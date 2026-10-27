@@ -82,9 +82,12 @@ can't value-compare, so a fresh function each render re-registers the axis.
 ## The x axis
 
 You don't declare the x axis to get one: `<ChartContainer>` renders a
-`<TimeAxis>` at the bottom automatically (`showAxis` defaults to `true`). Set
-`showAxis={false}` for a bare plot, or to place your own `<XAxis>` — for a top
-axis, a label, custom ticks, or a second (transformed) strip.
+`<TimeAxis>` at the bottom automatically. **Mount your own `<XAxis>`** (a top
+axis, a label, custom ticks) **and it replaces that strip** — one axis, not
+two. Set `showAxis={false}` for a bare plot, or `showAxis` (true) to keep the
+implicit strip _as well as_ a declared one, such as a second, transformed
+strip; that combination warns in development, since two axes is rarely
+intended.
 
 Its **kind is inferred from the data**, never set by a prop: a `TimeSeries`
 gives a time axis, a `ValueSeries` a [value axis](./value-axis.mdx), and

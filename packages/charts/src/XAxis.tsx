@@ -1,4 +1,11 @@
-import { Fragment, useContext, useMemo, useRef } from 'react';
+import {
+  Fragment,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { scaleLinear } from 'd3-scale';
 import { TimeZone } from 'pond-ts';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
@@ -6,6 +13,7 @@ import { derivedTicks, type AxisTransform } from './derivedTicks.js';
 import {
   ContainerContext,
   CursorContext,
+  ImplicitXAxisContext,
   type ResolvedCursorFrame,
 } from './context.js';
 import { tickValues } from './yticks.js';
@@ -468,6 +476,17 @@ export function XAxis({
   if (container === null) {
     throw new Error('<XAxis> must be rendered inside a <ChartContainer>');
   }
+  // [PND-XAXISOWN] A declared axis announces itself, so the container's
+  // implicit strip stands down. Layout effect: the implicit strip is gone
+  // before the first paint rather than flashing for a frame.
+  const implicit = useContext(ImplicitXAxisContext);
+  const { registerXAxis, unregisterXAxis } = container;
+  const [axisKey] = useState(() => Symbol('xaxis'));
+  useLayoutEffect(() => {
+    if (implicit) return undefined;
+    registerXAxis(axisKey);
+    return () => unregisterXAxis(axisKey);
+  }, [implicit, registerXAxis, unregisterXAxis, axisKey]);
   const cursor = useContext(CursorContext);
   // `xTickCount` is the container's shared x-side count — the same value the x
   // gridlines and `formatTime` use, so labels and grid stay on the same instants

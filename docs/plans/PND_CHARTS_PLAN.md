@@ -303,6 +303,23 @@ mounted-wins is the correction and `showAxis` is the compatibility shim, rather
 than mounted-wins being a special case bolted onto a prop that stays where it
 is.
 
+**Shipped (wave "Path to 1.0") — mounted wins.** A declared `<XAxis>`
+registers with the container (`registerXAxis`, in a layout effect, so the
+implicit strip is gone before first paint). `showAxis` now defaults to
+*undefined*, meaning "draw the implicit strip iff nothing is declared". The
+container's own strip renders inside an internal `ImplicitXAxisContext` so it
+does not count itself. `showAxis={false}` behaves as before. `showAxis={true}`
+plus a declared axis keeps both and dev-warns: honouring an explicit request
+beats overriding it, and the warning is the "warn at the conflict" half of the
+ask. Every `showAxis={false}` in `Axes.stories.tsx` (the tell) is gone, and
+the GalleryCard comment and the axes/layout/cheat-sheet docs are updated.
+Other stories' `showAxis={false}` were left alone: it is still correct there,
+and a sweep is churn. **Not done here:** [PND-AXISGUT]'s height reservation,
+which this makes answerable (the container now knows whether an axis is
+declared) but does not implement. Visual baselines for any story that mounted
+an `<XAxis>` *without* `showAxis={false}` lose their duplicate strip, which is
+the fix showing up rather than a regression.
+
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
 Filed by the estela agent after it shipped overlapping labels, and its framing

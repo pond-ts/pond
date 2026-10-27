@@ -37,6 +37,7 @@ import {
   type TrackerInfo,
   type TrackerSource,
   type DrawStatsFrame,
+  ImplicitXAxisContext,
 } from './context.js';
 import { warnOnDuplicateGestureOwners } from './cursors.js';
 import {
@@ -464,11 +465,14 @@ export interface ChartContainerProps {
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
   rowGap?: number;
   /**
-   * Auto-render the shared x axis under the rows. **Default `true`.** Set
-   * `false` for a bare plot (a sparkline), or when you place your own `<XAxis>`
-   * child (e.g. with a label, custom ticks, or on `side="top"`). Named
-   * `showAxis` (not `axis`) to avoid clashing with a layer's `axis` prop, which
-   * picks *which* `<YAxis>` it scales against — a different axis entirely.
+   * Auto-render the shared x axis under the rows. **Default: yes, unless you
+   * mount your own `<XAxis>`** ([PND-XAXISOWN]). A declared `<XAxis>` (or
+   * `<TimeAxis>` / `<CategoryAxis>`) anywhere in the container wins and the
+   * implicit strip stands down, so placing one no longer draws two. Set
+   * `false` for a bare plot (a sparkline). Set `true` to keep the strip *as
+   * well as* a mounted axis — honoured, with a dev warning, since two x axes
+   * is rarely the intent. Named `showAxis` (not `axis`) to avoid clashing with
+   * a layer's `axis` prop, which picks *which* `<YAxis>` it scales against.
    */
   showAxis?: boolean;
   /**
@@ -850,7 +854,7 @@ function ResolvedChartContainer({
   width,
   height,
   rowGap = 0,
-  showAxis = true,
+  showAxis,
   trackerPosition,
   onTrackerChanged,
   onDrawStats,
@@ -943,6 +947,33 @@ function ResolvedChartContainer({
     });
   }, []);
   const cursors = useMemo(() => Array.from(cursorMap.values()), [cursorMap]);
+  // [PND-XAXISOWN] Declared `<XAxis>` mounts. Any one of them stands the
+  // implicit strip down unless `showAxis` says otherwise explicitly.
+  const [declaredXAxes, setDeclaredXAxes] = useState<ReadonlySet<symbol>>(
+    () => new Set(),
+  );
+  const registerXAxis = useCallback((key: symbol) => {
+    setDeclaredXAxes((s) => (s.has(key) ? s : new Set(s).add(key)));
+  }, []);
+  const unregisterXAxis = useCallback((key: symbol) => {
+    setDeclaredXAxes((s) => {
+      if (!s.has(key)) return s;
+      const next = new Set(s);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const drawImplicitAxis = showAxis ?? declaredXAxes.size === 0;
+  const doubledAxis = showAxis === true && declaredXAxes.size > 0;
+  useEffect(() => {
+    if (isDev && doubledAxis) {
+      console.warn(
+        '<ChartContainer showAxis>: a declared <XAxis> is mounted and ' +
+          '`showAxis` is true, so two x axes draw. A mounted <XAxis> already ' +
+          'replaces the implicit strip — drop `showAxis` unless both are wanted.',
+      );
+    }
+  }, [doubledAxis]);
   // RFC A2.5: one snap/gesture owner per scope — warn (dev, once) on two.
   const warnedGestureRef = useRef(false);
   useEffect(() => {
@@ -2245,6 +2276,8 @@ function ResolvedChartContainer({
       unregisterSelectable,
       registerCursor,
       unregisterCursor,
+      registerXAxis,
+      unregisterXAxis,
       cursors,
       registerSelector,
       unregisterSelector,
@@ -2326,6 +2359,8 @@ function ResolvedChartContainer({
       unregisterSelectable,
       registerCursor,
       unregisterCursor,
+      registerXAxis,
+      unregisterXAxis,
       cursors,
       registerSelector,
       unregisterSelector,
@@ -2400,7 +2435,11 @@ function ResolvedChartContainer({
           >
             {children}
           </div>
-          {showAxis && <TimeAxis />}
+          {drawImplicitAxis && (
+            <ImplicitXAxisContext.Provider value={true}>
+              <TimeAxis />
+            </ImplicitXAxisContext.Provider>
+          )}
         </div>
       </CursorContext.Provider>
     </ContainerContext.Provider>

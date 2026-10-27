@@ -133,6 +133,16 @@ series)` replaces one source, and only nodes reading it recompute — the
 
 ### Changed
 
+- **`@pond-ts/charts`: a mounted `<XAxis>` replaces the container's implicit
+  x-axis strip** ([PND-XAXISOWN]). `<ChartContainer>` used to draw its own
+  strip whatever the declaration said, so mounting an `<XAxis>` (or
+  `<TimeAxis>` / `<CategoryAxis>`) drew two unless you also passed
+  `showAxis={false}`. A declared axis now stands the implicit one down.
+  `showAxis` still overrides: `false` hides the implicit strip, and `true`
+  keeps it alongside a declared axis, with a dev warning. Charts already
+  passing `showAxis={false}` are unchanged. A chart that relied on the default
+  to draw a second strip next to its own `<XAxis>` must now pass `showAxis`.
+
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
   to emit from a microtask, so several `push()` calls with no `await` between
   them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output
