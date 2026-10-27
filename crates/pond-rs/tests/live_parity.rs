@@ -410,7 +410,7 @@ fn fixture_is_well_formed() {
             assert_eq!(state.value.is_some(), has_value, "{}: {id}", case.name);
             assert_eq!(
                 state.stats.is_some(),
-                class == "LiveSeries",
+                class == "LiveSeries" || class == "LiveAggregation",
                 "{}: {id} stats",
                 case.name
             );
@@ -973,6 +973,19 @@ mod runner {
                     compare_rows(&what, state.snapshot.as_ref().unwrap(), &series_rows(&snap))?;
                     if Some(agg.has_open_bucket()) != state.has_open_bucket {
                         return Err(format!("{what}: has_open_bucket"));
+                    }
+                    let st = agg.stats();
+                    let mut got = serde_json::json!({
+                        "eventsObserved": st.events_observed,
+                        "bucketsClosed": st.buckets_closed,
+                        "openBuckets": st.open_buckets,
+                    });
+                    if let Some(start) = st.open_bucket_start {
+                        got["openBucketStart"] = start.into();
+                    }
+                    let want = Value::Object(state.stats.clone().unwrap());
+                    if got != want {
+                        return Err(format!("{what}: stats {got} vs {want}"));
                     }
                 }
             }

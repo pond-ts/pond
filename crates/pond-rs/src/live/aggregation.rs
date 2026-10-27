@@ -21,7 +21,7 @@ use crate::elements::compare_scalars;
 use crate::error::{PondError, Result};
 use crate::query::EventKey;
 use crate::reducer::{Agg, Reducer, clamp_at_zero, percentile_of_sorted};
-use crate::series::{ColumnDef, ColumnKind, TimeSeries};
+use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use super::buffer::series_of;
 use super::event::{LiveEvent, LiveSchema};
@@ -140,6 +140,18 @@ impl LiveAggregation {
             columns.push(Mapped { source: i, reducer });
         }
         let (step, anchor) = step_anchor;
+        // Every bucket a supported time can fall in must have i64 edges;
+        // checked here at the extremes so `ingest` cannot overflow.
+        for t in [-MAX_TIME_MS, MAX_TIME_MS] {
+            if bucket_of(t, step, anchor).is_none() {
+                return Err(PondError::InvalidData {
+                    call: CALL,
+                    message: format!(
+                        "step {step} ms with anchor {anchor} ms puts bucket edges outside the i64 range"
+                    ),
+                });
+            }
+        }
         let mut agg = Self {
             name,
             schema: LiveSchema::new(out_defs),
@@ -162,8 +174,8 @@ impl LiveAggregation {
     /// snapshot (only when something listens for it).
     pub(crate) fn ingest(&mut self, event: &LiveEvent, want_bucket: bool) -> Ingested {
         let ts = event.begin();
-        let start = (ts - self.anchor).div_euclid(self.step) * self.step + self.anchor;
-        let end = start + self.step;
+        let (start, end) =
+            bucket_of(ts, self.step, self.anchor).expect("edges checked in LiveAggregation::new");
         let watermark = self.watermark.map_or(ts, |w| w.max(ts));
         self.watermark = Some(watermark);
         let cutoff = watermark.saturating_sub(self.grace);
@@ -332,6 +344,17 @@ fn scalars(v: &Value, mut f: impl FnMut(&Scalar)) {
         Value::Array(items) => items.iter().for_each(f),
         Value::Decimal(_) => unreachable!("live series refuse decimal columns"),
     }
+}
+
+/// The bucket `[start, end)` holding `ts`, worked out in i128 (as batch
+/// `Sequence` does); `None` when an edge does not fit in an i64.
+fn bucket_of(ts: i64, step: i64, anchor: i64) -> Option<(i64, i64)> {
+    let (step, anchor) = (i128::from(step), i128::from(anchor));
+    let start = (i128::from(ts) - anchor).div_euclid(step) * step + anchor;
+    Some((
+        i64::try_from(start).ok()?,
+        i64::try_from(start + step).ok()?,
+    ))
 }
 
 /// pond-ts `===` on two cells; array cells by their elements bit for bit

@@ -87,7 +87,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   key lookups, stats, `to_json` / `from_json` and batch snapshots. `filter`
   and fixed-bucket `aggregate` build nodes on it, reached through copyable
   `Node` handles; `watch` picks which outputs a push returns, and `remove`
-  drops a node. Results match pond-ts event for event on 29 of the 49 live
+  drops a node. Results match pond-ts event for event on 31 of the 51 live
   replay cases (the rest need later steps).
 
 ### Fixed

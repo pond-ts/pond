@@ -3584,11 +3584,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        handles, `watch`, and `remove`.
        Built 2026-10-27 (`src/live/`: `mod.rs` owner, `event.rs`,
        `buffer.rs`, `view.rs`, `aggregation.rs`, `json.rs`; cargo feature
-       `live`, on by default). 29 of the 49 fixture cases run (every case
+       `live`, on by default). 31 of the 51 fixture cases run (every case
        whose nodes are only `filter` / `aggregate`), each push's outputs and
-       every node's final state equal. Three cases were added to the
-       fixture for this step: `view-dispose-chain-filters`,
-       `aggregate-reducers` (every reducer), `aggregate-grace`. Decisions
+       every node's final state (aggregation `stats` included) equal. Five
+       cases were added to the fixture for this step:
+       `view-dispose-chain-filters`, `aggregate-reducers` (every reducer),
+       `aggregate-grace`, `aggregate-boolean-array`,
+       `aggregate-dispose-on-view`. Decisions
        and differences from pond-ts:
        - Rows are stored as a `VecDeque` of shared events
          (`Arc` key + values, `Arc` schema), not the per-column sealed
@@ -3599,16 +3601,26 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          becomes the problem. `to_time_series` copies.
        - `push_many` checks every row, then dry-runs the ordering over the
          batch, then commits, in every mode (pond-ts after [PND-BATCHATOM]).
-       - `remove(node)`: the handle (and its children's) then return
-         `Err`; a source view left with no children and no watched output
-         is removed too (pond-ts's upward dispose, case
-         `view-dispose-chain`), but only once nothing else uses it. The
-         root cannot be removed.
+       - `remove(node)`: that node's handle then returns `Err`; nodes
+         built on it stay readable but get no more events. When a view is
+         removed, a source view left with no children and no watched
+         output is detached too, and so on up (pond-ts's upward dispose,
+         case `view-dispose-chain`); it stays readable. Removing an
+         aggregation does not walk up (`LiveAggregation.dispose` only
+         unsubscribes; case `aggregate-dispose-on-view`, found in review).
+         The root cannot be removed.
        - pond-rs refuses what pond-ts accepts and gets wrong: number
          reducers on text columns ([PND-KINDREDUCE]; case
          `aggregate-bad-mapping` is listed as refused in the harness),
          decimal columns and duplicate column names in a live schema, and
          intervals whose label kind differs from the events held.
+       - `keep` on an array column compares the arrays' elements, as
+         batch pond-rs does; pond-ts compares the array objects, so two
+         equal arrays give a gap there ([PND-ARRAYKEY], logged with the
+         batch reducers). The fixture's array case leaves `keep` out.
+       - Bucket edges are worked out in i128, and `aggregate` refuses a
+         step and anchor whose edges for a supported time would not fit
+         an i64 (an anchor of `i64::MIN` panicked before review).
        - A late event a `reorder` source accepts goes into each view in
          key order; pond-ts views throw ([PND-LATE]). No fixture case
          reaches it with only step 2 nodes; step 3 decides.

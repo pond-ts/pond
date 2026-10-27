@@ -55,8 +55,9 @@
  * `final` holds each node's state after the last step: its pond-ts `class`
  * (constructor name, which fixes the output kinds above) and output `schema`;
  * `rows` (every event it holds, via `at(i)`) for series, views, rolling,
- * reduce and partitioned rolling; `stats` for a `LiveSeries`; `closed` and
- * `snapshot` rows plus `hasOpenBucket` for an aggregation; `value` for
+ * reduce and partitioned rolling; `stats` for a `LiveSeries` and an
+ * aggregation; `closed` and `snapshot` rows plus `hasOpenBucket` for an
+ * aggregation; `value` for
  * rolling and reduce; `partitions` (`[key, rows]` pairs from `toMap()`) for
  * partitioned series and views. A partition key is the `toMap()` key: the
  * partition value as text, and `" undefined"` (pond-ts's own marker, with
@@ -121,6 +122,26 @@ const INTERVAL_ROWS = [
   [['b2', 10000, 15000], 4],
   [['b2', 10000, 20000], 2],
   [['b4', 20000, 25000], -3],
+];
+
+// True/false and array cells, for reducers on columns that are not numbers.
+// Runs of equal values (so `keep` holds) and a gap in each column.
+const TAG_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'ok', kind: 'boolean', required: false },
+  { name: 'tags', kind: 'array', required: false },
+];
+const TAG_ROWS = [
+  [0, true, ['a']],
+  [1000, true, ['a', 'b']],
+  [2000, null, null],
+  [3000, true, []],
+  [5000, false, ['b']],
+  [6000, true, [1, 'a']],
+  [7000, false, ['b']],
+  [10000, false, null],
+  [11000, false, [true]],
+  [16000, true, ['c']],
 ];
 
 const RANGE_SCHEMA = [
@@ -470,6 +491,43 @@ const CASES = [
       { dispose: 'g' },
       { dispose: 'm' },
       ...each(ROWS.slice(6, 12)),
+    ],
+  },
+  {
+    // pond-ts compares array cells by object in `keep`, so arrays get no
+    // `keep` here ([PND-ARRAYKEY]; pond-rs compares their elements).
+    name: 'aggregate-boolean-array',
+    schema: TAG_SCHEMA,
+    steps: [
+      node('a', 'aggregate', 'root', every('5s'), {
+        okN: { from: 'ok', using: 'count' },
+        okFirst: { from: 'ok', using: 'first' },
+        okLast: { from: 'ok', using: 'last' },
+        okKeep: { from: 'ok', using: 'keep' },
+        okUnique: { from: 'ok', using: 'unique' },
+        okTop: { from: 'ok', using: 'top1' },
+        okSamples: { from: 'ok', using: 'samples' },
+        tagN: { from: 'tags', using: 'count' },
+        tagFirst: { from: 'tags', using: 'first' },
+        tagLast: { from: 'tags', using: 'last' },
+        tagUnique: { from: 'tags', using: 'unique' },
+        tagTop: { from: 'tags', using: 'top2' },
+        tagSamples: { from: 'tags', using: 'samples' },
+      }),
+      ...each(TAG_ROWS),
+    ],
+  },
+  {
+    // Disposing an aggregation does not dispose the unwatched view it was
+    // built on (only a view's dispose walks up).
+    name: 'aggregate-dispose-on-view',
+    schema: SCHEMA,
+    steps: [
+      quiet('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('a', 'aggregate', 'f', every('5s'), { cpu: 'sum' }),
+      ...each(ROWS.slice(0, 8)),
+      { dispose: 'a' },
+      ...each(ROWS.slice(8, 14)),
     ],
   },
   {
@@ -907,6 +965,7 @@ function finalOf(obj) {
     out.closed = encodeRows(obj.closed());
     out.snapshot = encodeRows(obj.snapshot());
     out.hasOpenBucket = obj.hasOpenBucket;
+    out.stats = obj.stats();
     return out;
   }
   if (kind === 'LivePartitionedSeries' || kind === 'LivePartitionedView') {

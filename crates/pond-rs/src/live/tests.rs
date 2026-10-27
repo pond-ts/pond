@@ -318,6 +318,29 @@ fn aggregate_mappings_are_checked() {
 }
 
 #[test]
+fn extreme_anchors_are_refused_or_handled() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    // Bucket edges that do not fit an i64 are refused up front.
+    let far = Sequence::every("1s").unwrap().with_anchor(i64::MIN);
+    assert!(live.aggregate(root, &far, &sum).is_ok());
+    // The earliest supported time would fall in a bucket starting one
+    // i64::MAX step before the anchor, below i64::MIN.
+    let huge = Sequence::every_ms(i64::MAX)
+        .unwrap()
+        .with_anchor(-MAX_TIME_MS + 1);
+    assert!(live.aggregate(root, &huge, &sum).is_err());
+    // An extreme but representable anchor puts events in the right bucket.
+    let a = live.aggregate(root, &far, &sum).unwrap();
+    live.push(1_500, row("a", 2.0)).unwrap();
+    live.push(2_300, row("a", 3.0)).unwrap();
+    // i64::MIN ends in ...808, so bucket edges sit 192 ms past each second.
+    assert_eq!(live[a].len(), 1);
+    assert_eq!(live[a].at(0).unwrap().begin(), 1_192);
+}
+
+#[test]
 fn json_in_and_out() {
     let mut live = series(LiveOptions::new());
     live.watch(live.root(), OutputKind::Batch).unwrap();

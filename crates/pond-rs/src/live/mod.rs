@@ -281,42 +281,47 @@ impl<T> From<Node<T>> for NodeId {
 }
 
 /// The node types a [`Node`] can name.
-pub trait NodeType: sealed::Sealed + Sized {
-    #[doc(hidden)]
-    fn of(state: &State) -> Option<&Self>;
-}
+pub trait NodeType: sealed::Sealed + Sized {}
 
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::LiveView {}
-    impl Sealed for super::LiveAggregation {}
-}
+    use super::{LiveAggregation, LiveView};
 
-impl NodeType for LiveView {
-    fn of(state: &State) -> Option<&Self> {
-        match state {
-            State::View(v) => Some(v),
-            _ => None,
+    /// What a slot holds. Public only inside this private module, so
+    /// callers outside the crate cannot name it.
+    pub enum State {
+        Root,
+        View(LiveView),
+        Aggregation(LiveAggregation),
+        Removed,
+    }
+
+    pub trait Sealed {
+        fn of(state: &State) -> Option<&Self>;
+    }
+
+    impl Sealed for LiveView {
+        fn of(state: &State) -> Option<&Self> {
+            match state {
+                State::View(v) => Some(v),
+                _ => None,
+            }
+        }
+    }
+
+    impl Sealed for LiveAggregation {
+        fn of(state: &State) -> Option<&Self> {
+            match state {
+                State::Aggregation(a) => Some(a),
+                _ => None,
+            }
         }
     }
 }
 
-impl NodeType for LiveAggregation {
-    fn of(state: &State) -> Option<&Self> {
-        match state {
-            State::Aggregation(a) => Some(a),
-            _ => None,
-        }
-    }
-}
+impl NodeType for LiveView {}
+impl NodeType for LiveAggregation {}
 
-#[doc(hidden)]
-pub enum State {
-    Root,
-    View(LiveView),
-    Aggregation(LiveAggregation),
-    Removed,
-}
+use sealed::State;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sub {
@@ -978,9 +983,10 @@ impl LiveSeries {
     }
 
     /// Remove a node (pond-ts `dispose`): its handle stops working, and
-    /// nodes built on it keep what they hold but get no more events. If
-    /// its source is a view that nothing else uses (no watch, no node built
-    /// on it), that view is detached too, and so on up: it keeps its events
+    /// nodes built on it keep what they hold but get no more events. If a
+    /// removed view's source is a view that nothing else uses (no watch, no
+    /// node built on it), that view is detached too, and so on up (removing
+    /// an aggregation does not walk up, as in pond-ts): it keeps its events
     /// and its handle still reads it, but it gets no more events. The root
     /// cannot be removed.
     pub fn remove(&mut self, node: impl Into<NodeId>) -> Result<()> {
@@ -992,9 +998,15 @@ impl LiveSeries {
                 message: "the root cannot be removed; drop the LiveSeries".into(),
             });
         }
+        let was_view = matches!(self.slots[i].state, State::View(_));
         let mut source = self.detach(i);
         self.slots[i].state = State::Removed;
         self.slots[i].subs = Default::default();
+        // Only a view walks up (pond-ts `LiveView.dispose`); removing an
+        // aggregation leaves its source as it is.
+        if !was_view {
+            return Ok(());
+        }
         while let Some(s) = source {
             let slot = &self.slots[s];
             if !matches!(slot.state, State::View(_)) || slot.has_subs() {
