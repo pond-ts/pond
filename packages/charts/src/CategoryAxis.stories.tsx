@@ -294,6 +294,58 @@ function SelectDemo() {
 
 export const Select: Story = { render: () => <SelectDemo /> };
 
+/** Two quarters that draw the same label — the case that used to merge. */
+const QUARTERS = [
+  { key: '2025-Q1', label: 'Q1', value: 18 },
+  { key: '2025-Q2', label: 'Q2', value: 24 },
+  { key: '2026-Q1', label: 'Q1', value: 31 },
+  { key: '2026-Q2', label: 'Q2', value: 27 },
+];
+
+function KeyedLabelsDemo() {
+  const [sel, setSel] = useState<SelectInfo | null>(null);
+  return (
+    <div>
+      <div
+        style={{
+          height: 18,
+          marginBottom: 8,
+          fontFamily: defaultTheme.font.family,
+          fontSize: 12,
+          color: defaultTheme.axis.label,
+        }}
+      >
+        {sel === null ? (
+          <span style={{ opacity: 0.5 }}>click a Q1 bar…</span>
+        ) : (
+          <span>
+            mark <b>{sel.mark}</b> · label {sel.label} · {sel.value}
+          </span>
+        )}
+      </div>
+      <ChartContainer width={640}>
+        <Selector onSelect={setSel}>
+          <ChartRow height={240}>
+            <YAxis id="v" min={0} pad={0.08} />
+            <Layers>
+              <BarChart categories={QUARTERS} id="quarters" gap={6} />
+            </Layers>
+          </ChartRow>
+        </Selector>
+      </ChartContainer>
+    </div>
+  );
+}
+
+/**
+ * **Key vs label** ([PND-CATID]). Each category has a `key` (its identity) and
+ * a `label` (what is drawn). Here two years' quarters both read `Q1` / `Q2` on
+ * the axis, yet each bar selects on its own: the readout shows the `mark`
+ * (the key) next to the `label`. Without keys, the two `Q1` bars would be one
+ * mark and light together.
+ */
+export const KeyedLabels: Story = { render: () => <KeyedLabelsDemo /> };
+
 /**
  * **Signed values.** A single-series category bar honours its sign — a negative
  * category (a losing ticker's day P&L) draws **below the zero baseline**, a

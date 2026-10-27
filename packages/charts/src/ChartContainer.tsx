@@ -94,6 +94,15 @@ function normalizeRange(
   return 'begin' in range ? [range.begin(), range.end()] : [range[0], range[1]];
 }
 
+/**
+ * A declared category slot whose identity and display string differ — see
+ * {@link ChartContainerProps.categories} ([PND-CATID]).
+ */
+export interface CategoryEntry {
+  readonly key: string;
+  readonly label: string;
+}
+
 export interface ChartContainerProps {
   /**
    * The shared x **domain** `[begin, end]` — a tuple, or a `TimeRange`
@@ -107,9 +116,13 @@ export interface ChartContainerProps {
    * **Make the x axis ordinal at the container level** — one equal-width slot
    * per name, in this order ([PND-IGNITECAT]).
    *
-   * Note this is a list of **names** (`string[]`), unlike `<BarChart
-   * categories>`, which takes `{ label, value }` data. The container names the
-   * slots; the bar layer fills them.
+   * Note this is a list of **names**, unlike `<BarChart categories>`, which
+   * takes `{ label, value }` data. The container names the slots; the bar layer
+   * fills them. An entry is a string, or `{ key, label }` when the slot's
+   * identity and its display string differ ([PND-CATID]) — the slots, the
+   * agreement check against a `<BarChart categories>` layer and selection all
+   * speak `key`; the axis draws `label`. A plain string is a key whose label
+   * comes from the category layer (or is the key, with no layer to say).
    *
    * Until this prop, the band scale was reachable only *through a layer*:
    * `<BarChart categories>` (and a **horizontal** heat map) reported
@@ -204,7 +217,7 @@ export interface ChartContainerProps {
    * Omit for the inferred behaviour: a container with only category layers
    * still resolves its slots from them, exactly as before.
    */
-  categories?: readonly string[];
+  categories?: readonly (string | CategoryEntry)[];
   /**
    * **Cap the slot pitch** on a **category** x axis, in CSS pixels
    * ([PND-BANDPACK]). A band scale otherwise spreads its categories across the
@@ -885,9 +898,26 @@ function ResolvedChartContainer({
   // hypothetical for venue or instrument names.
   const categoriesKey =
     categoriesProp === undefined ? null : JSON.stringify(categoriesProp);
+  // [PND-CATID] Split into keys (the slots' identity, which every agreement
+  // check compares) and labels (what the axis draws).
   const declaredCategories = useMemo(
     (): readonly string[] | null =>
-      categoriesProp === undefined ? null : [...categoriesProp],
+      categoriesProp === undefined
+        ? null
+        : categoriesProp.map((c) => (typeof c === 'string' ? c : c.key)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
+    [categoriesKey],
+  );
+  // A bare-string entry declares a slot, not a label: it defers to a layer's
+  // label for that slot, so declaring keys on the container does not replace
+  // the bars' display strings with keys.
+  const declaredLabels = useMemo(
+    (): readonly (string | undefined)[] | null =>
+      categoriesProp === undefined
+        ? null
+        : categoriesProp.map((c) =>
+            typeof c === 'string' ? undefined : c.label,
+          ),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
     [categoriesKey],
   );
@@ -1286,6 +1316,34 @@ function ResolvedChartContainer({
     }
     return cats;
   }, [sources, declaredCategories]);
+
+  // [PND-CATID] The display labels for those slots: the container's own when
+  // it declares them, else the first category layer's. Only the keys are
+  // checked for agreement — two layers may label one slot differently, and
+  // the declaring side wins rather than throwing over presentation.
+  const categoryLabelsFresh = useMemo((): readonly string[] | null => {
+    let layer: readonly string[] | null = null;
+    for (const s of sources.values()) {
+      if ((s.xCategories?.() ?? null) === null) continue;
+      layer = s.xCategoryLabels?.() ?? null;
+      break;
+    }
+    if (declaredLabels === null) return layer;
+    // Declared label, else the layer's, else the key itself.
+    return declaredLabels.map(
+      (label, i) => label ?? layer?.[i] ?? categories?.[i] ?? '',
+    );
+  }, [sources, declaredLabels, categories]);
+  // Held by content, like the declared list: the merge builds a new array
+  // whenever a layer re-registers, and the band scale must not rebuild (and
+  // repaint every row) for labels that did not change.
+  const categoryLabelsKey =
+    categoryLabelsFresh === null ? null : JSON.stringify(categoryLabelsFresh);
+  const categoryLabels = useMemo(
+    () => categoryLabelsFresh,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
+    [categoryLabelsKey],
+  );
 
   // Auto-fit extent — the union of the layers' x extents — used as the domain
   // when no explicit `range` is given. (Same source registry as the kind; the
@@ -1767,7 +1825,7 @@ function ResolvedChartContainer({
       const slack = Math.max(0, plotWidth - packed);
       const offset =
         bandAlign === 'center' ? slack / 2 : bandAlign === 'end' ? slack : 0;
-      const s = scaleBand(cats)
+      const s = scaleBand(cats, categoryLabels ?? undefined)
         .domain([0, n])
         .range([offset, offset + packed]);
       return {
@@ -1945,6 +2003,7 @@ function ResolvedChartContainer({
   }, [
     resolvedKind,
     categories,
+    categoryLabels,
     maxBandWidth,
     bandAlign,
     d0,

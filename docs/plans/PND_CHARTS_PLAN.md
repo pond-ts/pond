@@ -4193,7 +4193,58 @@ decision: today duplicate labels are structurally meaningless (they merge);
 with keys they become legal, and the container's category-agreement check
 compares label lists.
 
-**Not started.** Blocked on owner review of the sketch.
+**Implemented (wave "Path to 1.0") as sketched — awaiting owner sign-off
+(public widening of the selection currency).** An independent adversarial
+review agent checked it before hand-in. That was a review, not the owner gate.
+
+**Open for owner** (the sign-off should cover these):
+
+- (a) **`sameMark` keeps `label` in identity** for keyed categories. Heat cells
+  need mark+label, so an entry holding only a key, or a stale label, highlights
+  on the canvas but fails `selectionContains` against a fresh hit. Accept as
+  documented, or have a mark declare whether its label is identity?
+- (b) **Duplicate keys**: they collapse to one slot silently, as duplicate
+  labels did before. Add a dev warning?
+
+Decisions:
+
+- **`key?: string` on `CategoryDatum` and `CategoryStackDatum`, default
+  `label`.** The readers put keys in `marks` and add `markLabels` only when some
+  key differs from its label. An unkeyed list therefore builds the _identical_
+  series (pinned by test), not just an equivalent one.
+- **The axis domain is keys; labels ride alongside.** `scaleBand(keys,
+labels?)` — `label(v)` draws and the new `key(v)` identifies. A layer adds
+  `xCategoryLabels()` next to `xCategories()` (keys). The container checks
+  agreement on **keys only**. When labels conflict across layers it does not
+  throw: the container's declared labels win, otherwise the first category
+  layer's. Labels are presentation, so a disagreement there is not worth an
+  error.
+- **Container `categories` widens to `(string | { key, label })[]`**, not a
+  sibling prop. A bare string is a key that declares the slot only; its label
+  comes from the category layer, or is the key itself when no layer gives one.
+  Without that, declaring keys on the container (the [PND-IGNITECAT] pattern)
+  would have drawn keys over keyed bars, which the independent review caught.
+  Every existing call is unchanged.
+- **`SelectInfo.label` is the display label**, `mark` the key. The span/sweep
+  `rows` channel reads the same label field `hitTest` reports, as it did
+  before. It stays label-based, so a `rows` filter matches every category that
+  draws that string. `binCategories` (the horizontal chart's y labels) carries
+  labels, since it only ever labelled slots.
+- **Duplicate validation: none added.** Duplicate _labels_ are now legal (that
+  is the feature). Duplicate _keys_ collapse to one slot exactly as duplicate
+  labels did before. A throw would turn a silently-wrong chart that some caller
+  may have shipped into a crash, so that call is left to the owner as a
+  possible dev warning.
+- `useChartFrame().bands` gains `keys` and `ChartBand.key`, so header strips
+  can map a slot back to data without a side table.
+- **`sameMark` keeps `label` in the identity, as a known sharp edge.** On a
+  heat map, `mark` names the bin and `label` the row, so dropping the label
+  would merge cells. As a result, an entry that holds only a key, or a label
+  that has since been re-localized, still highlights on the canvas (category
+  bars match on `mark` alone) but fails `sameMark` / `selectionContains`
+  against a fresh hit. The rule: build entries from hits. To fix it properly,
+  a mark would need to say whether its label is identity or presentation.
+  That is left for the owner rather than guessed at here.
 
 ---
 

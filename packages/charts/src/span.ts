@@ -160,6 +160,13 @@ export function spansForLayer(
  * `<MultiSelector>`'s own demote-on-edit stories made exactly that error, in
  * three places, in the file that is supposed to be the worked example —
  * which is why this is a library export and not a docs note.
+ *
+ * **A keyed category's `label` is its display string** ([PND-CATID]), and it
+ * stays part of this identity, because on a heat map `mark` names the bin and
+ * `label` the row — dropping it would merge cells. So build entries from hits
+ * (or carry the category's current label): an entry holding only the key
+ * highlights on the canvas, which matches categorical bars on `mark` alone,
+ * but is not `sameMark` as a hit on it.
  */
 export function sameMark(a: SelectInfo, b: SelectInfo): boolean {
   if (a.id !== b.id) return false;

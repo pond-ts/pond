@@ -781,6 +781,13 @@ export interface RowLayer {
    */
   xCategories?(): readonly string[] | null;
   /**
+   * Display labels index-aligned with {@link xCategories} — whose entries are
+   * category **keys**, the identity — when the two differ ([PND-CATID]). The
+   * axis draws these; the slots and selection key on the keys. Absent ⇒ each
+   * key is its own label.
+   */
+  xCategoryLabels?(): readonly string[] | null;
+  /**
    * A **horizontal** categorical source's ordered category names — the same
    * list {@link xCategories} carries for a vertical one, but for the axis it
    * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
@@ -1143,6 +1150,13 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /**
+   * Display labels index-aligned with {@link xCategories} — whose entries are
+   * category **keys**, the identity — when the two differ ([PND-CATID]). The
+   * axis draws these; the slots and selection key on the keys. Absent ⇒ each
+   * key is its own label.
+   */
+  xCategoryLabels?(): readonly string[] | null;
   /**
    * A **horizontal** categorical source's ordered category names — the same
    * list {@link xCategories} carries for a vertical one, but for the axis it

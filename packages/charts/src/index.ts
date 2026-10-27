@@ -23,7 +23,7 @@ export { Canvas } from './Canvas.js';
 export type { CanvasProps, CanvasDraw } from './Canvas.js';
 
 export { ChartContainer } from './ChartContainer.js';
-export type { ChartContainerProps } from './ChartContainer.js';
+export type { CategoryEntry, ChartContainerProps } from './ChartContainer.js';
 export { ChartRow } from './ChartRow.js';
 export type { ChartRowProps } from './ChartRow.js';
 export { Layers } from './Layers.js';

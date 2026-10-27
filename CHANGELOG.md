@@ -80,6 +80,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/charts`: category key, separate from its label** ([PND-CATID]).
+  `CategoryDatum` / `CategoryStackDatum` take an optional `key` (default:
+  `label`). The key is the category's identity: it is the slot, the bar's
+  `mark` and `SelectInfo.mark`, and it is what the controlled `selected` echo
+  matches. The axis, readouts and `SelectInfo.label` show the `label`. Two
+  categories that render the same string no longer merge into one mark, and
+  shortening or localizing a label no longer changes what a selection means.
+  `<ChartContainer categories>` also accepts `{ key, label }` entries
+  (`CategoryEntry`). Agreement with a category layer is checked on keys. An
+  entry's label wins over the layer's; a bare-string entry keeps the layer's
+  label. `ScaleBand` gains `key(v)`,
+  and `useChartFrame().bands` gains `keys` / `ChartBand.key`. Lists without
+  keys build the exact same series as before. **Semantics shift for keyed
+  lists only:** `SelectInfo.label` on a keyed categorical bar is now the
+  display label, where it used to equal `mark`.
+
 - **`@pond-ts/fit`: `Track.simplify(tolerance)`** ([PND-FITPUB]). The
   Douglas–Peucker thinning behind `summary().polyline`, now reachable for a
   bare polyline: `Track.of(points).simplify(Distance.meters(12))` returns a
