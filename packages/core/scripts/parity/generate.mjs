@@ -1,11 +1,12 @@
-// Writes test/fixtures/parity.json and the parity-export*.arrow files from the
-// compiled package.
+// Writes test/fixtures/parity.json, live-parity.json and the
+// parity-export*.arrow files from the compiled package.
 // Run after `npm run build --workspace=pond-ts`:
 //   node packages/core/scripts/parity/generate.mjs
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as pond from '../../dist/index.js';
 import { buildFixture } from './cases.mjs';
+import { buildLiveFixture } from './live.mjs';
 import {
   EXPORT_FILE,
   TYPED_EXPORTS,
@@ -21,6 +22,13 @@ const out = fileURLToPath(
 const fixture = buildFixture(pond);
 writeFileSync(out, JSON.stringify(fixture) + '\n');
 console.log(`wrote ${fixture.cases.length} cases to ${out}`);
+
+const liveOut = fileURLToPath(
+  new URL('../../test/fixtures/live-parity.json', import.meta.url),
+);
+const live = await buildLiveFixture(pond);
+writeFileSync(liveOut, JSON.stringify(live) + '\n');
+console.log(`wrote ${live.cases.length} live cases to ${liveOut}`);
 
 const arrowOut = fileURLToPath(
   new URL(`../../test/fixtures/${EXPORT_FILE}`, import.meta.url),

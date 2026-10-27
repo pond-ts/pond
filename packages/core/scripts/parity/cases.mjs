@@ -4496,7 +4496,7 @@ const CASES = [
  * The closures a case can name, as `{ fn: spec }`. pond-rs's harness builds
  * the same closure from the same spec.
  */
-function closure(spec) {
+export function closure(spec) {
   if (spec === 'rangeBegin') return (r) => r.begin();
   if (spec === 'rangeEnd') return (r) => r.end();
   if (spec === 'rowLabel') return (_r, i) => `row${i}`;
@@ -4663,7 +4663,7 @@ function attempt(head, run) {
 }
 
 /** Tag the numbers plain JSON would lose or change. */
-function encodeCell(cell) {
+export function encodeCell(cell) {
   if (Array.isArray(cell)) return cell.map(encodeCell);
   if (typeof cell !== 'number') return cell;
   if (Object.is(cell, -0)) return { f64: '-0' };
