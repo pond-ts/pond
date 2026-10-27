@@ -7,6 +7,10 @@
  * instruments sharing one id-space would answer for each other. One
  * graph per binding; hosts own graph lifecycle, the graph owns
  * memoization.
+ *
+ * A binding may also be **several sources behind one join node**
+ * ([PND-PROCJOIN], `join.ts`): the graph then reads the join's aligned
+ * series, and the join's policy-bearing id scopes every spec id in it.
  */
 
 import {
@@ -20,12 +24,24 @@ import {
   type ColumnView,
 } from '../column.js';
 import { ProcessError } from '../errors.js';
-import { defineNode, type Node } from '../node.js';
+import { defineNode, derive, type Node } from '../node.js';
+import type { Outlet } from '../port.js';
 import { port } from '../types.js';
 import { source, type SourceNode } from '../source.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 import { requiredHistory } from './history.js';
 import { columnsOf, specId, unitOf } from './identity.js';
+import {
+  align,
+  assembleJoined,
+  checkJoin,
+  checkSource,
+  joinId,
+  sameKeys,
+  SOURCE_SEPARATOR,
+  type JoinInfo,
+  type JoinPolicy,
+} from './join.js';
 import type { Registry } from './registry.js';
 import {
   isFold,
@@ -161,7 +177,30 @@ function densify(column: Column): (number | undefined)[] {
 export class BoundGraph {
   readonly registry: Registry;
   readonly units: Units;
-  readonly #source: SourceNode<TimeSeries<SeriesSchema>>;
+  /**
+   * The join, for a binding over several sources — [PND-PROCJOIN].
+   * `undefined` for an ordinary single-source binding.
+   */
+  readonly join: JoinInfo | undefined;
+  /** The single source; for a joined binding, one per binding key. */
+  readonly #sources: ReadonlyMap<string, SourceNode<TimeSeries<SeriesSchema>>>;
+  /** What every node reads as `src` — the source, or the join node's output. */
+  readonly #root: Outlet<TimeSeries<SeriesSchema>>;
+  /**
+   * Per-source change stamps for a joined binding, bumped by the join node
+   * when a source's aligned columns changed — its own data moved, or the
+   * shared key base did. A node whose raw inputs all carry an unchanged
+   * stamp, and whose nested inputs are unchanged, hands back its previous
+   * output instead of recomputing: a tick in `compare` leaves every node
+   * over `primary` alone, though both read the one join node.
+   */
+  readonly #stamps = new Map<string, number>();
+  /**
+   * Bumped when the aligned key base moves. Every source stamp moves with
+   * it; this one exists for a node with no raw input, which still reads
+   * the key column (a fold's timestamps, an op's series length).
+   */
+  #keyStamp = 0;
   readonly #nodes = new Map<string, Compiled>();
   /** Insertion order is LRU order: a touch deletes and re-adds. */
   readonly #lru = new Set<string>();
@@ -186,13 +225,84 @@ export class BoundGraph {
   #full = 0;
 
   constructor(
-    series: TimeSeries<SeriesSchema>,
-    options: { registry: Registry; units?: Units; budgetBytes?: number },
+    input:
+      | TimeSeries<SeriesSchema>
+      | Readonly<Record<string, TimeSeries<SeriesSchema>>>,
+    options: {
+      registry: Registry;
+      units?: Units;
+      budgetBytes?: number;
+      join?: JoinPolicy;
+    },
   ) {
     this.registry = options.registry;
     this.units = options.units ?? {};
     this.#budgetBytes = options.budgetBytes ?? Number.POSITIVE_INFINITY;
-    this.#source = source({ initial: series, kind: 'source' });
+    if (options.join === undefined) {
+      const only = source({
+        initial: input as TimeSeries<SeriesSchema>,
+        kind: 'source',
+      });
+      this.#sources = new Map([['', only]]);
+      this.#root = only.out.value;
+      this.join = undefined;
+      return;
+    }
+    const record = input as Readonly<Record<string, TimeSeries<SeriesSchema>>>;
+    checkJoin(record, options.join);
+    const names = Object.keys(record).sort((a, b) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    const policy = options.join;
+    this.join = { id: joinId(names, policy), policy, sources: names };
+    this.#sources = new Map(
+      names.map((n) => [n, source({ initial: record[n]!, kind: n })]),
+    );
+    this.#root = this.#joinNode(names, policy).out.value;
+  }
+
+  /**
+   * The join itself: n sources in, one aligned series out. A real node,
+   * so it memoizes like any other and appears in `Graph.from`.
+   */
+  #joinNode(names: readonly string[], policy: JoinPolicy) {
+    let lastInputs: Record<string, TimeSeries<SeriesSchema>> | undefined;
+    let lastKeys: Float64Array | undefined;
+    const outlets = Object.fromEntries(
+      names.map((n) => [n, this.#sources.get(n)!.out.value]),
+    );
+    return derive(
+      outlets,
+      (vals) => {
+        const current = vals as Record<string, TimeSeries<SeriesSchema>>;
+        const alignment = align(new Map(Object.entries(current)), policy);
+        const keysMoved =
+          lastKeys === undefined || !sameKeys(lastKeys, alignment.keys);
+        if (keysMoved) this.#keyStamp += 1;
+        for (const n of names) {
+          if (keysMoved || !Object.is(lastInputs?.[n], current[n])) {
+            this.#stamps.set(n, (this.#stamps.get(n) ?? 0) + 1);
+          }
+        }
+        lastInputs = { ...current };
+        lastKeys = alignment.keys;
+        return assembleJoined(
+          new Map(names.map((n) => [n, current[n]!])),
+          alignment,
+          this.join!.id,
+        );
+      },
+      { kind: this.join!.id },
+    );
+  }
+
+  /**
+   * The stamp a raw column reads under — the stamp of the source it is
+   * qualified by. Only meaningful for a joined binding.
+   */
+  #stampOf(column: string): number {
+    const at = column.indexOf(SOURCE_SEPARATOR);
+    return this.#stamps.get(at < 0 ? column : column.slice(0, at)) ?? 0;
   }
 
   /** Bytes currently retained across every materialized node value. */
@@ -328,8 +438,20 @@ export class BoundGraph {
     this.#lru.add(id);
   }
 
-  /** Replaces the bound data. Every node downstream goes dirty. */
-  setSource(series: TimeSeries<SeriesSchema>): void {
+  /**
+   * Replaces the bound data. Every node downstream goes dirty.
+   *
+   * A joined binding replaces **one** source by its binding key, and only
+   * nodes reading that source (or a key base the change moved) recompute
+   * — the rest revalidate and hand back their previous output.
+   */
+  setSource(series: TimeSeries<SeriesSchema>): void;
+  setSource(key: string, series: TimeSeries<SeriesSchema>): void;
+  setSource(
+    a: string | TimeSeries<SeriesSchema>,
+    b?: TimeSeries<SeriesSchema>,
+  ): void {
+    const target = this.#sourceFor(a, b);
     // "No claim", owed to every node — and it DOMINATES any later partial
     // claim. If a node misses a full replacement and is then handed a
     // `setSourceFrom`, it must still recompute wholly: the rows before
@@ -338,7 +460,38 @@ export class BoundGraph {
       this.#fullDirty.add(id);
       this.#pendingFrom.delete(id);
     }
-    this.#source.set(series);
+    target.node.set(target.series);
+  }
+
+  /** Resolves `setSource`'s two call shapes to one source node. */
+  #sourceFor(
+    a: string | TimeSeries<SeriesSchema>,
+    b: TimeSeries<SeriesSchema> | undefined,
+  ): {
+    node: SourceNode<TimeSeries<SeriesSchema>>;
+    series: TimeSeries<SeriesSchema>;
+  } {
+    if (this.join === undefined) {
+      if (typeof a === 'string') {
+        throw new ProcessError(
+          `setSource('${a}', …) names a source, but this binding has one — pass the series alone`,
+        );
+      }
+      return { node: this.#sources.get('')!, series: a };
+    }
+    if (typeof a !== 'string' || b === undefined) {
+      throw new ProcessError(
+        `this binding joins ${this.join.sources.map((s) => `'${s}'`).join(', ')} — name the source: setSource(key, series)`,
+      );
+    }
+    const node = this.#sources.get(a);
+    if (node === undefined) {
+      throw new ProcessError(
+        `'${a}' is not a source of this binding — sources are ${this.join.sources.map((s) => `'${s}'`).join(', ')}`,
+      );
+    }
+    checkSource(a, b);
+    return { node, series: b };
   }
 
   /**
@@ -358,6 +511,15 @@ export class BoundGraph {
    * doubt use {@link setSource}, which recomputes everything.
    */
   setSourceFrom(series: TimeSeries<SeriesSchema>, changedFrom: number): void {
+    // A source row is not an aligned row once a join sits between them,
+    // so the claim cannot be translated. Per-source invalidation already
+    // spares every node off the changed source; the ones on it recompute
+    // whole.
+    if (this.join !== undefined) {
+      throw new ProcessError(
+        `setSourceFrom is not supported on a joined binding — use setSource(key, series)`,
+      );
+    }
     const from = Math.max(0, Math.floor(changedFrom));
     for (const id of this.#nodes.keys()) {
       if (this.#fullDirty.has(id)) continue; // a full dirty outranks this
@@ -367,7 +529,7 @@ export class BoundGraph {
         owed === undefined ? from : Math.min(owed, from),
       );
     }
-    this.#source.set(series);
+    this.#sources.get('')!.set(series);
   }
 
   /**
@@ -384,7 +546,7 @@ export class BoundGraph {
   }
 
   get series(): TimeSeries<SeriesSchema> {
-    return this.#source.out.value.get();
+    return this.#root.get();
   }
 
   /** Ids currently compiled. Node lifetime is a budget question — see [PND-PROCCACHE]. */
@@ -571,7 +733,7 @@ export class BoundGraph {
       };
     });
 
-    const inlets: Record<string, any> = { src: this.#source.out.value };
+    const inlets: Record<string, any> = { src: this.#root };
     bound.forEach((b, i) => {
       if (b.nested) inlets[`in${i}`] = b.outlet;
     });
@@ -594,6 +756,37 @@ export class BoundGraph {
     // what a value depends on.
     let previous: Column[] | undefined;
 
+    // Per-source invalidation, for a joined binding ([PND-PROCJOIN]).
+    // Every node reads `src`, so a tick in any source dirties all of them;
+    // what decides whether THIS node's answer moved is the stamp of each
+    // source its raw inputs read, plus its nested inputs by identity.
+    // Unchanged ⇒ hand back the very same output objects, which the
+    // outlets' `Object.is` sees as no change, so nothing downstream
+    // recomputes either.
+    const joined = this.join !== undefined;
+    let lastSeen: unknown[] | undefined;
+    let lastOut: any;
+    const seen = (vals: Record<string, any>): unknown[] => [
+      this.#keyStamp,
+      ...bound.map((b, i) =>
+        b.nested ? vals[`in${i}`] : this.#stampOf(b.column),
+      ),
+    ];
+    const unchanged = (now: unknown[]): boolean =>
+      lastSeen !== undefined &&
+      lastOut !== undefined &&
+      now.every((v, i) => Object.is(v, lastSeen![i]));
+    const remember = <T extends Record<string, unknown>>(
+      now: unknown[] | undefined,
+      out: T,
+    ): T => {
+      if (now !== undefined) {
+        lastSeen = now;
+        lastOut = out;
+      }
+      return out;
+    };
+
     const factory = defineNode({
       kind: spec.op,
       inputs: Object.fromEntries(
@@ -601,6 +794,8 @@ export class BoundGraph {
       ),
       outputs,
       compute: (vals: Record<string, any>) => {
+        const now = joined ? seen(vals) : undefined;
+        if (now !== undefined && unchanged(now)) return lastOut;
         const src = vals['src'] as TimeSeries<SeriesSchema>;
         const inputsByRole = Object.fromEntries(
           bound.map((b) => [b.role, b.column]),
@@ -666,7 +861,7 @@ export class BoundGraph {
           const keyColumn = src.keyColumn() as unknown as {
             at(i: number): number;
           };
-          return {
+          return remember(now, {
             [FACT]: op.fold({
               values,
               numeric,
@@ -674,7 +869,7 @@ export class BoundGraph {
               params,
               id,
             }),
-          };
+          });
         }
         // Only a column-producing op needs the widened series, because the
         // corpus studies take `(series, { column })`.
@@ -802,8 +997,11 @@ export class BoundGraph {
           this.#full += 1;
         }
         previous = columns;
-        return Object.fromEntries(
-          op.outputs.map((o, n) => [outletKey(o), columns[n]!]),
+        return remember(
+          now,
+          Object.fromEntries(
+            op.outputs.map((o, n) => [outletKey(o), columns[n]!]),
+          ),
         );
       },
     });
@@ -865,28 +1063,52 @@ export class BoundGraph {
   }
 }
 
+/** Options shared by both forms of {@link bind}. */
+export interface BindOptions {
+  registry: Registry;
+  /**
+   * Consumer-supplied units per raw column. A joined binding keys them
+   * by qualified name — `{ 'AAPL:close': 'USD' }`.
+   */
+  units?: Units;
+  /**
+   * Cap on retained node values, in bytes — [PND-PROCCACHE]. Unbounded
+   * when omitted, which is the behaviour every existing caller has.
+   *
+   * Bytes rather than entries because entries are not the unit anyone
+   * has a limit in: one node over 1M rows outweighs fifty over 5,000.
+   * Enforced after each `run`, LRU, skipping any node whose consumer
+   * still holds its outlet.
+   */
+  budgetBytes?: number;
+}
+
 /**
  * Binds a dataset, producing a graph its plans resolve against.
  *
  * One graph per data binding — two instruments get two graphs and share
  * no nodes, even though their specs produce identical ids.
+ *
+ * **Several sources, one graph — [PND-PROCJOIN].** Pass a record of
+ * series and a `join` policy, and the graph reads one aligned series
+ * whose columns are `KEY:column` — so a spec can take `AAPL:close` and
+ * `MSFT:close` as its two inputs. The policy (`inner`, or `asof` onto a
+ * named `base`) is required and is in the join's id, `graph.join.id`,
+ * because the two give different answers. See `join.ts`.
  */
 export function bind(
   series: TimeSeries<SeriesSchema>,
-  options: {
-    registry: Registry;
-    units?: Units;
-    /**
-     * Cap on retained node values, in bytes — [PND-PROCCACHE]. Unbounded
-     * when omitted, which is the behaviour every existing caller has.
-     *
-     * Bytes rather than entries because entries are not the unit anyone
-     * has a limit in: one node over 1M rows outweighs fifty over 5,000.
-     * Enforced after each `run`, LRU, skipping any node whose consumer
-     * still holds its outlet.
-     */
-    budgetBytes?: number;
-  },
+  options: BindOptions,
+): BoundGraph;
+export function bind(
+  sources: Readonly<Record<string, TimeSeries<SeriesSchema>>>,
+  options: BindOptions & { join: JoinPolicy },
+): BoundGraph;
+export function bind(
+  input:
+    | TimeSeries<SeriesSchema>
+    | Readonly<Record<string, TimeSeries<SeriesSchema>>>,
+  options: BindOptions & { join?: JoinPolicy },
 ): BoundGraph {
-  return new BoundGraph(series, options);
+  return new BoundGraph(input, options);
 }

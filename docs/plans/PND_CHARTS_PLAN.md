@@ -303,6 +303,33 @@ mounted-wins is the correction and `showAxis` is the compatibility shim, rather
 than mounted-wins being a special case bolted onto a prop that stays where it
 is.
 
+**Shipped (wave "Path to 1.0") — mounted wins.** A declared `<XAxis>`
+registers with the container (`registerXAxis`, in a layout effect, so the
+implicit strip is gone before first paint). `showAxis` now defaults to
+*undefined*, meaning "draw the implicit strip iff nothing is declared". The
+container's own strip renders inside an internal `ImplicitXAxisContext` so it
+does not count itself. `showAxis={false}` behaves as before. `showAxis={true}`
+plus a declared axis keeps both and dev-warns: honouring an explicit request
+beats overriding it, and the warning is the "warn at the conflict" half of the
+ask. Every `showAxis={false}` in `Axes.stories.tsx` (the tell) is gone, and
+the GalleryCard comment and the axes/layout/cheat-sheet docs are updated.
+Other stories' `showAxis={false}` were left alone: it is still correct there,
+and a sweep is churn. **Not done here:** [PND-AXISGUT]'s height reservation,
+which this makes answerable (the container now knows whether an axis is
+declared) but does not implement. Nothing else in `ChartContainer` reads
+`showAxis` (checked); the managed-`height` strip subtraction is pinned by a
+structural test.
+
+**Intended visual diffs.** Two story files mounted an axis without
+`showAxis={false}` and were drawing a duplicate strip, which is now gone: every
+`charts-barchart-category-stack--*` story, and every
+`performance-decimation--*` story. Neither has a committed e2e snapshot. The
+only e2e spec that touches them, `decimation.spec.ts`, compares
+`performance-decimation--default` against `--off`, and both lose the strip the
+same way, so no baselines needed regenerating. The `axes--x-axis-*` and
+`axes--value-x-*` stories dropped their `showAxis={false}` but still draw one
+axis, so they are visually unchanged.
+
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
 Filed by the estela agent after it shipped overlapping labels, and its framing
@@ -372,6 +399,19 @@ Two things to get right rather than assume:
   change; `subtle` / `strong` becomes a lie the moment a theme rebalances.
 - **The default has to stay put.** `[1, 0.7, 0.4]` is right for the common case
   (annotations secondary to a line), so an unrolled mark must not move.
+
+**Shipped** in #834 (on the wave base). `annotation.roles[role]` may now carry
+`depth` (its own three-level ramp), and `color` became optional, so a role
+without one takes the register hue. `defaultTheme` and `estelaTheme` ship
+`wash` (edges rest at 0.2, fill 0.06; estela's is a 7% foam tint) and
+`argument` (rests at 0.85). Marks with no role keep `[1, 0.7, 0.4]`. The measles
+gallery card moved to `role="argument"`, and estela's handoff
+(`docs/notes/estela-fit-swap-2026-10.md`) points its `theme.annotation`
+override at `<Region role="wash">`. Wave "Path to 1.0" added the story fan-out
+#834 left out: `Annotations/Marker` `RoleArgument` / `RoleWash` and
+`Annotations/Region` `RoleWash` / `RoleWashSelected` / `RoleArgument`. These
+render `defaultTheme`, so each shipped role can be seen and reviewed against the
+default. They are pinned by `test/annotation-stories.test.tsx`.
 
 Related friction from the same exchange, **not yet tracked**: estela reserves
 x-axis height by hand (`ChartRow height={h - X_AXIS_H}` plus a matching
@@ -4193,7 +4233,58 @@ decision: today duplicate labels are structurally meaningless (they merge);
 with keys they become legal, and the container's category-agreement check
 compares label lists.
 
-**Not started.** Blocked on owner review of the sketch.
+**Implemented (wave "Path to 1.0") as sketched — awaiting owner sign-off
+(public widening of the selection currency).** An independent adversarial
+review agent checked it before hand-in. That was a review, not the owner gate.
+
+**Open for owner** (the sign-off should cover these):
+
+- (a) **`sameMark` keeps `label` in identity** for keyed categories. Heat cells
+  need mark+label, so an entry holding only a key, or a stale label, highlights
+  on the canvas but fails `selectionContains` against a fresh hit. Accept as
+  documented, or have a mark declare whether its label is identity?
+- (b) **Duplicate keys**: they collapse to one slot silently, as duplicate
+  labels did before. Add a dev warning?
+
+Decisions:
+
+- **`key?: string` on `CategoryDatum` and `CategoryStackDatum`, default
+  `label`.** The readers put keys in `marks` and add `markLabels` only when some
+  key differs from its label. An unkeyed list therefore builds the _identical_
+  series (pinned by test), not just an equivalent one.
+- **The axis domain is keys; labels ride alongside.** `scaleBand(keys,
+labels?)` — `label(v)` draws and the new `key(v)` identifies. A layer adds
+  `xCategoryLabels()` next to `xCategories()` (keys). The container checks
+  agreement on **keys only**. When labels conflict across layers it does not
+  throw: the container's declared labels win, otherwise the first category
+  layer's. Labels are presentation, so a disagreement there is not worth an
+  error.
+- **Container `categories` widens to `(string | { key, label })[]`**, not a
+  sibling prop. A bare string is a key that declares the slot only; its label
+  comes from the category layer, or is the key itself when no layer gives one.
+  Without that, declaring keys on the container (the [PND-IGNITECAT] pattern)
+  would have drawn keys over keyed bars, which the independent review caught.
+  Every existing call is unchanged.
+- **`SelectInfo.label` is the display label**, `mark` the key. The span/sweep
+  `rows` channel reads the same label field `hitTest` reports, as it did
+  before. It stays label-based, so a `rows` filter matches every category that
+  draws that string. `binCategories` (the horizontal chart's y labels) carries
+  labels, since it only ever labelled slots.
+- **Duplicate validation: none added.** Duplicate _labels_ are now legal (that
+  is the feature). Duplicate _keys_ collapse to one slot exactly as duplicate
+  labels did before. A throw would turn a silently-wrong chart that some caller
+  may have shipped into a crash, so that call is left to the owner as a
+  possible dev warning.
+- `useChartFrame().bands` gains `keys` and `ChartBand.key`, so header strips
+  can map a slot back to data without a side table.
+- **`sameMark` keeps `label` in the identity, as a known sharp edge.** On a
+  heat map, `mark` names the bin and `label` the row, so dropping the label
+  would merge cells. As a result, an entry that holds only a key, or a label
+  that has since been re-localized, still highlights on the canvas (category
+  bars match on `mark` alone) but fails `sameMark` / `selectionContains`
+  against a fresh hit. The rule: build entries from hits. To fix it properly,
+  a mark would need to say whether its label is identity or presentation.
+  That is left for the owner rather than guessed at here.
 
 ---
 

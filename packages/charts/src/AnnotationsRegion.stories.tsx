@@ -119,3 +119,34 @@ export const NarrowAndWide: Story = {
     </Chart>
   ),
 };
+
+/** **Role: wash** ([PND-ANNROLE]) — the shipped `wash` role: a quiet tint that
+ *  sits *behind* the data (edges rest at 0.2, fill 0.06), for a focus band
+ *  rather than a claim. Its depth ramp is its own, so it stays quiet at rest. */
+export const RoleWash: Story = {
+  render: () => (
+    <Chart>
+      <Region from={at(30)} to={at(55)} label="focus" role="wash" />
+    </Chart>
+  ),
+};
+
+/** **Role: wash, selected** — the wash role's own ramp still brightens on
+ *  selection, so a selected focus band is findable without going loud. */
+export const RoleWashSelected: Story = {
+  render: () => (
+    <Chart>
+      <Region from={at(30)} to={at(55)} label="focus" role="wash" selected />
+    </Chart>
+  ),
+};
+
+/** **Role: argument** — the shipped `argument` role: the span *is* the point
+ *  of the chart, so it rests at 0.85 instead of the register's 0.4. */
+export const RoleArgument: Story = {
+  render: () => (
+    <Chart>
+      <Region from={at(30)} to={at(55)} label="policy" role="argument" />
+    </Chart>
+  ),
+};

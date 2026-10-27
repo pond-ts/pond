@@ -80,6 +80,45 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/charts`: category key, separate from its label** ([PND-CATID]).
+  `CategoryDatum` / `CategoryStackDatum` take an optional `key` (default:
+  `label`). The key is the category's identity: it is the slot, the bar's
+  `mark` and `SelectInfo.mark`, and it is what the controlled `selected` echo
+  matches. The axis, readouts and `SelectInfo.label` show the `label`. Two
+  categories that render the same string no longer merge into one mark, and
+  shortening or localizing a label no longer changes what a selection means.
+  `<ChartContainer categories>` also accepts `{ key, label }` entries
+  (`CategoryEntry`). Agreement with a category layer is checked on keys. An
+  entry's label wins over the layer's; a bare-string entry keeps the layer's
+  label. `ScaleBand` gains `key(v)`,
+  and `useChartFrame().bands` gains `keys` / `ChartBand.key`. Lists without
+  keys build the exact same series as before. **Semantics shift for keyed
+  lists only:** `SelectInfo.label` on a keyed categorical bar is now the
+  display label, where it used to equal `mark`.
+
+- **`@pond-ts/fit`: `Track.simplify(tolerance)`** ([PND-FITPUB]). The
+  Douglas–Peucker thinning behind `summary().polyline`, now reachable for a
+  bare polyline: `Track.of(points).simplify(Distance.meters(12))` returns a
+  `Track`. This settles fit's first-publish export pass: `elevationProfile`,
+  `profileByDistance` and `rollingSpread` stay internal (their output is
+  `summary().channels` / `activity.windowChannels()`), and the unit-preference
+  system (`UnitPreferences`, `DEFAULT_UNITS`, `*UnitLabel`) stays in fit rather
+  than moving onto `Profile`.
+
+- **`@pond-ts/process`: join several sources in one graph** ([PND-PROCJOIN]).
+  `bind({ AAPL: a, MSFT: b }, { registry, join: { how: 'inner' } })` puts n
+  sources behind one join node and exposes one aligned series whose columns
+  are `KEY:column`, so a spread or ratio is an ordinary spec —
+  `{ op: 'ratio', inputs: ['AAPL:close', 'MSFT:close'] }` — with an id, a
+  cache and `explain`. The policy is required (`inner`, or `asof` onto a
+  named `base`) because the two give different answers; it is in the join's
+  id, `graph.join.id` (`p1:join(AAPL+MSFT;how=inner)`). `setSource(key,
+series)` replaces one source, and only nodes reading it recompute — the
+  other leg's nodes hand back their previous columns unchanged (unless an
+  inner join's shared timestamps moved). Sources must be `time`-keyed with
+  number/string columns; `setSourceFrom` is not supported on a joined
+  binding; `Host` does not take joined bindings yet.
+
 - **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
   annotation draws at 0.4 alpha, which was too loud for a focus tint behind
   data and too quiet for a mark that carries the chart's point, so consumers
@@ -93,6 +132,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   base's `roles` has neither role, so `role="wash"` falls back to the register.
 
 ### Changed
+
+- **`@pond-ts/charts`: a mounted `<XAxis>` replaces the container's implicit
+  x-axis strip** ([PND-XAXISOWN]). `<ChartContainer>` used to draw its own
+  strip whatever the declaration said, so mounting an `<XAxis>` (or
+  `<TimeAxis>` / `<CategoryAxis>`) drew two unless you also passed
+  `showAxis={false}`. A declared axis now stands the implicit one down.
+  `showAxis` still overrides: `false` hides the implicit strip, and `true`
+  keeps it alongside a declared axis, with a dev warning. Charts already
+  passing `showAxis={false}` are unchanged. A chart that relied on the default
+  to draw a second strip next to its own `<XAxis>` must now pass `showAxis`.
 
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
   to emit from a microtask, so several `push()` calls with no `await` between

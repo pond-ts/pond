@@ -47,7 +47,7 @@ const VERSION = 'p1';
  * Escapes the separators an id is built from, so a string param cannot
  * forge one. `sma(a\)b;…)` stays one id rather than closing early.
  */
-function esc(v: unknown): string {
+export function esc(v: unknown): string {
   return String(v).replace(/[\\;,()=+]/g, (c) => `\\${c}`);
 }
 
