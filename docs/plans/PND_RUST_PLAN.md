@@ -3582,6 +3582,54 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `event_rate`, snapshots incl. `to_json` / `from_json`, `stats`),
        plus `filter` and a fixed-bucket `aggregate` queried through
        handles, `watch`, and `remove`.
+       Built 2026-10-27 (`src/live/`: `mod.rs` owner, `event.rs`,
+       `buffer.rs`, `view.rs`, `aggregation.rs`, `json.rs`; cargo feature
+       `live`, on by default). 29 of the 49 fixture cases run (every case
+       whose nodes are only `filter` / `aggregate`), each push's outputs and
+       every node's final state equal. Three cases were added to the
+       fixture for this step: `view-dispose-chain-filters`,
+       `aggregate-reducers` (every reducer), `aggregate-grace`. Decisions
+       and differences from pond-ts:
+       - Rows are stored as a `VecDeque` of shared events
+         (`Arc` key + values, `Arc` schema), not the per-column sealed
+         chunks the design above names: a filter or a watched output hands
+         the same event on with two reference counts, and retention pops
+         from the front. Cost is about 230 bytes per event (each cell is a
+         48-byte `Value`); a column store is the change to make if memory
+         becomes the problem. `to_time_series` copies.
+       - `push_many` checks every row, then dry-runs the ordering over the
+         batch, then commits, in every mode (pond-ts after [PND-BATCHATOM]).
+       - `remove(node)`: the handle (and its children's) then return
+         `Err`; a source view left with no children and no watched output
+         is removed too (pond-ts's upward dispose, case
+         `view-dispose-chain`), but only once nothing else uses it. The
+         root cannot be removed.
+       - pond-rs refuses what pond-ts accepts and gets wrong: number
+         reducers on text columns ([PND-KINDREDUCE]; case
+         `aggregate-bad-mapping` is listed as refused in the harness),
+         decimal columns and duplicate column names in a live schema, and
+         intervals whose label kind differs from the events held.
+       - A late event a `reorder` source accepts goes into each view in
+         key order; pond-ts views throw ([PND-LATE]). No fixture case
+         reaches it with only step 2 nodes; step 3 decides.
+       - `aggregate` refuses calendar sequences for now (step 5 with the
+         full `LiveAggregation`).
+       - For step 6: pond-ts #838 (partition fan-out per `pushMany`)
+         finishes partitions (retention, `batch`, `evict`, settle) in the
+         order of each partition's last row in the batch; fixture case
+         `partition-pushmany`.
+       - Timing (`examples/perf_live.rs` vs `bench/live_pond_ts.mjs`, 1M
+         events, pond-ts after the fix below): one at a time 298 ms vs
+         3,548 (12x); `max_events` 10k 220 vs 2,667; reorder 398 vs 587;
+         filter + aggregate 418 vs 3,864, all outputs watched 696 vs
+         4,401, on a 10k window 408 vs 10,766. Batches of 1,000: 260 vs
+         148, pond-rs slower: storing takes ~125 ms and freeing the 1M
+         events when the series is dropped ~130 ms (counted in the time);
+         pond-ts stores batches by column and makes no per-event object
+         when nothing listens. A column store would close that.
+       - Timing found a pond-ts bug, fixed in the same PR:
+         [PND-LIVEPUSHSCAN] (one-at-a-time `push` slowed as the series
+         grew).
     3. Views: `map`, `select`, `sample`, `window`; live `diff` / `rate` /
        `pct_change` / `fill` / `cumulative`.
     4. Rolling: single-window (`LiveRollingAggregation`), fused

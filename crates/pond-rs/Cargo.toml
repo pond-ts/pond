@@ -40,7 +40,9 @@ zmij = "1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-default = ["parallel"]
+default = ["parallel", "live"]
+# The live layer (`pond_rs::live`): series that take events as they arrive.
+live = []
 # Work on independent output columns runs on several cores (rayon's pool;
 # RAYON_NUM_THREADS sets its size). Results are the same bits either way:
 # each column is still computed start to finish by one thread.
@@ -51,3 +53,7 @@ serde = { version = "1", features = ["derive"] }
 # float_roundtrip: fixture numbers must parse to the exact f64 pond-ts wrote.
 # preserve_order: mapping objects keep their key order (it sets column order).
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[[example]]
+name = "perf_live"
+required-features = ["live"]

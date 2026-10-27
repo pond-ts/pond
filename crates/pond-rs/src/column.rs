@@ -304,6 +304,42 @@ pub enum Value {
     Array(Vec<Scalar>),
 }
 
+impl From<f64> for Value {
+    fn from(v: f64) -> Self {
+        Value::Number(v)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(v: &str) -> Self {
+        Value::String(v.to_string())
+    }
+}
+
+impl From<String> for Value {
+    fn from(v: String) -> Self {
+        Value::String(v)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(v: bool) -> Self {
+        Value::Boolean(v)
+    }
+}
+
+impl From<Vec<Scalar>> for Value {
+    fn from(v: Vec<Scalar>) -> Self {
+        Value::Array(v)
+    }
+}
+
+impl From<Decimal> for Value {
+    fn from(v: Decimal) -> Self {
+        Value::Decimal(v)
+    }
+}
+
 impl Value {
     /// The number, if this is a [`Value::Number`].
     pub fn as_f64(&self) -> Option<f64> {

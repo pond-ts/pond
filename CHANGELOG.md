@@ -78,7 +78,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
+  on by default). `LiveSeries` takes events one at a time or in batches
+  (`push` / `push_many` / `push_json`), with pond-ts's ordering modes
+  (strict, drop, reorder with a grace window), retention by count or age,
+  key lookups, stats, `to_json` / `from_json` and batch snapshots. `filter`
+  and fixed-bucket `aggregate` build nodes on it, reached through copyable
+  `Node` handles; `watch` picks which outputs a push returns, and `remove`
+  drops a node. Results match pond-ts event for event on 29 of the 49 live
+  replay cases (the rest need later steps).
+
 ### Fixed
+
+- **`LiveSeries.push` one event at a time no longer slows down as the series
+  grows** ([PND-LIVEPUSHSCAN]). On a `strict` time-keyed series each push
+  looked up the newest row by walking every stored push from the oldest, so
+  100k pushes took 18.6 s; they now take 0.2 s.
 
 - **`LiveSeries.push` / `pushMany` refuse a batch with a bad row whole, in
   every ordering mode** ([PND-BATCHATOM]). Under `ordering: 'drop'` or

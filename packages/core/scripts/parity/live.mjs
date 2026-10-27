@@ -456,6 +456,23 @@ const CASES = [
 
   // ── Aggregation ──
   {
+    // view-dispose-chain with filters only: disposing 'g' disposes the
+    // unwatched 'f' it was built on (frozen at its rows so far); disposing
+    // 'm' leaves the watched 'k' running.
+    name: 'view-dispose-chain-filters',
+    schema: SCHEMA,
+    steps: [
+      quiet('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('g', 'filter', 'f', filterGt('mem', 12)),
+      node('k', 'filter', 'root', filterGt('mem', 0)),
+      node('m', 'filter', 'k', filterGt('cpu', 2)),
+      ...each(ROWS.slice(0, 6)),
+      { dispose: 'g' },
+      { dispose: 'm' },
+      ...each(ROWS.slice(6, 12)),
+    ],
+  },
+  {
     name: 'aggregate-5s',
     schema: SCHEMA,
     steps: [
@@ -493,6 +510,51 @@ const CASES = [
       ...each(ROWS),
       { clear: true },
       ...each(ROWS.slice(0, 3)),
+    ],
+  },
+  {
+    // Every built-in reducer, on a number column (with -0, ties and gaps)
+    // and on a text column.
+    name: 'aggregate-reducers',
+    schema: SCHEMA,
+    steps: [
+      node('a', 'aggregate', 'root', every('5s'), {
+        n: { from: 'cpu', using: 'count' },
+        sum: { from: 'cpu', using: 'sum' },
+        avg: { from: 'cpu', using: 'avg' },
+        min: { from: 'cpu', using: 'min' },
+        max: { from: 'cpu', using: 'max' },
+        first: { from: 'cpu', using: 'first' },
+        last: { from: 'cpu', using: 'last' },
+        median: { from: 'cpu', using: 'median' },
+        stdev: { from: 'cpu', using: 'stdev' },
+        p90: { from: 'cpu', using: 'p90' },
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+        unique: { from: 'cpu', using: 'unique' },
+        top2: { from: 'cpu', using: 'top2' },
+        samples: { from: 'cpu', using: 'samples' },
+        hostN: { from: 'host', using: 'count' },
+        hostFirst: { from: 'host', using: 'first' },
+        hostLast: { from: 'host', using: 'last' },
+        hostKeep: { from: 'host', using: 'keep' },
+        hosts: { from: 'host', using: 'unique' },
+        hostTop: { from: 'host', using: 'top1' },
+        hostSamples: { from: 'host', using: 'samples' },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // A grace window keeps 1s buckets open until the newest event is 2s
+    // past their end; a late row within grace joins its bucket, one past
+    // it is refused.
+    name: 'aggregate-grace',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '2s' },
+    steps: [
+      node('a', 'aggregate', 'root', every('1s'), { cpu: 'sum', mem: 'max' }),
+      ...LATE_STEPS,
     ],
   },
   {
