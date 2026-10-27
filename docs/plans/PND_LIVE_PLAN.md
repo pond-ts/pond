@@ -102,6 +102,18 @@ before; 200k rows in 1k batches measured the same before and after (within
 run-to-run noise, ~66-80 ms). `_pushTrustedEvents` gets the same order
 check.
 
+### [PND-LIVEPUSHSCAN] — done 2026-10-27
+
+Found timing pond-rs R3 step 2 against pond-ts: one-at-a-time `push` on a
+`strict` time-keyed series got slower as the series grew (10k pushes 0.15 s,
+50k 5.1 s, 100k 18.6 s; 1M would take most of an hour). Each `push` adds a
+one-row chunk to the chunked backing, and the order check reads the last
+row through `#locate`, which walked every chunk from the front. Fix:
+`#locate` walks from the nearer end, so the newest rows are found at once
+(10k 0.07 s, 50k 0.18 s, 100k 0.21 s). Not changed: one chunk per `push`
+still costs an object per row; coalescing small pushes into the pending tier
+(as partition routing does) would cut that, not measured.
+
 ### [PND-LJOIN] — Live merge / join
 
 No way to combine multiple `LiveSeries` into one live source (interleave
