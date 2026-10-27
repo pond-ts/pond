@@ -37,8 +37,11 @@ settle; the staged rows were then re-validated at flush.
 (1) `_stageRowsOpen` per partition: order check, stage the whole slice, open
 the partition's guard; (2) `_emitStagedEvent` for every row in source order;
 (3) `_stageRowsClose` per partition: retention, one `'batch'`, `'evict'`,
-settle, drain queued pushes. All partitions' guards are open during step 2, so
-a push made from a partition listener queues exactly as before. Per-partition
+settle, drain queued pushes (partitions close in the order of their last row in
+the chunk — Layer-2 review on #838 found that closing in first-seen order sent
+a partition `reduce` under `apply()` out of key order into the strict unified
+buffer). All partitions' guards are open during step 2, so
+a push made from a partition listener queues until that partition closes. Per-partition
 scratch slots are reused chunk to chunk (fresh `indices` arrays, not
 `length = 0`, which V8 runs as a slow runtime call; it was the hottest line).
 The pending-tier flush runs `validateAndNormalizeColumnar` with a new internal

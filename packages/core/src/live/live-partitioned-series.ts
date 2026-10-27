@@ -53,6 +53,8 @@ type RouteSlot<S extends SeriesSchema> = {
   part: LiveSeries<S>;
   /** The chunk this slot was last reset for (`#routeEpoch`). */
   epoch: number;
+  /** The chunk this slot was last queued to close for. */
+  closeMark: number;
   /** The partition's row indices into the source chunk, in source order. */
   indices: number[];
   /** Transient events for those rows, or `null` with no row listener. */
@@ -64,12 +66,16 @@ type RouteSlot<S extends SeriesSchema> = {
   errors: unknown[];
 };
 
+/** Placeholder `indices` between chunks; replaced (not pushed to) on reset. */
+const NO_INDICES: number[] = [];
+
 function newRouteSlot<S extends SeriesSchema>(
   part: LiveSeries<S>,
 ): RouteSlot<S> {
   return {
     part,
     epoch: 0,
+    closeMark: 0,
     indices: [],
     added: null,
     cursor: 0,
@@ -1177,7 +1183,9 @@ export class LivePartitionedSeries<
    *    opens its re-entrancy guard (`_stageRowsOpen`).
    * 2. Fan out: `'event'` for every row, in source order.
    * 3. Close: each partition runs retention, one `'batch'` with its whole
-   *    slice, `'evict'`, then settles (`_stageRowsClose`).
+   *    slice, `'evict'`, then settles (`_stageRowsClose`). Partitions
+   *    close in the order of their last row in the chunk, so outputs
+   *    emitted at settle (`reduce`) also reach a fan-in in key order.
    *
    * This matches what a partition sees from a plain chunked `pushMany`
    * (all rows stored before any `'event'`; one `'batch'`; one settle).
@@ -1236,7 +1244,6 @@ export class LivePartitionedSeries<
           slot.added = null;
           slot.cursor = 0;
           slot.open = false;
-          if (slot.errors.length > 0) slot.errors = [];
           slots.push(slot);
         }
         slot.indices.push(i);
@@ -1267,8 +1274,22 @@ export class LivePartitionedSeries<
         }
       }
 
-      // 4. Close every opened partition, even if an earlier one throws.
-      for (const slot of slots) {
+      // 4. Close every opened partition, even if an earlier one throws,
+      //    in the order of each partition's LAST row in the chunk. Close
+      //    runs settle, and outputs that emit at settle (`reduce`) key
+      //    their output by that last row; closing in first-seen order
+      //    would hand a strict `apply()` / `collect()` buffer `a@2000`
+      //    before `b@1000` for source `[a@0, b@1000, a@2000]`. Found by
+      //    the Layer-2 review on PR #838.
+      const closeOrder: RouteSlot<S>[] = [];
+      for (let i = n - 1; i >= 0; i -= 1) {
+        const slot = rowSlot[i];
+        if (slot === undefined || slot.closeMark === epoch) continue;
+        slot.closeMark = epoch;
+        closeOrder.push(slot);
+      }
+      for (let c = closeOrder.length - 1; c >= 0; c -= 1) {
+        const slot = closeOrder[c]!;
         if (!slot.open) continue;
         slot.open = false;
         try {
@@ -1276,7 +1297,11 @@ export class LivePartitionedSeries<
         } catch (error) {
           first ??= { error };
         }
-        slot.added = null; // don't pin the events until the next chunk
+        // Don't pin this chunk's events, rows or errors until the
+        // partition's next chunk.
+        slot.added = null;
+        slot.indices = NO_INDICES;
+        if (slot.errors.length > 0) slot.errors = [];
       }
     } finally {
       if (reuse) this.#routing = false;

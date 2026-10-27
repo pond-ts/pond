@@ -245,7 +245,8 @@ describe('[PND-PARTBATCH] one pass per partition per chunk', () => {
     }
     live.pushMany(ROWS.slice());
     expect(events).toEqual(['a@0', 'b@1000', 'a@2000', 'b@3000', 'a@4000']);
-    expect(batches).toEqual(['a:0,2000,4000', 'b:1000,3000']);
+    // Partitions close in order of their last row (b@3000 before a@4000).
+    expect(batches).toEqual(['b:1000,3000', 'a:0,2000,4000']);
   });
 
   it("a partition's rows are all stored before its first 'event' (like pushMany)", () => {
@@ -340,6 +341,37 @@ describe('[PND-PARTBATCH] one pass per partition per chunk', () => {
     const times: number[] = [];
     for (let i = 0; i < all.length; i += 1) times.push(all.at(i)!.begin());
     expect(times).toEqual([0, 0, 1000, 2000, 3000, 4000, 9000]);
+  });
+
+  it('apply() over a settle-emitting output stays in key order (review on #838)', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    const sums = byHost.apply((p) => p.reduce({ value: 'sum' }));
+    live.pushMany([
+      [0, 1, 'a'],
+      [1000, 2, 'b'],
+      [2000, 3, 'a'],
+    ]);
+    live.pushMany([
+      [3000, 4, 'c'],
+      [3000, 5, 'b'],
+      [4000, 6, 'a'],
+      [5000, 7, 'c'],
+    ]);
+    const rows: unknown[] = [];
+    for (let i = 0; i < sums.length; i += 1) {
+      const e = sums.at(i)!;
+      rows.push([e.begin(), e.get('value')]);
+    }
+    // One output per partition per pushMany, ordered by each partition's
+    // last row: b@1000, a@2000 | b@3000, a@4000, c@5000.
+    expect(rows).toEqual([
+      [1000, 2],
+      [2000, 4],
+      [3000, 7],
+      [4000, 10],
+      [5000, 11],
+    ]);
   });
 
   it('rows packed past the staging threshold match the Event[] backing, every kind', () => {

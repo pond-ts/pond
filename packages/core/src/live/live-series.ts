@@ -735,10 +735,13 @@ export class LiveSeries<S extends SeriesSchema> {
 
     chunked.stageRows(source, indices);
     this.#statsIngested += k;
+    const added =
+      k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
+        ? materializeEventsFromStoreAt(source, indices, this.schema)
+        : null;
+    // Open the guard last, so nothing above can throw with it open.
     this.#dispatchDepth += 1;
-    return k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
-      ? materializeEventsFromStoreAt(source, indices, this.schema)
-      : null;
+    return added;
   }
 
   /**
