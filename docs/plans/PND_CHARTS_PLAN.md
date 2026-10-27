@@ -373,6 +373,19 @@ Two things to get right rather than assume:
 - **The default has to stay put.** `[1, 0.7, 0.4]` is right for the common case
   (annotations secondary to a line), so an unrolled mark must not move.
 
+**Shipped** in #834 (on the wave base). `annotation.roles[role]` may now carry
+`depth` (its own three-level ramp), and `color` became optional, so a role
+without one takes the register hue. `defaultTheme` and `estelaTheme` ship
+`wash` (edges rest at 0.2, fill 0.06; estela's is a 7% foam tint) and
+`argument` (rests at 0.85). Marks with no role keep `[1, 0.7, 0.4]`. The measles
+gallery card moved to `role="argument"`, and estela's handoff
+(`docs/notes/estela-fit-swap-2026-10.md`) points its `theme.annotation`
+override at `<Region role="wash">`. Wave "Path to 1.0" added the story fan-out
+#834 left out: `Annotations/Marker` `RoleArgument` / `RoleWash` and
+`Annotations/Region` `RoleWash` / `RoleWashSelected` / `RoleArgument`. These
+render `defaultTheme`, so each shipped role can be seen and reviewed against the
+default. They are pinned by `test/annotation-stories.test.tsx`.
+
 Related friction from the same exchange, **not yet tracked**: estela reserves
 x-axis height by hand (`ChartRow height={h - X_AXIS_H}` plus a matching
 `<XAxis height>`), got the arithmetic wrong once, and shipped labels overlapping
