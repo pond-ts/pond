@@ -3541,6 +3541,38 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     1. The replay fixture generator in `packages/core/test/` (a few dozen
        cases across every operator), the Rust runner that compares, and
        the pond-ts [PND-REDUCETICK] fix.
+       Done 2026-10-27: generator `packages/core/scripts/parity/live.mjs`
+       (run by `generate.mjs`), fixture `live-parity.json` (46 cases,
+       3,070 outputs inside calls plus 2 deferred, every operator, output
+       kind and step kind), drift
+       test `live-parity-fixture.test.ts`, Rust loader
+       `tests/live_parity.rs` (checks the fixture's shape; `SUPPORTED_OPS`
+       is empty until step 2 adds ops and fills in `run_case`). A case is
+       a list of steps (`push` / `pushMany` / `pushJson` / `clear` /
+       `node` / `dispose`) rather than nodes tagged with a push index:
+       same information, and it also orders disposals. After each step the
+       generator waits for microtasks; anything emitted then is the step's
+       `deferred` list, which today is only a `reduce` built over existing
+       history (its construction replay). pond-rs should return those as
+       the outputs of building the node. Things the fixture pins that a
+       port could get wrong: an aggregation emits the new open bucket
+       before the bucket it closes (`bucket`, `event`, `update`); error
+       wording differs by ordering mode (`'cpu': expected …` under
+       `drop` / `reorder`, `row 0 col 2: …` under `strict`); under
+       `drop` / `reorder`, `pushMany` with a bad second row commits and
+       emits the first row's `event` (no `batch`) before throwing, while
+       `strict` refuses the whole batch, so the "never half-committed"
+       rule in the design above holds for pond-ts only under `strict`
+       (step 2 decides: copy, or fix pond-ts first); disposing the last
+       view on an intermediate view disposes the intermediate too, but
+       only when nothing listens to it (case `view-dispose-chain`, an
+       unwatched node; pond-rs's `remove` goes down the tree, so this
+       upward case needs a deliberate mapping); on a
+       `reorder` source an accepted late event makes every view on it
+       throw while the source keeps the event (pond-ts bug, noted under
+       [PND-LATE] in `PND_LIVE_PLAN.md`; case
+       `partition-apply-and-retention`). Whether pond-rs copies that throw
+       or the pond-ts bug is fixed first is a step 3 decision.
     2. Owner and handles on a small chain: `LiveSeries` (schema, `push` /
        `push_many` / `push_json`, ordering `strict` / `drop` / `reorder`
        with `grace_window`, retention `max_events` / `max_age`, `clear`,

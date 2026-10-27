@@ -614,8 +614,8 @@ the study oracle) is done.
   complete.** Detail in the breakout plan.
 
 - **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
-  2026-10-23 after R2, revised twice 2026-10-25 after two reviews; awaiting
-  pjm17971's review. Port pond-ts's live layer (`LiveSeries`, views, live
+  2026-10-23 after R2, revised twice 2026-10-25 after two reviews; in
+  progress (step 1, the pond-ts replay fixture, landed 2026-10-27). Port pond-ts's live layer (`LiveSeries`, views, live
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.

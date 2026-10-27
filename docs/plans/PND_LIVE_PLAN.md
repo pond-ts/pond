@@ -78,6 +78,15 @@ stateful transform — overlaps with streaming Milestone A
 ([PND-CHANGE](PND_STREAMING_PLAN.md)). Archive has the full scope note and
 test matrix.
 
+Worse than "does not re-flow" for plain views (found 2026-10-27 writing the
+pond-rs live fixture, case `partition-apply-and-retention`): on an
+`ordering: 'reorder'` source, a late event the source accepts makes every
+`LiveView` built on it (even `filter(() => true)`) throw "processed event has
+key … older than the previous tail", so `push` throws after the source has
+already stored the event; the source then holds it and the views do not.
+Reproduced: `reorder` series, `fill('hold')` / `filter` / `diff` views, push
+5000 then 2600 → push throws, source length 2, each view length 1.
+
 ### [PND-LJOIN] — Live merge / join
 
 No way to combine multiple `LiveSeries` into one live source (interleave
