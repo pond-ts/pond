@@ -106,6 +106,8 @@ export {
   UnitError,
   UnknownColumnError,
 } from './plan/graph.js';
+export type { BindOptions } from './plan/graph.js';
+export type { JoinInfo, JoinPolicy } from './plan/join.js';
 export { expandSlots, SlotError } from './plan/slots.js';
 export { plan, PlanBuilder, BuilderError } from './plan/builder.js';
 export type {

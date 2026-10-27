@@ -80,6 +80,20 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/process`: join several sources in one graph** ([PND-PROCJOIN]).
+  `bind({ AAPL: a, MSFT: b }, { registry, join: { how: 'inner' } })` puts n
+  sources behind one join node and exposes one aligned series whose columns
+  are `KEY:column`, so a spread or ratio is an ordinary spec —
+  `{ op: 'ratio', inputs: ['AAPL:close', 'MSFT:close'] }` — with an id, a
+  cache and `explain`. The policy is required (`inner`, or `asof` onto a
+  named `base`) because the two give different answers; it is in the join's
+  id, `graph.join.id` (`p1:join(AAPL+MSFT;how=inner)`). `setSource(key,
+series)` replaces one source, and only nodes reading it recompute — the
+  other leg's nodes hand back their previous columns unchanged (unless an
+  inner join's shared timestamps moved). Sources must be `time`-keyed with
+  number/string columns; `setSourceFrom` is not supported on a joined
+  binding; `Host` does not take joined bindings yet.
+
 - **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
   annotation draws at 0.4 alpha, which was too loud for a focus tint behind
   data and too quiet for a mark that carries the chart's point, so consumers
