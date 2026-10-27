@@ -1,4 +1,16 @@
-/** Display-edge unit conversion. The model stores SI; UI converts here. */
+/**
+ * Display-edge unit conversion. The model stores SI; UI converts here.
+ *
+ * **This is the unit-preference home** ([PND-FITPUB]). `UnitPreferences` is a
+ * *display* choice — miles or kilometres on screen — and stays here, flat in
+ * the barrel, rather than on `Profile`, which holds *performance* parameters
+ * resolved as-of an activity's date (FTP, zones, weight). The two change for
+ * different reasons and at different times, so one object would conflate them.
+ * No separate `DisplayPreferences` class: quantities already render themselves
+ * (`distance.format(prefs.distance)`), so a wrapper would add a name and no
+ * behaviour. The `*UnitLabel` helpers stay for the case `.format()` does not
+ * cover — an axis that labels once and formats many values.
+ */
 
 export const METERS_PER_MILE = 1609.344;
 export const METERS_PER_FOOT = 0.3048;

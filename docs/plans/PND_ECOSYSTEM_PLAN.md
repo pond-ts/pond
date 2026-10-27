@@ -139,6 +139,19 @@ unpublished. Before first publish:
   deletes its local copy — tracked on the experiments roster
   ([PND_EXPERIMENTS_PLAN.md](PND_EXPERIMENTS_PLAN.md)).
 
+**Outcome (wave "Path to 1.0").** Export decision made and pinned by
+`packages/fit/test/exports.test.ts`: `simplify` gets a façade door,
+`Track.simplify(tolerance: Distance)`; `elevationProfile`, `profileByDistance`
+and `rollingSpread` stay internal — their output already ships as
+`summary().channels` / `activity.windowChannels()` (median + both band pairs
+per channel), and `rollingSpread` is superseded as a primitive by core
+`rollingByColumn`. Units-preference home: stays in `units.ts`, flat-exported,
+**not** on `Profile` (display choice vs. as-of performance parameters); no
+`DisplayPreferences` wrapper, since quantities already `.format(unit)`.
+Reasoning in `packages/fit/docs/rfc-facade-first.md` § "First-publish export
+decision". The estela handoff — what to import instead of each local helper —
+is [estela-fit-swap-2026-10.md](../notes/estela-fit-swap-2026-10.md).
+
 Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 [docs/rfcs/geo.md](../rfcs/geo.md) §10–§13, estela's `docs/pond-friction.md`,
 and the estela section of
