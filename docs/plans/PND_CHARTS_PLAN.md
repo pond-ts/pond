@@ -4193,8 +4193,20 @@ decision: today duplicate labels are structurally meaningless (they merge);
 with keys they become legal, and the container's category-agreement check
 compares label lists.
 
-**Shipped (wave "Path to 1.0") as sketched — owner gate via the wave's
-independent review.** Decisions:
+**Implemented (wave "Path to 1.0") as sketched — awaiting owner sign-off
+(public widening of the selection currency).** An independent adversarial
+review agent checked it before hand-in. That was a review, not the owner gate.
+
+**Open for owner** (the sign-off should cover these):
+
+- (a) **`sameMark` keeps `label` in identity** for keyed categories. Heat cells
+  need mark+label, so an entry holding only a key, or a stale label, highlights
+  on the canvas but fails `selectionContains` against a fresh hit. Accept as
+  documented, or have a mark declare whether its label is identity?
+- (b) **Duplicate keys**: they collapse to one slot silently, as duplicate
+  labels did before. Add a dev warning?
+
+Decisions:
 
 - **`key?: string` on `CategoryDatum` and `CategoryStackDatum`, default
   `label`.** The readers put keys in `marks` and add `markLabels` only when some
