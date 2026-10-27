@@ -11,13 +11,16 @@
  *   { pushMany: rows }    live.pushMany(rows)
  *   { pushJson: rows }    live.pushJson(rows)
  *   { clear: true }       live.clear()
- *   { node: { id, op, from, args } }
+ *   { node: { id, op, from, args, watch? } }
  *                         nodes[id] = nodes[from][op](...args); `from`
- *                         is "root" or an earlier node id
+ *                         is "root" or an earlier node id; `watch: false`
+ *                         attaches no listeners (see below)
  *   { dispose: id }       nodes[id].dispose()
  *
  * Every node (and the root) gets one listener per output kind its class
- * has (LiveSeries: event, batch, evict; LiveView: event, evict;
+ * has, unless built with `watch: false`: pond-ts disposes an intermediate
+ * view along with the last view built on it only if nothing else listens
+ * to it, so case `view-dispose-chain` needs a node with no listeners (LiveSeries: event, batch, evict; LiveView: event, evict;
  * LiveAggregation: event, bucket, update; LiveRollingAggregation: event,
  * update; the rest: event). Each step records, in dispatch order, the
  * outputs it caused as `{ node, kind, payload }`, and `error`
@@ -49,12 +52,17 @@
  * [[op, ...args], ...] }` is a partition `apply` factory running those
  * calls on each partition.
  *
- * `final` holds each node's state after the last step: its output `schema`;
+ * `final` holds each node's state after the last step: its pond-ts `class`
+ * (constructor name, which fixes the output kinds above) and output `schema`;
  * `rows` (every event it holds, via `at(i)`) for series, views, rolling,
  * reduce and partitioned rolling; `stats` for a `LiveSeries`; `closed` and
  * `snapshot` rows plus `hasOpenBucket` for an aggregation; `value` for
  * rolling and reduce; `partitions` (`[key, rows]` pairs from `toMap()`) for
- * partitioned series and views. A disposed node has `{ disposed: true }`.
+ * partitioned series and views. A partition key is the `toMap()` key: the
+ * partition value as text, and `" undefined"` (pond-ts's own marker, with
+ * the leading space) for rows where the partition column is missing. A
+ * node disposed by a `dispose` step has `{ class, disposed: true }`; one
+ * pond-ts disposed with it keeps its frozen state.
  * A case whose root cannot be built has `error` and no steps.
  *
  * Run through `buildLiveFixture(pond)` (async, for the microtask waits) by
@@ -134,6 +142,9 @@ const node = (id, op, from, ...args) => ({ node: { id, op, from, args } });
 const every = (d) => ({ sequence: { every: d } });
 const filterGt = (column, gt) => ({ fn: { column, gt } });
 const filterEq = (column, eq) => ({ fn: { column, eq } });
+const quiet = (id, op, from, ...args) => ({
+  node: { id, op, from, args, watch: false },
+});
 
 // A late row (2.6s) once the stream has reached 5.001s, then a row 0.5s
 // late, then one exactly at the newest time.
@@ -193,13 +204,29 @@ const CASES = [
     steps: [
       ...LATE_STEPS,
       { pushMany: [ROWS[14], [100, 'a', 1, 1], ROWS[15]] },
+      { push: [[16000, 'a', 'high', 1]] },
+      {
+        pushMany: [
+          [16000, 'a', 1, 1],
+          [17000, 5, 1, 1],
+        ],
+      },
     ],
   },
   {
     name: 'series-reorder',
     schema: SCHEMA,
     options: { ordering: 'reorder' },
-    steps: LATE_STEPS,
+    steps: [
+      ...LATE_STEPS,
+      { push: [[16000, 'a', 'high', 1]] },
+      {
+        pushMany: [
+          [16000, 'a', 1, 1],
+          [17000, 5, 1, 1],
+        ],
+      },
+    ],
   },
   {
     name: 'series-reorder-grace',
@@ -408,6 +435,22 @@ const CASES = [
       ...each(ROWS.slice(0, 8)),
       { dispose: 'f' },
       ...each(ROWS.slice(8, 12)),
+    ],
+  },
+  {
+    // Disposing the last view on an unwatched intermediate disposes the
+    // intermediate too ('f' stops at 4 rows); a watched one ('k') stays.
+    name: 'view-dispose-chain',
+    schema: SCHEMA,
+    steps: [
+      quiet('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('g', 'filter', 'f', filterGt('mem', 12)),
+      node('k', 'filter', 'root', filterGt('mem', 0)),
+      node('h', 'diff', 'k', 'mem'),
+      ...each(ROWS.slice(0, 6)),
+      { dispose: 'g' },
+      { dispose: 'h' },
+      ...each(ROWS.slice(6, 12)),
     ],
   },
 
@@ -796,8 +839,8 @@ function attach(obj, id, record) {
 }
 
 function finalOf(obj) {
-  const out = { schema: JSON.parse(JSON.stringify(obj.schema)) };
   const kind = obj.constructor.name;
+  const out = { class: kind, schema: JSON.parse(JSON.stringify(obj.schema)) };
   if (kind === 'LiveAggregation') {
     out.closed = encodeRows(obj.closed());
     out.snapshot = encodeRows(obj.snapshot());
@@ -856,7 +899,7 @@ async function runCase(pond, spec) {
             : parent[op](...args.map((a) => decodeArg(pond, a)));
         if (made === undefined) throw new Error(`${op} gave nothing`);
         nodes.set(id, made);
-        attach(made, id, record);
+        if (step.node.watch !== false) attach(made, id, record);
       } else throw new Error(`unknown step ${JSON.stringify(step)}`);
     } catch (e) {
       result.error = errorOf(e);
@@ -870,7 +913,9 @@ async function runCase(pond, spec) {
   out.final = Object.fromEntries(
     [...nodes].map(([id, obj]) => [
       id,
-      disposed.has(id) ? { disposed: true } : finalOf(obj),
+      disposed.has(id)
+        ? { class: obj.constructor.name, disposed: true }
+        : finalOf(obj),
     ]),
   );
   return out;

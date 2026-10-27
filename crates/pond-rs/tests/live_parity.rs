@@ -47,6 +47,22 @@ const KNOWN_OPS: &[&str] = &[
 
 const KINDS: &[&str] = &["event", "batch", "evict", "bucket", "update"];
 
+/// The output kinds each pond-ts live class emits (its `on(...)` types).
+fn kinds_of(class: &str) -> &'static [&'static str] {
+    match class {
+        "LiveSeries" => &["event", "batch", "evict"],
+        "LiveView" => &["event", "evict"],
+        "LiveAggregation" => &["event", "bucket", "update"],
+        "LiveRollingAggregation" => &["event", "update"],
+        "LiveFusedRolling"
+        | "LiveReduce"
+        | "LivePartitionedFusedRolling"
+        | "LivePartitionedSyncRolling" => &["event"],
+        "LivePartitionedSeries" | "LivePartitionedView" => &[],
+        other => panic!("unknown live class {other}"),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
@@ -110,6 +126,9 @@ struct NodeSpec {
     from: String,
     #[allow(dead_code)] // read by the runner from R3 step 2
     args: Vec<Value>,
+    /// `false`: pond-ts attached no listeners to this node.
+    #[serde(default)]
+    watch: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -123,6 +142,8 @@ struct Output {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Final {
+    /// pond-ts class name; fixes the output kinds and state fields.
+    class: String,
     #[serde(default)]
     disposed: Option<bool>,
     #[serde(default)]
@@ -287,6 +308,7 @@ fn fixture_is_well_formed() {
         }
         let finals = case.r#final.as_ref().expect("final");
         let mut live: BTreeSet<&str> = BTreeSet::from(["root"]);
+        let mut unwatched: BTreeSet<&str> = BTreeSet::new();
         for step in &case.steps {
             actions.insert(step.action());
             if let Some(node) = &step.node {
@@ -301,6 +323,9 @@ fn fixture_is_well_formed() {
                 // A node that failed to build never exists.
                 if step.error.is_none() {
                     assert!(live.insert(node.id.as_str()), "{}: dup id", case.name);
+                    if node.watch == Some(false) {
+                        unwatched.insert(node.id.as_str());
+                    }
                 }
             }
             if let Some(id) = &step.dispose {
@@ -331,10 +356,48 @@ fn fixture_is_well_formed() {
         }
         let built: BTreeSet<&str> = finals.keys().map(String::as_str).collect();
         assert_eq!(built, live, "{}: final covers every node", case.name);
+        // Each output is a kind its node's class emits; unwatched nodes
+        // emit nothing (nothing listened).
+        for out in case.steps.iter().flat_map(Step::all_outputs) {
+            let class = &finals[&out.node].class;
+            assert!(
+                kinds_of(class).contains(&out.kind.as_str()),
+                "{}: {} ({class}) emitted {}",
+                case.name,
+                out.node,
+                out.kind
+            );
+            assert!(!unwatched.contains(out.node.as_str()), "{}", case.name);
+        }
         for (id, state) in finals {
+            let class = state.class.as_str();
+            kinds_of(class); // a known class
             if state.disposed == Some(true) {
                 continue;
             }
+            // The state fields each class records.
+            let (rows, buckets, parts) = (
+                state.rows.is_some(),
+                state.closed.is_some() && state.snapshot.is_some(),
+                state.partitions.is_some(),
+            );
+            let expect = match class {
+                "LiveAggregation" => (false, true, false),
+                "LivePartitionedSeries" | "LivePartitionedView" => (false, false, true),
+                _ => (true, false, false),
+            };
+            assert_eq!((rows, buckets, parts), expect, "{}: {id} fields", case.name);
+            let has_value = matches!(
+                class,
+                "LiveRollingAggregation" | "LiveFusedRolling" | "LiveReduce"
+            );
+            assert_eq!(state.value.is_some(), has_value, "{}: {id}", case.name);
+            assert_eq!(
+                state.stats.is_some(),
+                class == "LiveSeries",
+                "{}: {id} stats",
+                case.name
+            );
             assert!(state.schema.is_some(), "{}: {id} schema", case.name);
             let rows = [&state.rows, &state.closed, &state.snapshot];
             for row in rows.into_iter().flatten().flatten() {
@@ -352,9 +415,6 @@ fn fixture_is_well_formed() {
             for cell in state.value.iter().flat_map(|v| v.values()) {
                 check_cell(cell).unwrap();
             }
-            if id == "root" {
-                assert!(state.stats.is_some(), "{}: root stats", case.name);
-            }
         }
     }
     // The fixture exercises every action, output kind and operator, and a
@@ -366,6 +426,14 @@ fn fixture_is_well_formed() {
     let used: BTreeSet<&str> = fixture.cases.iter().flat_map(ops_of).collect();
     assert_eq!(used, KNOWN_OPS.iter().copied().collect(), "operators");
     assert!(deferred > 0, "a reduce replay");
+    assert!(
+        fixture
+            .cases
+            .iter()
+            .flat_map(|c| &c.steps)
+            .any(|s| s.node.as_ref().is_some_and(|n| n.watch == Some(false))),
+        "an unwatched node"
+    );
 }
 
 #[test]

@@ -3542,8 +3542,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        cases across every operator), the Rust runner that compares, and
        the pond-ts [PND-REDUCETICK] fix.
        Done 2026-10-27: generator `packages/core/scripts/parity/live.mjs`
-       (run by `generate.mjs`), fixture `live-parity.json` (45 cases,
-       3,031 outputs, every operator, output kind and step kind), drift
+       (run by `generate.mjs`), fixture `live-parity.json` (46 cases,
+       3,070 outputs inside calls plus 2 deferred, every operator, output
+       kind and step kind), drift
        test `live-parity-fixture.test.ts`, Rust loader
        `tests/live_parity.rs` (checks the fixture's shape; `SUPPORTED_OPS`
        is empty until step 2 adds ops and fills in `run_case`). A case is
@@ -3556,8 +3557,17 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        the outputs of building the node. Things the fixture pins that a
        port could get wrong: an aggregation emits the new open bucket
        before the bucket it closes (`bucket`, `event`, `update`); error
-       wording differs by ordering mode (`'mem': expected …` under
-       `drop` / `reorder`, `row 0 col 3: …` under `strict`); on a
+       wording differs by ordering mode (`'cpu': expected …` under
+       `drop` / `reorder`, `row 0 col 2: …` under `strict`); under
+       `drop` / `reorder`, `pushMany` with a bad second row commits and
+       emits the first row's `event` (no `batch`) before throwing, while
+       `strict` refuses the whole batch, so the "never half-committed"
+       rule in the design above holds for pond-ts only under `strict`
+       (step 2 decides: copy, or fix pond-ts first); disposing the last
+       view on an intermediate view disposes the intermediate too, but
+       only when nothing listens to it (case `view-dispose-chain`, an
+       unwatched node; pond-rs's `remove` goes down the tree, so this
+       upward case needs a deliberate mapping); on a
        `reorder` source an accepted late event makes every view on it
        throw while the source keeps the event (pond-ts bug, noted under
        [PND-LATE] in `PND_LIVE_PLAN.md`; case
