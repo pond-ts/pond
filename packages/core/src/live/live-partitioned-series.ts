@@ -48,6 +48,36 @@ type SyncRollingIngestTarget<R extends SeriesSchema, K extends string> = {
   _registerUnsubscribe(unsub: () => void): void;
 };
 
+/** One partition's share of a source chunk in `#routeChunk`. */
+type RouteSlot<S extends SeriesSchema> = {
+  part: LiveSeries<S>;
+  /** The chunk this slot was last reset for (`#routeEpoch`). */
+  epoch: number;
+  /** The partition's row indices into the source chunk, in source order. */
+  indices: number[];
+  /** Transient events for those rows, or `null` with no row listener. */
+  added: EventForSchema<S>[] | null;
+  /** Next `added` entry to fan out. */
+  cursor: number;
+  /** `_stageRowsOpen` succeeded, so `_stageRowsClose` must run. */
+  open: boolean;
+  errors: unknown[];
+};
+
+function newRouteSlot<S extends SeriesSchema>(
+  part: LiveSeries<S>,
+): RouteSlot<S> {
+  return {
+    part,
+    epoch: 0,
+    indices: [],
+    added: null,
+    cursor: 0,
+    open: false,
+    errors: [],
+  };
+}
+
 type SpawnListener<S extends SeriesSchema, K extends string> = (
   key: K,
   partition: LiveSource<S>,
@@ -198,6 +228,10 @@ export class LivePartitionedSeries<
   // Pipeline counters for {@link LivePartitionedSeries.stats}.
   // Cumulative since construction; never reset.
   #statsEventsRouted = 0;
+  /** `#routeChunk` per-partition scratch, reused chunk to chunk. */
+  readonly #routeSlots = new Map<K, RouteSlot<S>>();
+  #routeEpoch = 0;
+  #routing = false;
 
   /**
    * [PND-LIVFIX] Quiet-partition age sweep. Per-partition `maxAge` used
@@ -283,7 +317,7 @@ export class LivePartitionedSeries<
     // Route columnar ONLY when the partition sub-series will ACTUALLY be
     // chunked. A `{ ordering: 'reorder' | 'drop' }` override on a chunked
     // (strict) source spawns array-backed partitions (`'auto'` +
-    // non-strict ⇒ Event[]), but `#routeChunk` → `_stageRows` requires a
+    // non-strict ⇒ Event[]), but `#routeChunk` → `_stageRowsOpen` requires a
     // chunked backing and would throw "not chunked-backed", crashing
     // ingest on the first batch. Gate on the effective partition ordering
     // and fall back to the per-event path otherwise. (Reintroduced
@@ -1123,38 +1157,137 @@ export class LivePartitionedSeries<
 
   /**
    * Column-native routing: bucket a source chunk's rows by partition and
-   * stage each row into its partition's chunked backing's coalescing
+   * stage each partition's slice into its chunked backing's coalescing
    * tier — **no per-row `Event`** on the storage path (the
    * partition-retention OOM fix). The key derivation matches
    * {@link partitionKey} (String-coerced; `' undefined'` sentinel) so
    * chunked and per-event routing partition identically.
    *
-   * **Routes per row in SOURCE order**, not bucketed per partition. A
-   * bucketed pass (all of partition A, then all of B) would emit the
-   * `'event'` fan-out out of source order — `a@0, a@2, b@1` for source
-   * `[a@0, b@1, a@2]` — and a live `collect()` / `apply()` fan-in into a
-   * strict unified buffer would throw on the out-of-order key. Per-row
-   * routing preserves the source-order fan-out (matching the per-event
-   * path); the heap win is unaffected because the partition's STORAGE
-   * still coalesces staged rows into one chunk per threshold regardless
-   * of staging granularity. (Caught by adversarial review on PR #175.)
+   * **`'event'` fan-out stays in SOURCE order**, not bucketed per
+   * partition. A bucketed fan-out (all of partition A, then all of B)
+   * would emit `a@0, a@2, b@1` for source `[a@0, b@1, a@2]` — a live
+   * `collect()` / `apply()` fan-in into a strict unified buffer would
+   * throw on the out-of-order key, and a clock-triggered partitioned
+   * rolling would fire a boundary before B's earlier row arrived.
+   * (Caught by adversarial review on PR #175.)
+   *
+   * Everything else runs once per partition per chunk ([PND-PARTBATCH]):
+   *
+   * 1. Open: each partition order-checks and stages its whole slice and
+   *    opens its re-entrancy guard (`_stageRowsOpen`).
+   * 2. Fan out: `'event'` for every row, in source order.
+   * 3. Close: each partition runs retention, one `'batch'` with its whole
+   *    slice, `'evict'`, then settles (`_stageRowsClose`).
+   *
+   * This matches what a partition sees from a plain chunked `pushMany`
+   * (all rows stored before any `'event'`; one `'batch'`; one settle).
+   * Before, every row paid its own order check, staging call, guard,
+   * retention pass, one-row `'batch'` and settle — 30-37% slower than
+   * the `Event[]` path with a listener attached (gRPC revival re-bench,
+   * 2026-10-27).
+   *
+   * A partition whose slice fails the order check is skipped (none of
+   * its rows land); every other partition still gets its rows and
+   * fan-out, and the first error is thrown after all are closed.
    */
   #routeChunk(store: ColumnarStore<S>): void {
     const col = store.columns.get(String(this.by));
     if (col === undefined) return; // partition column always in schema
     const n = store.length;
-    // Reused single-index array — `_stageRows` consumes it synchronously,
-    // so this avoids a per-row allocation.
-    const one: number[] = [0];
-    for (let i = 0; i < n; i += 1) {
-      const v = col.read(i);
-      const key = (v === undefined ? ' undefined' : `${String(v)}`) as K;
-      const part = this.#ensurePartition(key);
-      this.#statsEventsRouted += 1;
-      one[0] = i;
-      part._stageRows(store, one);
+    if (n === 0) return;
+    let first: { error: unknown } | undefined;
+
+    // Slots persist per partition key and are reset lazily by epoch, so a
+    // chunk allocates nothing per partition. A re-entrant call (not
+    // reachable today: the source queues pushes made from listeners)
+    // would clobber them, so it gets fresh slots instead.
+    const reuse = !this.#routing;
+    this.#routing = true;
+    const epoch = ++this.#routeEpoch;
+    const slotOf = reuse ? this.#routeSlots : new Map<K, RouteSlot<S>>();
+    const slots: RouteSlot<S>[] = [];
+    const rowSlot: Array<RouteSlot<S> | undefined> = new Array(n);
+    try {
+      // 1. Bucket row indices per partition, remembering each row's
+      //    slot so step 3 can walk the rows in source order.
+      for (let i = 0; i < n; i += 1) {
+        const v = col.read(i);
+        const key = (v === undefined ? ' undefined' : `${String(v)}`) as K;
+        let slot = slotOf.get(key);
+        if (slot === undefined) {
+          let part: LiveSeries<S>;
+          try {
+            part = this.#ensurePartition(key);
+          } catch (error) {
+            // Unknown value under typed `groups`: drop this row, route
+            // the rest, throw once they are all delivered.
+            first ??= { error };
+            continue;
+          }
+          slot = newRouteSlot(part);
+          slotOf.set(key, slot);
+        }
+        if (slot.epoch !== epoch) {
+          // Fresh `indices` (young-gen, cheap) rather than `length = 0`,
+          // which V8 runs as a slow runtime call — it was the hottest
+          // line of this loop at one row per partition per chunk.
+          slot.epoch = epoch;
+          slot.indices = [];
+          slot.added = null;
+          slot.cursor = 0;
+          slot.open = false;
+          if (slot.errors.length > 0) slot.errors = [];
+          slots.push(slot);
+        }
+        slot.indices.push(i);
+        rowSlot[i] = slot;
+      }
+
+      // 2. Open: stage storage once per partition.
+      let anyEvents = false;
+      for (const slot of slots) {
+        try {
+          slot.added = slot.part._stageRowsOpen(store, slot.indices);
+          slot.open = true;
+          this.#statsEventsRouted += slot.indices.length;
+          if (slot.added !== null) anyEvents = true;
+        } catch (error) {
+          first ??= { error };
+        }
+      }
+
+      // 3. `'event'` fan-out in source order. Listener errors are caught
+      //    per partition inside `_emitStagedEvent`.
+      if (anyEvents) {
+        for (let i = 0; i < n; i += 1) {
+          const slot = rowSlot[i];
+          if (slot === undefined || slot.added === null) continue;
+          slot.part._emitStagedEvent(slot.added[slot.cursor]!, slot.errors);
+          slot.cursor += 1;
+        }
+      }
+
+      // 4. Close every opened partition, even if an earlier one throws.
+      for (const slot of slots) {
+        if (!slot.open) continue;
+        slot.open = false;
+        try {
+          slot.part._stageRowsClose(slot.added, slot.errors);
+        } catch (error) {
+          first ??= { error };
+        }
+        slot.added = null; // don't pin the events until the next chunk
+      }
+    } finally {
+      if (reuse) this.#routing = false;
     }
-    if (n > 0) this.#advanceWatermark(store.beginAt(n - 1));
+
+    try {
+      this.#advanceWatermark(store.beginAt(n - 1));
+    } catch (error) {
+      first ??= { error };
+    }
+    if (first) throw first.error;
   }
 
   /**
