@@ -80,6 +80,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: `Track.simplify(tolerance)`** ([PND-FITPUB]). The
+  Douglas–Peucker thinning behind `summary().polyline`, now reachable for a
+  bare polyline: `Track.of(points).simplify(Distance.meters(12))` returns a
+  `Track`. This settles fit's first-publish export pass: `elevationProfile`,
+  `profileByDistance` and `rollingSpread` stay internal (their output is
+  `summary().channels` / `activity.windowChannels()`), and the unit-preference
+  system (`UnitPreferences`, `DEFAULT_UNITS`, `*UnitLabel`) stays in fit rather
+  than moving onto `Profile`.
+
 - **`@pond-ts/process`: join several sources in one graph** ([PND-PROCJOIN]).
   `bind({ AAPL: a, MSFT: b }, { registry, join: { how: 'inner' } })` puts n
   sources behind one join node and exposes one aligned series whose columns
