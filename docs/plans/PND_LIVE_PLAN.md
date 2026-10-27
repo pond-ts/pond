@@ -87,6 +87,21 @@ already stored the event; the source then holds it and the views do not.
 Reproduced: `reorder` series, `fill('hold')` / `filter` / `diff` views, push
 5000 then 2600 → push throws, source length 2, each view length 1.
 
+### [PND-BATCHATOM] — done 2026-10-27
+
+Found by the pond-rs live fixture (R3 step 1, cases `series-drop-late` /
+`series-reorder`): on the per-row backing (`drop`, `reorder`, and non-time
+keys under `strict`) `pushMany` validated and inserted row by row, so a bad
+row threw after the earlier rows were committed and their `'event'`s fired,
+and retention / `'batch'` / `'evict'` never ran for them (`maxEvents: 2`
+held 4 rows). pjm17971 chose to fix pond-ts rather than have pond-rs copy
+it. Fix: validate every row, then dry-run the ordering policy over the
+batch (`#checkOrder`, tracking the latest key as the inserts would), then
+commit. Error messages are unchanged; batches with no bad row behave as
+before; 200k rows in 1k batches measured the same before and after (within
+run-to-run noise, ~66-80 ms). `_pushTrustedEvents` gets the same order
+check.
+
 ### [PND-LJOIN] — Live merge / join
 
 No way to combine multiple `LiveSeries` into one live source (interleave

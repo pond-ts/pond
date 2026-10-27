@@ -78,6 +78,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`LiveSeries.push` / `pushMany` refuse a batch with a bad row whole, in
+  every ordering mode** ([PND-BATCHATOM]). Under `ordering: 'drop'` or
+  `'reorder'`, and for interval / time-range keys under `'strict'`, a bad
+  cell, a wrong row width or a row the ordering refuses used to throw only
+  after the rows before it were committed and their `'event'`s had fired,
+  skipping retention, `'batch'` and `'evict'` (a `maxEvents: 2` series could
+  hold 4 rows). The whole batch is now checked first, as it already was for
+  time-keyed `'strict'` series, so a throw leaves the series and its
+  listeners untouched. Batches with no bad row behave as before.
+
 ### Added
 
 - **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
