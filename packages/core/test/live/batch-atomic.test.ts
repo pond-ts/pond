@@ -135,4 +135,24 @@ describe('pushMany refuses a bad batch whole', () => {
     expect(seen).toEqual([]);
     expect(live.length).toBe(1);
   });
+
+  it('the trusted event path refuses an out-of-order batch whole', () => {
+    // `_pushTrustedEvents` (the partition fan-in path) skips row
+    // validation but must still check order before committing.
+    const source = new LiveSeries({ name: 's', schema: intervalSchema });
+    source.pushMany([
+      [['a', 0, 1000], 1],
+      [['b', 1000, 2000], 2],
+    ]);
+    const late = new LiveSeries({ name: 'l', schema: intervalSchema });
+    late.push([['c', 500, 600], 3]);
+    const live = new LiveSeries({ name: 'x', schema: intervalSchema });
+    const seen = watch(live);
+    expect(() =>
+      live._pushTrustedEvents([source.at(0)!, source.at(1)!, late.at(0)!]),
+    ).toThrow('out-of-order event: timestamp 500 is before latest 1000');
+    expect(seen).toEqual([]);
+    expect(live.length).toBe(0);
+    expect(live.stats().ingested).toBe(0);
+  });
 });
