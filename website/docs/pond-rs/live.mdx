@@ -1,0 +1,412 @@
+---
+id: live
+title: Live series
+sidebar_position: 5.7
+---
+
+# Live series
+
+Everything else in these pages works on a batch: a whole series you
+already have. A live series takes events as they arrive (from a socket, a
+queue, a sensor) and keeps whatever is built on it up to date: a filtered
+view, a running per-minute average. It is the Rust version of pond-ts's
+`LiveSeries`, and each push gives the same results as pond-ts, in the same
+order (checked against cases pond-ts writes out).
+
+This is the first part of the live layer. Built so far: the live series
+itself (pushing, ordering rules, how many events to keep, lookups), live
+`filter`, and live `aggregate` into fixed-length buckets. Still to come:
+`map`, `select`, `sample`, `window`, live `diff` / `rate` / `fill` and
+friends, rolling windows, `reduce`, triggers, and per-entity partitions.
+
+It lives in `pond_rs::live`, behind the `live` cargo feature, which is on
+by default.
+
+## Making one and pushing events
+
+A live series has a name and a schema: the key column first (`time` for
+moments), then the value columns (numbers, text, true/false or arrays).
+`push(time, cells)` adds one event: the time in epoch milliseconds and one
+cell per value column, `None` for a gap. `push_many` adds a batch;
+`push_json` takes rows written as pond-ts JSON.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+
+    live.push(0, [Some("a".into()), Some(0.25.into())])?;
+    live.push_many([
+        (1_000, [Some("b".into()), Some(0.5.into())]),
+        (2_000, [Some("a".into()), None]),
+    ])?;
+    live.push_json(r#"[[3000, "b", 0.75]]"#)?;
+
+    assert_eq!(live.len(), 4);
+    assert_eq!(live.last().unwrap().number("load")?, Some(0.75));
+    assert_eq!(live.at(-2).unwrap().number("load")?, None); // the gap
+    assert_eq!(live.at_or_before(1_500).unwrap().string("host")?, Some("b"));
+
+    // A copy of what it holds now, as an ordinary batch series.
+    let batch = live.to_time_series()?;
+    assert_eq!(batch.len(), 4);
+    Ok(())
+}
+```
+
+The lookups are the batch ones: `at` (negative counts from the end),
+`first` / `last`, `bisect`, `at_or_before` / `at_or_after`,
+`includes_key`, `find` / `some` / `every`, and `events()` to walk them
+all. `time_range()` is the span from the first event to the last,
+`event_rate()` the events per second over it, and `stats()` the counters
+(events taken, evicted and skipped). `to_json` writes what it holds as
+pond-ts JSON, and `LiveSeries::from_json` starts one from it.
+
+**A batch is all or nothing.** `push_many` checks every row first, then
+the order of the whole batch; if anything is wrong it refuses the batch
+and stores none of it. (pond-ts used to keep the rows before a bad one in
+some modes; that was fixed there to match.)
+
+## Late events and how many to keep
+
+`LiveSeries::with_options(name, schema, LiveOptions::new()...)` sets two
+things.
+
+**What to do with an event that starts before the latest one**
+(`.ordering(…)`):
+
+- `OrderingMode::Strict`, the default: refuse it with an error.
+- `OrderingMode::Drop`: skip it quietly, and count it in
+  `stats().rejected`.
+- `OrderingMode::Reorder`: store it in its place in time.
+  `.grace_window("5s")` limits how late it may be; an older one is
+  refused.
+
+**How many to keep** (oldest go first, after each push):
+
+- `.max_events(n)`: at most `n` events.
+- `.max_age("1h")`: only events that start within that long of the latest
+  one. Age is measured from the latest event's time, not a clock, so a
+  series that stops receiving events keeps what it has.
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let schema = || {
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ]
+    };
+
+    // Strict: a late event is an error, and nothing changes.
+    let mut strict = LiveSeries::new("cpu", schema())?;
+    strict.push(5_000, [Some(1.0.into())])?;
+    assert!(strict.push(4_000, [Some(2.0.into())]).is_err());
+    assert_eq!(strict.len(), 1);
+
+    // Drop: skipped and counted.
+    let mut drop = LiveSeries::with_options(
+        "cpu",
+        schema(),
+        LiveOptions::new().ordering(OrderingMode::Drop),
+    )?;
+    drop.push(5_000, [Some(1.0.into())])?;
+    drop.push(4_000, [Some(2.0.into())])?;
+    assert_eq!((drop.len(), drop.stats().rejected), (1, 1));
+
+    // Reorder within 2 seconds, keeping the last 3 events.
+    let mut reorder = LiveSeries::with_options(
+        "cpu",
+        schema(),
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("2s")
+            .max_events(3),
+    )?;
+    reorder.push(5_000, [Some(1.0.into())])?;
+    reorder.push(4_000, [Some(2.0.into())])?; // 1 s late: put in place
+    assert!(reorder.push(1_000, [Some(3.0.into())]).is_err()); // 4 s late
+    reorder.push(6_000, [Some(4.0.into())])?;
+    reorder.push(7_000, [Some(5.0.into())])?; // the 4-second event goes
+    let times: Vec<i64> = reorder.events().map(|e| e.begin()).collect();
+    assert_eq!(times, [5_000, 6_000, 7_000]);
+    Ok(())
+}
+```
+
+## Building on it: filter and aggregate
+
+`live.filter(source, test)` makes a view of the events that pass a test;
+`live.aggregate(source, &Sequence::every("1m")?, &aggs)` makes fixed
+buckets with one column per `Agg`, as the batch `aggregate` does. Both
+start from what the source holds already, then keep up as events arrive.
+The source is `live.root()` or another node, so they chain.
+
+The live series owns every node built on it. Building one gives back a
+small **handle** (a `Node`): copyable, safe to send to another thread, and
+tied to no borrow. Read the node through the series that owns it:
+`live[busy]`, or `live.get(busy)?` to get an error instead of a panic for
+a handle that was removed.
+
+A view drops the events its source drops (by `max_events`, `max_age` or
+`clear`). An aggregation keeps its buckets whatever the source drops.
+
+- `live[node].len()`, `.events()`, `.at(…)`: the closed buckets, oldest
+  first.
+- `.has_open_bucket()`: whether a bucket is still collecting.
+- `.closed()`: the closed buckets as a batch series; `.snapshot()`: the
+  closed ones plus the open ones as they stand now.
+
+A bucket closes when an event arrives at or after its end. Under
+`OrderingMode::Reorder` with a grace window, it stays open until the
+latest event is a grace window past its end, so late events can still
+land in it. Only even steps (`Sequence::every`) work so far; calendar
+buckets (days in a time zone) come later.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let busy = live.filter(live.root(), |e| {
+        e.number("load").ok().flatten() > Some(0.8)
+    })?;
+    let per_minute = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[
+            Agg::new("load_avg", "load", Reducer::Avg),
+            Agg::new("events", "load", Reducer::Count),
+        ],
+    )?;
+
+    live.push(0, [Some("a".into()), Some(0.9.into())])?;
+    live.push(30_000, [Some("b".into()), Some(0.5.into())])?;
+    assert_eq!(live[busy].len(), 1);
+    assert_eq!(live[per_minute].len(), 0); // the first minute is still open
+    assert!(live[per_minute].has_open_bucket());
+
+    // An event in the second minute closes the first.
+    live.push(61_000, [Some("a".into()), Some(0.7.into())])?;
+    let minute = live[per_minute].at(0).unwrap();
+    assert_eq!(minute.begin(), 0);
+    assert_eq!(minute.number("load_avg")?, Some(0.7));
+    assert_eq!(minute.number("events")?, Some(2.0));
+
+    // The closed minute, plus the open one as it stands.
+    assert_eq!(live[per_minute].closed()?.len(), 1);
+    assert_eq!(live[per_minute].snapshot()?.len(), 2);
+    Ok(())
+}
+```
+
+Aggregating a text, true/false or array column works with `count`,
+`first`, `last`, `keep`, `unique`, `top<N>` and `samples`. Number
+reducers (`sum`, `avg`, …) on those columns are an error; pond-ts gives 0
+or gaps instead (logged as a pond-ts issue, [PND-KINDREDUCE]).
+
+## What a push returns: outputs
+
+In pond-ts you attach listeners (`series.on('event', fn)`) and pond-ts
+calls them. pond-rs calls none of your code during a push (apart from a
+filter's test). Instead, each push **returns** what it caused, as a list
+of `Output`s, for the nodes and kinds you asked for with
+`live.watch(node, kind)`:
+
+| Kind                 | Comes from         | Means                                              |
+| -------------------- | ------------------ | -------------------------------------------------- |
+| `OutputKind::Event`  | the series, a view | It took an event                                   |
+| `OutputKind::Event`  | an aggregation     | A bucket closed (the event is the finished bucket) |
+| `OutputKind::Batch`  | the series         | All the events one push stored                     |
+| `OutputKind::Evict`  | the series, a view | Events it dropped (retention or `clear`)           |
+| `OutputKind::Bucket` | an aggregation     | A bucket as it stands after an event joined it     |
+| `OutputKind::Update` | an aggregation     | It took an event, even one too late for any bucket |
+
+Nothing is returned for what you don't watch, so an unwatched node costs
+nothing extra. The outputs come in the order pond-ts's listeners would
+fire: each event travels down the tree (a node's subscribers in the order
+they were built), then the series' own retention, `Batch` and `Evict`.
+`output.node()` says which node it came from; compare it with
+`handle.id()`. `live.unwatch(node, kind)` stops it.
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let per_minute = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::new("load_avg", "load", Reducer::Avg)],
+    )?;
+    live.watch(per_minute, OutputKind::Event)?;
+    live.watch(per_minute, OutputKind::Bucket)?;
+
+    // Joining an open bucket: just the bucket as it stands.
+    let out = live.push(0, [Some(1.0.into())])?;
+    assert_eq!(out.len(), 1);
+    assert!(matches!(&out[0], Output::Bucket { event, .. } if event.begin() == 0));
+
+    // Starting the next minute: the new bucket first, then the closed one
+    // (pond-ts's order).
+    let out = live.push(60_000, [Some(3.0.into())])?;
+    let kinds: Vec<OutputKind> = out.iter().map(|o| o.kind()).collect();
+    assert_eq!(kinds, [OutputKind::Bucket, OutputKind::Event]);
+    let Output::Event { node, event } = &out[1] else { panic!() };
+    assert_eq!(*node, per_minute.id());
+    assert_eq!((event.begin(), event.number("load_avg")?), (0, Some(1.0)));
+    Ok(())
+}
+```
+
+### Sending outputs somewhere else
+
+Because a push only returns a list, where the outputs go next is up to
+you: a channel, a `tokio::sync::watch` (when only the latest value
+matters), a websocket, or a plain function call. A channel takes a few
+lines:
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+use std::sync::mpsc;
+use std::thread;
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let busy = live.filter(live.root(), |e| {
+        e.number("load").ok().flatten() > Some(0.8)
+    })?;
+    live.watch(busy, OutputKind::Event)?;
+
+    let (tx, rx) = mpsc::channel::<Output>();
+    let alerts = thread::spawn(move || {
+        // Another thread reads the alerts as they come.
+        rx.iter()
+            .filter_map(|o| match o {
+                Output::Event { event, .. } => Some(event.begin()),
+                _ => None,
+            })
+            .collect::<Vec<i64>>()
+    });
+
+    for (t, load) in [(0, 0.5), (1_000, 0.9), (2_000, 0.95), (3_000, 0.1)] {
+        for output in live.push(t, [Some(load.into())])? {
+            tx.send(output).unwrap();
+        }
+    }
+    drop(tx); // no more alerts: the reader's loop ends
+    assert_eq!(alerts.join().unwrap(), [1_000, 2_000]);
+    Ok(())
+}
+```
+
+**Threads.** A `LiveSeries` can be moved to another thread. To read it
+from several threads, put it behind a lock (`Arc<Mutex<LiveSeries>>`), or
+publish a `to_time_series()` copy after each push for readers to use.
+
+## Removing a node
+
+`live.remove(node)` takes a node out (pond-ts's `dispose`). Its handle
+then gives an error from `live.get(…)`. Nodes built on it keep what they
+hold but get no more events. As in pond-ts, when you remove a view, the
+view it was built on is detached too if nothing else uses it (no other
+node, nothing watched); it stays readable but stops updating. The series
+itself cannot be removed.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let busy = live.filter(live.root(), |e| {
+        e.number("load").ok().flatten() > Some(0.8)
+    })?;
+    live.push(0, [Some(0.9.into())])?;
+
+    live.remove(busy)?;
+    assert!(live.get(busy).is_err());
+    live.push(1_000, [Some(0.95.into())])?; // the series still takes events
+    assert_eq!(live.len(), 2);
+    Ok(())
+}
+```
+
+## What differs from pond-ts
+
+- **Outputs instead of listeners**, as above. pond-ts calls your
+  listeners during the push; pond-rs returns the same outputs, in the same
+  order, after it.
+- **Stricter schemas.** Exact decimal columns and two columns with the
+  same name are refused; so are number reducers on text columns (pond-ts
+  answers those with 0 or gaps).
+- **`keep` on an array column** compares the arrays' contents, as the
+  batch `aggregate` does. pond-ts compares the array objects, so two equal
+  arrays read as different there ([PND-ARRAYKEY]).
+- **A late event a `Reorder` series accepts** goes into each view on it in
+  its place. pond-ts's views throw an error there (logged as [PND-LATE]).
+- **Not built yet:** calendar buckets in a live `aggregate`, and the
+  other live nodes listed at the top.
+
+## Speed
+
+One million events, pushed one at a time unless noted, compared with
+pond-ts on the same machine (ms):
+
+| Case                                | pond-rs | pond-ts | Faster              |
+| ----------------------------------- | ------- | ------- | ------------------- |
+| Push only                           | 298     | 3,548   | 12×                 |
+| Keep the last 10,000 (`max_events`) | 220     | 2,667   | 12×                 |
+| `Reorder` (5% of events late)       | 398     | 587     | 1.5×                |
+| A filter and an aggregate           | 418     | 3,864   | 9.2×                |
+| The same, every output watched      | 696     | 4,401   | 6.3×                |
+| The same, keeping the last 10,000   | 408     | 10,766  | 26×                 |
+| Batches of 1,000                    | 260     | 148     | pond-ts 1.8× faster |
+
+pond-ts is faster on big batches because it stores a batch column by
+column and makes no object per event when nothing listens. pond-rs keeps
+one shared object per event (about 230 bytes each), so storing a million
+and freeing them again takes most of its 260 ms. Storing by column would
+close the gap and is the change to make if memory or batch speed starts
+to matter. These timings also found a pond-ts slowdown (pushing one at a
+time got slower as the series grew), fixed in pond-ts at the same time.

@@ -17,51 +17,60 @@ pond-ts lets through.
 
 Methods are the pond-ts names in Rust's `snake_case`.
 
-| pond-ts                                                           | pond-rs                                                                                       |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                         |
-| `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                        |
-| `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                     |
-| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
-| `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
-| `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |
-| `series.rolling(seq, '5m', m)`                                    | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                              |
-| `series.smooth('cpu', 'ema', { span: 20 })`                       | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                              |
-| `series.baseline('cpu', { window, sigma })`                       | `series.baseline("cpu", window, sigma, Rolling::default())?`                                  |
-| `series.scan('cpu', step, init)`                                  | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                          |
-| `series.sample({ reservoir: { size } })`                          | `series.sample(Sample::Reservoir { size, seed })?`                                            |
-| `TimeSeries.concat([a, b])`                                       | `TimeSeries::concat(&[&a, &b])?`                                                              |
-| `series.collapse(keys, out, fn, { append })`                      | `series.collapse(&keys, out, f)?` / `collapse_keep`                                           |
-| `series.pivotByGroup('host', 'cpu')`                              | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                    |
-| `series.byColumn('watts', { edges }, m)`                          | `series.by_column("watts", &Bins::edges(edges), &aggs)?` (a `Table`, not an array of records) |
-| `series.rollingByColumn('km', { radius, at }, m)`                 | `series.rolling_by_column_at("km", radius, &at, &aggs)?`                                      |
-| `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                        |
-| `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                      |
-| `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                       |
-| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                    |
-| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                            |
-| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                |
-| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`           |
-| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                 |
-| `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                               |
-| `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                   |
-| `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                |
-| `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                       |
-| `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                      |
-| `series.tail('1h')`                                               | `series.tail("1h")?`                                                                          |
-| `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                   |
-| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                 |
-| `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                            |
-| `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                        |
-| `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                              |
-| `series.groupBy('host')` / `toMap()`                              | `series.group_by(&["host"])` / `iter()`                                                       |
-| `series.atOrBefore(t)` / `nearest(t)`                             | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                                    |
-| `new TimeRange(a, b)` as a lookup key                             | `EventKey::time_range(a, b)?`                                                                 |
-| `series.within(a, b)` / `containedBy(range)`                      | `series.within(a, b)?` / `contained_by(range)`                                                |
-| `series.at(i).get('cpu')`                                         | `series.column("cpu")?.numbers()?.get(i)`                                                     |
-| `toJSON()` / `TimeSeries.fromJSON(json)`                          | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?`            |
-| `toColumns()` / `toPoints()`                                      | `to_columns_json()?` / `to_points_json()?` (and `from_columns_json` / `from_points_json`)     |
-| `toArrow()` / `fromArrow()`                                       | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                                   |
+| pond-ts                                                           | pond-rs                                                                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                                         |
+| `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                                        |
+| `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                                     |
+| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                                              |
+| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                                       |
+| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                                             |
+| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                                         |
+| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                                              |
+| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                                  |
+| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                                          |
+| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`                   |
+| `live.on('event', fn)` after `new LiveSeries(...)`                | `live.watch(node, OutputKind::Event)?`, then read the outputs each `push` returns (see [Live series](./live)) |
+| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                                    |
+| `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                                        |
+| `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                                          |
+| `series.rolling(seq, '5m', m)`                                    | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                                              |
+| `series.smooth('cpu', 'ema', { span: 20 })`                       | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                                              |
+| `series.baseline('cpu', { window, sigma })`                       | `series.baseline("cpu", window, sigma, Rolling::default())?`                                                  |
+| `series.scan('cpu', step, init)`                                  | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                                          |
+| `series.sample({ reservoir: { size } })`                          | `series.sample(Sample::Reservoir { size, seed })?`                                                            |
+| `TimeSeries.concat([a, b])`                                       | `TimeSeries::concat(&[&a, &b])?`                                                                              |
+| `series.collapse(keys, out, fn, { append })`                      | `series.collapse(&keys, out, f)?` / `collapse_keep`                                                           |
+| `series.pivotByGroup('host', 'cpu')`                              | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                                    |
+| `series.byColumn('watts', { edges }, m)`                          | `series.by_column("watts", &Bins::edges(edges), &aggs)?` (a `Table`, not an array of records)                 |
+| `series.rollingByColumn('km', { radius, at }, m)`                 | `series.rolling_by_column_at("km", radius, &at, &aggs)?`                                                      |
+| `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                                        |
+| `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                                      |
+| `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                                       |
+| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                                    |
+| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                                            |
+| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                                |
+| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`                           |
+| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                                 |
+| `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                                               |
+| `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                                   |
+| `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                                |
+| `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                                       |
+| `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                                      |
+| `series.tail('1h')`                                               | `series.tail("1h")?`                                                                                          |
+| `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                                   |
+| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                                 |
+| `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                                            |
+| `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                                        |
+| `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                                              |
+| `series.groupBy('host')` / `toMap()`                              | `series.group_by(&["host"])` / `iter()`                                                                       |
+| `series.atOrBefore(t)` / `nearest(t)`                             | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                                                    |
+| `new TimeRange(a, b)` as a lookup key                             | `EventKey::time_range(a, b)?`                                                                                 |
+| `series.within(a, b)` / `containedBy(range)`                      | `series.within(a, b)?` / `contained_by(range)`                                                                |
+| `series.at(i).get('cpu')`                                         | `series.column("cpu")?.numbers()?.get(i)`                                                                     |
+| `toJSON()` / `TimeSeries.fromJSON(json)`                          | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?`                            |
+| `toColumns()` / `toPoints()`                                      | `to_columns_json()?` / `to_points_json()?` (and `from_columns_json` / `from_points_json`)                     |
+| `toArrow()` / `fromArrow()`                                       | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                                                   |
 
 ## Types are checked when the code runs
 
@@ -78,6 +87,10 @@ fixed from the message alone.
 Each of these is a case where pond-ts quietly does something surprising and
 pond-rs returns an error instead.
 
+- **A study on a missing or text column.** Most of pond-ts's financial
+  studies give a column of all gaps, so a typo in the column name looks like "no
+  data" (logged as a pond-ts issue, [PND-STUDYSRC]). pond-rs returns an
+  error naming the column.
 - **Number reducers on text.** pond-ts runs them anyway: `sum` of a text
   column gives 0 and `avg` gives gaps. pond-rs allows only `count`, `first`
   and `last` on text and true/false columns.
@@ -133,7 +146,8 @@ pond-rs returns an error instead.
 
 - **`smooth` and `baseline` on the wrong column.** An unknown column or
   one that is not numbers is an error. pond-ts passes the series through
-  unchanged (`smooth` on an unknown column) or gives a gap in every row.
+  unchanged (`smooth` on an unknown column) or gives a gap in every row,
+  on a partitioned series too.
 - **`baseline_named`** refuses a name that is the key's, or the same name
   twice; pond-ts only checks the existing columns.
 - **An option a smoothing method does not take** (`warmup` on a loess,
@@ -151,7 +165,9 @@ pond-rs returns an error instead.
 - **Repeatable random samples.** `Sample::Reservoir` takes a seed, so
   the same seed picks the same rows; pond-ts's reservoir has none. The
   picked rows keep their order in the series, where pond-ts sorts them by
-  key, which can order rows sharing a key differently.
+  key, which can order rows sharing a key differently. On a partitioned
+  series each partition gets its own seed, made from yours, so those picks
+  repeat too.
 - **Exact decimals.** A column kind of their own, for money and other exact
   values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
 - **`with_column`** takes any kind of column and you choose required or
@@ -188,8 +204,8 @@ bug is logged in `PLAN.md` to fix there.
   (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
-  (`reduce('cpu', 'avg')`) and custom reducer functions are not built; one
-  `Agg` does the first.
+  (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom
+  reducer functions are not built.
 - **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
   builds the surviving row), and `align` / `materialize` take a range as an
   epoch-millisecond pair rather than a pond-ts `BoundedSequence`.
@@ -197,6 +213,10 @@ bug is logged in `PLAN.md` to fix there.
   an English (or the root) locale. Node uses the machine's locale, so
   pond-ts on a machine set to another language can order interval labels
   differently; pond-rs always uses the root order.
+- **A partitioned `scan` gives each partition its own copy of the start
+  value.** pond-ts hands every partition the same start object, so a step
+  that changes it in place carries state from one partition into the
+  next. In pond-rs every partition starts from a fresh copy.
 - **`align` with `Linear` holds exact decimal columns** instead of drawing a
   line through them, since a point between two decimals is generally not
   exact. pond-ts has no decimal kind.
