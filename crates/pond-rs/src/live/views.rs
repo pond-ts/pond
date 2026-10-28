@@ -127,7 +127,7 @@ impl LiveSeries {
     where
         F: FnMut(&LiveEvent) -> Vec<Option<Value>> + Send + 'static,
     {
-        let source = self.slot_of("LiveSeries::map", from.into())?;
+        let source = self.source_of("LiveSeries::map", from.into())?;
         let schema = self.schema_of(source);
         let out = Arc::clone(&schema);
         let step: Step = Box::new(move |e: &LiveEvent| {
@@ -173,7 +173,7 @@ impl LiveSeries {
         names: &[&str],
     ) -> Result<Node<LiveView>> {
         const CALL: &str = "LiveSeries::select";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
         let schema = self.schema_of(source);
         Self::columns_of(CALL, &schema, names, None)?;
         let keep: Vec<usize> = (0..schema.values().len())
@@ -204,7 +204,7 @@ impl LiveSeries {
         how: Sample,
     ) -> Result<Node<LiveView>> {
         const CALL: &str = "LiveSeries::sample";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
         let stride = match how {
             Sample::Stride(n) if n >= 1 => n,
             Sample::Stride(_) => {
@@ -237,7 +237,7 @@ impl LiveSeries {
         from: impl Into<super::NodeId>,
         duration: &str,
     ) -> Result<Node<LiveView>> {
-        let source = self.slot_of("LiveSeries::window", from.into())?;
+        let source = self.source_of("LiveSeries::window", from.into())?;
         let ms = parse_duration(duration)?;
         let schema = self.schema_of(source);
         let step: Step = Box::new(|e: &LiveEvent| Some(e.clone()));
@@ -252,7 +252,7 @@ impl LiveSeries {
         rows: usize,
     ) -> Result<Node<LiveView>> {
         const CALL: &str = "LiveSeries::window_rows";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
         if rows == 0 {
             return Err(PondError::InvalidData {
                 call: CALL,
@@ -359,7 +359,7 @@ impl LiveSeries {
         first: FirstRow,
         mode: Delta,
     ) -> Result<Node<LiveView>> {
-        let source = self.slot_of(call, from)?;
+        let source = self.source_of(call, from)?;
         let schema = self.schema_of(source);
         if columns.is_empty() {
             return Err(PondError::InvalidData {
@@ -467,7 +467,7 @@ impl LiveSeries {
         limit: Option<usize>,
     ) -> Result<Node<LiveView>> {
         const CALL: &str = "LiveSeries::fill";
-        let source = self.slot_of(CALL, from)?;
+        let source = self.source_of(CALL, from)?;
         let schema = self.schema_of(source);
         let refuse = |message: String| PondError::InvalidData {
             call: CALL,
@@ -658,7 +658,7 @@ impl LiveSeries {
         names: &[&str],
         mut folds: Vec<Box<dyn FnMut(Option<f64>, f64) -> f64 + Send>>,
     ) -> Result<Node<LiveView>> {
-        let source = self.slot_of(call, from)?;
+        let source = self.source_of(call, from)?;
         let schema = self.schema_of(source);
         if names.is_empty() {
             return Err(PondError::InvalidData {

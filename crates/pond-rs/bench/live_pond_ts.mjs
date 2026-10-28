@@ -2,6 +2,7 @@
 //
 //     npm run build --workspace=pond-ts
 //     node crates/pond-rs/bench/live_pond_ts.mjs
+//     ONLY=rolling node crates/pond-rs/bench/live_pond_ts.mjs
 import { LiveSeries, Sequence } from '../../../packages/core/dist/index.js';
 
 const N = 1_000_000;
@@ -195,9 +196,57 @@ const cases = [
       oneByOne(live, late);
     },
   ],
+  [
+    'rolling 30s avg + max + stdev, max_events 10k',
+    () => {
+      const live = capped();
+      live.rolling('30s', {
+        cpu_avg: { from: 'cpu', using: 'avg' },
+        mem_max: { from: 'mem', using: 'max' },
+        cpu_sd: { from: 'cpu', using: 'stdev' },
+      });
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'rolling 100 rows avg, history off, update watched',
+    () => {
+      const live = capped();
+      const r = live.rolling(100, { cpu: 'avg' }, { history: false });
+      r.on('update', () => {});
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'fused rolling 1m + 5m + 15m avg, max_events 10k',
+    () => {
+      const live = capped();
+      live.rolling({
+        '1m': { cpu_1m: { from: 'cpu', using: 'avg' } },
+        '5m': { cpu_5m: { from: 'cpu', using: 'avg' } },
+        '15m': { cpu_15m: { from: 'cpu', using: 'avg' } },
+      });
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'reduce avg + max + count, max_events 10k',
+    () => {
+      const live = capped();
+      live.reduce({
+        cpu_avg: { from: 'cpu', using: 'avg' },
+        mem_max: { from: 'mem', using: 'max' },
+        n: { from: 'cpu', using: 'count' },
+      });
+      oneByOne(live, rows);
+    },
+  ],
 ];
 const report = {};
+// ONLY=<text> times just the cases whose name contains it.
+const only = process.env.ONLY ?? '';
 for (const [name, f] of cases) {
+  if (!name.includes(only)) continue;
   const ms = median(f);
   report[name] = Number(ms.toFixed(2));
   console.log(`${name.padEnd(44)} ${ms.toFixed(1).padStart(9)} ms`);

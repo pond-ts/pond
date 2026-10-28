@@ -96,6 +96,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   the 52 live replay cases. Where pond-ts takes a bad argument silently
   (an unknown column, `diff` on a text column, a fill value of the wrong
   kind), pond-rs refuses it when the view is built.
+- **pond-rs: live rolling windows and reduce** (R3 step 4). `rolling`
+  (over a duration), `rolling_rows` (over a count of events) and
+  `rolling_windows` (several windows sharing one buffer) keep reducers over
+  a trailing window and emit per event or on a `Trigger` (every n events,
+  or when a clock bucket ends), keeping what they emit up to a `History`
+  limit. `reduce` keeps reducers over everything its source holds now and
+  emits once per push. Every built-in pond-ts reducer works in both, including
+  huge values summed exactly. Results match pond-ts event for event on 52 of the
+  57 live replay cases (the 5 left are partitioned, a later step). Reading
+  `value()` changes nothing in pond-rs, where in pond-ts it can move the
+  last bit of a later `stdev`; a clock trigger on interval-keyed events is
+  refused (pond-ts emits time keys under the interval schema); a reduce
+  built over existing events emits for them during the build, where
+  pond-ts waits for a microtask.
 
 ### Changed
 
@@ -119,6 +133,11 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`live.reduce` no longer slows down a loop of pushes** ([PND-REDUCEMICRO]).
+  Each push queued one more microtask when pushes ran in a loop without
+  awaiting, and each held the reduce and everything it had emitted until
+  the loop ended. Now a loop queues one. 1M pushes into a series keeping
+  10k events, with a reduce: 5.2-9.7 s (slower on each repeat) to 4.3-4.5 s.
 - **Live views and `drop` / `reorder` series with retention evict much
   faster on buffers up to ~16k events** ([PND-EVICTSPLICE]). Dropping the
   oldest event copied the whole buffer on every push (~20 µs at 10k

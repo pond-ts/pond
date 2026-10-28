@@ -718,6 +718,8 @@ dependencies = [
  "icu_collator",
  "jiff",
  "jiff-tzdb",
+ "num-bigint",
+ "num-traits",
  "rayon",
  "serde",
  "serde_json",

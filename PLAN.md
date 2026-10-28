@@ -618,7 +618,9 @@ the study oracle) is done.
   progress (step 1, the pond-ts replay fixture, landed 2026-10-27; step 2,
   `LiveSeries` with `filter` and fixed-bucket `aggregate`, merged 2026-10-28
   (#839); step 3, the other views, merged 2026-10-28 (#840); events stored
-  by column before step 4, about 5-7x less memory for the series). Port pond-ts's live layer (`LiveSeries`, views, live
+  by column before step 4, about 5-7x less memory for the series (#842);
+  step 4, rolling windows and `reduce` with their triggers, built
+  2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.

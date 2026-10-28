@@ -5,7 +5,8 @@
 //! **One owner, handles, outputs in order.** A [`LiveSeries`] owns every
 //! node built from it. Building one (a view such as [`LiveSeries::filter`],
 //! [`LiveSeries::map`], [`LiveSeries::diff`], [`LiveSeries::fill`] or
-//! [`LiveSeries::window`], or [`LiveSeries::aggregate`]) returns a [`Node`] handle: `Copy`, `Send`, no
+//! [`LiveSeries::window`], [`LiveSeries::aggregate`], [`LiveSeries::rolling`]
+//! or [`LiveSeries::reduce`]) returns a [`Node`] handle: `Copy`, `Send`, no
 //! lifetime. Read a node through the owner with `live.get(node)?` (or
 //! `live[node]`, which panics on a bad handle). Each push returns what it
 //! caused, as [`Output`]s, in the order pond-ts's listeners would see them:
@@ -66,6 +67,44 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 //!
+//! **Rolling and reduce.** [`LiveSeries::rolling`] keeps reducers over a
+//! trailing window (a duration, or [`LiveSeries::rolling_rows`] for a
+//! count of events) and emits after each source event, or on a
+//! [`Trigger`]: every n events, or when a clock bucket ends.
+//! [`LiveSeries::rolling_windows`] runs several windows over one shared
+//! buffer, one output column set each. [`LiveSeries::reduce`] keeps
+//! reducers over everything its source holds now (removing what the source
+//! evicts) and emits once per push. Both keep what they emit
+//! ([`History`] limits it for rolling). Values match pond-ts to the bit,
+//! with one exception: reading a node's `value()` changes nothing here,
+//! where in pond-ts a read can move the last bit of a later `stdev`.
+//!
+//! ```
+//! # use pond_rs::live::{LiveOptions, LiveSeries, RollingOptions, Trigger};
+//! # use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Value};
+//! let mut live = LiveSeries::with_options(
+//!     "cpu",
+//!     vec![
+//!         ColumnDef::required("time", ColumnKind::Time),
+//!         ColumnDef::optional("load", ColumnKind::Number),
+//!     ],
+//!     LiveOptions::new().max_events(3),
+//! )?;
+//! let root = live.root();
+//! let avg = [Agg::new("avg", "load", Reducer::Avg)];
+//! let last_2s = live.rolling(root, "2s", &avg)?;
+//! let every_2 = RollingOptions::new().trigger(Trigger::count(2)?);
+//! let pairs = live.rolling_rows(root, 2, &avg, &every_2)?;
+//! let held = live.reduce(root, &[Agg::new("max", "load", Reducer::Max)])?;
+//! live.push_many((0..5).map(|i| (i * 1000, [Some(Value::from(i as f64))])))?;
+//! assert_eq!(live[last_2s].len(), 5); // one per event
+//! assert_eq!(live[last_2s].value(), [Some(Value::from(3.0))]); // 2, 3, 4
+//! assert_eq!(live[pairs].len(), 2); // after the 2nd and 4th events
+//! assert_eq!(live[held].value(), [Some(Value::from(4.0))]); // the series keeps 2, 3, 4
+//! assert_eq!(live[held].len(), 1); // one per push
+//! # Ok::<(), pond_rs::PondError>(())
+//! ```
+//!
 //! **Storage.** Series and views store their events by column (a number
 //! cell is 8 bytes). Reading builds a [`LiveEvent`] from the cells:
 //! `at`, `events`, `find`, `some` and `every` build each event they visit,
@@ -80,6 +119,9 @@ mod aggregation;
 mod buffer;
 mod event;
 mod json;
+mod reduce;
+mod rolling;
+mod states;
 mod view;
 mod views;
 
@@ -93,6 +135,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 pub use aggregation::{AggregationStats, LiveAggregation};
 pub use event::LiveEvent;
+pub use reduce::{LiveReduce, ReduceStats};
+pub use rolling::{History, LiveRolling, RollingOptions, RollingStats, RollingWindow, Trigger};
 pub use view::LiveView;
 
 use crate::column::{Scalar, Value};
@@ -106,6 +150,8 @@ use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use buffer::EventBuffer;
 use event::LiveSchema;
+use reduce::Place;
+use rolling::{After, Span};
 use view::Step;
 
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
@@ -181,7 +227,8 @@ pub struct LiveStats {
 
 /// The kinds of [`Output`]. A series emits `Event`, `Batch` and `Evict`; a
 /// view `Event` and `Evict`; an aggregation `Event` (a closed bucket),
-/// `Bucket` and `Update`.
+/// `Bucket` and `Update`; a rolling window `Event` and `Update` (fused
+/// windows `Event` only); a reduce `Event`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputKind {
     Event,
@@ -216,8 +263,14 @@ pub enum Output {
     },
     /// An aggregation's bucket as it now stands, after an event joined it.
     Bucket { node: NodeId, event: LiveEvent },
-    /// An aggregation took an event (even one too late for any bucket).
-    Update { node: NodeId },
+    /// An aggregation or a (single) rolling window took an event (an
+    /// aggregation: even one too late for any bucket). A rolling window
+    /// gives its value columns as they now stand, in schema order (pond-ts
+    /// `value()`); an aggregation gives `None`.
+    Update {
+        node: NodeId,
+        values: Option<Vec<Option<Value>>>,
+    },
 }
 
 impl Output {
@@ -227,7 +280,7 @@ impl Output {
             | Output::Batch { node, .. }
             | Output::Evict { node, .. }
             | Output::Bucket { node, .. }
-            | Output::Update { node } => *node,
+            | Output::Update { node, .. } => *node,
         }
     }
 
@@ -250,7 +303,8 @@ pub struct NodeId {
     index: u32,
 }
 
-/// A handle to a node of type `T` ([`LiveView`], [`LiveAggregation`]) in
+/// A handle to a node of type `T` ([`LiveView`], [`LiveAggregation`],
+/// [`LiveRolling`], [`LiveReduce`]) in
 /// the [`LiveSeries`] that built it. Read it with `live.get(node)` or
 /// `live[node]`; build on it by passing it as a source.
 pub struct Node<T> {
@@ -296,7 +350,7 @@ impl<T> From<Node<T>> for NodeId {
 pub trait NodeType: sealed::Sealed + Sized {}
 
 mod sealed {
-    use super::{LiveAggregation, LiveView};
+    use super::{LiveAggregation, LiveReduce, LiveRolling, LiveView};
 
     /// What a slot holds. Public only inside this private module, so
     /// callers outside the crate cannot name it.
@@ -304,6 +358,8 @@ mod sealed {
         Root,
         View(LiveView),
         Aggregation(LiveAggregation),
+        Rolling(LiveRolling),
+        Reduce(LiveReduce),
         Removed,
     }
 
@@ -328,10 +384,30 @@ mod sealed {
             }
         }
     }
+
+    impl Sealed for LiveRolling {
+        fn of(state: &State) -> Option<&Self> {
+            match state {
+                State::Rolling(r) => Some(r),
+                _ => None,
+            }
+        }
+    }
+
+    impl Sealed for LiveReduce {
+        fn of(state: &State) -> Option<&Self> {
+            match state {
+                State::Reduce(r) => Some(r),
+                _ => None,
+            }
+        }
+    }
 }
 
 impl NodeType for LiveView {}
 impl NodeType for LiveAggregation {}
+impl NodeType for LiveRolling {}
+impl NodeType for LiveReduce {}
 
 use sealed::State;
 
@@ -349,10 +425,13 @@ struct Slot {
 
 impl Slot {
     fn emits(&self) -> &'static [OutputKind] {
-        match self.state {
+        match &self.state {
             State::Root => &[OutputKind::Event, OutputKind::Batch, OutputKind::Evict],
             State::View(_) => &[OutputKind::Event, OutputKind::Evict],
             State::Aggregation(_) => &[OutputKind::Event, OutputKind::Bucket, OutputKind::Update],
+            State::Rolling(r) if r.is_fused() => &[OutputKind::Event],
+            State::Rolling(_) => &[OutputKind::Event, OutputKind::Update],
+            State::Reduce(_) => &[OutputKind::Event],
             State::Removed => &[],
         }
     }
@@ -712,7 +791,11 @@ impl LiveSeries {
             // Handed down the tree first, then stored: nothing below reads
             // the root's storage, and storing last lets the cells move in
             // when no output kept the event.
-            self.emit_event(0, &event, out);
+            let place = Place {
+                at: self.buffer.position(event.key()),
+                trimmed: 0,
+            };
+            self.emit_event(0, &event, Some(place), out);
             if want_batch {
                 added.push(event.clone());
             }
@@ -731,7 +814,25 @@ impl LiveSeries {
         if n > 0 {
             self.evict_root(n, out);
         }
+        self.settle(out);
         Ok(())
+    }
+
+    /// The end of a push (pond-ts's settle hook, [PND-REDUCETICK]): each
+    /// reduce emits for what reached it, oldest node first.
+    fn settle(&mut self, out: &mut Vec<Output>) {
+        for i in 1..self.slots.len() {
+            let hand_on = !self.slots[i].subs[OutputKind::Event.slot()].is_empty();
+            let State::Reduce(r) = &mut self.slots[i].state else {
+                continue;
+            };
+            if !r.has_pending() {
+                continue;
+            }
+            for event in r.settle(hand_on) {
+                self.emit_event(i, &event, None, out);
+            }
+        }
     }
 
     /// How many of the oldest events retention drops now.
@@ -748,13 +849,20 @@ impl LiveSeries {
     fn evict_root(&mut self, n: usize, out: &mut Vec<Output>) {
         self.evicted += n as u64;
         let cutoff = self.buffer.begin_at(n - 1);
-        let keep = self.watches(0, OutputKind::Evict);
+        let keep = self.wants_evicted(0);
         let evicted = self.buffer.evict(n, keep);
         self.emit_evict(0, cutoff, &evicted, out);
     }
 
-    fn watches(&self, node: usize, kind: OutputKind) -> bool {
-        self.slots[node].subs[kind.slot()].contains(&Sub::Watch)
+    /// Whether something needs the events `node` evicts: a watcher, or a
+    /// reduce removing them (a view only needs where they end).
+    fn wants_evicted(&self, node: usize) -> bool {
+        self.slots[node].subs[OutputKind::Evict.slot()]
+            .iter()
+            .any(|sub| match sub {
+                Sub::Watch => true,
+                Sub::Child(c) => matches!(self.slots[*c].state, State::Reduce(_)),
+            })
     }
 
     // ── Fan-out ─────────────────────────────────────────────────────
@@ -776,7 +884,15 @@ impl LiveSeries {
         }
     }
 
-    fn emit_event(&mut self, node: usize, event: &LiveEvent, out: &mut Vec<Output>) {
+    /// `node` took `event` (at `place` among the events it holds, for a
+    /// series or a view): hand it to watchers and to the nodes built on it.
+    fn emit_event(
+        &mut self,
+        node: usize,
+        event: &LiveEvent,
+        place: Option<Place>,
+        out: &mut Vec<Output>,
+    ) {
         let kind = OutputKind::Event.slot();
         let mut k = 0;
         while k < self.slots[node].subs[kind].len() {
@@ -785,7 +901,7 @@ impl LiveSeries {
                     node: self.id_of(node),
                     event: event.clone(),
                 }),
-                Sub::Child(c) => self.deliver(c, event, out),
+                Sub::Child(c) => self.deliver(c, event, place, out),
             }
             k += 1;
         }
@@ -809,13 +925,16 @@ impl LiveSeries {
                     events: evicted.to_vec(),
                 }),
                 Sub::Child(c) => {
-                    let keep = self.watches(c, OutputKind::Evict);
-                    let State::View(view) = &mut self.slots[c].state else {
-                        unreachable!("only views follow evictions")
-                    };
-                    let (last, removed) = view.mirror_evict(cutoff, keep);
-                    if let Some(last) = last {
-                        self.emit_evict(c, last, &removed, out);
+                    let keep = self.wants_evicted(c);
+                    match &mut self.slots[c].state {
+                        State::View(view) => {
+                            let (last, removed) = view.mirror_evict(cutoff, keep);
+                            if let Some(last) = last {
+                                self.emit_evict(c, last, &removed, out);
+                            }
+                        }
+                        State::Reduce(reduce) => reduce.evict(evicted),
+                        _ => unreachable!("only views and reduces follow evictions"),
                     }
                 }
             }
@@ -823,15 +942,42 @@ impl LiveSeries {
         }
     }
 
-    /// One source event reaching child `c`.
-    fn deliver(&mut self, c: usize, event: &LiveEvent, out: &mut Vec<Output>) {
+    /// One source event reaching child `c` (at `place` in its source).
+    fn deliver(
+        &mut self,
+        c: usize,
+        event: &LiveEvent,
+        place: Option<Place>,
+        out: &mut Vec<Output>,
+    ) {
         let want_bucket = !self.slots[c].subs[OutputKind::Bucket.slot()].is_empty();
+        let want_update = !self.slots[c].subs[OutputKind::Update.slot()].is_empty();
         let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
         match &mut self.slots[c].state {
             State::View(view) => {
-                if let Some(kept) = view.take(event, hand_on) {
-                    self.emit_event(c, &kept, out);
+                if let Some((Some(kept), place)) = view.take(event, hand_on) {
+                    self.emit_event(c, &kept, Some(place), out);
                 }
+            }
+            State::Rolling(rolling) => {
+                let after = if want_update {
+                    After::Record
+                } else {
+                    After::Touch
+                };
+                let rolled = rolling.ingest(event, hand_on, after);
+                if let Some(emitted) = rolled.event {
+                    self.emit_event(c, &emitted, None, out);
+                }
+                if let Some(values) = rolled.update {
+                    self.emit(c, OutputKind::Update, out, |node| Output::Update {
+                        node,
+                        values: Some(values.clone()),
+                    });
+                }
+            }
+            State::Reduce(reduce) => {
+                reduce.ingest(event, place.expect("a reduce's source places its events"))
             }
             State::Aggregation(agg) => {
                 let done = agg.ingest(event, want_bucket);
@@ -842,9 +988,12 @@ impl LiveSeries {
                     });
                 }
                 for closed in &done.closed {
-                    self.emit_event(c, closed, out);
+                    self.emit_event(c, closed, None, out);
                 }
-                self.emit(c, OutputKind::Update, out, |node| Output::Update { node });
+                self.emit(c, OutputKind::Update, out, |node| Output::Update {
+                    node,
+                    values: None,
+                });
             }
             State::Root | State::Removed => unreachable!("not a child"),
         }
@@ -876,12 +1025,29 @@ impl LiveSeries {
         }
     }
 
+    /// The node to build on: a reduce and fused rolling windows have
+    /// nothing built on them in pond-ts, so pond-rs refuses them as sources.
+    fn source_of(&self, call: &'static str, id: NodeId) -> Result<usize> {
+        let i = self.slot_of(call, id)?;
+        let message = match &self.slots[i].state {
+            State::Reduce(_) => "nothing can be built on a reduce",
+            State::Rolling(r) if r.is_fused() => "nothing can be built on fused rolling windows",
+            _ => return Ok(i),
+        };
+        Err(PondError::InvalidData {
+            call,
+            message: message.into(),
+        })
+    }
+
     /// The events a node holds now, to replay into a node built on it.
     fn held(&self, i: usize) -> Box<dyn Iterator<Item = LiveEvent> + '_> {
         match &self.slots[i].state {
             State::Root => Box::new(self.buffer.iter()),
             State::View(v) => Box::new(v.buffer.iter()),
             State::Aggregation(a) => Box::new(a.events().cloned()),
+            State::Rolling(r) => Box::new(r.kept().iter()),
+            State::Reduce(r) => Box::new(r.kept().iter()),
             State::Removed => Box::new(std::iter::empty()),
         }
     }
@@ -891,6 +1057,8 @@ impl LiveSeries {
             State::Root => Arc::clone(&self.schema),
             State::View(v) => Arc::clone(&v.schema),
             State::Aggregation(a) => a.schema_arc(),
+            State::Rolling(r) => r.schema_arc(),
+            State::Reduce(r) => r.schema_arc(),
             State::Removed => unreachable!("checked"),
         }
     }
@@ -898,7 +1066,7 @@ impl LiveSeries {
     fn add_node<T>(&mut self, source: usize, state: State) -> Node<T> {
         let index = self.slots.len();
         let follows_evict = matches!(self.slots[source].state, State::Root | State::View(_))
-            && matches!(state, State::View(_));
+            && matches!(state, State::View(_) | State::Reduce(_));
         self.slots.push(Slot {
             state,
             source: Some(source),
@@ -920,7 +1088,7 @@ impl LiveSeries {
     where
         F: FnMut(&LiveEvent) -> bool + Send + 'static,
     {
-        let source = self.slot_of("LiveSeries::filter", from.into())?;
+        let source = self.source_of("LiveSeries::filter", from.into())?;
         let schema = self.schema_of(source);
         let step: Step = Box::new(move |e: &LiveEvent| keep(e).then(|| e.clone()));
         Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
@@ -942,7 +1110,7 @@ impl LiveSeries {
         mapping: &[Agg],
     ) -> Result<Node<LiveAggregation>> {
         const CALL: &str = "LiveSeries::aggregate";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
         let step = sequence
             .fixed_step()
             .ok_or_else(|| PondError::Unsupported {
@@ -965,6 +1133,143 @@ impl LiveSeries {
             self.held(source),
         )?;
         Ok(self.add_node(source, State::Aggregation(agg)))
+    }
+
+    /// A rolling window of time (`window`, a duration such as `"5s"`) over
+    /// the events of `from`, one column per mapping entry: each event's
+    /// window holds the events starting no more than `window` before it.
+    /// Emits an event for every source event (see [`RollingOptions`] for
+    /// warm-up, triggers and how many it keeps). Built over what `from`
+    /// holds now.
+    ///
+    /// Reducers on text, true/false and array columns are limited as in
+    /// [`LiveSeries::aggregate`].
+    pub fn rolling(
+        &mut self,
+        from: impl Into<NodeId>,
+        window: &str,
+        mapping: &[Agg],
+    ) -> Result<Node<LiveRolling>> {
+        self.rolling_with(from, window, mapping, &RollingOptions::default())
+    }
+
+    /// [`LiveSeries::rolling`] with options.
+    pub fn rolling_with(
+        &mut self,
+        from: impl Into<NodeId>,
+        window: &str,
+        mapping: &[Agg],
+        options: &RollingOptions,
+    ) -> Result<Node<LiveRolling>> {
+        const CALL: &str = "LiveSeries::rolling";
+        let ms = parse_duration(window)?;
+        self.add_rolling(CALL, from.into(), |name, schema| {
+            LiveRolling::single(CALL, name, schema, Span::Time(ms), mapping, options)
+        })
+    }
+
+    /// A rolling window of the last `rows` events (at least 1) of `from`.
+    pub fn rolling_rows(
+        &mut self,
+        from: impl Into<NodeId>,
+        rows: usize,
+        mapping: &[Agg],
+        options: &RollingOptions,
+    ) -> Result<Node<LiveRolling>> {
+        const CALL: &str = "LiveSeries::rolling_rows";
+        if rows == 0 {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "a window of rows needs at least one row".into(),
+            });
+        }
+        self.add_rolling(CALL, from.into(), |name, schema| {
+            LiveRolling::single(CALL, name, schema, Span::Rows(rows), mapping, options)
+        })
+    }
+
+    /// Several rolling windows of time over `from`, worked out in one pass
+    /// and emitted together (pond-ts's keyed `rolling({ "1m": …, "5m": … })`):
+    /// each event carries every window's columns, in the order given. Output
+    /// names must differ across windows. One trigger for all.
+    pub fn rolling_windows(
+        &mut self,
+        from: impl Into<NodeId>,
+        windows: &[RollingWindow],
+        options: &RollingOptions,
+    ) -> Result<Node<LiveRolling>> {
+        const CALL: &str = "LiveSeries::rolling_windows";
+        self.add_rolling(CALL, from.into(), |name, schema| {
+            LiveRolling::fused(CALL, name, schema, windows, options)
+        })
+    }
+
+    fn add_rolling(
+        &mut self,
+        call: &'static str,
+        from: NodeId,
+        build: impl FnOnce(String, &[ColumnDef]) -> Result<LiveRolling>,
+    ) -> Result<Node<LiveRolling>> {
+        let source = self.source_of(call, from)?;
+        if matches!(self.slots[source].state, State::Rolling(_)) {
+            return Err(PondError::InvalidData {
+                call,
+                message: "a rolling window takes a series, a view or an aggregation (as pond-ts)"
+                    .into(),
+            });
+        }
+        let schema = self.schema_of(source);
+        let mut rolling = build(self.name.clone(), &schema.columns)?;
+        for event in self.held(source) {
+            rolling.ingest(&event, false, After::Replay);
+        }
+        Ok(self.add_node(source, State::Rolling(rolling)))
+    }
+
+    /// A reduction over everything `from` holds now, one column per mapping
+    /// entry (pond-ts `reduce`): values are added as events arrive and
+    /// removed as `from` evicts them. Emits at the end of each push, keyed
+    /// at its last event (one event per push, however many rows).
+    ///
+    /// `from` is the series or a view (as pond-ts). Built over what `from`
+    /// holds now, it emits once for those events straight away: that event
+    /// is in its [`LiveReduce::events`] but in no push's outputs. pond-ts
+    /// emits it on a microtask just after the build, so this matches a
+    /// caller that yields before its next push; one that pushes again
+    /// without yielding gets a single emission from pond-ts, for both.
+    pub fn reduce(&mut self, from: impl Into<NodeId>, mapping: &[Agg]) -> Result<Node<LiveReduce>> {
+        self.reduce_with(from, mapping, Trigger::event())
+    }
+
+    /// [`LiveSeries::reduce`] paced by `trigger`: a count trigger emits
+    /// once per `n` events that arrived (several times in one push if it
+    /// brought several `n`), each keyed at the push's last event; a clock
+    /// trigger looks at the push's last event.
+    pub fn reduce_with(
+        &mut self,
+        from: impl Into<NodeId>,
+        mapping: &[Agg],
+        trigger: Trigger,
+    ) -> Result<Node<LiveReduce>> {
+        const CALL: &str = "LiveSeries::reduce";
+        let source = self.source_of(CALL, from.into())?;
+        if !matches!(self.slots[source].state, State::Root | State::View(_)) {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "reduce takes a series or a view (as pond-ts)".into(),
+            });
+        }
+        let schema = self.schema_of(source);
+        let sorted = source == 0 && self.ordering == OrderingMode::Reorder;
+        let reduce = LiveReduce::new(
+            self.name.clone(),
+            &schema.columns,
+            mapping,
+            trigger,
+            sorted,
+            self.held(source),
+        )?;
+        Ok(self.add_node(source, State::Reduce(reduce)))
     }
 
     /// The node behind `node`; an error when it was removed or is another

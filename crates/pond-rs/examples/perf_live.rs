@@ -16,10 +16,18 @@
 //! The step 3 views (`map`, `select`, `sample`, `window`, `diff` / `rate` /
 //! `pct_change`, `fill`, `cumulative`) each build at most one new event per
 //! source event, O(columns); a time window trims from the front.
+//! Step 4: a rolling window adds each event to every output column's state
+//! and removes what leaves the window (sum / avg / count / stdev O(1), min
+//! / max amortised O(1) with a monotonic queue, percentiles O(log w)), then
+//! emits one event, kept unless `History` limits it; fused windows share
+//! one buffer and each evicts from its own head. `reduce` adds each event
+//! and removes each one the source evicts, then emits once per push.
 
 use std::time::Instant;
 
-use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode, OutputKind};
+use pond_rs::live::{
+    History, LiveOptions, LiveSeries, OrderingMode, OutputKind, RollingOptions, RollingWindow,
+};
 use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Sample, Sequence, Value};
 
 /// Median of five timed runs after a warm-up. Each run gets its own copy of
@@ -96,7 +104,12 @@ fn main() -> pond_rs::Result<()> {
     let busy = |e: &pond_rs::live::LiveEvent| e.number("cpu").ok().flatten() > Some(0.5);
 
     let mut report = Vec::new();
+    // ONLY=<text> times just the cases whose name contains it.
+    let only = std::env::var("ONLY").unwrap_or_default();
     let mut run = |name: &str, input: &Vec<Row>, f: &mut dyn FnMut(Vec<Row>)| {
+        if !name.contains(only.as_str()) {
+            return;
+        }
         let ms = median_ms(|| input.clone(), f);
         println!("{name:<44} {ms:>9.1} ms");
         report.push(format!("\"{name}\": {ms:.2}"));
@@ -232,6 +245,62 @@ fn main() -> pond_rs::Result<()> {
             live.diff(root, &["cpu"]).unwrap();
             live.fill_all(root, Fill::Hold).unwrap();
             live.window(root, "30s").unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    // Step 4: rolling windows and reduce, on a root keeping 10k events.
+    run(
+        "rolling 30s avg + max + stdev, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            let m = [
+                Agg::new("cpu_avg", "cpu", Reducer::Avg),
+                Agg::new("mem_max", "mem", Reducer::Max),
+                Agg::new("cpu_sd", "cpu", Reducer::Stdev),
+            ];
+            live.rolling(root, "30s", &m).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "rolling 100 rows avg, history off, update watched",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            let opts = RollingOptions::new().history(History::Off);
+            let r = live
+                .rolling_rows(root, 100, &[Agg::of("cpu", Reducer::Avg)], &opts)
+                .unwrap();
+            live.watch(r, OutputKind::Update).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "fused rolling 1m + 5m + 15m avg, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            let windows = [
+                RollingWindow::new("1m", &[Agg::new("cpu_1m", "cpu", Reducer::Avg)]),
+                RollingWindow::new("5m", &[Agg::new("cpu_5m", "cpu", Reducer::Avg)]),
+                RollingWindow::new("15m", &[Agg::new("cpu_15m", "cpu", Reducer::Avg)]),
+            ];
+            live.rolling_windows(root, &windows, &RollingOptions::new())
+                .unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "reduce avg + max + count, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            live.reduce(root, &mapping).unwrap();
             one_by_one(&mut live, rows);
         },
     );

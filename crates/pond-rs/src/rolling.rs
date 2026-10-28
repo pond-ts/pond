@@ -25,20 +25,21 @@ const CALL: &str = "rolling";
 
 /// pond-ts `SUM_SPLIT`: from this magnitude pond-ts moves a value into an
 /// exact big-integer lane so a running sum cannot get stuck at infinity.
-/// pond-rs does not have that lane yet and refuses such values instead.
-const SUM_SPLIT: f64 = pow2(960);
+/// Batch pond-rs refuses such values instead (the live layer has the lane:
+/// `live/states.rs`).
+pub(crate) const SUM_SPLIT: f64 = pow2(960);
 /// pond-ts `STDEV_SPLIT`, the same idea for stdev.
-const STDEV_SPLIT: f64 = pow2(480);
+pub(crate) const STDEV_SPLIT: f64 = pow2(480);
 
 /// `2^e` exactly, for normal exponents.
-const fn pow2(e: u64) -> f64 {
+pub(crate) const fn pow2(e: u64) -> f64 {
     f64::from_bits((e + 1023) << 52)
 }
 
 /// One column's window state: a value enters with `add`, leaves with
 /// `remove`; `snapshot` is the reducer over what is inside. Only present
 /// (finite) values reach a state.
-trait WindowState {
+pub(crate) trait WindowState {
     fn add(&mut self, row: usize, v: f64);
     fn remove(&mut self, row: usize, v: f64);
     /// `&mut`: the stdev state may move its reference point when read.
@@ -66,19 +67,19 @@ const SPLIT: f64 = 134_217_729.0;
 /// pond-ts `WindowSum`: a running sum held as `hi + lo` (double-double), so
 /// rounding errors are kept rather than piling up. `hi` is the sum rounded
 /// once; `n` resets the empty window to exactly 0.
-#[derive(Default)]
-struct WindowSum {
-    hi: f64,
+#[derive(Default, Clone)]
+pub(crate) struct WindowSum {
+    pub(crate) hi: f64,
     lo: f64,
-    n: i64,
+    pub(crate) n: i64,
 }
 
 impl WindowSum {
-    fn add(&mut self, v: f64) {
+    pub(crate) fn add(&mut self, v: f64) {
         self.n += 1;
         self.acc(v);
     }
-    fn remove(&mut self, v: f64) {
+    pub(crate) fn remove(&mut self, v: f64) {
         self.n -= 1;
         if self.n == 0 {
             self.hi = 0.0;
@@ -133,7 +134,7 @@ impl WindowState for AvgState {
 /// pond-ts `rollingMonotoneDeque`: (row, value) pairs, front is the answer;
 /// the earliest of equal values wins.
 #[derive(Default)]
-struct ExtremeState<const MAX: bool>(VecDeque<(usize, f64)>);
+pub(crate) struct ExtremeState<const MAX: bool>(pub(crate) VecDeque<(usize, f64)>);
 
 impl<const MAX: bool> WindowState for ExtremeState<MAX> {
     fn add(&mut self, row: usize, v: f64) {
@@ -174,9 +175,9 @@ impl<const LAST: bool> WindowState for OrderedState<LAST> {
 }
 
 /// pond-ts `rollingSortedArray` + `percentileOfSorted`.
-struct SortedState {
-    sorted: Vec<f64>,
-    q: f64,
+pub(crate) struct SortedState {
+    pub(crate) sorted: Vec<f64>,
+    pub(crate) q: f64,
 }
 
 impl WindowState for SortedState {
@@ -206,10 +207,22 @@ impl WindowState for SortedState {
 /// the top, which can be `-0`. `zeros` is that stack. Otherwise one end is
 /// not a zero and the sign of the other cannot change the result.
 #[derive(Default)]
-struct DiffState {
+pub(crate) struct DiffState {
     max: ExtremeState<true>,
     min: ExtremeState<false>,
     zeros: VecDeque<f64>,
+}
+
+impl DiffState {
+    /// The snapshot, read without `&mut`.
+    #[cfg(feature = "live")]
+    pub(crate) fn peek(&self) -> Option<f64> {
+        let (hi, lo) = (self.max.0.front()?.1, self.min.0.front()?.1);
+        if hi == 0.0 && lo == 0.0 {
+            return Some(self.zeros.back()? - self.zeros.front()?);
+        }
+        Some(hi - lo)
+    }
 }
 
 impl WindowState for DiffState {
@@ -267,9 +280,9 @@ impl WindowState for KeepState {
 /// `d²` split exactly. The shift moves to the mean (an exact rewrite of the
 /// sums) when the mean drifts about one stdev away. Same operations in the
 /// same order as pond-ts, so the bits match.
-#[derive(Default)]
-struct StdevState {
-    n: f64,
+#[derive(Default, Clone)]
+pub(crate) struct StdevState {
+    pub(crate) n: f64,
     k: f64,
     s1h: f64,
     s1l: f64,
@@ -306,7 +319,17 @@ impl StdevState {
         self.s2h = h;
     }
 
-    fn m2(&mut self) -> f64 {
+    /// pond-ts `WindowStdev.mean()`: the window mean (0 when empty, where
+    /// pond-ts gives `undefined` and its caller `?? 0`).
+    #[cfg(feature = "live")]
+    pub(crate) fn mean(&self) -> f64 {
+        if self.n == 0.0 {
+            return 0.0;
+        }
+        self.k + (self.s1h + self.s1l) / self.n
+    }
+
+    pub(crate) fn m2(&mut self) -> f64 {
         let n = self.n;
         if n <= 1.0 {
             return 0.0;
@@ -399,7 +422,7 @@ impl WindowState for StdevState {
 }
 
 /// First index whose value is not below `v` (pond-ts `bisect`).
-fn lower_bound(sorted: &[f64], v: f64) -> usize {
+pub(crate) fn lower_bound(sorted: &[f64], v: f64) -> usize {
     sorted.partition_point(|&x| x < v)
 }
 

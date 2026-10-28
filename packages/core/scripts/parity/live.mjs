@@ -800,6 +800,214 @@ const CASES = [
     ],
   },
 
+  {
+    // A reorder source with retention evicts its key-order prefix, which
+    // can be a late (recent) arrival: a reduce on the root must remove
+    // that event, not the oldest arrival, and switches min / max / first /
+    // last / difference to states that remove any event ([PND-LIVFIX]).
+    // A reduce on a filter of it keeps the arrival-order states; one on a
+    // window view never hears of what the window trims. Rolling windows
+    // take late events as new arrivals.
+    name: 'reduce-and-rolling-reorder',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', retention: { maxEvents: 4 } },
+    steps: [
+      node('r', 'reduce', 'root', {
+        cpu: 'min',
+        mem: 'max',
+        f: { from: 'cpu', using: 'first' },
+        l: { from: 'mem', using: 'last' },
+        d: { from: 'cpu', using: 'difference' },
+        s: { from: 'cpu', using: 'samples' },
+        t: { from: 'cpu', using: 'sum' },
+        k: { from: 'host', using: 'keep' },
+      }),
+      node('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('rf', 'reduce', 'f', {
+        cpu: 'min',
+        l: { from: 'cpu', using: 'last' },
+        s: { from: 'cpu', using: 'samples' },
+      }),
+      node('w', 'window', 'root', 3),
+      node('rw', 'reduce', 'w', {
+        cpu: 'sum',
+        s: { from: 'cpu', using: 'samples' },
+      }),
+      node('ro', 'rolling', 'root', '2s', {
+        cpu: 'avg',
+        n: { from: 'cpu', using: 'count' },
+      }),
+      node('fu', 'rolling', 'root', {
+        '1s': { cpu: 'max' },
+        '3s': { s: { from: 'cpu', using: 'samples' } },
+      }),
+      ...LATE_STEPS,
+      { pushMany: [ROWS[15], [9500, 'a', 5, 5], ROWS[16]] },
+    ],
+  },
+  {
+    // Every built-in reducer in a count window, on a number column (with
+    // -0, ties and gaps) and on a text column; the stdev is read for the
+    // update listener after each event as well as for the event.
+    name: 'rolling-reducers',
+    schema: SCHEMA,
+    steps: [
+      node('r', 'rolling', 'root', 4, {
+        n: { from: 'cpu', using: 'count' },
+        sum: { from: 'cpu', using: 'sum' },
+        avg: { from: 'cpu', using: 'avg' },
+        min: { from: 'cpu', using: 'min' },
+        max: { from: 'cpu', using: 'max' },
+        first: { from: 'cpu', using: 'first' },
+        last: { from: 'cpu', using: 'last' },
+        median: { from: 'cpu', using: 'median' },
+        stdev: { from: 'cpu', using: 'stdev' },
+        p90: { from: 'cpu', using: 'p90' },
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+        unique: { from: 'cpu', using: 'unique' },
+        top2: { from: 'cpu', using: 'top2' },
+        samples: { from: 'cpu', using: 'samples' },
+        hostN: { from: 'host', using: 'count' },
+        hostFirst: { from: 'host', using: 'first' },
+        hostLast: { from: 'host', using: 'last' },
+        hostKeep: { from: 'host', using: 'keep' },
+        hosts: { from: 'host', using: 'unique' },
+        hostTop: { from: 'host', using: 'top1' },
+        hostSamples: { from: 'host', using: 'samples' },
+      }),
+      node('z', 'rolling', 'root', 2, {
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // True/false and array cells: arrays are flattened for unique, top
+    // and samples, and `keep` compares array cells as objects (two equal
+    // arrays from different events are different).
+    name: 'rolling-tags',
+    schema: TAG_SCHEMA,
+    steps: [
+      node('r', 'rolling', 'root', 3, {
+        okN: { from: 'ok', using: 'count' },
+        okFirst: { from: 'ok', using: 'first' },
+        okLast: { from: 'ok', using: 'last' },
+        okKeep: { from: 'ok', using: 'keep' },
+        oks: { from: 'ok', using: 'unique' },
+        tagN: { from: 'tags', using: 'count' },
+        tagLast: { from: 'tags', using: 'last' },
+        tagKeep: { from: 'tags', using: 'keep' },
+        tags: { from: 'tags', using: 'unique' },
+        tagTop: { from: 'tags', using: 'top2' },
+        tagSamples: { from: 'tags', using: 'samples' },
+      }),
+      node('one', 'rolling', 'root', 1, {
+        tagKeep: { from: 'tags', using: 'keep' },
+      }),
+      node('red', 'reduce', 'root', {
+        okKeep: { from: 'ok', using: 'keep' },
+        tags: { from: 'tags', using: 'unique' },
+      }),
+      ...each(TAG_ROWS),
+    ],
+  },
+  {
+    // How many emitted events a rolling keeps, and the options it refuses.
+    name: 'rolling-history',
+    schema: SCHEMA,
+    steps: [
+      node('off', 'rolling', 'root', '5s', { cpu: 'sum' }, { history: false }),
+      node(
+        'n',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxEvents: 3 } },
+      ),
+      node(
+        'age',
+        'rolling',
+        'root',
+        3,
+        { cpu: 'max' },
+        { history: { maxAge: '5s' }, trigger: { every: '2s' } },
+      ),
+      node(
+        'both',
+        'rolling',
+        'root',
+        { '2s': { cpu: 'min' } },
+        { history: { maxEvents: 4, maxAge: '9s' } },
+      ),
+      node(
+        'zero',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxEvents: 0 } },
+      ),
+      node(
+        'bad',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxAge: 'soon' } },
+      ),
+      node('rows0', 'rolling', 'root', 0, { cpu: 'sum' }),
+      node('dup', 'rolling', 'root', {
+        '1s': { cpu: 'sum' },
+        '2s': { cpu: 'max' },
+      }),
+      node('none', 'rolling', 'root', {}),
+      node('fs', 'rolling', 'root', {
+        '2s': { mapping: { cpu: 'avg' }, minSamples: 3 },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // Values from 2^480 (stdev) and 2^960 (sum, avg) up go to an exact
+    // big-integer lane, so a window that overflowed reads finite again
+    // once the huge values leave it.
+    name: 'rolling-overflow',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ],
+    steps: [
+      node('r', 'rolling', 'root', 2, {
+        sum: { from: 'v', using: 'sum' },
+        avg: { from: 'v', using: 'avg' },
+        stdev: { from: 'v', using: 'stdev' },
+      }),
+      node('red', 'reduce', 'root', {
+        sum: { from: 'v', using: 'sum' },
+        stdev: { from: 'v', using: 'stdev' },
+      }),
+      ...each([
+        [0, 1],
+        [1, 1.7e308],
+        [2, 1.7e308],
+        [3, -1.3e308],
+        [4, 2],
+        [5, 3e150],
+        [6, -2.5e200],
+        [7, 7],
+        [8, 1e300],
+        [9, 4.5],
+        [10, -8.98846567431158e307],
+        [11, 3.0000000000000004e145],
+        [12, 3e145],
+        [13, 0.5],
+      ]),
+    ],
+  },
+
   // ── Partitioned ──
   {
     name: 'partition-collect',
