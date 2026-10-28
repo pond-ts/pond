@@ -1204,6 +1204,37 @@ const CASES = [
     ],
   },
   {
+    // Built over history the root already holds (the root's retention is
+    // inherited), then fed more rows: collect replays sorted by time.
+    name: 'partition-over-history',
+    schema: SCHEMA,
+    options: { retention: { maxEvents: 12 } },
+    steps: [
+      { pushMany: ROWS.slice(0, 14) },
+      node('p', 'partitionBy', 'root', 'host'),
+      node('all', 'collect', 'p'),
+      node('ap', 'apply', 'p', { chain: [['diff', 'cpu']] }),
+      node('pb', 'partition', 'p', 'b'),
+      ...each(ROWS.slice(14, 18)),
+      { pushMany: ROWS.slice(18) },
+    ],
+  },
+  {
+    // Age retention on the partitions: a quiet partition ages out when the
+    // others move time on; the gathered series keeps its own count limit.
+    name: 'partition-max-age',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxAge: '6s' },
+      }),
+      node('all', 'collect', 'p', { retention: { maxEvents: 5 } }),
+      node('pc', 'partition', 'p', 'c'),
+      ...each(ROWS.slice(0, 12)),
+      { pushMany: ROWS.slice(12) },
+    ],
+  },
+  {
     name: 'partition-bad-options',
     schema: SCHEMA,
     steps: [
