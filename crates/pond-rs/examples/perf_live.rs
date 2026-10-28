@@ -5,16 +5,17 @@
 //!
 //!     cargo run --release -p pond-rs --example perf_live
 //!
-//! Cost per event: the row check (one pass over its cells), an append at the
-//! tail (a late event under `reorder`: an insert, moving the events after
-//! it), and per node one step: a filter's test, an aggregation's add to each
-//! output column of the open bucket (plus a lookup in the open buckets,
-//! O(log open)). Retention drops from the front, O(evicted). Watched outputs
-//! add one shared event (two reference counts) per output; a watched
-//! `Bucket` builds the bucket's snapshot each time. The step 3 views
-//! (`map`, `select`, `sample`, `window`, `diff` / `rate` / `pct_change`,
-//! `fill`, `cumulative`) each build at most one new event per source event
-//! (a copy of its cells), O(columns); a time window trims from the front.
+//! Cost per event: the row check (one pass over its cells), an append to
+//! each stored column (a late event under `reorder`: an insert in each,
+//! moving the cells after it), and per node one step: a filter's test, an
+//! aggregation's add to each output column of the open bucket (plus a
+//! lookup in the open buckets, O(log open)). Each view stores a copy of the
+//! cells it keeps (a text cell allocates). Retention drops from the front,
+//! O(evicted). Watched outputs add one shared event (two reference counts)
+//! per output; a watched `Bucket` builds the bucket's snapshot each time.
+//! The step 3 views (`map`, `select`, `sample`, `window`, `diff` / `rate` /
+//! `pct_change`, `fill`, `cumulative`) each build at most one new event per
+//! source event, O(columns); a time window trims from the front.
 
 use std::time::Instant;
 

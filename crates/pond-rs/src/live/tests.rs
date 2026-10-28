@@ -20,8 +20,8 @@ fn series(options: LiveOptions) -> LiveSeries {
     LiveSeries::with_options("cpu", schema(), options).unwrap()
 }
 
-fn begins<'a>(events: impl Iterator<Item = &'a LiveEvent>) -> Vec<i64> {
-    events.map(LiveEvent::begin).collect()
+fn begins(events: impl Iterator<Item = LiveEvent>) -> Vec<i64> {
+    events.map(|e| e.begin()).collect()
 }
 
 #[test]
@@ -41,23 +41,23 @@ fn lookups_on_the_root_and_a_view() {
         live.push(t, row("a", cpu)).unwrap();
     }
     assert_eq!(live.len(), 4);
-    assert_eq!(live.at(-1).map(LiveEvent::begin), Some(4000));
+    assert_eq!(live.at(-1).map(|e| e.begin()), Some(4000));
     assert_eq!(live.at(4), None);
     assert_eq!(live.at(-5), None);
     assert_eq!(live.bisect(1000), 1);
     assert_eq!(live.bisect(1001), 3);
     assert!(live.includes_key(1000));
     assert!(!live.includes_key(2000));
-    assert_eq!(live.at_or_before(2000).map(LiveEvent::begin), Some(1000));
+    assert_eq!(live.at_or_before(2000).map(|e| e.begin()), Some(1000));
     assert_eq!(
         live.at_or_before(1000).unwrap().number("cpu").unwrap(),
         Some(5.0)
     );
     assert_eq!(live.at_or_before(-1), None);
-    assert_eq!(live.at_or_after(2000).map(LiveEvent::begin), Some(4000));
+    assert_eq!(live.at_or_after(2000).map(|e| e.begin()), Some(4000));
     assert_eq!(live.at_or_after(4001), None);
     let busy = |e: &LiveEvent| e.number("cpu").ok().flatten() > Some(4.0);
-    assert_eq!(live.find(busy).map(LiveEvent::begin), Some(1000));
+    assert_eq!(live.find(busy).map(|e| e.begin()), Some(1000));
     assert!(live.some(busy));
     assert!(!live.every(busy));
     assert_eq!(live.time_range(), 4000);
@@ -68,7 +68,7 @@ fn lookups_on_the_root_and_a_view() {
     assert_eq!(begins(view.events()), [1000, 1000]);
     assert_eq!(view.at(-1).unwrap().number("cpu").unwrap(), Some(6.0));
     assert!(view.includes_key(1000));
-    assert_eq!(view.at_or_after(0).map(LiveEvent::begin), Some(1000));
+    assert_eq!(view.at_or_after(0).map(|e| e.begin()), Some(1000));
     assert!(view.every(busy));
     assert_eq!(view.to_time_series().unwrap().len(), 2);
 
