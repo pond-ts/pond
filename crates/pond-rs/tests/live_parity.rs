@@ -24,6 +24,7 @@ const FIXTURE: &str = "packages/core/test/fixtures/live-parity.json";
 #[cfg(feature = "live")]
 const SUPPORTED_OPS: &[&str] = &[
     "filter",
+    "aggregateWith",
     "aggregate",
     "map",
     "select",
@@ -61,6 +62,7 @@ const REFUSED: &[(&str, &str, &str)] = &[
 /// has no plan for fails here instead of being skipped quietly.
 const KNOWN_OPS: &[&str] = &[
     "filter",
+    "aggregateWith",
     "map",
     "select",
     "sample",
@@ -770,11 +772,15 @@ mod runner {
         if let Some(every) = seq.get("every") {
             Sequence::every(every.as_str().unwrap()).unwrap()
         } else {
-            Sequence::calendar(
+            let calendar = Sequence::calendar(
                 seq["calendar"].as_str().unwrap(),
                 seq["timeZone"].as_str().unwrap(),
             )
-            .unwrap()
+            .unwrap();
+            match seq.get("weekStartsOn").and_then(Value::as_i64) {
+                Some(day) => calendar.with_week_start(day as i8).unwrap(),
+                None => calendar,
+            }
         }
     }
 
@@ -1135,6 +1141,15 @@ mod runner {
                             from,
                             &sequence_of(&spec.args[0]),
                             &mapping_of(&spec.args[1]),
+                        )
+                        .map(Handle::Agg)
+                        .map_err(|e| e.to_string()),
+                    "aggregateWith" => live
+                        .aggregate_with(
+                            from,
+                            &sequence_of(&spec.args[0]),
+                            &mapping_of(&spec.args[1]),
+                            spec.args[2]["grace"].as_str(),
                         )
                         .map(Handle::Agg)
                         .map_err(|e| e.to_string()),

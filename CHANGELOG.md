@@ -110,6 +110,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   refused (pond-ts emits time keys under the interval schema); a reduce
   built over existing events emits for them during the build, where
   pond-ts waits for a microtask.
+- **Live `aggregate` takes calendar sequences.**
+  `live.aggregate(Sequence.calendar('day', { timeZone }), mapping)` buckets
+  events by day, week, month, quarter or year in that time zone, so a day
+  across a clock change is 23 or 25 hours. It used to throw ("calendar
+  sequences do not have a fixed millisecond step size"). Clock triggers
+  still take fixed sequences only.
+- **pond-rs: calendar buckets and `aggregate_with` for live aggregation**
+  (R3 step 5). `LiveSeries::aggregate` takes `Sequence::calendar`, as
+  pond-ts now does; while one exists the series refuses times outside
+  years -9997 to 9997 (UTC). `aggregate_with` gives an aggregation its own
+  grace, as the pond-ts constructor's `{ grace }` option. Results match
+  pond-ts on 55 of the 60 live replay cases.
 
 ### Changed
 
