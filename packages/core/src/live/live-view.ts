@@ -736,7 +736,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * views disagreed. Stateful views (`diff`, `rate`, `pctChange`,
    * `fill`, `cumulative`, `sample`) still compute in arrival order: a
    * late event is compared with the previous arrival, not the previous
-   * time. Recomputing later rows is the rest of [PND-LATE].
+   * time. Recomputing later rows is the rest of [PND-LATE]. A `window`
+   * view trims silently, so a late event older than its cutoff is trimmed
+   * at once but still dispatched to views built on the window, which keep
+   * it.
    */
   #appendChecked(event: EventForSchema<S>): void {
     const events = this.#events;

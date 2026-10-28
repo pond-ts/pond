@@ -107,7 +107,12 @@ on 1M pushes: 115 s). Every per-event buffer dropped its oldest events with
 10k events), where `shift()` moves the array's start in place. Same cost in
 the row backing of `drop` / `reorder` roots with retention and in rolling
 history. Fix: `removeFront` / `dropFront` (`src/live/array-front.ts`) shift
-when under a quarter of the buffer goes, else splice. 100k pushes,
+when under a quarter of the buffer goes and the buffer is at most 16k items,
+else splice (one item: shift). The first version shifted at any size; the
+Layer 2 review on #840 found that past ~16k items (V8's large-object space)
+each `shift()` copies the whole array, so a 20k burst from a 1M buffer took
+33 s against 14 ms for one splice. Large buffers still copy on every
+eviction either way: [PND-EVICTDEQUE]. 100k pushes,
 `maxEvents` 10k: reorder root 2.36 s -> 31 ms, root + filter view 2.26 s ->
 164 ms, root + 3 diff views 5.66 s -> 247 ms; strict root alone and no
 retention unchanged (`scripts/perf-live-evict.mjs`). Not changed: the

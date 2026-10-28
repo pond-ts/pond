@@ -112,9 +112,11 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
-- **Live views and `drop` / `reorder` series with retention no longer slow
-  down with buffer size** ([PND-EVICTSPLICE]). Dropping the oldest event
-  copied the whole buffer on every push (~20 µs at 10k events). With
+- **Live views and `drop` / `reorder` series with retention evict much
+  faster on buffers up to ~16k events** ([PND-EVICTSPLICE]). Dropping the
+  oldest event copied the whole buffer on every push (~20 µs at 10k
+  events); it now moves the array's start in place. Larger buffers still
+  copy on eviction ([PND-EVICTDEQUE]). With
   `maxEvents: 10_000`, 100k pushes into a `reorder` series went from 2.4 s
   to 31 ms, and into a series with three `diff`-style views from 5.7 s to
   0.25 s.

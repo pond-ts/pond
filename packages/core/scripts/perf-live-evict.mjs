@@ -83,6 +83,46 @@ for (const maxEvents of [1_000, 10_000]) {
     ),
   );
 }
+// Large buffers (past V8's in-place shift limit): one eviction per push,
+// and a burst of 20k evictions from a 100k buffer in one pushMany.
+results.push(
+  benchmark(
+    'reorder root, maxEvents 100k',
+    capped('reorder', 100_000),
+    110_000,
+    3,
+  ),
+);
+results.push(
+  benchmark(
+    'strict root + filter view, maxEvents 100k',
+    () => {
+      const live = capped('strict', 100_000)();
+      live.filter(() => true);
+      return live;
+    },
+    110_000,
+    3,
+  ),
+);
+{
+  const burst = () => {
+    const live = capped('reorder', 100_000)();
+    live.filter(() => true);
+    const rows = (from) =>
+      Array.from({ length: 20_000 }, (_, i) => [(from + i) * 100, i % 97]);
+    const start = performance.now();
+    for (let b = 0; b < 8; b += 1) live.pushMany(rows(b * 20_000));
+    return performance.now() - start;
+  };
+  burst();
+  const ms = median([burst(), burst(), burst()]);
+  results.push({
+    name: 'reorder root + filter view, maxEvents 100k, pushMany 20k x 8',
+    pushes: 160_000,
+    ms: Number(ms.toFixed(1)),
+  });
+}
 // Sparse: no eviction at all (the shift path must not cost the no-op case).
 results.push(
   benchmark(

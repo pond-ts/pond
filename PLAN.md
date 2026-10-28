@@ -886,6 +886,12 @@ Robustness debt plus the queued composition workstreams. Plan:
   (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
   longer throw on a late event (2026-10-28, they insert it in order); the
   recompute of later rows is what remains.
+- **[PND-EVICTDEQUE]** — Live per-event buffers (`LiveView`, the
+  `drop` / `reorder` row backing, rolling history) past ~16k events still
+  copy the whole array on each eviction (~150 µs at 100k events), because
+  V8 cannot move a large array's start in place. Needs a start index with
+  occasional compaction behind every reader. Found 2026-10-28 reviewing
+  [PND-EVICTSPLICE].
 - **[PND-LJOIN]** — Live merge / join across sources.
 - **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
   prerequisite-or-sibling of [PND-LJOIN].

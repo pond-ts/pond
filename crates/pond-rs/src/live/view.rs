@@ -31,7 +31,9 @@ pub(crate) enum Window {
 /// or `clear`), the view removes every event that starts at or before the
 /// last one evicted, and says so with its own `Evict` output. A `window`
 /// view also trims itself after each event, silently (as pond-ts: no
-/// `Evict` output, and views built on it keep what it trimmed).
+/// `Evict` output, and views built on it keep what it trimmed). So a late
+/// event older than a window's cutoff is trimmed at once but still handed
+/// to views built on the window, which keep it.
 ///
 /// A late event (one a [`Reorder`](super::OrderingMode::Reorder) source
 /// accepts before its newest) goes into the view at its key's position.

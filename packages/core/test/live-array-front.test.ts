@@ -10,6 +10,10 @@ describe('removeFront / dropFront', () => {
     [10, 9],
     [10, 10],
     [100, 5],
+    // Past the in-place shift limit: one item shifts, more splice.
+    [40_000, 1],
+    [40_000, 3],
+    [40_000, 9_000],
   ] as const) {
     it(`removes ${n} of ${size} (both paths agree with splice)`, () => {
       const items = Array.from({ length: size }, (_, i) => i);
