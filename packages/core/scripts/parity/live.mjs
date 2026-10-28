@@ -1150,6 +1150,33 @@ const CASES = [
     ],
   },
   {
+    // [PND-PARTBATCH] A multi-row pushMany into a strict source: each
+    // partition stores its slice, runs retention, fires one 'batch' and
+    // settles (one reduce output) once per pushMany, while 'event' (and so
+    // collect and the clock-triggered rolling) stays in source order.
+    name: 'partition-pushmany',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxEvents: 2 },
+      }),
+      node('all', 'collect', 'p'),
+      { pushMany: ROWS.slice(0, 5) },
+      node('pa', 'partition', 'p', 'a'),
+      node('pb', 'partition', 'p', 'b'),
+      node('ra', 'reduce', 'pa', { cpu: 'sum' }),
+      node(
+        'fused',
+        'rolling',
+        'p',
+        { '2s': { cpu: 'max' }, '5s': { mem: 'avg' } },
+        { trigger: { every: '5s' } },
+      ),
+      { pushMany: ROWS.slice(5, 16) },
+      { pushMany: ROWS.slice(16) },
+    ],
+  },
+  {
     name: 'partition-groups',
     schema: SCHEMA,
     steps: [
@@ -1201,6 +1228,86 @@ const CASES = [
       node('f', 'fill', 'p', { mem: 0 }),
       node('fall', 'collect', 'f'),
       ...LATE_STEPS,
+    ],
+  },
+  {
+    // Built over history the root already holds (the root's retention is
+    // inherited), then fed more rows: collect replays sorted by time.
+    name: 'partition-over-history',
+    schema: SCHEMA,
+    options: { retention: { maxEvents: 6 } },
+    steps: [
+      { pushMany: ROWS.slice(0, 14) },
+      node('p', 'partitionBy', 'root', 'host'),
+      node('all', 'collect', 'p'),
+      node('ap', 'apply', 'p', { chain: [['diff', 'cpu']] }),
+      node('pb', 'partition', 'p', 'b'),
+      ...each(ROWS.slice(14, 18)),
+      { pushMany: ROWS.slice(18) },
+    ],
+  },
+  {
+    // Age retention on the partitions: a quiet partition ages out when the
+    // others move time on; the gathered series keeps its own count limit.
+    name: 'partition-max-age',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxAge: '6s' },
+      }),
+      node('all', 'collect', 'p', { retention: { maxEvents: 5 } }),
+      node('pc', 'partition', 'p', 'c'),
+      ...each(ROWS.slice(0, 12)),
+      { pushMany: ROWS.slice(12) },
+    ],
+  },
+  {
+    // The quiet-partition sweep runs when time has moved maxAge / 8 (here
+    // exactly 1s) since the last one: c's only row ages out on the sweep
+    // at 8001, a full step after the one at 7001.
+    name: 'partition-max-age-sweep',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxAge: '8s' },
+      }),
+      node('pa', 'partition', 'p', 'a'),
+      ...each([
+        [0, 'c', 1, 1],
+        [0, 'a', 2, 2],
+        [7001, 'a', 3, 3],
+        [8001, 'a', 4, 4],
+      ]),
+    ],
+  },
+  {
+    // Synchronised rolling built over history: declared groups set the
+    // emitting order (c, a, b, not the order they first arrive), the
+    // history replays in time order across partitions, and a clock rolling
+    // on a per-partition chain (fill, then rolling) emits the same way.
+    name: 'partition-rolling-history',
+    schema: SCHEMA,
+    steps: [
+      { pushMany: ROWS.slice(0, 12).filter((r) => r[1] !== null) },
+      node('p', 'partitionBy', 'root', 'host', { groups: ['c', 'a', 'b'] }),
+      node(
+        'sync',
+        'rolling',
+        'p',
+        '5s',
+        { cpu: 'sum' },
+        { trigger: { every: '5s' } },
+      ),
+      node('fh', 'fill', 'p', 'hold'),
+      node(
+        'chain',
+        'rolling',
+        'fh',
+        3,
+        { cpu: 'avg' },
+        { trigger: { every: '5s' }, minSamples: 2 },
+      ),
+      ...each(ROWS.slice(12).filter((r) => r[1] !== null)),
     ],
   },
   {

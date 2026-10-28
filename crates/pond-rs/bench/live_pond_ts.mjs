@@ -3,7 +3,11 @@
 //     npm run build --workspace=pond-ts
 //     node crates/pond-rs/bench/live_pond_ts.mjs
 //     ONLY=rolling node crates/pond-rs/bench/live_pond_ts.mjs
-import { LiveSeries, Sequence } from '../../../packages/core/dist/index.js';
+import {
+  LiveSeries,
+  Sequence,
+  Trigger,
+} from '../../../packages/core/dist/index.js';
 
 const N = 1_000_000;
 let seed = 20261027;
@@ -27,6 +31,12 @@ for (let i = 0; i < N; i++) {
   const shift = next() < 0.05 ? Math.floor(next() * 1000) : 0;
   late.push([t - shift, host, cpu, mem]);
 }
+// The same rows over 1000 hosts (the gRPC experiment's shape).
+const rows1k = rows.map(([t, , cpu, mem], i) => [t, `h${i % 1000}`, cpu, mem]);
+const batches = (live, rs) => {
+  for (let i = 0; i < rs.length; i += 1000)
+    live.pushMany(rs.slice(i, i + 1000));
+};
 const schema = [
   { name: 'time', kind: 'time' },
   { name: 'host', kind: 'string', required: false },
@@ -250,6 +260,57 @@ const cases = [
         mapping,
       );
       oneByOne(live, rows);
+    },
+  ],
+  [
+    'partition 4 hosts + collect, max_events 10k',
+    () => {
+      const live = capped();
+      live.partitionBy('host').collect();
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'partition 4 hosts: diff + fill each, collect',
+    () => {
+      const live = capped();
+      live.partitionBy('host').diff('cpu').fill('hold').collect();
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'partition 4 hosts: fused 1m + 5m every 1m',
+    () => {
+      const live = capped();
+      live.partitionBy('host').rolling(
+        {
+          '1m': { cpu_1m: { from: 'cpu', using: 'avg' } },
+          '5m': { mem_5m: { from: 'mem', using: 'max' } },
+        },
+        { trigger: Trigger.every('1m') },
+      );
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'partition 1000 hosts, batches of 1000: rolling',
+    () => {
+      const live = capped();
+      live
+        .partitionBy('host', { retention: { maxEvents: 100 } })
+        .rolling('30s', { cpu: 'avg' })
+        .collect();
+      batches(live, rows1k);
+    },
+  ],
+  [
+    'partition 1000 hosts, batches of 1000: sync',
+    () => {
+      const live = capped();
+      live
+        .partitionBy('host', { retention: { maxEvents: 100 } })
+        .rolling('30s', { cpu: 'avg' }, { trigger: Trigger.every('10s') });
+      batches(live, rows1k);
     },
   ],
 ];

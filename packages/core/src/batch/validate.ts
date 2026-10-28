@@ -292,6 +292,14 @@ export function validateAndNormalize<S extends SeriesSchema>(
  */
 export type ColumnarIntakeOptions = {
   readonly nonFiniteAsMissing?: boolean;
+  /**
+   * @internal Rows were already validated by this intake (the live
+   * chunked storage re-packing rows it gathered from a validated
+   * store). Skips the per-cell kind / required checks and the array
+   * re-freeze, and reads a `time` key given as epoch ms directly. Order
+   * is still checked.
+   */
+  readonly trusted?: boolean;
 };
 
 /**
@@ -336,6 +344,7 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
 ): { keys: KeyColumn; columns: Map<string, Column> } {
   const { schema, rows } = input;
   const nonFiniteAsMissing = options.nonFiniteAsMissing === true;
+  const trusted = options.trusted === true;
   if (!schema.length) {
     throw new ValidationError('schema must have at least one column');
   }
@@ -419,23 +428,27 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
     // the existing kind-specific input validation rather than
     // duplicating it here. The big-ticket savings (Event + data
     // dict allocations) come from the value-column path below.
-    const key = normalizeKey(keyKind, row[0], i, 0);
-    beginBuf[i] = key.begin();
-    if (endBuf !== beginBuf) endBuf[i] = key.end();
-    if (labelArr !== undefined) {
-      const label = (key as Interval).value;
-      if (labelKind === undefined) {
-        labelKind = typeof label === 'string' ? 'string' : 'number';
-      } else if (typeof label !== labelKind) {
-        // `RangeError` (not `ValidationError`) for parity with the
-        // pre-2c throw site at `buildSeriesStoreFromEvents`. Some
-        // callers may catch by class name; matching the pre-existing
-        // error class avoids a downstream-caller break.
-        throw new RangeError(
-          `row ${i} has interval label of type ${typeof label} but earlier rows had ${labelKind} labels — interval-keyed series must use one label type throughout`,
-        );
+    if (trusted && keyKind === 'time' && typeof row[0] === 'number') {
+      beginBuf[i] = row[0];
+    } else {
+      const key = normalizeKey(keyKind, row[0], i, 0);
+      beginBuf[i] = key.begin();
+      if (endBuf !== beginBuf) endBuf[i] = key.end();
+      if (labelArr !== undefined) {
+        const label = (key as Interval).value;
+        if (labelKind === undefined) {
+          labelKind = typeof label === 'string' ? 'string' : 'number';
+        } else if (typeof label !== labelKind) {
+          // `RangeError` (not `ValidationError`) for parity with the
+          // pre-2c throw site at `buildSeriesStoreFromEvents`. Some
+          // callers may catch by class name; matching the pre-existing
+          // error class avoids a downstream-caller break.
+          throw new RangeError(
+            `row ${i} has interval label of type ${typeof label} but earlier rows had ${labelKind} labels — interval-keyed series must use one label type throughout`,
+          );
+        }
+        labelArr[i] = label;
       }
-      labelArr[i] = label;
     }
 
     // Value columns — direct per-kind buffer writes with inline
@@ -456,13 +469,14 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       ) {
         value = undefined;
       }
-      const required = def.required !== false;
-      if (value === undefined && required) {
-        throw new ValidationError(
-          `row ${i} col ${c + 1} (${def.name}) is required`,
-        );
+      if (!trusted) {
+        if (value === undefined && def.required !== false) {
+          throw new ValidationError(
+            `row ${i} col ${c + 1} (${def.name}) is required`,
+          );
+        }
+        assertCellKind(def.kind, value, i, c + 1);
       }
-      assertCellKind(def.kind, value, i, c + 1);
       switch (colKinds[c]) {
         case 'number': {
           // A missing number is `NaN` in the buffer — number columns
@@ -505,7 +519,9 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
           // post-validation freeze step. Element-wise contract was
           // checked by `assertCellKind` above.
           buf[i] = Array.isArray(value)
-            ? (Object.freeze(value.slice()) as ArrayValue)
+            ? trusted
+              ? (value as ArrayValue)
+              : (Object.freeze(value.slice()) as ArrayValue)
             : undefined;
           break;
         }

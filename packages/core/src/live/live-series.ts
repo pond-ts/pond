@@ -204,7 +204,7 @@ export type LiveSeriesOptions<S extends SeriesSchema> = {
    * backing — used by `LivePartitionedSeries` for the per-event routing
    * path (a non-chunked source) and the `collect` / `apply` unified
    * buffers. Partition sub-series of a chunked source instead route
-   * column-native and adopt the chunked backing (see `_stageRows`). Not
+   * column-native and adopt the chunked backing (see `_stageRowsOpen`). Not
    * part of the public API.
    */
   __backing?: 'array' | 'auto';
@@ -597,23 +597,32 @@ export class LiveSeries<S extends SeriesSchema> {
    * exception elsewhere.
    */
   #guarded(run: () => void): void {
-    let failure: { error: unknown } | undefined;
     this.#dispatchDepth += 1;
+    let failure: { error: unknown } | undefined;
     try {
       run();
     } catch (error) {
       failure = { error };
-    } finally {
-      // [PND-REDUCETICK] Settle once per push, after every phase, from the
-      // outermost guard only and while still guarded, so a push made by a
-      // settle listener is queued like any other re-entrant push.
-      if (this.#dispatchDepth === 1 && this.#onSettle.size > 0) {
-        const errors: unknown[] = [];
-        this.#dispatch(this.#onSettle, undefined, errors);
-        if (errors.length > 0) failure ??= { error: errors[0] };
-      }
-      this.#dispatchDepth -= 1;
     }
+    this.#closeGuard(failure);
+  }
+
+  /**
+   * Close a guard opened by `#guarded` or `_stageRowsOpen`: settle (from
+   * the outermost guard only, while still guarded), drop the depth, then
+   * drain queued pushes from depth 0. Throws `failure` (or the first
+   * settle / drained-push error) at the very end.
+   */
+  #closeGuard(failure: { error: unknown } | undefined): void {
+    // [PND-REDUCETICK] Settle once per push, after every phase, from the
+    // outermost guard only and while still guarded, so a push made by a
+    // settle listener is queued like any other re-entrant push.
+    if (this.#dispatchDepth === 1 && this.#onSettle.size > 0) {
+      const errors: unknown[] = [];
+      this.#dispatch(this.#onSettle, undefined, errors);
+      if (errors.length > 0) failure ??= { error: errors[0] };
+    }
+    this.#dispatchDepth -= 1;
     if (this.#dispatchDepth === 0 && !this.#draining) {
       this.#draining = true;
       try {
@@ -683,31 +692,43 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   /**
-   * @internal — the column-native partition-routing path. Stage the
-   * rows of `source` at `indices` (a partition's slice of a source
-   * chunk) into the chunked backing's coalescing tier: gathered tuples
-   * accumulate (no per-batch `ColumnarStore`) and flush as ONE packed
-   * chunk at the storage threshold. This is the gRPC-V7-earned fix for
-   * thin scatter — one chunk per (source-batch × partition) was 23.5×
-   * the object count + a throughput collapse. `'event'` / `'batch'`
-   * fan-out fires for the staged slice (transient, young-gen — the
-   * downstream-output boundary is §A, separate from retention), then
-   * retention. Trust contract: the gathered rows are `>=` the current
-   * last key (strict source + order-preserving scatter).
+   * @internal — the column-native partition-routing path, step 1 of 3.
+   * `LivePartitionedSeries.#routeChunk` calls it ONCE per partition per
+   * source chunk with that partition's slice of the chunk (`indices`, in
+   * source order). It order-checks the slice, stages it into the chunked
+   * backing's coalescing tier (gathered tuples flush as ONE packed chunk
+   * at the storage threshold — the gRPC-V7 fix for thin scatter), and
+   * opens this series' re-entrancy guard. Returns the slice's transient
+   * events when an `'event'` / `'batch'` listener will consume them,
+   * else `null` (no `Event` created — the heap/GC win).
+   *
+   * The router then fires `'event'` for every routed row in SOURCE order
+   * across partitions (`_emitStagedEvent`), and finally closes each
+   * partition (`_stageRowsClose`: retention → `'batch'` → `'evict'` →
+   * settle). Splitting it this way keeps the cross-partition source-order
+   * `'event'` fan-out a strict `collect()` / clock-triggered rolling
+   * needs, while storage, retention, `'batch'` and settle run once per
+   * partition per chunk instead of once per row ([PND-PARTBATCH]).
+   *
+   * The caller MUST call `_stageRowsClose` for every successful open,
+   * even if an earlier step threw — else the guard stays open and pushes
+   * queue forever. Trust contract: the rows are `>=` each other in the
+   * order given (strict source + order-preserving scatter).
    */
-  _stageRows(source: ColumnarStore<S>, indices: ArrayLike<number>): void {
+  _stageRowsOpen(
+    source: ColumnarStore<S>,
+    indices: ArrayLike<number>,
+  ): EventForSchema<S>[] | null {
     const chunked = this.#chunked;
     if (chunked === null) {
       throw new Error(
-        'LiveSeries._stageRows: series is not chunked-backed (internal misuse)',
+        'LiveSeries._stageRowsOpen: series is not chunked-backed (internal misuse)',
       );
     }
     const k = indices.length;
-    if (k === 0) return;
-
     // Cross-batch boundary: the slice's first key must be `>=` the
     // buffer's current last (which includes any pending-tier rows).
-    if (chunked.length > 0) {
+    if (k > 0 && chunked.length > 0) {
       const firstBegin = source.beginAt(indices[0]!);
       const lastBegin = chunked.beginAt(chunked.length - 1)!;
       if (firstBegin < lastBegin) {
@@ -719,25 +740,40 @@ export class LiveSeries<S extends SeriesSchema> {
 
     chunked.stageRows(source, indices);
     this.#statsIngested += k;
-
-    // Transient fan-out for the staged slice — only if a row listener
-    // will consume it (else zero `Event`s, the heap/GC win).
     const added =
-      this.#onEvent.size > 0 || this.#onBatch.size > 0
+      k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
         ? materializeEventsFromStoreAt(source, indices, this.schema)
         : null;
-    this.#guarded(() => {
-      const errors: unknown[] = [];
-      if (added) {
-        for (const ev of added) this.#dispatch(this.#onEvent, ev, errors);
-      }
+    // Open the guard last, so nothing above can throw with it open.
+    this.#dispatchDepth += 1;
+    return added;
+  }
 
+  /**
+   * @internal — routing step 2: fire `'event'` for one staged row. Must
+   * sit between `_stageRowsOpen` and `_stageRowsClose`. Listener errors
+   * land in `errors` (the same array passed to `_stageRowsClose`).
+   */
+  _emitStagedEvent(event: EventForSchema<S>, errors: unknown[]): void {
+    this.#dispatch(this.#onEvent, event, errors);
+  }
+
+  /**
+   * @internal — routing step 3: retention → `'batch'` (the whole staged
+   * slice) → `'evict'`, then close the guard opened by `_stageRowsOpen`
+   * (settle once, drain queued pushes). Throws the first listener error.
+   */
+  _stageRowsClose(added: EventForSchema<S>[] | null, errors: unknown[]): void {
+    let failure: { error: unknown } | undefined;
+    try {
       const evicted = this.#applyRetention();
-
       if (added) this.#dispatch(this.#onBatch, added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
-      rethrowFirst(errors);
-    });
+      if (errors.length > 0) failure = { error: errors[0] };
+    } catch (error) {
+      failure = { error };
+    }
+    this.#closeGuard(failure);
   }
 
   /**
@@ -745,7 +781,8 @@ export class LiveSeries<S extends SeriesSchema> {
    * `chunk → event → retention → batch → evict` fan-out. The source's
    * `pushMany` path (rows → validated store → here). The cross-batch
    * strict-order boundary check lives here. (The partition-routing path
-   * uses `_stageRows` instead, which coalesces and has its own fan-out.)
+   * uses `_stageRowsOpen`/`_stageRowsClose` instead, which coalesce and
+   * have their own fan-out.)
    */
   #commitChunk(store: ColumnarStore<S>): void {
     const chunked = this.#chunked!;
@@ -945,7 +982,7 @@ export class LiveSeries<S extends SeriesSchema> {
   /**
    * @internal — whether this series uses the chunked columnar backing
    * (top-level `strict` time-keyed). Lets `LivePartitionedSeries` choose
-   * column-native chunk routing (`_onChunk` + `_stageRows`) over the
+   * column-native chunk routing (`_onChunk` + `_stageRowsOpen`) over the
    * per-event `Event[]` path. Not part of the public surface.
    */
   get _isChunked(): boolean {

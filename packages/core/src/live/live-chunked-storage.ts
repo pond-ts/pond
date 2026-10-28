@@ -260,18 +260,16 @@ export class ChunkedColumnarLiveStorage<
 
   /**
    * Compact the pending tier into one packed chunk. Rows are trusted
-   * (gathered from a validated source store), but reusing
-   * `validateAndNormalizeColumnar` is fine — it runs once per
-   * `#flushThreshold` rows (amortized O(N)), and avoids re-implementing
-   * per-kind column + validity construction.
+   * (gathered from a validated source store), so the intake runs in
+   * `trusted` mode: no per-cell checks, no `Time` per key, no array
+   * re-freeze — only the column building is shared.
    */
   #flushPending(): void {
     if (this.#pending.length === 0) return;
-    const { keys, columns } = validateAndNormalizeColumnar<S>({
-      name: 'live-chunk',
-      schema: this.#schema,
-      rows: this.#pending,
-    });
+    const { keys, columns } = validateAndNormalizeColumnar<S>(
+      { name: 'live-chunk', schema: this.#schema, rows: this.#pending },
+      { trusted: true },
+    );
     this.#chunks.push(
       ColumnarStore.fromTrustedStore(this.#schema, keys, columns),
     );

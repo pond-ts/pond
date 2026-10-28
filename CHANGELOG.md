@@ -122,6 +122,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   years -9997 to 9997 (UTC). `aggregate_with` gives an aggregation its own
   grace, as the pond-ts constructor's `{ grace }` option. Results match
   pond-ts on 55 of the 60 live replay cases.
+- **pond-rs: live partitions** (R3 step 6). `partition_by` splits the root's
+  events by a column into one series per value, each with its own ordering
+  and retention (`PartitionOptions`, inherited from the root by default, and
+  `groups` to declare the values up front). `per_partition` describes a
+  chain of nodes to build on every partition, including ones that appear
+  later; `collect` and `apply` gather what the partitions (or their chains)
+  emit into one series; `partition_rolling`, `partition_rolling_rows` and
+  `partition_rolling_windows` keep a rolling window per partition and emit
+  one row per partition, all together, each time a clock bucket ends.
+  `LiveSeries::node` turns a node id (say, a chain's output) into a typed
+  handle. Results match pond-ts on all 65 live replay cases, including the
+  batch routing order from #838. Where pond-rs differs: a push that a
+  partition would refuse (a value outside the declared groups, or an event
+  a partition's ordering refuses, as after a `clear`, which empties the
+  root but not the partitions) is refused whole before anything is stored,
+  where pond-ts stores it in the root and then throws; partitions are
+  built on the root only; removing a partitioned node also removes the
+  `per_partition` chains described on it; and the partition column of
+  synchronised rolling output is text (the partition value as pond-ts
+  writes it, `" undefined"` for a row without one), which pond-ts declares
+  with the source column's type but also fills with text.
 
 ### Changed
 
@@ -191,6 +212,30 @@ include new features and type-level changes; patch bumps are strictly additive.
   base's `roles` has neither role, so `role="wash"` falls back to the register.
 
 ### Changed
+
+- **Partitioned live series take each `pushMany` in one pass per partition**
+  ([PND-PARTBATCH]). With a strict time-keyed source (the default),
+  `partitionBy` used to hand a `pushMany` batch to its partitions one row at a
+  time, and each row paid its own storage write, retention pass, one-row
+  `'batch'` and end-of-push settle. Now each partition stores its rows, runs
+  retention, fires one `'batch'` with all its rows and settles once per
+  `pushMany`, like a plain `pushMany` into that partition. `'event'` still
+  fires row by row in the source's order across partitions, so `collect()`,
+  `apply()` and partitioned rolling see exactly the same events. What you can
+  notice: a partition's `'batch'` / `'evict'` listeners get one call per
+  `pushMany` instead of one per row, a `reduce` built on a partition emits once
+  per `pushMany`, and a partition's rows are all stored before its first
+  `'event'`. Partitions finish (their `'batch'`, `'evict'` and settle) in the
+  order of their last row in the batch, so a `reduce` under `apply()` still
+  reaches the combined series in time order. A push made from inside a
+  partition listener now runs after the whole batch has been delivered, not
+  after the current row. A listener that throws on one partition no longer
+  stops the rest of the batch reaching the other partitions; with typed
+  `groups` an undeclared value drops only its own row; and if one partition
+  rejects its rows as out of order, only that partition skips them (all three
+  still throw after the batch is delivered). Single-row `push` and non-strict sources are unchanged. Speed,
+  1000 hosts with a fused rolling attached: 19-29% faster
+  (`scripts/perf-partition-rolling.mjs`).
 
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
   to emit from a microtask, so several `push()` calls with no `await` between

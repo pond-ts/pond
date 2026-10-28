@@ -47,7 +47,7 @@ impl LiveSeries {
         window_ms: Option<i64>,
     ) -> Node<LiveView> {
         let view = LiveView::new(
-            self.name.clone(),
+            self.name_of(source),
             schema,
             step,
             self.held(source),
