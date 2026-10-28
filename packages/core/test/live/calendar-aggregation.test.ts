@@ -3,7 +3,7 @@
  * time zone, so their length varies (DST days, months).
  */
 import { describe, expect, it } from 'vitest';
-import { LiveSeries, Sequence } from '../../src/index.js';
+import { LiveAggregation, LiveSeries, Sequence } from '../../src/index.js';
 
 const HOUR = 3_600_000;
 const schema = [
@@ -49,6 +49,28 @@ describe('LiveAggregation with calendar sequences', () => {
     live.push([5, 100]); // back into day 0, still open
     live.push([4 * day, 0]); // closes days 0 and 1
     expect(days.closed().events.map((e) => e.get('v'))).toEqual([101, 10]);
+  });
+
+  it('its own grace keeps a calendar day open for late events', () => {
+    const live = new LiveSeries({
+      name: 'x',
+      schema,
+      ordering: 'reorder',
+      graceWindow: '1d',
+    });
+    const days = new LiveAggregation(
+      live,
+      Sequence.calendar('day', { timeZone: 'UTC' }),
+      { v: 'sum' },
+      { grace: '2h' },
+    );
+    const day = 24 * HOUR;
+    live.push([12 * HOUR, 1]);
+    live.push([day + HOUR, 10]); // within 2h of day 0's end: still open
+    expect(days.closed().length).toBe(0);
+    live.push([23 * HOUR, 100]); // late, lands in day 0
+    live.push([day + 3 * HOUR, 0]); // past day 0's end + 2h: closes it
+    expect(days.closed().events.map((e) => e.get('v'))).toEqual([101]);
   });
 
   it('months in London', () => {

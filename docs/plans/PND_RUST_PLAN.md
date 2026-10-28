@@ -3805,9 +3805,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        - Fixture: cases `aggregate-own-grace` and
          `aggregate-calendar-zones` (New York days across the 2026 DST
          change, Sunday weeks, London months, a filter view, a late row
-         into the day before the cached one); `aggregate-calendar` now
-         records buckets instead of an error. 54 of 59 cases run, all
-         equal. A cache that checked only `ts < end` survived until the
+         into the day before the cached one), `aggregate-calendar-fallback`
+         (New York's 25-hour fall-back day, Santiago's skipped midnight);
+         `aggregate-calendar` now records buckets instead of an error. 55
+         of 60 cases run, all equal. A cache that checked only `ts < end` survived until the
          late row went into an earlier bucket.
        - Timing (1M events, root keeping 10k, each case alone, ms): daily
          New York buckets 198 vs pond-ts 2,469; the fixed path unchanged

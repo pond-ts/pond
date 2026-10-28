@@ -121,7 +121,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   pond-ts now does; while one exists the series refuses times outside
   years -9997 to 9997 (UTC). `aggregate_with` gives an aggregation its own
   grace, as the pond-ts constructor's `{ grace }` option. Results match
-  pond-ts on 54 of the 59 live replay cases.
+  pond-ts on 55 of the 60 live replay cases.
 
 ### Changed
 

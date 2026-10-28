@@ -695,7 +695,7 @@ impl LiveSeries {
         let (lo, hi) = CALENDAR_RANGE_MS;
         if self.calendar_aggregations > 0 && !(lo..hi).contains(&key.begin()) {
             return Err(bad(format!(
-                "time {} ms is outside years -9997 to 9998 (UTC), the range a calendar aggregation takes",
+                "time {} ms is outside years -9997 to 9997 (UTC), the range a calendar aggregation takes",
                 key.begin()
             )));
         }

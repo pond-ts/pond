@@ -168,6 +168,15 @@ const CAL_ROWS = Array.from({ length: 100 }, (_, i) => [
   i % 5 === 0 ? null : (i * 37) % 11,
   i % 4,
 ]);
+// Rows across the autumn DST edges: every 5 hours from 2026-09-03
+// 00:00 UTC to 2026-11-04 (Santiago skips midnight 2026-09-06, New York
+// falls back 2026-11-01).
+const DST_ROWS = Array.from({ length: 300 }, (_, i) => [
+  Date.UTC(2026, 8, 3) + i * 5 * HOUR,
+  ['a', 'b', 'c'][i % 3],
+  i % 7 === 0 ? null : (i * 13) % 9,
+  i % 3,
+]);
 const NY_DAY = { sequence: { calendar: 'day', timeZone: 'America/New_York' } };
 const each = (rows) => rows.map((row) => ({ push: [row] }));
 const node = (id, op, from, ...args) => ({ node: { id, op, from, args } });
@@ -744,6 +753,26 @@ const CASES = [
       // Late past the 6h grace (the latest is 56h): the root refuses it.
       { push: [[CAL_T0 + 40 * HOUR, 'c', 8, 3]] },
       { pushMany: CAL_ROWS.slice(9) },
+    ],
+  },
+  {
+    // The other DST edges: New York's fall-back day (2026-11-01, 25
+    // hours) and Santiago's skipped midnight (2026-09-06 starts at 01:00,
+    // a 23-hour day). Rows every 5 hours from 2026-09-03 to 2026-11-04.
+    name: 'aggregate-calendar-fallback',
+    schema: SCHEMA,
+    steps: [
+      node('ny', 'aggregate', 'root', NY_DAY, { cpu: 'sum', mem: 'count' }),
+      node(
+        'scl',
+        'aggregate',
+        'root',
+        { sequence: { calendar: 'day', timeZone: 'America/Santiago' } },
+        { cpu: 'sum', mem: 'count' },
+      ),
+      ...each(DST_ROWS.slice(0, 40)),
+      { pushMany: DST_ROWS.slice(40, 250) },
+      ...each(DST_ROWS.slice(250)),
     ],
   },
   {

@@ -184,7 +184,7 @@ impl LiveAggregation {
                 return Err(PondError::InvalidData {
                     call: CALL,
                     message: format!(
-                        "an event at {} ms is outside years -9997 to 9998 (UTC), the range a calendar aggregation takes",
+                        "an event at {} ms is outside years -9997 to 9997 (UTC), the range a calendar aggregation takes",
                         event.begin()
                     ),
                 });
