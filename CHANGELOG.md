@@ -192,6 +192,30 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **Partitioned live series take each `pushMany` in one pass per partition**
+  ([PND-PARTBATCH]). With a strict time-keyed source (the default),
+  `partitionBy` used to hand a `pushMany` batch to its partitions one row at a
+  time, and each row paid its own storage write, retention pass, one-row
+  `'batch'` and end-of-push settle. Now each partition stores its rows, runs
+  retention, fires one `'batch'` with all its rows and settles once per
+  `pushMany`, like a plain `pushMany` into that partition. `'event'` still
+  fires row by row in the source's order across partitions, so `collect()`,
+  `apply()` and partitioned rolling see exactly the same events. What you can
+  notice: a partition's `'batch'` / `'evict'` listeners get one call per
+  `pushMany` instead of one per row, a `reduce` built on a partition emits once
+  per `pushMany`, and a partition's rows are all stored before its first
+  `'event'`. Partitions finish (their `'batch'`, `'evict'` and settle) in the
+  order of their last row in the batch, so a `reduce` under `apply()` still
+  reaches the combined series in time order. A push made from inside a
+  partition listener now runs after the whole batch has been delivered, not
+  after the current row. A listener that throws on one partition no longer
+  stops the rest of the batch reaching the other partitions; with typed
+  `groups` an undeclared value drops only its own row; and if one partition
+  rejects its rows as out of order, only that partition skips them (all three
+  still throw after the batch is delivered). Single-row `push` and non-strict sources are unchanged. Speed,
+  1000 hosts with a fused rolling attached: 19-29% faster
+  (`scripts/perf-partition-rolling.mjs`).
+
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
   to emit from a microtask, so several `push()` calls with no `await` between
   them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output

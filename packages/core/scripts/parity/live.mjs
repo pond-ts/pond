@@ -1150,6 +1150,33 @@ const CASES = [
     ],
   },
   {
+    // [PND-PARTBATCH] A multi-row pushMany into a strict source: each
+    // partition stores its slice, runs retention, fires one 'batch' and
+    // settles (one reduce output) once per pushMany, while 'event' (and so
+    // collect and the clock-triggered rolling) stays in source order.
+    name: 'partition-pushmany',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxEvents: 2 },
+      }),
+      node('all', 'collect', 'p'),
+      { pushMany: ROWS.slice(0, 5) },
+      node('pa', 'partition', 'p', 'a'),
+      node('pb', 'partition', 'p', 'b'),
+      node('ra', 'reduce', 'pa', { cpu: 'sum' }),
+      node(
+        'fused',
+        'rolling',
+        'p',
+        { '2s': { cpu: 'max' }, '5s': { mem: 'avg' } },
+        { trigger: { every: '5s' } },
+      ),
+      { pushMany: ROWS.slice(5, 16) },
+      { pushMany: ROWS.slice(16) },
+    ],
+  },
+  {
     name: 'partition-groups',
     schema: SCHEMA,
     steps: [
