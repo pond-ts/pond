@@ -907,7 +907,7 @@ pub(crate) fn read_time(
 
 /// The start and end of a time range (`[begin, end]` / `{start, end}`) or
 /// an interval (`[label, begin, end]` / `{value, start, end}`).
-fn read_span<'a>(
+pub(crate) fn read_span<'a>(
     call: &'static str,
     v: &'a Json<'a>,
     row: usize,

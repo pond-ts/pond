@@ -176,6 +176,37 @@ fn check_order(call: &'static str, begin: i64, end: i64) -> Result<()> {
     Ok(())
 }
 
+/// Two keys in pond-ts's order (`a.compare(b)`): start, then end, then kind,
+/// then (two intervals) label: numbers before text, text by the root
+/// collator as JavaScript's `localeCompare`.
+#[cfg(feature = "live")]
+pub(crate) fn compare_keys(a: &EventKey, b: &EventKey) -> Ordering {
+    let c = a
+        .begin
+        .cmp(&b.begin)
+        .then(a.end.cmp(&b.end))
+        .then(a.kind.cmp(&b.kind));
+    if c != Ordering::Equal {
+        return c;
+    }
+    match (&a.label, &b.label) {
+        (Some(Label::Number(x)), Some(Label::Number(y))) => {
+            x.partial_cmp(y).unwrap_or(Ordering::Equal)
+        }
+        (Some(Label::Number(_)), Some(Label::String(_))) => Ordering::Less,
+        (Some(Label::String(_)), Some(Label::Number(_))) => Ordering::Greater,
+        (Some(Label::String(x)), Some(Label::String(y))) if x != y => root_collator().compare(x, y),
+        _ => Ordering::Equal,
+    }
+}
+
+/// pond-ts `a.equals(b)`: same kind, start and end, and for intervals the
+/// same label (`===`).
+#[cfg(feature = "live")]
+pub(crate) fn keys_equal(a: &EventKey, b: &EventKey) -> bool {
+    a.kind == b.kind && a.begin == b.begin && a.end == b.end && a.label == b.label
+}
+
 /// Compares a series' rows with one key, as pond-ts `keyAt(i).compare(key)`.
 struct KeyCompare<'a> {
     key: &'a Key,

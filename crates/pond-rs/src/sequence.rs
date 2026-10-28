@@ -112,6 +112,16 @@ impl Sequence {
         }))
     }
 
+    /// `(step, anchor)` in ms for a fixed-length sequence; `None` for a
+    /// calendar one.
+    #[cfg(feature = "live")]
+    pub(crate) fn fixed_step(&self) -> Option<(i64, i64)> {
+        match self.0 {
+            Grid::Every { step_ms, anchor_ms } => Some((step_ms, anchor_ms)),
+            Grid::Calendar { .. } => None,
+        }
+    }
+
     /// The same grid shifted so a bucket starts at `anchor_ms`. Calendar
     /// sequences have no anchor and are returned unchanged.
     pub fn with_anchor(self, anchor_ms: i64) -> Self {

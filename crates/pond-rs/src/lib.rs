@@ -156,6 +156,8 @@ mod join;
 mod json;
 mod json_columns;
 mod json_text;
+#[cfg(feature = "live")]
+pub mod live;
 mod par;
 mod partition;
 mod pivot;

@@ -286,6 +286,18 @@ export class ChunkedColumnarLiveStorage<
    */
   #locate(i: number): [number, number] | null {
     if (i < 0 || i >= this.#committed) return null;
+    // Walk from the nearer end. A one-row `push` appends a one-row chunk,
+    // and its order check reads the last row, so a walk from the front
+    // made each push cost O(chunks) — 1M pushes took tens of minutes
+    // ([PND-LIVEPUSHSCAN]). The newest rows are now found from the back.
+    if (i >= this.#committed / 2) {
+      let end = this.#committed;
+      for (let c = this.#chunks.length - 1; c >= 0; c -= 1) {
+        const start = end - this.#chunks[c]!.length;
+        if (i >= start) return [c, i - start];
+        end = start;
+      }
+    }
     let acc = 0;
     for (let c = 0; c < this.#chunks.length; c += 1) {
       const len = this.#chunks[c]!.length;
