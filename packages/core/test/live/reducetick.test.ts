@@ -3,7 +3,7 @@
  * retention and `'evict'`), not on a microtask, so the number and value
  * of its outputs do not depend on where the caller awaits.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LiveSeries, Trigger } from '../../src/index.js';
 import { LiveReduce } from '../../src/live/live-reduce.js';
 import { LiveView } from '../../src/live/live-view.js';
@@ -215,5 +215,22 @@ describe('LiveReduce outside a push and on errors', () => {
     live.push([2000, 2, 'a']);
     expect(calls).toBe(2);
     expect(r.value().v).toBe(3);
+  });
+
+  it('[PND-REDUCEMICRO] a synchronous loop of pushes queues one backstop microtask', async () => {
+    const live = make();
+    const r = live.reduce({ v: 'sum' });
+    await flush(); // the construction replay's microtask
+    const spy = vi.spyOn(globalThis, 'queueMicrotask');
+    try {
+      for (let i = 1; i <= 100; i++) live.push([i * 1000, i, 'a']);
+      expect(spy).toHaveBeenCalledTimes(1);
+      await flush();
+      expect(r.length).toBe(100); // one per push
+      live.push([101_000, 1, 'a']); // the microtask cleared the flag: queues again
+      expect(spy).toHaveBeenCalledTimes(3); // + the test's own flush()
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

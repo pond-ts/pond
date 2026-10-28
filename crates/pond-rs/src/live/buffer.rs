@@ -24,7 +24,7 @@ use super::event::{LiveEvent, LiveSchema};
 
 /// One value column's cells, oldest first.
 #[derive(Debug)]
-enum Cells {
+pub(crate) enum Cells {
     /// NaN for a gap.
     Number(VecDeque<f64>),
     String(VecDeque<Option<String>>),
@@ -33,7 +33,7 @@ enum Cells {
 }
 
 impl Cells {
-    fn new(kind: ColumnKind) -> Self {
+    pub(crate) fn new(kind: ColumnKind) -> Self {
         match kind {
             ColumnKind::Number => Cells::Number(VecDeque::new()),
             ColumnKind::String => Cells::String(VecDeque::new()),
@@ -43,12 +43,27 @@ impl Cells {
         }
     }
 
-    fn get(&self, i: usize) -> Option<Value> {
+    pub(crate) fn get(&self, i: usize) -> Option<Value> {
         match self {
             Cells::Number(c) => Some(c[i]).filter(|v| !v.is_nan()).map(Value::Number),
             Cells::String(c) => c[i].clone().map(Value::String),
             Cells::Boolean(c) => c[i].map(Value::Boolean),
             Cells::Array(c) => c[i].clone().map(Value::Array),
+        }
+    }
+
+    /// Add a copy of `cell` at the end.
+    pub(crate) fn push(&mut self, cell: Option<&Value>) {
+        let at = self.len();
+        self.insert_ref(at, cell);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Cells::Number(c) => c.len(),
+            Cells::String(c) => c.len(),
+            Cells::Boolean(c) => c.len(),
+            Cells::Array(c) => c.len(),
         }
     }
 
@@ -82,7 +97,7 @@ impl Cells {
         }
     }
 
-    fn drop_front(&mut self, n: usize) {
+    pub(crate) fn drop_front(&mut self, n: usize) {
         match self {
             Cells::Number(c) => drop_front(c, n),
             Cells::String(c) => drop_front(c, n),
@@ -200,17 +215,18 @@ impl EventBuffer {
 
     /// Append at the tail, or (a key before the tail's) at the last place
     /// that keeps the buffer in key order, after any equal keys. Copies the
-    /// cells.
-    pub(crate) fn insert(&mut self, event: &LiveEvent) {
+    /// cells. Returns the position it went to.
+    pub(crate) fn insert(&mut self, event: &LiveEvent) -> usize {
         let at = self.place(event.key());
         for (cells, cell) in self.cells.iter_mut().zip(event.values()) {
             cells.insert_ref(at, cell.as_ref());
         }
+        at
     }
 
     /// [`EventBuffer::insert`], moving the cells out of `event` when
     /// nothing else holds it.
-    pub(crate) fn insert_owned(&mut self, event: LiveEvent) {
+    pub(crate) fn insert_owned(&mut self, event: LiveEvent) -> usize {
         if event.is_shared() {
             return self.insert(&event);
         }
@@ -218,6 +234,50 @@ impl EventBuffer {
         let at = self.place(&key);
         for (cells, cell) in self.cells.iter_mut().zip(values) {
             cells.insert(at, cell);
+        }
+        at
+    }
+
+    /// Where [`EventBuffer::insert`] would put `key`, without storing it.
+    pub(crate) fn position(&self, key: &EventKey) -> usize {
+        let in_order = self
+            .tail
+            .as_ref()
+            .is_none_or(|last| compare_keys(last, key) != Ordering::Greater);
+        if in_order {
+            self.len()
+        } else {
+            self.partition_point(|k| compare_keys(k, key) != Ordering::Greater)
+        }
+    }
+
+    /// Add an event at the end whatever its key: for outputs kept in the
+    /// order they were made (rolling and reduce), never searched by key.
+    pub(crate) fn append(&mut self, key: EventKey, values: Vec<Option<Value>>) {
+        let at = self.len();
+        self.push_key(&key);
+        for (cells, cell) in self.cells.iter_mut().zip(values) {
+            cells.insert(at, cell);
+        }
+        self.tail = Some(key);
+    }
+
+    /// [`EventBuffer::append`], copying the cells.
+    pub(crate) fn append_ref(&mut self, event: &LiveEvent) {
+        self.push_key(event.key());
+        for (cells, cell) in self.cells.iter_mut().zip(event.values()) {
+            cells.push(cell.as_ref());
+        }
+        self.tail = Some(event.key().clone());
+    }
+
+    fn push_key(&mut self, key: &EventKey) {
+        self.begin.push_back(key.begin());
+        if let Some(end) = &mut self.end {
+            end.push_back(key.end());
+        }
+        if let Some(labels) = &mut self.labels {
+            labels.push_back(key.label().expect("interval keys have labels").clone());
         }
     }
 

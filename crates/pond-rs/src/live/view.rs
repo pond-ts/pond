@@ -10,6 +10,7 @@ use crate::series::{ColumnDef, TimeSeries};
 
 use super::buffer::EventBuffer;
 use super::event::{LiveEvent, LiveSchema};
+use super::reduce::Place;
 
 /// What a view does with each source event: the event it keeps, if any.
 pub(crate) type Step = Box<dyn FnMut(&LiveEvent) -> Option<LiveEvent> + Send>;
@@ -89,27 +90,32 @@ impl LiveView {
         view
     }
 
-    /// Run the step on one source event and hold what it keeps. Returns
-    /// the kept event when `hand_on` is set (something takes this view's
+    /// Run the step on one source event and hold what it keeps: `None`
+    /// when it keeps nothing. Otherwise where the kept event went, and the
+    /// event itself when `hand_on` is set (something takes this view's
     /// events): handed on even if a window trims it straight away. Without
     /// `hand_on` the cells are moved into storage.
-    pub(crate) fn take(&mut self, event: &LiveEvent, hand_on: bool) -> Option<LiveEvent> {
+    pub(crate) fn take(
+        &mut self,
+        event: &LiveEvent,
+        hand_on: bool,
+    ) -> Option<(Option<LiveEvent>, Place)> {
         let kept = (self.step)(event)?;
-        let out = if hand_on {
-            self.buffer.insert(&kept);
-            Some(kept)
+        let (out, at) = if hand_on {
+            let at = self.buffer.insert(&kept);
+            (Some(kept), at)
         } else {
-            self.buffer.insert_owned(kept);
-            None
+            (None, self.buffer.insert_owned(kept))
         };
-        self.trim();
-        out
+        let trimmed = self.trim();
+        Some((out, Place { at, trimmed }))
     }
 
-    /// Apply the window, if any: drop the oldest events past it.
-    fn trim(&mut self) {
+    /// Apply the window, if any: drop the oldest events past it. Returns
+    /// how many it dropped.
+    fn trim(&mut self) -> usize {
         let n = match self.window {
-            None => return,
+            None => return 0,
             Some(Window::Rows(keep)) => self.buffer.len().saturating_sub(keep),
             Some(Window::Span(ms)) => match self.buffer.back_begin() {
                 None => 0,
@@ -119,6 +125,7 @@ impl LiveView {
         if n > 0 {
             self.buffer.evict(n, false);
         }
+        n
     }
 
     /// Mirror a source eviction whose last evicted event started at
