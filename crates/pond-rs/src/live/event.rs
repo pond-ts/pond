@@ -1,7 +1,8 @@
 //! One event of a live node: a key and a value per column, sharing its
 //! schema with every other event of that node. Cheap to clone (two
-//! reference counts), so outputs and views hold the same event the root
-//! stored rather than copies.
+//! reference counts), so every output of one push shares the same event.
+//! Series and views store their events by column (`buffer.rs`) and build a
+//! `LiveEvent` when one is read.
 
 use std::sync::Arc;
 
@@ -61,6 +62,19 @@ impl LiveEvent {
         Self {
             data: Arc::new(EventData { key, values }),
             schema,
+        }
+    }
+
+    /// Whether another clone of this event exists.
+    pub(crate) fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.data) > 1
+    }
+
+    /// The key and cells, moved out when nothing else holds this event.
+    pub(crate) fn into_parts(self) -> (EventKey, Vec<Option<Value>>) {
+        match Arc::try_unwrap(self.data) {
+            Ok(data) => (data.key, data.values),
+            Err(shared) => (shared.key.clone(), shared.values.clone()),
         }
     }
 

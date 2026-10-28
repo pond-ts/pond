@@ -64,52 +64,56 @@ impl std::fmt::Debug for LiveView {
 impl LiveView {
     /// A view over `history` (its source's events now), trimmed once at
     /// the end as pond-ts does.
-    pub(crate) fn new<'a>(
+    pub(crate) fn new(
         name: String,
         schema: Arc<LiveSchema>,
         step: Step,
-        history: impl Iterator<Item = &'a LiveEvent>,
+        history: impl Iterator<Item = LiveEvent>,
         window: Option<Window>,
         window_ms: Option<i64>,
     ) -> Self {
         let mut view = Self {
             name,
+            buffer: EventBuffer::new(Arc::clone(&schema)),
             schema,
-            buffer: EventBuffer::default(),
             step,
             window,
             window_ms,
         };
         for event in history {
-            if let Some(kept) = (view.step)(event) {
-                view.buffer.insert(kept);
+            if let Some(kept) = (view.step)(&event) {
+                view.buffer.insert_owned(kept);
             }
         }
         view.trim();
         view
     }
 
-    /// Run the step on one source event; the event kept, now held (and
-    /// handed on even if a window trims it straight away).
-    pub(crate) fn take(&mut self, event: &LiveEvent) -> Option<LiveEvent> {
+    /// Run the step on one source event and hold what it keeps. Returns
+    /// the kept event when `hand_on` is set (something takes this view's
+    /// events): handed on even if a window trims it straight away. Without
+    /// `hand_on` the cells are moved into storage.
+    pub(crate) fn take(&mut self, event: &LiveEvent, hand_on: bool) -> Option<LiveEvent> {
         let kept = (self.step)(event)?;
-        self.buffer.insert(kept.clone());
+        let out = if hand_on {
+            self.buffer.insert(&kept);
+            Some(kept)
+        } else {
+            self.buffer.insert_owned(kept);
+            None
+        };
         self.trim();
-        Some(kept)
+        out
     }
 
     /// Apply the window, if any: drop the oldest events past it.
     fn trim(&mut self) {
-        let events = &self.buffer.events;
         let n = match self.window {
             None => return,
-            Some(Window::Rows(keep)) => events.len().saturating_sub(keep),
-            Some(Window::Span(ms)) => match events.back() {
+            Some(Window::Rows(keep)) => self.buffer.len().saturating_sub(keep),
+            Some(Window::Span(ms)) => match self.buffer.back_begin() {
                 None => 0,
-                Some(last) => {
-                    let cutoff = last.begin().saturating_sub(ms);
-                    events.iter().take_while(|e| e.begin() < cutoff).count()
-                }
+                Some(last) => self.buffer.count_before(last.saturating_sub(ms)),
             },
         };
         if n > 0 {
@@ -117,25 +121,22 @@ impl LiveView {
         }
     }
 
-    /// Mirror a source eviction: drop held events starting at or before
-    /// the last evicted one. The events dropped, collected only when
-    /// `keep` is set (something follows this view's evictions).
-    pub(crate) fn mirror_evict(&mut self, evicted: &[LiveEvent], keep: bool) -> Vec<LiveEvent> {
-        let Some(cutoff) = evicted.last().map(LiveEvent::begin) else {
-            return Vec::new();
-        };
-        // Usually a few events at the front: count them rather than
-        // search the whole buffer.
-        let n = self
-            .buffer
-            .events
-            .iter()
-            .take_while(|e| e.begin() <= cutoff)
-            .count();
+    /// Mirror a source eviction whose last evicted event started at
+    /// `cutoff`: drop held events starting at or before it. Returns the
+    /// start of the last one dropped (`None` when none was), and the events
+    /// themselves when `keep` is set (something watches this view's
+    /// evictions).
+    pub(crate) fn mirror_evict(
+        &mut self,
+        cutoff: i64,
+        keep: bool,
+    ) -> (Option<i64>, Vec<LiveEvent>) {
+        let n = self.buffer.count_through(cutoff);
         if n == 0 {
-            return Vec::new();
+            return (None, Vec::new());
         }
-        self.buffer.evict(n, keep)
+        let last = self.buffer.begin_at(n - 1);
+        (Some(last), self.buffer.evict(n, keep))
     }
 
     /// The source's name.
@@ -177,22 +178,23 @@ impl LiveView {
         self.buffer.len() == 0
     }
 
-    /// The event at `index`; negative positions count from the end.
-    pub fn at(&self, index: i64) -> Option<&LiveEvent> {
+    /// The event at `index`; negative positions count from the end. Built
+    /// from the stored cells (a copy).
+    pub fn at(&self, index: i64) -> Option<LiveEvent> {
         self.buffer.at(index)
     }
 
-    pub fn first(&self) -> Option<&LiveEvent> {
+    pub fn first(&self) -> Option<LiveEvent> {
         self.buffer.at(0)
     }
 
-    pub fn last(&self) -> Option<&LiveEvent> {
+    pub fn last(&self) -> Option<LiveEvent> {
         self.buffer.at(-1)
     }
 
-    /// Every event held, oldest first.
-    pub fn events(&self) -> impl ExactSizeIterator<Item = &LiveEvent> {
-        self.buffer.events.iter()
+    /// Every event held, oldest first, each built from the stored cells.
+    pub fn events(&self) -> impl ExactSizeIterator<Item = LiveEvent> + '_ {
+        self.buffer.iter()
     }
 
     /// Where `key` would go: the first event not before it.
@@ -206,33 +208,32 @@ impl LiveView {
     }
 
     /// The event with this key, or the nearest one before it.
-    pub fn at_or_before(&self, key: impl Into<EventKey>) -> Option<&LiveEvent> {
+    pub fn at_or_before(&self, key: impl Into<EventKey>) -> Option<LiveEvent> {
         self.buffer.at_or_before(&key.into())
     }
 
     /// The event with this key, or the nearest one after it.
-    pub fn at_or_after(&self, key: impl Into<EventKey>) -> Option<&LiveEvent> {
+    pub fn at_or_after(&self, key: impl Into<EventKey>) -> Option<LiveEvent> {
         self.buffer.at_or_after(&key.into())
     }
 
     /// The first event `test` accepts.
-    pub fn find(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> Option<&LiveEvent> {
-        self.buffer.events.iter().find(|e| test(e))
+    pub fn find(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> Option<LiveEvent> {
+        self.buffer.iter().find(|e| test(e))
     }
 
     /// Whether `test` accepts some event (`false` when empty).
-    pub fn some(&self, test: impl FnMut(&LiveEvent) -> bool) -> bool {
-        self.buffer.events.iter().any(test)
+    pub fn some(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> bool {
+        self.buffer.iter().any(|e| test(&e))
     }
 
     /// Whether `test` accepts every event (`true` when empty).
-    pub fn every(&self, test: impl FnMut(&LiveEvent) -> bool) -> bool {
-        self.buffer.events.iter().all(test)
+    pub fn every(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> bool {
+        self.buffer.iter().all(|e| test(&e))
     }
 
     /// The events held, as a batch series named after the source.
     pub fn to_time_series(&self) -> Result<TimeSeries> {
-        self.buffer
-            .snapshot("LiveView::to_time_series", &self.name, &self.schema)
+        self.buffer.snapshot("LiveView::to_time_series", &self.name)
     }
 }

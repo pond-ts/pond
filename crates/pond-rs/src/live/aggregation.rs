@@ -84,13 +84,13 @@ pub(crate) struct Ingested {
 
 impl LiveAggregation {
     /// Check the mapping against the source schema and replay `history`.
-    pub(crate) fn new<'a>(
+    pub(crate) fn new(
         name: String,
         source: &[ColumnDef],
         step_anchor: (i64, i64),
         grace: i64,
         mapping: &[Agg],
-        history: impl Iterator<Item = &'a LiveEvent>,
+        history: impl Iterator<Item = LiveEvent>,
     ) -> Result<Self> {
         let values = &source[1..];
         let mut out_defs = vec![ColumnDef::required("time", ColumnKind::Interval)];
@@ -165,7 +165,7 @@ impl LiveAggregation {
             events_observed: 0,
         };
         for event in history {
-            agg.ingest(event, false);
+            agg.ingest(&event, false);
         }
         Ok(agg)
     }

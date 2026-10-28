@@ -1082,7 +1082,7 @@ mod runner {
                 Handle::Root => {
                     let ts = live.to_time_series().map_err(|e| e.to_string())?;
                     compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
-                    let held: Vec<Value> = live.events().map(event_json).collect();
+                    let held: Vec<Value> = live.events().map(|e| event_json(&e)).collect();
                     compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
                     let st = live.stats();
                     let mut got = serde_json::json!({
@@ -1102,7 +1102,7 @@ mod runner {
                     let view = &live[n];
                     let ts = view.to_time_series().map_err(|e| e.to_string())?;
                     compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
-                    let held: Vec<Value> = view.events().map(event_json).collect();
+                    let held: Vec<Value> = view.events().map(|e| event_json(&e)).collect();
                     compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
                 }
                 Handle::Agg(n) => {

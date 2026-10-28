@@ -66,6 +66,13 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 //!
+//! **Storage.** Series and views store their events by column (a number
+//! cell is 8 bytes). Reading builds a [`LiveEvent`] from the cells:
+//! `at`, `events`, `find`, `some` and `every` build each event they visit,
+//! and a lookup by key on interval keys copies the label it compares with.
+//! A view holds its own copy of the events it keeps, so each pass-through
+//! view costs about as much memory as the series.
+//!
 //! Threads: the owner is `Send`; to share it, put it behind a lock, or
 //! publish a [`LiveSeries::to_time_series`] snapshot after each push.
 
@@ -445,15 +452,16 @@ impl LiveSeries {
                 return Err(bad(format!("two columns are named '{}'", def.name)));
             }
         }
+        let schema = LiveSchema::new(schema);
         Ok(Self {
             owner: NEXT_OWNER.fetch_add(1, AtomicOrdering::Relaxed),
             name: name.into(),
-            schema: LiveSchema::new(schema),
+            buffer: EventBuffer::new(Arc::clone(&schema)),
+            schema,
             ordering: options.ordering,
             grace_ms,
             max_events: options.max_events,
             max_age_ms,
-            buffer: EventBuffer::default(),
             ingested: 0,
             evicted: 0,
             rejected: 0,
@@ -562,9 +570,7 @@ impl LiveSeries {
         let n = self.buffer.len();
         let mut out = Vec::new();
         if n > 0 {
-            self.evicted += n as u64;
-            let evicted = self.buffer.evict(n, true);
-            self.emit_evict(0, &evicted, &mut out);
+            self.evict_root(n, &mut out);
         }
         out
     }
@@ -603,9 +609,8 @@ impl LiveSeries {
                 )));
             }
         }
-        if let (Some(label), Some(held)) = (key.label(), self.buffer.events.front())
-            && matches!(label, Label::Number(_))
-                != matches!(held.key().label(), Some(Label::Number(_)))
+        if let (Some(label), Some(held)) = (key.label(), self.buffer.front_label())
+            && matches!(label, Label::Number(_)) != matches!(held, Label::Number(_))
         {
             return Err(bad(
                 "interval labels must all be numbers or all text, like the events held".into(),
@@ -702,47 +707,54 @@ impl LiveSeries {
                 self.rejected += 1;
                 continue;
             }
-            self.buffer.insert(event.clone());
             self.ingested += 1;
             any = true;
+            // Handed down the tree first, then stored: nothing below reads
+            // the root's storage, and storing last lets the cells move in
+            // when no output kept the event.
             self.emit_event(0, &event, out);
             if want_batch {
-                added.push(event);
+                added.push(event.clone());
             }
+            self.buffer.insert_owned(event);
         }
         if !any {
             return Ok(());
         }
-        let evicted = self.apply_retention();
+        let n = self.retention_count();
         if want_batch {
             self.emit(0, OutputKind::Batch, out, |node| Output::Batch {
                 node,
                 events: added.clone(),
             });
         }
-        if !evicted.is_empty() {
-            self.emit_evict(0, &evicted, out);
+        if n > 0 {
+            self.evict_root(n, out);
         }
         Ok(())
     }
 
-    fn apply_retention(&mut self) -> Vec<LiveEvent> {
+    /// How many of the oldest events retention drops now.
+    fn retention_count(&self) -> usize {
         let len = self.buffer.len();
         let mut n = self.max_events.map_or(0, |m| len.saturating_sub(m));
-        if let (Some(age), Some(latest)) = (self.max_age_ms, self.buffer.events.back()) {
-            let cutoff = latest.begin() - age;
-            let mut i = n;
-            while i < len && self.buffer.events[i].begin() < cutoff {
-                i += 1;
-            }
-            n = n.max(i);
+        if let (Some(age), Some(latest)) = (self.max_age_ms, self.buffer.back_begin()) {
+            n = n.max(self.buffer.count_before(latest - age));
         }
-        if n == 0 {
-            return Vec::new();
-        }
+        n
+    }
+
+    /// Drop the root's oldest `n` events (n > 0) and tell what follows.
+    fn evict_root(&mut self, n: usize, out: &mut Vec<Output>) {
         self.evicted += n as u64;
-        let keep = self.slots[0].subs[OutputKind::Evict.slot()].iter().len() > 0;
-        self.buffer.evict(n, keep)
+        let cutoff = self.buffer.begin_at(n - 1);
+        let keep = self.watches(0, OutputKind::Evict);
+        let evicted = self.buffer.evict(n, keep);
+        self.emit_evict(0, cutoff, &evicted, out);
+    }
+
+    fn watches(&self, node: usize, kind: OutputKind) -> bool {
+        self.slots[node].subs[kind.slot()].contains(&Sub::Watch)
     }
 
     // ── Fan-out ─────────────────────────────────────────────────────
@@ -779,7 +791,15 @@ impl LiveSeries {
         }
     }
 
-    fn emit_evict(&mut self, node: usize, evicted: &[LiveEvent], out: &mut Vec<Output>) {
+    /// `node` dropped events, the last starting at `cutoff`; `evicted`
+    /// holds them when `node` watches its evictions (empty otherwise).
+    fn emit_evict(
+        &mut self,
+        node: usize,
+        cutoff: i64,
+        evicted: &[LiveEvent],
+        out: &mut Vec<Output>,
+    ) {
         let kind = OutputKind::Evict.slot();
         let mut k = 0;
         while k < self.slots[node].subs[kind].len() {
@@ -789,13 +809,13 @@ impl LiveSeries {
                     events: evicted.to_vec(),
                 }),
                 Sub::Child(c) => {
-                    let follow = !self.slots[c].subs[kind].is_empty();
+                    let keep = self.watches(c, OutputKind::Evict);
                     let State::View(view) = &mut self.slots[c].state else {
                         unreachable!("only views follow evictions")
                     };
-                    let removed = view.mirror_evict(evicted, follow);
-                    if !removed.is_empty() {
-                        self.emit_evict(c, &removed, out);
+                    let (last, removed) = view.mirror_evict(cutoff, keep);
+                    if let Some(last) = last {
+                        self.emit_evict(c, last, &removed, out);
                     }
                 }
             }
@@ -806,9 +826,10 @@ impl LiveSeries {
     /// One source event reaching child `c`.
     fn deliver(&mut self, c: usize, event: &LiveEvent, out: &mut Vec<Output>) {
         let want_bucket = !self.slots[c].subs[OutputKind::Bucket.slot()].is_empty();
+        let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
         match &mut self.slots[c].state {
             State::View(view) => {
-                if let Some(kept) = view.take(event) {
+                if let Some(kept) = view.take(event, hand_on) {
                     self.emit_event(c, &kept, out);
                 }
             }
@@ -856,11 +877,11 @@ impl LiveSeries {
     }
 
     /// The events a node holds now, to replay into a node built on it.
-    fn held(&self, i: usize) -> Box<dyn Iterator<Item = &LiveEvent> + '_> {
+    fn held(&self, i: usize) -> Box<dyn Iterator<Item = LiveEvent> + '_> {
         match &self.slots[i].state {
-            State::Root => Box::new(self.buffer.events.iter()),
-            State::View(v) => Box::new(v.buffer.events.iter()),
-            State::Aggregation(a) => Box::new(a.events()),
+            State::Root => Box::new(self.buffer.iter()),
+            State::View(v) => Box::new(v.buffer.iter()),
+            State::Aggregation(a) => Box::new(a.events().cloned()),
             State::Removed => Box::new(std::iter::empty()),
         }
     }
@@ -1037,22 +1058,24 @@ impl LiveSeries {
         self.buffer.len() == 0
     }
 
-    /// The event at `index`; negative positions count from the end.
-    pub fn at(&self, index: i64) -> Option<&LiveEvent> {
+    /// The event at `index`; negative positions count from the end. Built
+    /// from the stored cells (a copy).
+    pub fn at(&self, index: i64) -> Option<LiveEvent> {
         self.buffer.at(index)
     }
 
-    pub fn first(&self) -> Option<&LiveEvent> {
+    pub fn first(&self) -> Option<LiveEvent> {
         self.buffer.at(0)
     }
 
-    pub fn last(&self) -> Option<&LiveEvent> {
+    pub fn last(&self) -> Option<LiveEvent> {
         self.buffer.at(-1)
     }
 
-    /// Every event held, oldest first.
-    pub fn events(&self) -> impl ExactSizeIterator<Item = &LiveEvent> {
-        self.buffer.events.iter()
+    /// Every event held, oldest first, each built from the stored cells.
+    /// For many events, [`LiveSeries::to_time_series`] is faster.
+    pub fn events(&self) -> impl ExactSizeIterator<Item = LiveEvent> + '_ {
+        self.buffer.iter()
     }
 
     /// Where `key` would go: the first event not before it.
@@ -1066,28 +1089,28 @@ impl LiveSeries {
     }
 
     /// The event with this key, or the nearest one before it.
-    pub fn at_or_before(&self, key: impl Into<EventKey>) -> Option<&LiveEvent> {
+    pub fn at_or_before(&self, key: impl Into<EventKey>) -> Option<LiveEvent> {
         self.buffer.at_or_before(&key.into())
     }
 
     /// The event with this key, or the nearest one after it.
-    pub fn at_or_after(&self, key: impl Into<EventKey>) -> Option<&LiveEvent> {
+    pub fn at_or_after(&self, key: impl Into<EventKey>) -> Option<LiveEvent> {
         self.buffer.at_or_after(&key.into())
     }
 
     /// The first event `test` accepts.
-    pub fn find(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> Option<&LiveEvent> {
-        self.buffer.events.iter().find(|e| test(e))
+    pub fn find(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> Option<LiveEvent> {
+        self.buffer.iter().find(|e| test(e))
     }
 
     /// Whether `test` accepts some event (`false` when empty).
-    pub fn some(&self, test: impl FnMut(&LiveEvent) -> bool) -> bool {
-        self.buffer.events.iter().any(test)
+    pub fn some(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> bool {
+        self.buffer.iter().any(|e| test(&e))
     }
 
     /// Whether `test` accepts every event (`true` when empty).
-    pub fn every(&self, test: impl FnMut(&LiveEvent) -> bool) -> bool {
-        self.buffer.events.iter().all(test)
+    pub fn every(&self, mut test: impl FnMut(&LiveEvent) -> bool) -> bool {
+        self.buffer.iter().all(|e| test(&e))
     }
 
     /// Latest start minus earliest start, ms (0 with fewer than two
@@ -1108,15 +1131,15 @@ impl LiveSeries {
             evicted: self.evicted,
             rejected: self.rejected,
             length: self.buffer.len(),
-            earliest: self.buffer.events.front().map(LiveEvent::begin),
-            latest: self.buffer.events.back().map(LiveEvent::begin),
+            earliest: self.buffer.front_begin(),
+            latest: self.buffer.back_begin(),
         }
     }
 
     /// The events held, as a batch series (copied).
     pub fn to_time_series(&self) -> Result<TimeSeries> {
         self.buffer
-            .snapshot("LiveSeries::to_time_series", &self.name, &self.schema)
+            .snapshot("LiveSeries::to_time_series", &self.name)
     }
 
     /// The events held as pond-ts JSON ([`TimeSeries::to_json`]).
