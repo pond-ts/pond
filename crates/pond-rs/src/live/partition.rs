@@ -185,6 +185,10 @@ pub struct LivePartitioned {
     sweep_every: Option<i64>,
     watermark: Option<i64>,
     last_sweep: Option<i64>,
+    /// The root's latest key when it was last cleared: the partitions keep
+    /// events up to it that the root no longer holds, so a push's order
+    /// against the root no longer implies its order in each partition.
+    pub(crate) cleared_at: Option<EventKey>,
 }
 
 impl std::fmt::Debug for LivePartitioned {
@@ -405,6 +409,7 @@ impl LiveSeries {
             sweep_every: max_age_ms.map(|a| (a / 8).max(1)),
             watermark: None,
             last_sweep: None,
+            cleared_at: None,
         };
         // Declared partitions, then the root's history.
         let p = self.slots.len();
@@ -414,6 +419,7 @@ impl LiveSeries {
             series: 0,
             subs: Default::default(),
         });
+        self.partitions.push(p);
         if let Some(groups) = options.groups.clone() {
             for g in groups {
                 self.spawn(p, g)?;
@@ -786,13 +792,24 @@ impl LiveSeries {
         //    (built here when new).
         let mut shares: Vec<Share> = Vec::new();
         let mut share_at: HashMap<usize, usize> = HashMap::new();
-        let mut share_of: Vec<usize> = Vec::with_capacity(events.len());
+        let mut share_of: Vec<Option<usize>> = Vec::with_capacity(events.len());
         for (r, event) in events.iter().enumerate() {
             let slot = match self.partitioned(p).slot_for(event) {
                 Some(slot) => slot,
                 None => {
                     let key = self.partitioned(p).key_of(event);
-                    self.ensure_partition(p, &key)?
+                    match self.ensure_partition(p, &key) {
+                        Ok(slot) => slot,
+                        Err(e) => {
+                            // A hook failed building the partition: this row
+                            // is dropped, the rest routed, the push fails
+                            // after (pond-ts `#routeChunk`). The partition
+                            // stays, so its later rows reach it.
+                            self.fail(e);
+                            share_of.push(None);
+                            continue;
+                        }
+                    }
                 }
             };
             let s = *share_at.entry(slot).or_insert_with(|| {
@@ -803,16 +820,18 @@ impl LiveSeries {
                 shares.len() - 1
             });
             shares[s].rows.push(r);
-            share_of.push(s);
+            share_of.push(Some(s));
         }
-        let pt = self.partitioned_mut(p);
-        pt.routed += events.len() as u64;
         for share in &shares {
+            self.partitioned_mut(p).routed += share.rows.len() as u64;
             self.series_mut(share.slot).ingested += share.rows.len() as u64;
         }
         // 2. Every row's `Event`, in the push's order.
         for (r, event) in events.iter().enumerate() {
-            let part = shares[share_of[r]].slot;
+            let Some(s) = share_of[r] else {
+                continue;
+            };
+            let part = shares[s].slot;
             let place = super::reduce::Place {
                 at: self.series(part).buffer.position(event.key()),
                 trimmed: 0,
@@ -880,7 +899,8 @@ impl LiveSeries {
     /// refuse (pond-ts throws after storing it in the root).
     pub(super) fn check_partitions(&self, events: &[LiveEvent]) -> Result<()> {
         const CALL: &str = "LiveSeries::push";
-        for slot in &self.slots {
+        for &p in &self.partitions {
+            let slot = &self.slots[p];
             let State::Partitioned(pt) = &slot.state else {
                 continue;
             };
@@ -899,10 +919,17 @@ impl LiveSeries {
                         .is_some_and(|g| root.grace_ms.is_none_or(|r| g < r)),
                     OrderingMode::Drop => false,
                 };
-            if !order_check && pt.groups.is_none() {
+            let mut root_last = root.buffer.last_key().cloned();
+            // After a clear, a partition can hold events past the root's
+            // latest.
+            let behind = pt.cleared_at.as_ref().is_some_and(|c| {
+                root_last
+                    .as_ref()
+                    .is_none_or(|r| compare_keys(c, r) == std::cmp::Ordering::Greater)
+            });
+            if !order_check && !behind && pt.groups.is_none() {
                 continue;
             }
-            let mut root_last = root.buffer.last_key().cloned();
             let mut part_last: HashMap<String, Option<EventKey>> = HashMap::new();
             for (i, event) in events.iter().enumerate() {
                 let key = event.key();

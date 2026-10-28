@@ -135,9 +135,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   handle. Results match pond-ts on all 65 live replay cases, including the
   batch routing order from #838. Where pond-rs differs: a push that a
   partition would refuse (a value outside the declared groups, or an event
-  a stricter partition ordering refuses) is refused whole before anything
-  is stored, where pond-ts stores it in the root and then throws;
-  partitions are built on the root only; and the partition column of
+  a partition's ordering refuses, as after a `clear`, which empties the
+  root but not the partitions) is refused whole before anything is stored,
+  where pond-ts stores it in the root and then throws; partitions are
+  built on the root only; removing a partitioned node also removes the
+  `per_partition` chains described on it; and the partition column of
   synchronised rolling output is text (the partition value as pond-ts
   writes it, `" undefined"` for a row without one), which pond-ts declares
   with the source column's type but also fills with text.

@@ -511,6 +511,9 @@ pub struct LiveSeries {
     slots: Vec<Slot>,
     /// Partitioned nodes routed a push at a time (see `partition.rs`).
     routers: Vec<usize>,
+    /// Every partitioned node built and not removed: the nodes a push
+    /// checks before anything is stored.
+    partitions: Vec<usize>,
     /// Every reduce built, oldest first: the nodes a push settles (a scan
     /// of every node per push is slow with many partitions).
     reduces: Vec<usize>,
@@ -615,6 +618,7 @@ impl LiveSeries {
                 subs: Default::default(),
             }],
             routers: Vec::new(),
+            partitions: Vec::new(),
             reduces: Vec::new(),
             failure: None,
         })
@@ -716,7 +720,9 @@ impl LiveSeries {
             return Ok(Vec::new());
         }
         self.check_order(&events)?;
-        self.check_partitions(&events)?;
+        if !self.partitions.is_empty() {
+            self.check_partitions(&events)?;
+        }
         let mut out = Vec::new();
         self.ingest_series(0, events, &mut out);
         self.take_failure()?;
@@ -743,6 +749,19 @@ impl LiveSeries {
         let n = self.core().buffer.len();
         let mut out = Vec::new();
         if n > 0 {
+            let latest = self.core().buffer.last_key().cloned();
+            for k in 0..self.partitions.len() {
+                let p = self.partitions[k];
+                if let State::Partitioned(pt) = &mut self.slots[p].state
+                    && pt.cleared_at.as_ref().is_none_or(|c| {
+                        latest
+                            .as_ref()
+                            .is_some_and(|l| compare_keys(l, c) == Ordering::Greater)
+                    })
+                {
+                    pt.cleared_at = latest.clone();
+                }
+            }
             self.evict_series(0, n, &mut out);
         }
         out
@@ -1104,6 +1123,26 @@ impl LiveSeries {
                     values: None,
                 });
             }
+            State::PartitionRolling(_) | State::Partitioned(_) | State::Series(_) => {
+                self.deliver_partitioned(c, from, event, hand_on, out)
+            }
+            State::PartitionedView(_) | State::Removed => unreachable!("never a child"),
+        }
+    }
+
+    /// [`LiveSeries::deliver`] to a node of the partition layer: kept out
+    /// of line so the common path (views, rolling, aggregations) stays
+    /// small.
+    #[inline(never)]
+    fn deliver_partitioned(
+        &mut self,
+        c: usize,
+        from: usize,
+        event: &LiveEvent,
+        hand_on: bool,
+        out: &mut Vec<Output>,
+    ) {
+        match &mut self.slots[c].state {
             State::PartitionRolling(rolling) => {
                 let key = rolling.feeds[&from].clone();
                 for row in rolling.ingest(&key, event, hand_on) {
@@ -1149,7 +1188,7 @@ impl LiveSeries {
                 }
                 self.ingest_series(c, vec![event.clone()], out);
             }
-            State::PartitionedView(_) | State::Removed => unreachable!("never a child"),
+            _ => unreachable!("not a partition-layer node"),
         }
     }
 
@@ -1566,6 +1605,13 @@ impl LiveSeries {
         if matches!(self.slots[i].state, State::Partitioned(_)) {
             // Its partitions keep their events and get no more.
             self.routers.retain(|&p| p != i);
+            self.partitions.retain(|&p| p != i);
+            // Its per_partition chains go with it.
+            for slot in &mut self.slots {
+                if matches!(&slot.state, State::PartitionedView(v) if v.partitioned == i) {
+                    slot.state = State::Removed;
+                }
+            }
         }
         if let State::PartitionRolling(r) = &self.slots[i].state {
             // Unhook from every feed and from new partitions; a chain built
@@ -1575,8 +1621,16 @@ impl LiveSeries {
                 for subs in &mut self.slots[f].subs {
                     subs.retain(|sub| *sub != Sub::Child(i));
                 }
-                if !matches!(self.slots[f].state, State::Series(_)) && !self.slots[f].has_subs() {
-                    let _ = self.remove(self.id_of(f));
+                // Up the chain to the partition, while nothing else uses
+                // a node.
+                let mut node = Some(f);
+                while let Some(n) = node {
+                    let slot = &self.slots[n];
+                    if matches!(slot.state, State::Series(_) | State::Removed) || slot.has_subs() {
+                        break;
+                    }
+                    node = slot.source;
+                    let _ = self.remove(self.id_of(n));
                 }
             }
             if let Some(p) = self.slots[i].source.take()
