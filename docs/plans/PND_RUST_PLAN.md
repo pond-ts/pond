@@ -3592,13 +3592,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `aggregate-grace`, `aggregate-boolean-array`,
        `aggregate-dispose-on-view`. Decisions
        and differences from pond-ts:
-       - Rows are stored as a `VecDeque` of shared events
-         (`Arc` key + values, `Arc` schema), not the per-column sealed
-         chunks the design above names: a filter or a watched output hands
-         the same event on with two reference counts, and retention pops
-         from the front. Cost is about 230 bytes per event (each cell is a
-         48-byte `Value`); a column store is the change to make if memory
-         becomes the problem. `to_time_series` copies.
+       - Rows were first stored as a `VecDeque` of shared events
+         (`Arc` key + values, `Arc` schema): a filter or a watched output
+         handed the same event on with two reference counts. Cost was about
+         250 bytes per event (each cell a 48-byte `Value`). Replaced by a
+         column store before step 4 (below, "Memory").
        - `push_many` checks every row, then dry-runs the ordering over the
          batch, then commits, in every mode (pond-ts after [PND-BATCHATOM]).
        - `remove(node)`: that node's handle then returns `Err`; nodes
@@ -3693,8 +3691,36 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          against ~67 for a plain `VecDeque` of the same rows, and the batch
          handler's p99 doubled; cause is one `Arc` + a `Vec` of 48-byte
          `Option<Value>` cells per event. Same column-store point as the
-         step 2 `push_many` timing; to weigh before step 4. Also
-         `LiveSeries::to_json` copies into a `TimeSeries` first.
+         step 2 `push_many` timing. Also `LiveSeries::to_json` copies into
+         a `TimeSeries` first.
+       - Fixed 2026-10-28, before step 4 (pjm17971 asked whether to fix it
+         now; yes, since steps 4-6 add more nodes that keep events): series
+         and views store events by column (`live/buffer.rs`): a start time
+         per event (plus end and label for range and interval keys) and a
+         `VecDeque` per value column, numbers as `f64` with NaN for a gap
+         (live number columns never hold NaN otherwise), text as
+         `Option<String>`, true/false as `Option<bool>`. A `LiveEvent` is
+         built when read (`at`, `events`, `find`, … now return owned events)
+         or when a push hands an event down the tree; the root stores an
+         event after handing it on, moving its cells in when no output kept
+         it. Simpler than the sealed chunks the design above names: no
+         `Arc` sharing of chunks with `to_time_series` (which builds
+         columns straight from the store). Memory (`examples/mem_live.rs`,
+         1M events, bytes held per event): time + 3 numbers 249 → 34;
+         time + text + 2 numbers 250 → 51; the same plus a pass-all filter
+         133 → 51 per event summed over both nodes (the view alone went
+         from ~16 to ~51: it now holds its own copy rather than sharing the
+         root's events, so each pass-through view costs about as much as
+         the series; worth remembering as steps 4-6 add nodes); time + 10
+         numbers 585 → 92. Timing
+         (`perf_live`, ms, best of two interleaved runs, before → after):
+         one at a time 268 → 220; batches of 1,000 217 → 204; reorder 306
+         → 230; filter + aggregate 382 → 293; fill + cumulative 600 → 450;
+         filter + aggregate on a 10k-capped root 278 → 339 and map +
+         select + sample 462 → 499 (copying cells into each view, text
+         cells allocate); the rest within ±6%. Batches of 1,000 are still
+         slower than pond-ts (92 ms): each row still makes one short-lived
+         event and frees the caller's cell list.
     4. Rolling: single-window (`LiveRollingAggregation`), fused
        multi-window (`LiveFusedRolling`), `reduce`.
     5. Triggers (`event`, `clock(sequence)`, `every(duration)`,

@@ -2,95 +2,344 @@
 //! the lookups pond-ts offers on them (`at`, `bisect`, `at_or_before`, …),
 //! shared by [`LiveSeries`](super::LiveSeries) and
 //! [`LiveView`](super::LiveView).
+//!
+//! Stored by column, not as one object per event: a start time per event
+//! (plus an end and a label for range and interval keys), and one array per
+//! value column. A number cell is 8 bytes (a gap is NaN, which a live
+//! number column never holds otherwise), a true/false cell 1 byte. Reading
+//! an event builds a [`LiveEvent`] from its cells.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::column::{ArrayColumn, BooleanColumn, ColumnData, Float64Column, StringColumn, Value};
+use crate::column::{
+    ArrayColumn, BooleanColumn, ColumnData, Float64Column, Scalar, StringColumn, Value,
+};
 use crate::error::Result;
 use crate::query::{EventKey, Label, compare_keys, keys_equal};
 use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries};
 
 use super::event::{LiveEvent, LiveSchema};
 
-#[derive(Debug, Default)]
+/// One value column's cells, oldest first.
+#[derive(Debug)]
+enum Cells {
+    /// NaN for a gap.
+    Number(VecDeque<f64>),
+    String(VecDeque<Option<String>>),
+    Boolean(VecDeque<Option<bool>>),
+    Array(VecDeque<Option<Vec<Scalar>>>),
+}
+
+impl Cells {
+    fn new(kind: ColumnKind) -> Self {
+        match kind {
+            ColumnKind::Number => Cells::Number(VecDeque::new()),
+            ColumnKind::String => Cells::String(VecDeque::new()),
+            ColumnKind::Boolean => Cells::Boolean(VecDeque::new()),
+            ColumnKind::Array => Cells::Array(VecDeque::new()),
+            other => unreachable!("live value columns are never {}", other.as_str()),
+        }
+    }
+
+    fn get(&self, i: usize) -> Option<Value> {
+        match self {
+            Cells::Number(c) => Some(c[i]).filter(|v| !v.is_nan()).map(Value::Number),
+            Cells::String(c) => c[i].clone().map(Value::String),
+            Cells::Boolean(c) => c[i].map(Value::Boolean),
+            Cells::Array(c) => c[i].clone().map(Value::Array),
+        }
+    }
+
+    /// Put a copy of `cell` at `at` (the end when `at` is the length).
+    fn insert_ref(&mut self, at: usize, cell: Option<&Value>) {
+        match (self, cell) {
+            (Cells::Number(c), Some(Value::Number(v))) => put(c, at, *v),
+            (Cells::Number(c), None) => put(c, at, f64::NAN),
+            (Cells::String(c), Some(Value::String(v))) => put(c, at, Some(v.clone())),
+            (Cells::String(c), None) => put(c, at, None),
+            (Cells::Boolean(c), Some(Value::Boolean(v))) => put(c, at, Some(*v)),
+            (Cells::Boolean(c), None) => put(c, at, None),
+            (Cells::Array(c), Some(Value::Array(v))) => put(c, at, Some(v.clone())),
+            (Cells::Array(c), None) => put(c, at, None),
+            (_, Some(v)) => unreachable!("a cell of the wrong kind reached storage: {v:?}"),
+        }
+    }
+
+    /// Put `cell` at `at` (the end when `at` is the length).
+    fn insert(&mut self, at: usize, cell: Option<Value>) {
+        match (self, cell) {
+            (Cells::Number(c), Some(Value::Number(v))) => put(c, at, v),
+            (Cells::Number(c), None) => put(c, at, f64::NAN),
+            (Cells::String(c), Some(Value::String(v))) => put(c, at, Some(v)),
+            (Cells::String(c), None) => put(c, at, None),
+            (Cells::Boolean(c), Some(Value::Boolean(v))) => put(c, at, Some(v)),
+            (Cells::Boolean(c), None) => put(c, at, None),
+            (Cells::Array(c), Some(Value::Array(v))) => put(c, at, Some(v)),
+            (Cells::Array(c), None) => put(c, at, None),
+            (_, Some(v)) => unreachable!("a cell of the wrong kind reached storage: {v:?}"),
+        }
+    }
+
+    fn drop_front(&mut self, n: usize) {
+        match self {
+            Cells::Number(c) => drop_front(c, n),
+            Cells::String(c) => drop_front(c, n),
+            Cells::Boolean(c) => drop_front(c, n),
+            Cells::Array(c) => drop_front(c, n),
+        }
+    }
+
+    fn column(&self, name: &str, required: bool) -> Column {
+        let data: ColumnData = match self {
+            Cells::Number(c) => {
+                Float64Column::from_options(c.iter().map(|v| Some(*v).filter(|v| !v.is_nan())))
+                    .into()
+            }
+            Cells::String(c) => StringColumn::from_options(c.iter().map(Option::as_deref)).into(),
+            Cells::Boolean(c) => BooleanColumn::from_options(c.iter().copied()).into(),
+            Cells::Array(c) => ArrayColumn::from_options(c.iter().cloned()).into(),
+        };
+        Column::from_data(name.to_string(), data, required)
+    }
+}
+
+/// Put `v` at `at`: a push at the end, an insert before it.
+fn put<T>(c: &mut VecDeque<T>, at: usize, v: T) {
+    if at == c.len() {
+        c.push_back(v);
+    } else {
+        c.insert(at, v);
+    }
+}
+
+/// Drop the first `n` (one at a time is the common case, after each push).
+fn drop_front<T>(c: &mut VecDeque<T>, n: usize) {
+    if n == 1 {
+        c.pop_front();
+    } else {
+        c.drain(..n);
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct EventBuffer {
-    pub(crate) events: VecDeque<LiveEvent>,
+    schema: Arc<LiveSchema>,
+    begin: VecDeque<i64>,
+    /// Range and interval keys only.
+    end: Option<VecDeque<i64>>,
+    /// Interval keys only.
+    labels: Option<VecDeque<Label>>,
+    cells: Vec<Cells>,
+    /// The newest key (the key order's last), kept so the order check on
+    /// each push does not rebuild it.
+    tail: Option<EventKey>,
 }
 
 impl EventBuffer {
+    pub(crate) fn new(schema: Arc<LiveSchema>) -> Self {
+        let key = schema.columns[0].kind;
+        let ranged = key != ColumnKind::Time;
+        Self {
+            begin: VecDeque::new(),
+            end: ranged.then(VecDeque::new),
+            labels: (key == ColumnKind::Interval).then(VecDeque::new),
+            cells: schema.values().iter().map(|d| Cells::new(d.kind)).collect(),
+            tail: None,
+            schema,
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
-        self.events.len()
+        self.begin.len()
     }
 
     pub(crate) fn last_key(&self) -> Option<&EventKey> {
-        self.events.back().map(LiveEvent::key)
+        self.tail.as_ref()
+    }
+
+    /// The label of the oldest event (interval keys).
+    pub(crate) fn front_label(&self) -> Option<&Label> {
+        self.labels.as_ref().and_then(VecDeque::front)
+    }
+
+    pub(crate) fn front_begin(&self) -> Option<i64> {
+        self.begin.front().copied()
+    }
+
+    pub(crate) fn back_begin(&self) -> Option<i64> {
+        self.begin.back().copied()
+    }
+
+    /// The start of the event at `i`.
+    pub(crate) fn begin_at(&self, i: usize) -> i64 {
+        self.begin[i]
+    }
+
+    fn key_at(&self, i: usize) -> EventKey {
+        let begin = self.begin[i];
+        match (&self.end, &self.labels) {
+            (None, _) => EventKey::time(begin),
+            (Some(end), None) => {
+                EventKey::time_range(begin, end[i]).expect("stored keys are valid")
+            }
+            (Some(end), Some(labels)) => {
+                EventKey::interval(labels[i].clone(), begin, end[i]).expect("stored keys are valid")
+            }
+        }
+    }
+
+    fn event_at(&self, i: usize) -> LiveEvent {
+        LiveEvent::new(
+            Arc::clone(&self.schema),
+            self.key_at(i),
+            self.cells.iter().map(|c| c.get(i)).collect(),
+        )
     }
 
     /// Append at the tail, or (a key before the tail's) at the last place
-    /// that keeps the buffer in key order, after any equal keys.
-    pub(crate) fn insert(&mut self, event: LiveEvent) {
-        let in_order = self
-            .last_key()
-            .is_none_or(|last| compare_keys(last, event.key()) != Ordering::Greater);
-        if in_order {
-            self.events.push_back(event);
-            return;
+    /// that keeps the buffer in key order, after any equal keys. Copies the
+    /// cells.
+    pub(crate) fn insert(&mut self, event: &LiveEvent) {
+        let at = self.place(event.key());
+        for (cells, cell) in self.cells.iter_mut().zip(event.values()) {
+            cells.insert_ref(at, cell.as_ref());
         }
-        let at = self
-            .events
-            .partition_point(|e| compare_keys(e.key(), event.key()) != Ordering::Greater);
-        self.events.insert(at, event);
+    }
+
+    /// [`EventBuffer::insert`], moving the cells out of `event` when
+    /// nothing else holds it.
+    pub(crate) fn insert_owned(&mut self, event: LiveEvent) {
+        if event.is_shared() {
+            return self.insert(&event);
+        }
+        let (key, values) = event.into_parts();
+        let at = self.place(&key);
+        for (cells, cell) in self.cells.iter_mut().zip(values) {
+            cells.insert(at, cell);
+        }
+    }
+
+    /// Store `key` where it goes in key order; its position, for the cells.
+    fn place(&mut self, key: &EventKey) -> usize {
+        let in_order = self
+            .tail
+            .as_ref()
+            .is_none_or(|last| compare_keys(last, key) != Ordering::Greater);
+        let at = if in_order {
+            self.len()
+        } else {
+            self.partition_point(|k| compare_keys(k, key) != Ordering::Greater)
+        };
+        put(&mut self.begin, at, key.begin());
+        if let Some(end) = &mut self.end {
+            put(end, at, key.end());
+        }
+        if let Some(labels) = &mut self.labels {
+            put(
+                labels,
+                at,
+                key.label().expect("interval keys have labels").clone(),
+            );
+        }
+        if in_order {
+            self.tail = Some(key.clone());
+        }
+        at
     }
 
     /// Remove the oldest `n` events, returning them when `keep` is set.
     pub(crate) fn evict(&mut self, n: usize, keep: bool) -> Vec<LiveEvent> {
-        if keep {
-            self.events.drain(..n).collect()
+        let n = n.min(self.len());
+        let out = if keep {
+            (0..n).map(|i| self.event_at(i)).collect()
         } else {
-            self.events.drain(..n);
             Vec::new()
+        };
+        drop_front(&mut self.begin, n);
+        if let Some(end) = &mut self.end {
+            drop_front(end, n);
         }
+        if let Some(labels) = &mut self.labels {
+            drop_front(labels, n);
+        }
+        for c in &mut self.cells {
+            c.drop_front(n);
+        }
+        if self.begin.is_empty() {
+            self.tail = None;
+        }
+        out
     }
 
-    pub(crate) fn at(&self, index: i64) -> Option<&LiveEvent> {
+    /// The number of oldest events starting before `cutoff`.
+    pub(crate) fn count_before(&self, cutoff: i64) -> usize {
+        self.begin.partition_point(|&b| b < cutoff)
+    }
+
+    /// The number of oldest events starting at or before `cutoff`.
+    pub(crate) fn count_through(&self, cutoff: i64) -> usize {
+        self.begin.partition_point(|&b| b <= cutoff)
+    }
+
+    pub(crate) fn at(&self, index: i64) -> Option<LiveEvent> {
         let i = if index < 0 {
-            self.events.len() as i64 + index
+            self.len() as i64 + index
         } else {
             index
         };
-        usize::try_from(i).ok().and_then(|i| self.events.get(i))
+        usize::try_from(i)
+            .ok()
+            .filter(|&i| i < self.len())
+            .map(|i| self.event_at(i))
+    }
+
+    /// Every event, oldest first, each built from its cells.
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = LiveEvent> + '_ {
+        (0..self.len()).map(|i| self.event_at(i))
+    }
+
+    /// The first position whose key `pred` rejects (keys are in order).
+    fn partition_point(&self, mut pred: impl FnMut(&EventKey) -> bool) -> usize {
+        let (mut lo, mut hi) = (0, self.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if pred(&self.key_at(mid)) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
     }
 
     pub(crate) fn bisect(&self, key: &EventKey) -> usize {
-        self.events
-            .partition_point(|e| compare_keys(e.key(), key) == Ordering::Less)
+        self.partition_point(|k| compare_keys(k, key) == Ordering::Less)
     }
 
     pub(crate) fn includes_key(&self, key: &EventKey) -> bool {
-        self.events
-            .get(self.bisect(key))
-            .is_some_and(|e| keys_equal(e.key(), key))
-    }
-
-    pub(crate) fn at_or_before(&self, key: &EventKey) -> Option<&LiveEvent> {
         let i = self.bisect(key);
-        match self.events.get(i) {
-            Some(e) if keys_equal(e.key(), key) => Some(e),
-            _ if i == 0 => None,
-            _ => self.events.get(i - 1),
-        }
+        i < self.len() && keys_equal(&self.key_at(i), key)
     }
 
-    pub(crate) fn at_or_after(&self, key: &EventKey) -> Option<&LiveEvent> {
-        self.events.get(self.bisect(key))
+    pub(crate) fn at_or_before(&self, key: &EventKey) -> Option<LiveEvent> {
+        let i = self.bisect(key);
+        if i < self.len() && keys_equal(&self.key_at(i), key) {
+            return Some(self.event_at(i));
+        }
+        (i > 0).then(|| self.event_at(i - 1))
+    }
+
+    pub(crate) fn at_or_after(&self, key: &EventKey) -> Option<LiveEvent> {
+        let i = self.bisect(key);
+        (i < self.len()).then(|| self.event_at(i))
     }
 
     /// Last start minus first start, ms; 0 with fewer than two events.
     pub(crate) fn time_range(&self) -> i64 {
-        match (self.events.front(), self.events.back()) {
-            (Some(a), Some(b)) if self.events.len() >= 2 => b.begin() - a.begin(),
+        match (self.begin.front(), self.begin.back()) {
+            (Some(a), Some(b)) if self.len() >= 2 => b - a,
             _ => 0,
         }
     }
@@ -102,16 +351,51 @@ impl EventBuffer {
         if span == 0 {
             return 0.0;
         }
-        self.events.len() as f64 / span as f64 * 1000.0
+        self.len() as f64 / span as f64 * 1000.0
     }
 
-    pub(crate) fn snapshot(
-        &self,
-        call: &'static str,
-        name: &str,
-        schema: &Arc<LiveSchema>,
-    ) -> Result<TimeSeries> {
-        series_of(call, name, schema, self.events.iter())
+    /// The events held as a batch series, built column by column.
+    pub(crate) fn snapshot(&self, call: &'static str, name: &str) -> Result<TimeSeries> {
+        let key_def = &self.schema.columns[0];
+        let begin: Vec<i64> = self.begin.iter().copied().collect();
+        let end = || -> Vec<i64> { self.end.iter().flatten().copied().collect() };
+        let key = match &self.labels {
+            None if self.end.is_none() => Key::Time(begin),
+            None => Key::TimeRange(TimeRangeKeys { begin, end: end() }),
+            Some(labels) => Key::Interval(IntervalKeys {
+                label: labels_of(labels.iter()),
+                begin,
+                end: end(),
+            }),
+        };
+        let columns = self
+            .schema
+            .values()
+            .iter()
+            .zip(&self.cells)
+            .map(|(def, cells)| cells.column(&def.name, def.required))
+            .collect();
+        TimeSeries::with_key(call, name.to_string(), key_def.name.clone(), key, columns)
+    }
+}
+
+/// Interval labels as a batch label column: numbers when every label is a
+/// number, text otherwise (pushes refuse a mix).
+fn labels_of<'a>(labels: impl Iterator<Item = &'a Label> + Clone) -> Labels {
+    if labels.clone().all(|l| matches!(l, Label::Number(_))) {
+        Labels::Number(
+            labels
+                .map(|l| match l {
+                    Label::Number(v) => *v,
+                    Label::String(_) => unreachable!("checked"),
+                })
+                .collect(),
+        )
+    } else {
+        Labels::String(StringColumn::from_options(labels.map(|l| match l {
+            Label::String(s) => Some(s.as_str()),
+            Label::Number(_) => None,
+        })))
     }
 }
 
@@ -128,35 +412,15 @@ pub(crate) fn series_of<'a>(
     let key = match key_def.kind {
         ColumnKind::Time => Key::Time(begin),
         ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end: end() }),
-        _ => {
-            let labels: Vec<&Label> = events
-                .clone()
-                .map(|e| e.key().label().expect("interval keys have labels"))
-                .collect();
-            let label = if labels.iter().all(|l| matches!(l, Label::Number(_))) {
-                Labels::Number(
-                    labels
-                        .iter()
-                        .map(|l| match l {
-                            Label::Number(v) => *v,
-                            Label::String(_) => unreachable!("checked"),
-                        })
-                        .collect(),
-                )
-            } else {
-                // Pushes refuse a label of the other kind, so these are all
-                // text.
-                Labels::String(StringColumn::from_options(labels.iter().map(|l| match l {
-                    Label::String(s) => Some(s.as_str()),
-                    Label::Number(_) => None,
-                })))
-            };
-            Key::Interval(IntervalKeys {
-                label,
-                begin,
-                end: end(),
-            })
-        }
+        _ => Key::Interval(IntervalKeys {
+            label: labels_of(
+                events
+                    .clone()
+                    .map(|e| e.key().label().expect("interval keys have labels")),
+            ),
+            begin,
+            end: end(),
+        }),
     };
     let columns = schema
         .values()
