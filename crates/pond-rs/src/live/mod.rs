@@ -145,7 +145,7 @@ use crate::error::{PondError, Result};
 use crate::json::{RowFormat, invalid, parse, read_name, read_schema};
 use crate::query::{EventKey, Label, compare_keys};
 use crate::reducer::Agg;
-use crate::sequence::Sequence;
+use crate::sequence::{CALENDAR_RANGE_MS, Sequence};
 use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use buffer::EventBuffer;
@@ -449,6 +449,9 @@ pub struct LiveSeries {
     schema: Arc<LiveSchema>,
     ordering: OrderingMode,
     grace_ms: Option<i64>,
+    /// Calendar aggregations built and not removed: while any is, pushed
+    /// times must be inside [`CALENDAR_RANGE_MS`].
+    calendar_aggregations: usize,
     max_events: Option<usize>,
     max_age_ms: Option<i64>,
     buffer: EventBuffer,
@@ -539,6 +542,7 @@ impl LiveSeries {
             schema,
             ordering: options.ordering,
             grace_ms,
+            calendar_aggregations: 0,
             max_events: options.max_events,
             max_age_ms,
             ingested: 0,
@@ -687,6 +691,13 @@ impl LiveSeries {
                     "time {t} ms is outside the supported range ±{MAX_TIME_MS} ms"
                 )));
             }
+        }
+        let (lo, hi) = CALENDAR_RANGE_MS;
+        if self.calendar_aggregations > 0 && !(lo..hi).contains(&key.begin()) {
+            return Err(bad(format!(
+                "time {} ms is outside years -9997 to 9998 (UTC), the range a calendar aggregation takes",
+                key.begin()
+            )));
         }
         if let (Some(label), Some(held)) = (key.label(), self.buffer.front_label())
             && matches!(label, Label::Number(_)) != matches!(held, Label::Number(_))
@@ -1094,11 +1105,17 @@ impl LiveSeries {
         Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
     }
 
-    /// Fixed-length buckets (`sequence` must be [`Sequence::every`]) over
-    /// the events of `from`, one column per mapping entry. Built over what
-    /// `from` holds now. Under [`OrderingMode::Reorder`] with a grace
-    /// window, a bucket stays open until the latest event is a grace
-    /// window past its end. Evictions do not reach buckets.
+    /// Buckets over the events of `from`, one column per mapping entry:
+    /// fixed-length ([`Sequence::every`]) or calendar ones
+    /// ([`Sequence::calendar`]: days, weeks, … in a time zone, so a day
+    /// across a clock change is 23 or 25 hours). Built over what `from`
+    /// holds now. Under [`OrderingMode::Reorder`] with a grace window, a
+    /// bucket stays open until the latest event is a grace window past its
+    /// end. Evictions do not reach buckets.
+    ///
+    /// While a calendar aggregation exists, the series refuses times
+    /// outside years -9997 to 9997 (UTC), the years its time-zone library
+    /// handles with room for a bucket either side; pond-ts takes any time.
     ///
     /// Reducers on text, true/false and array columns are limited to
     /// `count`, `first`, `last`, `keep`, `unique`, `top<N>` and `samples`
@@ -1109,29 +1126,40 @@ impl LiveSeries {
         sequence: &Sequence,
         mapping: &[Agg],
     ) -> Result<Node<LiveAggregation>> {
+        self.aggregate_with(from, sequence, mapping, None)
+    }
+
+    /// [`LiveSeries::aggregate`] with its own grace (a duration such as
+    /// `"2s"`; pond-ts `new LiveAggregation(source, sequence, mapping,
+    /// { grace })`): a bucket stays open until the latest event is `grace`
+    /// past its end, whatever the source's grace window. `None` takes the
+    /// series' grace window when built on the series, else 0.
+    pub fn aggregate_with(
+        &mut self,
+        from: impl Into<NodeId>,
+        sequence: &Sequence,
+        mapping: &[Agg],
+        grace: Option<&str>,
+    ) -> Result<Node<LiveAggregation>> {
         const CALL: &str = "LiveSeries::aggregate";
         let source = self.source_of(CALL, from.into())?;
-        let step = sequence
-            .fixed_step()
-            .ok_or_else(|| PondError::Unsupported {
-                call: CALL,
-                message:
-                    "calendar sequences have no fixed length; live aggregate takes Sequence::every"
-                        .into(),
-            })?;
-        let grace = match self.slots[source].state {
+        let grace_ms = grace.map(parse_duration).transpose()?;
+        let grace = grace_ms.unwrap_or(match self.slots[source].state {
             State::Root => self.grace_ms.unwrap_or(0),
             _ => 0,
-        };
+        });
         let schema = self.schema_of(source);
         let agg = LiveAggregation::new(
             self.name.clone(),
             &schema.columns,
-            step,
+            sequence,
             grace,
             mapping,
             self.held(source),
         )?;
+        if agg.is_calendar() {
+            self.calendar_aggregations += 1;
+        }
         Ok(self.add_node(source, State::Aggregation(agg)))
     }
 
@@ -1325,6 +1353,9 @@ impl LiveSeries {
             });
         }
         let was_view = matches!(self.slots[i].state, State::View(_));
+        if matches!(&self.slots[i].state, State::Aggregation(a) if a.is_calendar()) {
+            self.calendar_aggregations -= 1;
+        }
         let mut source = self.detach(i);
         self.slots[i].state = State::Removed;
         self.slots[i].subs = Default::default();

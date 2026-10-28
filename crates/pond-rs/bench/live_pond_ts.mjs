@@ -241,6 +241,17 @@ const cases = [
       oneByOne(live, rows);
     },
   ],
+  [
+    'aggregate daily New York, max_events 10k',
+    () => {
+      const live = capped();
+      live.aggregate(
+        Sequence.calendar('day', { timeZone: 'America/New_York' }),
+        mapping,
+      );
+      oneByOne(live, rows);
+    },
+  ],
 ];
 const report = {};
 // ONLY=<text> times just the cases whose name contains it.

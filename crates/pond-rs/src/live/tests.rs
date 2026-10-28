@@ -282,9 +282,6 @@ fn aggregate_mappings_are_checked() {
     let mut live = series(LiveOptions::new());
     let root = live.root();
     let every = Sequence::every("1s").unwrap();
-    let day = Sequence::calendar("day", "UTC").unwrap();
-    let sum = [Agg::of("cpu", Reducer::Sum)];
-    assert!(live.aggregate(root, &day, &sum).is_err());
     assert!(
         live.aggregate(root, &every, &[Agg::of("nope", Reducer::Sum)])
             .is_err()
@@ -699,4 +696,25 @@ fn rolling_and_reduce_counters() {
     assert_eq!(ds.buffer_size, 3);
     assert_eq!(ds.emissions, 1); // one per push
     assert_eq!(live[d].value(), vec![Some(Value::from(3.0))]);
+}
+
+#[test]
+fn calendar_aggregations_keep_times_in_jiff_range() {
+    let (lo, hi) = crate::sequence::CALENDAR_RANGE_MS;
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let day = Sequence::calendar("day", "Pacific/Kiritimati").unwrap();
+    live.push(lo - 1, row("a", 1.0)).unwrap(); // no calendar node yet
+    // Built over an event outside the range: refused.
+    assert!(live.aggregate(root, &day, &sum).is_err());
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let d = live.aggregate(root, &day, &sum).unwrap();
+    assert!(live.push(lo - 1, row("a", 1.0)).is_err());
+    live.push(lo, row("a", 1.0)).unwrap();
+    assert!(live.push(hi, row("a", 1.0)).is_err());
+    live.push(hi - 1, row("a", 1.0)).unwrap();
+    live.remove(d).unwrap();
+    live.push(hi, row("a", 1.0)).unwrap(); // the guard goes with the node
 }

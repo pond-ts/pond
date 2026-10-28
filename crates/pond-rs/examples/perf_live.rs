@@ -304,6 +304,19 @@ fn main() -> pond_rs::Result<()> {
             one_by_one(&mut live, rows);
         },
     );
+    // Step 5: calendar buckets (the last bucket is kept, so only an event
+    // in a new day does time-zone arithmetic).
+    let ny_day = Sequence::calendar("day", "America/New_York")?;
+    run(
+        "aggregate daily New York, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            live.aggregate(root, &ny_day, &mapping).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
     println!("{{{}}}", report.join(", "));
     Ok(())
 }

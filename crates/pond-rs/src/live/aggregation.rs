@@ -1,4 +1,6 @@
-//! Fixed-length buckets over a live source (pond-ts `LiveAggregation`).
+//! Buckets over a live source (pond-ts `LiveAggregation`): fixed-length
+//! ones, or calendar ones (days, weeks, … in a time zone, so of varying
+//! length).
 //!
 //! Each source event goes to the bucket its start falls in. A bucket closes
 //! once the latest start seen (the watermark), less the source's grace
@@ -21,6 +23,7 @@ use crate::elements::compare_scalars;
 use crate::error::{PondError, Result};
 use crate::query::EventKey;
 use crate::reducer::{Agg, Reducer, clamp_at_zero, percentile_of_sorted};
+use crate::sequence::{CALENDAR_RANGE_MS, Sequence};
 use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use super::buffer::series_of;
@@ -39,15 +42,13 @@ struct Pending {
     states: Vec<BucketState>,
 }
 
-/// Buckets of fixed length over a live source: the closed ones, and the
-/// ones still open. Built with [`LiveSeries::aggregate`](super::LiveSeries::aggregate);
+/// Buckets over a live source: the closed ones, and the ones still open. Built with [`LiveSeries::aggregate`](super::LiveSeries::aggregate);
 /// read through the owner.
 pub struct LiveAggregation {
     name: String,
     schema: Arc<LiveSchema>,
     columns: Vec<Mapped>,
-    step: i64,
-    anchor: i64,
+    grid: Grid,
     grace: i64,
     pending: BTreeMap<i64, Pending>,
     watermark: Option<i64>,
@@ -76,6 +77,47 @@ pub struct AggregationStats {
     pub open_bucket_start: Option<i64>,
 }
 
+/// How events map to buckets.
+enum Grid {
+    Fixed {
+        step: i64,
+        anchor: i64,
+    },
+    /// The last bucket looked up is kept: events in the same bucket skip
+    /// the time-zone arithmetic.
+    Calendar {
+        sequence: Sequence,
+        last: Option<(i64, i64)>,
+    },
+}
+
+impl Grid {
+    fn bucket(&mut self, ts: i64) -> (i64, i64) {
+        match self {
+            &mut Grid::Fixed { step, anchor } => {
+                bucket_of(ts, step, anchor).expect("edges checked in LiveAggregation::new")
+            }
+            Grid::Calendar { sequence, last } => {
+                if let Some((start, end)) = *last
+                    && (start..end).contains(&ts)
+                {
+                    return (start, end);
+                }
+                let bucket = sequence
+                    .calendar_bucket(ts)
+                    .expect("a calendar sequence")
+                    .expect("LiveSeries::push keeps times inside CALENDAR_RANGE_MS");
+                *last = Some(bucket);
+                bucket
+            }
+        }
+    }
+
+    fn is_calendar(&self) -> bool {
+        matches!(self, Grid::Calendar { .. })
+    }
+}
+
 /// What one source event did: the bucket it joined (when wanted) and the
 /// buckets it closed.
 pub(crate) struct Ingested {
@@ -88,7 +130,7 @@ impl LiveAggregation {
     pub(crate) fn new(
         name: String,
         source: &[ColumnDef],
-        step_anchor: (i64, i64),
+        sequence: &Sequence,
         grace: i64,
         mapping: &[Agg],
         history: impl Iterator<Item = LiveEvent>,
@@ -103,32 +145,50 @@ impl LiveAggregation {
             .into_iter()
             .map(|(source, reducer)| Mapped { source, reducer })
             .collect();
-        let (step, anchor) = step_anchor;
-        // Every bucket a supported time can fall in must have i64 edges;
-        // checked here at the extremes so `ingest` cannot overflow.
-        for t in [-MAX_TIME_MS, MAX_TIME_MS] {
-            if bucket_of(t, step, anchor).is_none() {
-                return Err(PondError::InvalidData {
-                    call: CALL,
-                    message: format!(
-                        "step {step} ms with anchor {anchor} ms puts bucket edges outside the i64 range"
-                    ),
-                });
+        let grid = match sequence.fixed_step() {
+            Some((step, anchor)) => {
+                // Every bucket a supported time can fall in must have i64
+                // edges; checked here at the extremes so `ingest` cannot
+                // overflow.
+                for t in [-MAX_TIME_MS, MAX_TIME_MS] {
+                    if bucket_of(t, step, anchor).is_none() {
+                        return Err(PondError::InvalidData {
+                            call: CALL,
+                            message: format!(
+                                "step {step} ms with anchor {anchor} ms puts bucket edges outside the i64 range"
+                            ),
+                        });
+                    }
+                }
+                Grid::Fixed { step, anchor }
             }
-        }
+            None => Grid::Calendar {
+                sequence: sequence.clone(),
+                last: None,
+            },
+        };
         let mut agg = Self {
             name,
             schema: LiveSchema::new(out_defs),
             columns,
-            step,
-            anchor,
+            grid,
             grace,
             pending: BTreeMap::new(),
             watermark: None,
             closed: Vec::new(),
             events_observed: 0,
         };
+        let (lo, hi) = CALENDAR_RANGE_MS;
         for event in history {
+            if agg.grid.is_calendar() && !(lo..hi).contains(&event.begin()) {
+                return Err(PondError::InvalidData {
+                    call: CALL,
+                    message: format!(
+                        "an event at {} ms is outside years -9997 to 9998 (UTC), the range a calendar aggregation takes",
+                        event.begin()
+                    ),
+                });
+            }
             agg.ingest(&event, false);
         }
         Ok(agg)
@@ -138,8 +198,7 @@ impl LiveAggregation {
     /// snapshot (only when something listens for it).
     pub(crate) fn ingest(&mut self, event: &LiveEvent, want_bucket: bool) -> Ingested {
         let ts = event.begin();
-        let (start, end) =
-            bucket_of(ts, self.step, self.anchor).expect("edges checked in LiveAggregation::new");
+        let (start, end) = self.grid.bucket(ts);
         let watermark = self.watermark.map_or(ts, |w| w.max(ts));
         self.watermark = Some(watermark);
         let cutoff = watermark.saturating_sub(self.grace);
@@ -187,6 +246,10 @@ impl LiveAggregation {
             key,
             states.iter().map(BucketState::snapshot).collect(),
         )
+    }
+
+    pub(crate) fn is_calendar(&self) -> bool {
+        self.grid.is_calendar()
     }
 
     pub(crate) fn schema_arc(&self) -> Arc<LiveSchema> {
