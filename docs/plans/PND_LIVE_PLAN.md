@@ -78,14 +78,26 @@ stateful transform — overlaps with streaming Milestone A
 ([PND-CHANGE](PND_STREAMING_PLAN.md)). Archive has the full scope note and
 test matrix.
 
-Worse than "does not re-flow" for plain views (found 2026-10-27 writing the
-pond-rs live fixture, case `partition-apply-and-retention`): on an
-`ordering: 'reorder'` source, a late event the source accepts makes every
-`LiveView` built on it (even `filter(() => true)`) throw "processed event has
-key … older than the previous tail", so `push` throws after the source has
-already stored the event; the source then holds it and the views do not.
-Reproduced: `reorder` series, `fill('hold')` / `filter` / `diff` views, push
-5000 then 2600 → push throws, source length 2, each view length 1.
+Plain views used to be worse than "does not re-flow" (found 2026-10-27
+writing the pond-rs live fixture, case `partition-apply-and-retention`): on
+an `ordering: 'reorder'` source, a late event the source accepted made every
+`LiveView` built on it (even `filter(() => true)`) throw "processed event
+has key … older than the previous tail", so `push` threw after the source
+had already stored the event, and the source held it while the views did
+not. **Fixed 2026-10-28** with pond-rs R3 step 3 (pjm17971's decision card
+offered insert in order / stateful views skip it / refuse the push;
+insert in order was the recommendation and the work went ahead on it):
+`#appendChecked` inserts an out-of-order event at its key position, after
+equal keys, instead of throwing. Stateful views (`diff`, `rate`,
+`pctChange`, `fill`, `cumulative`, `sample`) still work in arrival order,
+so their value for a late event (and for the event after it) is computed
+against the previous arrival, not the previous time; order-free folds
+(cumulative sum / count / max / min) end up right. A re-keying `map` whose
+output goes backwards, which threw since PR #125 to protect the
+binary-search queries, now inserts in order too, which also keeps those
+queries right. Fixture case `views-reorder-late` pins it for both
+libraries. Still open under [PND-LATE]: recomputing the rows after a late
+event in stateful views and in rolling windows.
 
 ### [PND-BATCHATOM] — done 2026-10-27
 
