@@ -3783,6 +3783,37 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `count(n)`; calendar sequences refused for clock triggers) across
        rolling, reduce and the full `LiveAggregation` (closed and open
        buckets).
+       Built 2026-10-28. Triggers had come with step 4, and closed and
+       open buckets with step 2, so what was left was pond-ts's
+       per-aggregation grace (the `LiveAggregation` constructor's
+       `{ grace }`, now `aggregate_with`) and calendar sequences.
+       pond-ts refused those in live `aggregate` too (`stepMs()` throws),
+       so they were new work in both libraries; pjm17971 chose to add them
+       (2026-10-28) rather than close the step with grace only.
+       - pond-ts: `LiveAggregation` takes the bucket holding each event
+         from `sequence.bounded` over the single instant (coverage
+         `'overlap'`) and keeps the last one, so only an event outside it
+         does time-zone arithmetic. Fixed sequences keep the arithmetic
+         path. Clock triggers still refuse calendar sequences.
+       - pond-rs: `Sequence::calendar_bucket` (one bucket, no walk past
+         it: `buckets_overlapping` computes the next bucket's end first,
+         which fails a year earlier near jiff's limits). While a calendar
+         aggregation exists the series refuses times outside years -9997
+         to 9997 UTC (`CALENDAR_RANGE_MS`; jiff handles ±9999 and a year
+         bucket in a zone 14 h off needs the year beside it), and building
+         one over such an event is refused. pond-ts takes any time.
+       - Fixture: cases `aggregate-own-grace` and
+         `aggregate-calendar-zones` (New York days across the 2026 DST
+         change, Sunday weeks, London months, a filter view, a late row
+         into the day before the cached one), `aggregate-calendar-fallback`
+         (New York's 25-hour fall-back day, Santiago's skipped midnight);
+         `aggregate-calendar` now records buckets instead of an error. 55
+         of 60 cases run, all equal. A cache that checked only `ts < end` survived until the
+         late row went into an earlier bucket.
+       - Timing (1M events, root keeping 10k, each case alone, ms): daily
+         New York buckets 198 vs pond-ts 2,469; the fixed path unchanged
+         (filter + aggregate 1 m 315 vs 3,103, 3,489 for pond-ts in the
+         step 4 run).
     6. Partitioned: `partition_by` (a node owning one subtree per key),
        `to_map` / `apply` / `collect` (append-only fan-in), partitioned
        fused rolling with synchronised emission.

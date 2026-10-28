@@ -158,6 +158,26 @@ const RANGE_ROWS = [
 
 // ── Case builders ────────────────────────────────────────────────
 
+// Calendar rows: from 2026-03-06 12:00 UTC (New York's DST change is
+// 2026-03-08 07:00 UTC), every 7 hours for ~four weeks into April.
+const HOUR = 3_600_000;
+const CAL_T0 = Date.UTC(2026, 2, 6, 12);
+const CAL_ROWS = Array.from({ length: 100 }, (_, i) => [
+  CAL_T0 + i * 7 * HOUR,
+  ['a', 'b', 'c'][i % 3],
+  i % 5 === 0 ? null : (i * 37) % 11,
+  i % 4,
+]);
+// Rows across the autumn DST edges: every 5 hours from 2026-09-03
+// 00:00 UTC to 2026-11-04 (Santiago skips midnight 2026-09-06, New York
+// falls back 2026-11-01).
+const DST_ROWS = Array.from({ length: 300 }, (_, i) => [
+  Date.UTC(2026, 8, 3) + i * 5 * HOUR,
+  ['a', 'b', 'c'][i % 3],
+  i % 7 === 0 ? null : (i * 13) % 9,
+  i % 3,
+]);
+const NY_DAY = { sequence: { calendar: 'day', timeZone: 'America/New_York' } };
 const each = (rows) => rows.map((row) => ({ push: [row] }));
 const node = (id, op, from, ...args) => ({ node: { id, op, from, args } });
 const every = (d) => ({ sequence: { every: d } });
@@ -649,6 +669,113 @@ const CASES = [
     ],
   },
   {
+    // `new LiveAggregation(source, sequence, mapping, { grace })`: its
+    // own grace overrides the series' (here 0 below 2s, and 3s on a view,
+    // which has none of its own).
+    name: 'aggregate-own-grace',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '2s' },
+    steps: [
+      node(
+        'z',
+        'aggregateWith',
+        'root',
+        every('1s'),
+        { cpu: 'sum' },
+        { grace: '0s' },
+      ),
+      node('v', 'filter', 'root', filterGt('cpu', 1)),
+      node(
+        'g',
+        'aggregateWith',
+        'v',
+        every('1s'),
+        { cpu: 'count' },
+        { grace: '3s' },
+      ),
+      node('d', 'aggregate', 'v', every('1s'), { cpu: 'count' }),
+      node(
+        'bad',
+        'aggregateWith',
+        'root',
+        every('1s'),
+        { cpu: 'sum' },
+        { grace: 'soon' },
+      ),
+      ...LATE_STEPS,
+    ],
+  },
+  {
+    // Calendar buckets vary in length: New York days across the March
+    // 2026 DST change (a 23-hour day), Sunday-start weeks, months, and
+    // late rows (6h grace): one into the day before, still open, one past
+    // the grace the root refuses.
+    name: 'aggregate-calendar-zones',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '6h' },
+    steps: [
+      node('day', 'aggregate', 'root', NY_DAY, { cpu: 'sum', mem: 'count' }),
+      node(
+        'week',
+        'aggregate',
+        'root',
+        {
+          sequence: {
+            calendar: 'week',
+            timeZone: 'America/New_York',
+            weekStartsOn: 7,
+          },
+        },
+        { cpu: 'max' },
+      ),
+      node(
+        'month',
+        'aggregate',
+        'root',
+        { sequence: { calendar: 'month', timeZone: 'Europe/London' } },
+        { cpu: 'avg' },
+      ),
+      node('f', 'filter', 'root', filterGt('cpu', 2)),
+      node('fday', 'aggregate', 'f', NY_DAY, { cpu: 'count' }),
+      node(
+        'own',
+        'aggregateWith',
+        'root',
+        NY_DAY,
+        { cpu: 'last' },
+        { grace: '1h' },
+      ),
+      ...each(CAL_ROWS.slice(0, 4)),
+      // Late: 15h is 22:00 the day before in New York, a bucket still
+      // open (the latest is 21h) and before the one last looked up.
+      { push: [[CAL_T0 + 15 * HOUR, 'b', 7, 2]] },
+      ...each(CAL_ROWS.slice(4, 9)),
+      // Late past the 6h grace (the latest is 56h): the root refuses it.
+      { push: [[CAL_T0 + 40 * HOUR, 'c', 8, 3]] },
+      { pushMany: CAL_ROWS.slice(9) },
+    ],
+  },
+  {
+    // The other DST edges: New York's fall-back day (2026-11-01, 25
+    // hours) and Santiago's skipped midnight (2026-09-06 starts at 01:00,
+    // a 23-hour day). Rows every 5 hours from 2026-09-03 to 2026-11-04.
+    name: 'aggregate-calendar-fallback',
+    schema: SCHEMA,
+    steps: [
+      node('ny', 'aggregate', 'root', NY_DAY, { cpu: 'sum', mem: 'count' }),
+      node(
+        'scl',
+        'aggregate',
+        'root',
+        { sequence: { calendar: 'day', timeZone: 'America/Santiago' } },
+        { cpu: 'sum', mem: 'count' },
+      ),
+      ...each(DST_ROWS.slice(0, 40)),
+      { pushMany: DST_ROWS.slice(40, 250) },
+      ...each(DST_ROWS.slice(250)),
+    ],
+  },
+  {
     name: 'aggregate-calendar',
     schema: SCHEMA,
     steps: [
@@ -1114,10 +1241,10 @@ function decodeCell(cell) {
 const decodeRows = (rows) => rows.map((row) => row.map(decodeCell));
 
 function decodeSequence(pond, spec) {
-  const { every: step, calendar, timeZone } = spec;
+  const { every: step, calendar, timeZone, weekStartsOn } = spec;
   return step !== undefined
     ? pond.Sequence.every(step)
-    : pond.Sequence.calendar(calendar, { timeZone });
+    : pond.Sequence.calendar(calendar, { timeZone, weekStartsOn });
 }
 
 function decodeTrigger(pond, spec) {
@@ -1258,7 +1385,12 @@ async function runCase(pond, spec) {
         const made =
           op === 'partition'
             ? parent.toMap().get(args[0])
-            : parent[op](...args.map((a) => decodeArg(pond, a)));
+            : op === 'aggregateWith'
+              ? new pond.LiveAggregation(
+                  parent,
+                  ...args.map((a) => decodeArg(pond, a)),
+                )
+              : parent[op](...args.map((a) => decodeArg(pond, a)));
         if (made === undefined) throw new Error(`${op} gave nothing`);
         nodes.set(id, made);
         if (step.node.watch !== false) attach(made, id, record);
