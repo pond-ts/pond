@@ -17,59 +17,60 @@ pond-ts lets through.
 
 Methods are the pond-ts names in Rust's `snake_case`.
 
-| pond-ts                                                           | pond-rs                                                                                       |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                         |
-| `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                        |
-| `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                     |
-| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                              |
-| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                       |
-| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                             |
-| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                         |
-| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                              |
-| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                  |
-| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                          |
-| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`   |
-| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
-| `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
-| `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |
-| `series.rolling(seq, '5m', m)`                                    | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                              |
-| `series.smooth('cpu', 'ema', { span: 20 })`                       | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                              |
-| `series.baseline('cpu', { window, sigma })`                       | `series.baseline("cpu", window, sigma, Rolling::default())?`                                  |
-| `series.scan('cpu', step, init)`                                  | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                          |
-| `series.sample({ reservoir: { size } })`                          | `series.sample(Sample::Reservoir { size, seed })?`                                            |
-| `TimeSeries.concat([a, b])`                                       | `TimeSeries::concat(&[&a, &b])?`                                                              |
-| `series.collapse(keys, out, fn, { append })`                      | `series.collapse(&keys, out, f)?` / `collapse_keep`                                           |
-| `series.pivotByGroup('host', 'cpu')`                              | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                    |
-| `series.byColumn('watts', { edges }, m)`                          | `series.by_column("watts", &Bins::edges(edges), &aggs)?` (a `Table`, not an array of records) |
-| `series.rollingByColumn('km', { radius, at }, m)`                 | `series.rolling_by_column_at("km", radius, &at, &aggs)?`                                      |
-| `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                        |
-| `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                      |
-| `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                       |
-| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                    |
-| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                            |
-| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                |
-| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`           |
-| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                 |
-| `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                               |
-| `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                   |
-| `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                |
-| `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                       |
-| `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                      |
-| `series.tail('1h')`                                               | `series.tail("1h")?`                                                                          |
-| `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                   |
-| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                 |
-| `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                            |
-| `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                        |
-| `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                              |
-| `series.groupBy('host')` / `toMap()`                              | `series.group_by(&["host"])` / `iter()`                                                       |
-| `series.atOrBefore(t)` / `nearest(t)`                             | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                                    |
-| `new TimeRange(a, b)` as a lookup key                             | `EventKey::time_range(a, b)?`                                                                 |
-| `series.within(a, b)` / `containedBy(range)`                      | `series.within(a, b)?` / `contained_by(range)`                                                |
-| `series.at(i).get('cpu')`                                         | `series.column("cpu")?.numbers()?.get(i)`                                                     |
-| `toJSON()` / `TimeSeries.fromJSON(json)`                          | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?`            |
-| `toColumns()` / `toPoints()`                                      | `to_columns_json()?` / `to_points_json()?` (and `from_columns_json` / `from_points_json`)     |
-| `toArrow()` / `fromArrow()`                                       | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                                   |
+| pond-ts                                                           | pond-rs                                                                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                                         |
+| `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                                        |
+| `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                                     |
+| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                                              |
+| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                                       |
+| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                                             |
+| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                                         |
+| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                                              |
+| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                                  |
+| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                                          |
+| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`                   |
+| `live.on('event', fn)` after `new LiveSeries(...)`                | `live.watch(node, OutputKind::Event)?`, then read the outputs each `push` returns (see [Live series](./live)) |
+| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                                    |
+| `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                                        |
+| `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                                          |
+| `series.rolling(seq, '5m', m)`                                    | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                                              |
+| `series.smooth('cpu', 'ema', { span: 20 })`                       | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                                              |
+| `series.baseline('cpu', { window, sigma })`                       | `series.baseline("cpu", window, sigma, Rolling::default())?`                                                  |
+| `series.scan('cpu', step, init)`                                  | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                                          |
+| `series.sample({ reservoir: { size } })`                          | `series.sample(Sample::Reservoir { size, seed })?`                                                            |
+| `TimeSeries.concat([a, b])`                                       | `TimeSeries::concat(&[&a, &b])?`                                                                              |
+| `series.collapse(keys, out, fn, { append })`                      | `series.collapse(&keys, out, f)?` / `collapse_keep`                                                           |
+| `series.pivotByGroup('host', 'cpu')`                              | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                                    |
+| `series.byColumn('watts', { edges }, m)`                          | `series.by_column("watts", &Bins::edges(edges), &aggs)?` (a `Table`, not an array of records)                 |
+| `series.rollingByColumn('km', { radius, at }, m)`                 | `series.rolling_by_column_at("km", radius, &at, &aggs)?`                                                      |
+| `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                                        |
+| `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                                      |
+| `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                                       |
+| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                                    |
+| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                                            |
+| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                                |
+| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`                           |
+| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                                 |
+| `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                                               |
+| `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                                   |
+| `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                                |
+| `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                                       |
+| `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                                      |
+| `series.tail('1h')`                                               | `series.tail("1h")?`                                                                                          |
+| `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                                   |
+| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                                 |
+| `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                                            |
+| `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                                        |
+| `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                                              |
+| `series.groupBy('host')` / `toMap()`                              | `series.group_by(&["host"])` / `iter()`                                                                       |
+| `series.atOrBefore(t)` / `nearest(t)`                             | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                                                    |
+| `new TimeRange(a, b)` as a lookup key                             | `EventKey::time_range(a, b)?`                                                                                 |
+| `series.within(a, b)` / `containedBy(range)`                      | `series.within(a, b)?` / `contained_by(range)`                                                                |
+| `series.at(i).get('cpu')`                                         | `series.column("cpu")?.numbers()?.get(i)`                                                                     |
+| `toJSON()` / `TimeSeries.fromJSON(json)`                          | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?`                            |
+| `toColumns()` / `toPoints()`                                      | `to_columns_json()?` / `to_points_json()?` (and `from_columns_json` / `from_points_json`)                     |
+| `toArrow()` / `fromArrow()`                                       | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                                                   |
 
 ## Types are checked when the code runs
 

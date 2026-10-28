@@ -75,8 +75,13 @@ trading calendars and the session studies (session VWAP, pivot points,
 anchored VWAP) are built, all 109 pond-ts studies; see
 [Finance studies](./finance-studies).
 
-**Not built yet:** the live (streaming) layer, and a WASM build that
-pond-ts can call. They come in that order; see the
+**Started:** the live layer: series that take events as they arrive, with
+live `filter` and per-minute (or any fixed step) `aggregate`; see
+[Live series](./live).
+
+**Not built yet:** the rest of the live layer (rolling windows, `reduce`,
+triggers, partitions, …), and a WASM build that pond-ts can call. They
+come in that order; see the
 [roadmap](#roadmap) below.
 
 ## Where to go next
@@ -91,6 +96,8 @@ pond-ts can call. They come in that order; see the
   anything.
 - [Finance studies](./finance-studies): moving averages, MACD, bands, RSI
   and more over price bars, as `@pond-ts/financial`.
+- [Live series](./live): events as they arrive, with live filters and
+  per-minute buckets.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
@@ -106,7 +113,7 @@ for the reasoning, `PLAN.md` for the current steps). In order:
    itself; R1b added the rest of pond-ts's batch operations, step by step.
 2. **Financial studies** (done), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
-3. **Live layer**: series that update as data arrives.
+3. **Live layer** (in progress): series that update as data arrives.
 4. **WASM bridge**: the same Rust code running inside pond-ts where it
    measurably helps.
 
