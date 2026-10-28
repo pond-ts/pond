@@ -13,11 +13,12 @@ view, a running per-minute average. It is the Rust version of pond-ts's
 `LiveSeries`, and each push gives the same results as pond-ts, in the same
 order (checked against cases pond-ts writes out).
 
-This is the first part of the live layer. Built so far: the live series
-itself (pushing, ordering rules, how many events to keep, lookups), live
-`filter`, and live `aggregate` into fixed-length buckets. Still to come:
-`map`, `select`, `sample`, `window`, live `diff` / `rate` / `fill` and
-friends, rolling windows, `reduce`, triggers, and per-entity partitions.
+The live layer is being built in steps. Built so far: the live series
+itself (pushing, ordering rules, how many events to keep, lookups); the
+views `filter`, `map`, `select`, `sample` and `window`; the running ones
+`diff`, `rate`, `pct_change`, `fill` and `cumulative`; and `aggregate`
+into fixed-length buckets. Still to come: rolling windows, `reduce`,
+triggers, and per-entity partitions.
 
 It lives in `pond_rs::live`, behind the `live` cargo feature, which is on
 by default.
@@ -225,6 +226,131 @@ Aggregating a text, true/false or array column works with `count`,
 reducers (`sum`, `avg`, …) on those columns are an error; pond-ts gives 0
 or gaps instead (logged as a pond-ts issue, [PND-KINDREDUCE]).
 
+## More views
+
+Every view takes a source (`live.root()` or another view), starts from
+what that source holds, and then keeps up. Chain them freely: a `fill`
+on the root, a `rate` on the fill, a `window` on the rate.
+
+**Reshaping and trimming:**
+
+- `map(from, |event| cells)`: new values for each event, one cell per
+  value column in schema order. The time and the columns stay the same.
+- `select(from, &["load"])`: only the named columns.
+- `sample(from, Sample::Stride(n))`: every `n`th event, counted from when
+  the view is built.
+- `window(from, "5m")`: only events within that long of the newest one.
+  `window_rows(from, n)`: only the newest `n`. `live[view].event_rate()`
+  gives events per second over a time window.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind, Sample};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+            ColumnDef::optional("mem", ColumnKind::Number),
+        ],
+    )?;
+    let percent = live.map(live.root(), |e| {
+        let load = e.number("load").ok().flatten();
+        vec![load.map(|l| (l * 100.0).into()), e.value("mem").unwrap().cloned()]
+    })?;
+    let load_only = live.select(live.root(), &["load"])?;
+    let every_other = live.sample(live.root(), Sample::Stride(2))?;
+    let last_2s = live.window(live.root(), "2s")?;
+    let last_two = live.window_rows(live.root(), 2)?;
+
+    for (i, load) in [0.25, 0.5, 0.75, 1.0, 0.5].into_iter().enumerate() {
+        live.push(i as i64 * 1_000, [Some(load.into()), Some(64.0.into())])?;
+    }
+
+    assert_eq!(live[percent].last().unwrap().number("load")?, Some(50.0));
+    assert_eq!(live[load_only].schema().len(), 2); // time and load
+    let sampled: Vec<i64> = live[every_other].events().map(|e| e.begin()).collect();
+    assert_eq!(sampled, [1_000, 3_000]);
+    assert_eq!(live[last_2s].len(), 3); // 2 s back from 4 s: from 2 s on
+    assert_eq!(live[last_2s].event_rate()?, 1.5); // 3 events in 2 seconds
+    assert_eq!(live[last_two].len(), 2);
+    Ok(())
+}
+```
+
+**Running calculations**, one event at a time, on the columns you name
+(other columns pass through):
+
+- `diff(from, &["bytes"])`: the change since the previous event.
+  `rate(…)`: that change per second. `pct_change(…)`: as a fraction of
+  the previous value. The first event gets a gap; the `_with` forms take
+  `FirstRow::Drop` to leave it out.
+- `fill(from, &[("bytes", Fill::Hold)])`: fill gaps as events arrive,
+  with `Fill::Hold` (the last value seen), `Fill::Zero` or
+  `Fill::Value(…)`. `fill_all(from, Fill::Hold)` fills every column.
+  `Fill::Bfill` and `Fill::Linear` need events that have not arrived yet,
+  so live views refuse them, as pond-ts does.
+- `cumulative(from, &[("bytes", Reducer::Sum)])`: a running sum, `Max`,
+  `Min` or `Count`. A gap keeps the running value.
+  `cumulative_with(from, "bytes", |acc, v| …)` runs a fold of your own.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind, Fill, FirstRow, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "net",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("bytes", ColumnKind::Number),
+        ],
+    )?;
+    // Fill the missing reading, then take bytes per second of the filled values.
+    let filled = live.fill(live.root(), &[("bytes", Fill::Hold)])?;
+    let per_second = live.rate(filled, &["bytes"])?;
+    let changes = live.diff_with(live.root(), &["bytes"], FirstRow::Drop)?;
+    let total = live.cumulative(live.root(), &[("bytes", Reducer::Sum)])?;
+
+    for (t, bytes) in [(0, Some(100.0)), (1_000, None), (2_000, Some(300.0)), (4_000, Some(600.0))] {
+        live.push(t, [bytes.map(Value::from)])?;
+    }
+
+    let filled: Vec<_> = live[filled].events().map(|e| e.number("bytes").unwrap()).collect();
+    assert_eq!(filled, [Some(100.0), Some(100.0), Some(300.0), Some(600.0)]);
+    let rate: Vec<_> = live[per_second].events().map(|e| e.number("bytes").unwrap()).collect();
+    assert_eq!(rate, [None, Some(0.0), Some(200.0), Some(150.0)]);
+    // A gap next to either side gives a gap; the first event is left out.
+    let diffs: Vec<_> = live[changes].events().map(|e| e.number("bytes").unwrap()).collect();
+    assert_eq!(diffs, [None, None, Some(300.0)]);
+    let sums: Vec<_> = live[total].events().map(|e| e.number("bytes").unwrap()).collect();
+    assert_eq!(sums, [Some(100.0), Some(100.0), Some(400.0), Some(1000.0)]);
+    Ok(())
+}
+```
+
+A few things to know:
+
+- **Mistakes are refused when the view is built**, not ignored: an
+  unknown column, `diff` or `cumulative` on a column that is not numbers,
+  a fill value of the wrong kind, a stride or row window of 0. pond-ts
+  takes most of these silently and gives gaps.
+- **`fill_with(…, limit)`** fills at most `limit` gaps in a row. A live
+  view cannot know how long a run of gaps will be, so it fills the first
+  `limit` and leaves the rest; the batch `fill_with` leaves a too-long run
+  unfilled.
+- **A `window` trims itself quietly.** It returns no `Evict` output when
+  events fall out of it, and views built on it keep what it trimmed (as
+  in pond-ts). To drop old events everywhere, set `max_events` or
+  `max_age` on the series instead.
+- **Late events under `Reorder`** go into every view at their place in
+  time. The running views (`diff`, `rate`, `fill`, `cumulative`,
+  `sample`) work in arrival order, so a late event's change is against
+  the event that arrived just before it, not the one just before it in
+  time. pond-ts used to throw an error here and now does the same.
+
 ## What a push returns: outputs
 
 In pond-ts you attach listeners (`series.on('event', fn)`) and pond-ts
@@ -383,8 +509,9 @@ fn main() -> Result<(), pond_rs::PondError> {
 - **`keep` on an array column** compares the arrays' contents, as the
   batch `aggregate` does. pond-ts compares the array objects, so two equal
   arrays read as different there ([PND-ARRAYKEY]).
-- **A late event a `Reorder` series accepts** goes into each view on it in
-  its place. pond-ts's views throw an error there (logged as [PND-LATE]).
+- **Stricter view arguments**, refused when the view is built (see
+  [More views](#more-views)).
+- **`map` cannot change an event's time**, only its values; pond-ts's can.
 - **Not built yet:** calendar buckets in a live `aggregate`, and the
   other live nodes listed at the top.
 
@@ -402,6 +529,23 @@ pond-ts on the same machine (ms):
 | The same, every output watched      | 696     | 4,401   | 6.3×                |
 | The same, keeping the last 10,000   | 408     | 10,766  | 26×                 |
 | Batches of 1,000                    | 260     | 148     | pond-ts 1.8× faster |
+
+With views, on a series keeping its last 10,000 events (ms, one million
+events):
+
+| Views                                           | pond-rs | pond-ts | Faster |
+| ----------------------------------------------- | ------- | ------- | ------ |
+| `diff` + `rate` + `pct_change`                  | 739     | 4,404   | 6.0×   |
+| `fill` (hold) + `cumulative`                    | 606     | 3,523   | 5.8×   |
+| `map` + `select` + `sample`                     | 480     | 3,678   | 7.7×   |
+| Two `window`s                                   | 309     | 3,173   | 10×    |
+| `Reorder` (5% late), `diff` + `fill` + `window` | 761     | 1,239   | 1.6×   |
+
+Each view that makes new events costs pond-rs about a quarter of a
+microsecond per event. These timings also found a pond-ts slowdown
+(dropping old events copied the whole buffer on every push; the first
+case took pond-ts 115 s before the fix), fixed in pond-ts at the same
+time.
 
 pond-ts is faster on big batches because it stores a batch column by
 column and makes no object per event when nothing listens. pond-rs keeps
