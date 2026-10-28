@@ -16,9 +16,10 @@ order (checked against cases pond-ts writes out).
 The live layer is being built in steps. Built so far: the live series
 itself (pushing, ordering rules, how many events to keep, lookups); the
 views `filter`, `map`, `select`, `sample` and `window`; the running ones
-`diff`, `rate`, `pct_change`, `fill` and `cumulative`; and `aggregate`
-into fixed-length buckets. Still to come: rolling windows, `reduce`,
-triggers, and per-entity partitions.
+`diff`, `rate`, `pct_change`, `fill` and `cumulative`; `aggregate`
+into fixed-length buckets; rolling windows and `reduce`, with triggers
+that set when they emit. Still to come: calendar buckets in `aggregate`,
+and per-entity partitions.
 
 It lives in `pond_rs::live`, behind the `live` cargo feature, which is on
 by default.
@@ -353,6 +354,178 @@ A few things to know:
   the event that arrived just before it, not the one just before it in
   time. pond-ts used to throw an error here and now does the same.
 
+## Rolling windows and reduce
+
+Two nodes keep running results instead of passing events on:
+
+- **`rolling(from, "30s", &aggs)`** works out each `Agg` over a trailing
+  window: the events starting no more than 30 s before the newest one
+  (an event exactly 30 s back still counts). By default it emits one
+  event per source event, keyed at that event.
+- **`rolling_rows(from, n, &aggs, &options)`** does the same over the last
+  `n` events instead of a span of time.
+- **`rolling_windows(from, &[RollingWindow::new("1m", &aggs), …], &options)`**
+  works out several time windows in one pass over one shared buffer and
+  emits them together, one column per `Agg` across all windows (output
+  names must differ). It is cheaper than one `rolling` per window.
+- **`reduce(from, &aggs)`** works out each `Agg` over everything `from`
+  holds now: values are added as events arrive and taken out again as
+  `from` drops them (by `max_events`, `max_age`, `clear`, or a `window`
+  view trimming itself). It emits once at the end of each push, keyed at
+  the push's last event, however many rows the push brought.
+
+`rolling` takes the series, a view or an aggregation; `reduce` takes the
+series or a view. Nothing can be built on a rolling window or a reduce
+(pond-ts has no methods there either). Every reducer the batch `aggregate`
+has works here, including sums of huge numbers kept exact.
+
+`RollingOptions` sets the rest, for `rolling_with`, `rolling_rows` and
+`rolling_windows`:
+
+- **`.min_samples(n)`**: emit gaps until the window holds `n` events (gaps
+  count). `RollingWindow::min_samples` sets it for one fused window.
+- **`.trigger(…)`**: when to emit. `Trigger::event()` (the default) for
+  every event; `Trigger::count(n)` every `n`th event; `Trigger::every("1m")`
+  when an event crosses into a new minute, keyed at that minute's start (the
+  first event only sets the minute; a quiet minute emits nothing).
+  `reduce_with(from, &aggs, trigger)` takes the same triggers.
+- **`.history(…)`**: how many emitted events to keep for reading back:
+  `History::All` (the default), `History::Off`, or `History::Limit` with a
+  `max_events` and/or a `max_age`. Watchers get every emitted event
+  whatever this says.
+
+Read the current result with `live[node].value()` (one value per column,
+in order, without emitting), the kept events with `.events()` / `.at(i)`
+(`at(-1)` is the latest), and counters with `.stats()`. Watching a rolling
+window's `OutputKind::Update` gives its values after every source event,
+even when its trigger did not fire.
+
+```rust
+use pond_rs::live::{History, LiveSeries, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    // The average and peak over the last 2 seconds, after every event.
+    let last_2s = live.rolling(
+        live.root(),
+        "2s",
+        &[
+            Agg::new("avg", "load", Reducer::Avg),
+            Agg::new("peak", "load", Reducer::Max),
+        ],
+    )?;
+    // The average of the last 3 events, once 3 have arrived, every 2nd
+    // event, keeping only the latest result.
+    let last_3 = live.rolling_rows(
+        live.root(),
+        3,
+        &[Agg::new("avg", "load", Reducer::Avg)],
+        &RollingOptions::new()
+            .min_samples(3)
+            .trigger(Trigger::count(2)?)
+            .history(History::Limit { max_events: Some(1), max_age: None }),
+    )?;
+    // Two windows in one pass, emitted together.
+    let both = live.rolling_windows(
+        live.root(),
+        &[
+            RollingWindow::new("1s", &[Agg::new("avg_1s", "load", Reducer::Avg)]),
+            RollingWindow::new("4s", &[Agg::new("avg_4s", "load", Reducer::Avg)]),
+        ],
+        &RollingOptions::new(),
+    )?;
+
+    for (i, load) in [1.0, 2.0, 3.0, 4.0, 5.0].into_iter().enumerate() {
+        live.push(i as i64 * 1_000, [Some(load.into())])?;
+    }
+
+    // At 4 s the window reaches back to 2 s: 3, 4 and 5.
+    let latest = live[last_2s].at(-1).unwrap();
+    assert_eq!(latest.begin(), 4_000);
+    assert_eq!(latest.number("avg")?, Some(4.0));
+    assert_eq!(latest.number("peak")?, Some(5.0));
+    assert_eq!(live[last_2s].len(), 5);
+    assert_eq!(live[last_2s].value(), [Some(4.0.into()), Some(5.0.into())]);
+
+    // Emitted at the 2nd and 4th events (the 2nd still warming up: a gap);
+    // only the last is kept.
+    assert_eq!(live[last_3].len(), 1);
+    let kept = live[last_3].at(0).unwrap();
+    assert_eq!((kept.begin(), kept.number("avg")?), (3_000, Some(3.0)));
+    assert_eq!(live[last_3].stats().emissions, 2);
+
+    let row = live[both].at(-1).unwrap();
+    assert_eq!(row.number("avg_1s")?, Some(4.5));
+    assert_eq!(row.number("avg_4s")?, Some(3.0));
+    Ok(())
+}
+```
+
+A reduce over the series follows what the series keeps, so with
+`max_events` or `max_age` it is a total over a moving set of events:
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, Output, OutputKind, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "orders",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("amount", ColumnKind::Number),
+        ],
+        LiveOptions::new().max_events(3),
+    )?;
+    // Totals over whatever the series holds: its last 3 orders.
+    let totals = live.reduce(
+        live.root(),
+        &[
+            Agg::new("total", "amount", Reducer::Sum),
+            Agg::new("orders", "amount", Reducer::Count),
+        ],
+    )?;
+    // The same, but only once per minute.
+    let per_minute = live.reduce_with(
+        live.root(),
+        &[Agg::new("total", "amount", Reducer::Sum)],
+        Trigger::every("1m")?,
+    )?;
+    live.watch(totals, OutputKind::Event)?;
+
+    // One push of three rows: one emission, keyed at its last row.
+    let out = live.push_many(vec![
+        (0, vec![Some(10.0.into())]),
+        (20_000, vec![Some(20.0.into())]),
+        (40_000, vec![Some(30.0.into())]),
+    ])?;
+    assert_eq!(out.len(), 1);
+    let Output::Event { event, .. } = &out[0] else { panic!() };
+    assert_eq!(event.begin(), 40_000);
+    assert_eq!(event.number("total")?, Some(60.0));
+
+    // A fourth order pushes the first out of the series, and out of the total.
+    live.push(65_000, [Some(5.0.into())])?;
+    let now = live[totals].at(-1).unwrap();
+    assert_eq!(now.number("total")?, Some(55.0));
+    assert_eq!(now.number("orders")?, Some(3.0));
+
+    // The per-minute reduce emitted once, when 65 s crossed into minute 1,
+    // keyed at the minute's start.
+    assert_eq!(live[per_minute].len(), 1);
+    let minute = live[per_minute].at(0).unwrap();
+    assert_eq!((minute.begin(), minute.number("total")?), (60_000, Some(55.0)));
+    Ok(())
+}
+```
+
 ## What a push returns: outputs
 
 In pond-ts you attach listeners (`series.on('event', fn)`) and pond-ts
@@ -369,6 +542,9 @@ of `Output`s, for the nodes and kinds you asked for with
 | `OutputKind::Evict`  | the series, a view | Events it dropped (retention or `clear`)           |
 | `OutputKind::Bucket` | an aggregation     | A bucket as it stands after an event joined it     |
 | `OutputKind::Update` | an aggregation     | It took an event, even one too late for any bucket |
+| `OutputKind::Event`  | a rolling window   | It emitted (per its trigger)                       |
+| `OutputKind::Update` | a rolling window   | It took an event; carries its values as they stand |
+| `OutputKind::Event`  | a reduce           | It emitted (at the end of a push)                  |
 
 Nothing is returned for what you don't watch, so an unwatched node costs
 nothing extra. The outputs come in the order pond-ts's listeners would
@@ -514,8 +690,19 @@ fn main() -> Result<(), pond_rs::PondError> {
 - **Stricter view arguments**, refused when the view is built (see
   [More views](#more-views)).
 - **`map` cannot change an event's time**, only its values; pond-ts's can.
-- **Not built yet:** calendar buckets in a live `aggregate`, and the
-  other live nodes listed at the top.
+- **Reading a rolling window's `value()` changes nothing.** In pond-ts
+  a read can move the last bit of a later `stdev`. pond-rs makes the
+  same reads pond-ts makes during a push, so pushed results still match
+  bit for bit.
+- **A reduce built over events its source already holds emits for them
+  straight away**, into its kept events but no push's outputs. pond-ts
+  emits on a microtask just after the build, so a caller that pushes
+  again without yielding gets one emission covering both from pond-ts,
+  and two from pond-rs.
+- **A clock trigger on a source keyed by ranges or intervals is
+  refused**; pond-ts emits time keys under the interval schema there.
+- **Not built yet:** calendar buckets in a live `aggregate`, and
+  per-entity partitions.
 
 ## Speed
 
@@ -549,8 +736,24 @@ microsecond per event. These timings also found a pond-ts slowdown
 case took pond-ts 115 s before the fix), fixed in pond-ts at the same
 time.
 
-These timings also found a pond-ts slowdown (pushing one at a time got
-slower as the series grew), fixed in pond-ts at the same time.
+Earlier timings found another (pushing one at a time got slower as the
+series grew), also fixed in pond-ts.
+
+Rolling windows and reduce, on a series keeping its last 10,000 events
+(ms, one million events, each case alone):
+
+| Case                                    | pond-rs | pond-ts | Faster |
+| --------------------------------------- | ------- | ------- | ------ |
+| The series alone                        | 182     | 2,049   | 11×    |
+| `rolling` 30 s: avg + max + stdev       | 328     | 3,719   | 11×    |
+| `rolling_rows` 100: avg, history off    | 291     | 2,935   | 10×    |
+| `rolling_windows` 1 m + 5 m + 15 m: avg | 338     | 3,493   | 10×    |
+| `reduce`: avg + max + count             | 357     | 6,443   | 18×    |
+
+These found a pond-ts slowdown too: a loop of pushes that never waited
+queued one task per push behind a `reduce`, each holding on to it until
+the loop ended (1M pushes took 5.2–9.7 s, slower on each repeat). Fixed
+in pond-ts at the same time (4.3–4.5 s).
 
 The tables above were measured before pond-rs switched to storing events
 by column (#842). On a later run after that change, pond-rs got faster on

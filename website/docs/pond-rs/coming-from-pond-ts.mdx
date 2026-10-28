@@ -31,6 +31,11 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                                          |
 | `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`                   |
 | `live.on('event', fn)` after `new LiveSeries(...)`                | `live.watch(node, OutputKind::Event)?`, then read the outputs each `push` returns (see [Live series](./live)) |
+| `live.rolling('30s', m, { trigger: t })`                          | `live.rolling_with(live.root(), "30s", &aggs, &RollingOptions::new().trigger(t))?`                            |
+| `live.rolling(100, m, options)`                                   | `live.rolling_rows(live.root(), 100, &aggs, &options)?`                                                       |
+| `live.rolling({ '1m': m1, '5m': m5 })`                            | `live.rolling_windows(live.root(), &[RollingWindow::new("1m", &m1), …], &opts)?`                              |
+| `live.reduce(m)`                                                  | `live.reduce(live.root(), &aggs)?`                                                                            |
+| `Trigger.every('1m')`, `Trigger.count(10)`                        | `Trigger::every("1m")?`, `Trigger::count(10)?`                                                                |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                                          |
