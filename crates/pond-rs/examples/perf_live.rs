@@ -26,7 +26,8 @@
 use std::time::Instant;
 
 use pond_rs::live::{
-    History, LiveOptions, LiveSeries, OrderingMode, OutputKind, RollingOptions, RollingWindow,
+    CollectOptions, History, LiveOptions, LiveSeries, OrderingMode, OutputKind, PartitionOptions,
+    RollingOptions, RollingWindow, Trigger,
 };
 use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Sample, Sequence, Value};
 
@@ -315,6 +316,97 @@ fn main() -> pond_rs::Result<()> {
             let root = live.root();
             live.aggregate(root, &ny_day, &mapping).unwrap();
             one_by_one(&mut live, rows);
+        },
+    );
+    // Step 6: partitions. 1000 hosts is the gRPC experiment's shape.
+    let rows1k: Vec<Row> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (t, row))| {
+            let mut row = row.clone();
+            row[0] = Some(Value::String(format!("h{}", i % 1000)));
+            (*t, row)
+        })
+        .collect();
+    let batches = |live: &mut LiveSeries, rows: Vec<Row>| {
+        let mut rows = rows.into_iter();
+        loop {
+            let batch: Vec<Row> = rows.by_ref().take(1000).collect();
+            if batch.is_empty() {
+                break;
+            }
+            live.push_many(batch).unwrap();
+        }
+    };
+    let none = PartitionOptions::new();
+    let all = CollectOptions::new();
+    run(
+        "partition 4 hosts + collect, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &none).unwrap();
+            live.collect(p, &all).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "partition 4 hosts: diff + fill each, collect",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &none).unwrap();
+            let chain = live
+                .per_partition(p, |live, part| {
+                    let d = live.diff(part, &["cpu"])?;
+                    Ok(live.fill_all(d, Fill::Hold)?.id())
+                })
+                .unwrap();
+            live.collect(chain, &all).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    let every = |d: &str| RollingOptions::new().trigger(Trigger::every(d).unwrap());
+    run(
+        "partition 4 hosts: fused 1m + 5m every 1m",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &none).unwrap();
+            let windows = [
+                RollingWindow::new("1m", &[Agg::new("cpu_1m", "cpu", Reducer::Avg)]),
+                RollingWindow::new("5m", &[Agg::new("mem_5m", "mem", Reducer::Max)]),
+            ];
+            live.partition_rolling_windows(p, &windows, &every("1m"))
+                .unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    let hundred = PartitionOptions::new().max_events(100);
+    let avg = [Agg::of("cpu", Reducer::Avg)];
+    run(
+        "partition 1000 hosts, batches of 1000: rolling",
+        &rows1k,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &hundred).unwrap();
+            let m = avg.clone();
+            let chain = live
+                .per_partition(p, move |live, part| Ok(live.rolling(part, "30s", &m)?.id()))
+                .unwrap();
+            live.collect(chain, &all).unwrap();
+            batches(&mut live, rows);
+        },
+    );
+    run(
+        "partition 1000 hosts, batches of 1000: sync",
+        &rows1k,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &hundred).unwrap();
+            live.partition_rolling(p, "30s", &avg, &every("10s"))
+                .unwrap();
+            batches(&mut live, rows);
         },
     );
     println!("{{{}}}", report.join(", "));

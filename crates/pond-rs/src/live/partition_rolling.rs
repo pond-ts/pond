@@ -355,7 +355,7 @@ impl LiveSeries {
         }
         let index = self.slots.len();
         self.slots.push(Slot {
-            state: State::PartitionRolling(node),
+            state: State::PartitionRolling(Box::new(node)),
             source: Some(p),
             series: self.slots[p].series,
             subs: Default::default(),

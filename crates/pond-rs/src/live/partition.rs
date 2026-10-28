@@ -277,6 +277,15 @@ impl LivePartitioned {
         }
     }
 
+    /// The partition slot for `event`, when built, without writing its
+    /// key for a text value.
+    fn slot_for(&self, event: &LiveEvent) -> Option<usize> {
+        match &event.values()[self.by] {
+            Some(Value::String(s)) => self.slot_of(s),
+            _ => self.slot_of(&self.key_of(event)),
+        }
+    }
+
     fn slot_of(&self, key: &str) -> Option<usize> {
         self.index.get(key).map(|&i| self.parts[i].index as usize)
     }
@@ -400,7 +409,7 @@ impl LiveSeries {
         // Declared partitions, then the root's history.
         let p = self.slots.len();
         self.slots.push(Slot {
-            state: State::Partitioned(partitioned),
+            state: State::Partitioned(Box::new(partitioned)),
             source: Some(0),
             series: 0,
             subs: Default::default(),
@@ -464,11 +473,11 @@ impl LiveSeries {
         let schema = self.stub_schema(p, &recipe)?;
         let index = self.slots.len();
         self.slots.push(Slot {
-            state: State::PartitionedView(PartitionedView {
+            state: State::PartitionedView(Box::new(PartitionedView {
                 partitioned: p,
                 recipe,
                 schema,
-            }),
+            })),
             source: None,
             series: 0,
             subs: Default::default(),
@@ -776,20 +785,23 @@ impl LiveSeries {
         // 1. Each partition's rows, partitions in order of first row
         //    (built here when new).
         let mut shares: Vec<Share> = Vec::new();
+        let mut share_at: HashMap<usize, usize> = HashMap::new();
         let mut share_of: Vec<usize> = Vec::with_capacity(events.len());
         for (r, event) in events.iter().enumerate() {
-            let key = self.partitioned(p).key_of(event);
-            let slot = self.ensure_partition(p, &key)?;
-            let s = match shares.iter().position(|s| s.slot == slot) {
-                Some(s) => s,
+            let slot = match self.partitioned(p).slot_for(event) {
+                Some(slot) => slot,
                 None => {
-                    shares.push(Share {
-                        slot,
-                        rows: Vec::new(),
-                    });
-                    shares.len() - 1
+                    let key = self.partitioned(p).key_of(event);
+                    self.ensure_partition(p, &key)?
                 }
             };
+            let s = *share_at.entry(slot).or_insert_with(|| {
+                shares.push(Share {
+                    slot,
+                    rows: Vec::new(),
+                });
+                shares.len() - 1
+            });
             shares[s].rows.push(r);
             share_of.push(s);
         }
@@ -809,13 +821,9 @@ impl LiveSeries {
             self.series_mut(part).buffer.insert(event);
         }
         // 3. Each partition finishes, in order of its last row.
-        let mut close: Vec<usize> = Vec::with_capacity(shares.len());
-        for &s in share_of.iter().rev() {
-            if !close.contains(&s) {
-                close.push(s);
-            }
-        }
-        for &s in close.iter().rev() {
+        let mut close: Vec<usize> = (0..shares.len()).collect();
+        close.sort_unstable_by_key(|&s| shares[s].rows.last());
+        for &s in &close {
             let share = &shares[s];
             let part = share.slot;
             let n = self.series(part).retention_count();
@@ -880,6 +888,20 @@ impl LiveSeries {
                 continue;
             }
             let root = self.core();
+            // A root that keeps strict order (or drops late events) hands
+            // each partition its events in order; only a reordering root
+            // can hand a partition an event its own ordering refuses.
+            let order_check = root.ordering == OrderingMode::Reorder
+                && match pt.ordering {
+                    OrderingMode::Strict => true,
+                    OrderingMode::Reorder => pt
+                        .grace_ms
+                        .is_some_and(|g| root.grace_ms.is_none_or(|r| g < r)),
+                    OrderingMode::Drop => false,
+                };
+            if !order_check && pt.groups.is_none() {
+                continue;
+            }
             let mut root_last = root.buffer.last_key().cloned();
             let mut part_last: HashMap<String, Option<EventKey>> = HashMap::new();
             for (i, event) in events.iter().enumerate() {

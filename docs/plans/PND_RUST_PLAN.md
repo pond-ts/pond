@@ -3817,6 +3817,47 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     6. Partitioned: `partition_by` (a node owning one subtree per key),
        `to_map` / `apply` / `collect` (append-only fan-in), partitioned
        fused rolling with synchronised emission.
+       Built 2026-10-28 (`src/live/partition.rs`, `partition_rolling.rs`,
+       `series.rs`), after pond-ts #838 merged (pjm17971 chose to merge it
+       first so pond-rs copies its batch routing).
+       - Partitions are series inside the owner (`SubSeries`); the root is
+         one too. Each slot records its nearest series, whose push settles
+         the reduces below it. `partition_by` is root-only in pond-rs.
+       - pond-ts's partitioned sugar (`p.fill(..)`, `p.diff(..)`,
+         `p.rolling(..)` without a clock, ...) is one call:
+         `per_partition(from, |live, part| ...)`, a closure that builds the
+         chain on a partition and is run again for every partition
+         `collect` / `apply` / `partition_outputs` builds on, and once on an
+         empty stub to learn the schema. `node::<T>(id)` gives a typed
+         handle for its output.
+       - Routing copies pond-ts exactly, since output order depends on it:
+         on a strict time-keyed root, a push goes to the partitions first
+         (each built in order of its first row, then every row's event in
+         push order, then each partition closes in order of its last row,
+         #838); otherwise each root event is routed as it arrives. The
+         quiet-partition age sweep runs every `max_age / 8` of time.
+       - A push a partition would refuse (value outside `groups`, an event
+         a stricter partition ordering refuses) is refused whole before
+         anything is stored; pond-ts stores it in the root and throws
+         (case `partition-groups`, compared without that row). An order a
+         gathered (`collect` / `apply`) series refuses fails the push
+         after it is delivered, as pond-ts throws mid-delivery.
+       - Synchronised rolling (`partition_rolling`, `_rows`, `_windows`)
+         reuses the rolling window state per partition (`take`, `advance`
+         added to `LiveRolling`). Emitting order: declared groups, then
+         first event. Its partition column is text (pond-ts declares the
+         source column's type but writes the key text into it).
+       - Fixture: 4 cases added (`partition-over-history`,
+         `partition-max-age`, `partition-max-age-sweep`,
+         `partition-rolling-history`) after mutation runs showed history
+         replay, inherited retention, the sweep step, group order and
+         chain-fed rolling were unchecked. 65 of 65 cases run, all equal.
+       - Timing found pond-rs slower than pond-ts at 1000 partitions: the
+         end-of-push settle scanned every node per series push (fixed: a
+         list of reduces), plus a linear search per routed row (fixed:
+         map). 1000 hosts, batches of 1000, per-host rolling 4,288 ms
+         before, 994 after. The up-front partition check is skipped when
+         the root's own order check already covers it.
     7. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
        a streaming task against polars-or-hand-written Rust; also the same
        task with a channel-style API vs owner-and-handles, to test rather

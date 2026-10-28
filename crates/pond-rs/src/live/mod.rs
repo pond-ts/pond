@@ -372,11 +372,11 @@ mod sealed {
         Rolling(LiveRolling),
         Reduce(LiveReduce),
         /// Routes the root's events into partitions (themselves series).
-        Partitioned(LivePartitioned),
+        Partitioned(Box<LivePartitioned>),
         /// A chain to build on every partition, not built yet.
-        PartitionedView(PartitionedView),
+        PartitionedView(Box<PartitionedView>),
         /// Rolling windows per partition, emitted together on a clock.
-        PartitionRolling(LivePartitionedRolling),
+        PartitionRolling(Box<LivePartitionedRolling>),
         Removed,
     }
 
@@ -511,6 +511,9 @@ pub struct LiveSeries {
     slots: Vec<Slot>,
     /// Partitioned nodes routed a push at a time (see `partition.rs`).
     routers: Vec<usize>,
+    /// Every reduce built, oldest first: the nodes a push settles (a scan
+    /// of every node per push is slow with many partitions).
+    reduces: Vec<usize>,
     /// A refusal met while handing events on (a gathered series' order, a
     /// chain that fails to build on a new partition): the push returns it
     /// after finishing.
@@ -612,6 +615,7 @@ impl LiveSeries {
                 subs: Default::default(),
             }],
             routers: Vec::new(),
+            reduces: Vec::new(),
             failure: None,
         })
     }
@@ -930,7 +934,8 @@ impl LiveSeries {
     /// [PND-REDUCETICK]): each reduce below it emits for what reached it,
     /// oldest node first.
     fn settle(&mut self, series: usize, out: &mut Vec<Output>) {
-        for i in 1..self.slots.len() {
+        for k in 0..self.reduces.len() {
+            let i = self.reduces[k];
             if self.slots[i].series != series {
                 continue;
             }
@@ -1250,6 +1255,9 @@ impl LiveSeries {
         } else {
             self.slots[source].series
         };
+        if matches!(state, State::Reduce(_)) {
+            self.reduces.push(index);
+        }
         self.slots.push(Slot {
             state,
             source: Some(source),
