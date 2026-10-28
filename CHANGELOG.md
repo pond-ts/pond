@@ -80,6 +80,62 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
+  on by default). `LiveSeries` takes events one at a time or in batches
+  (`push` / `push_many` / `push_json`), with pond-ts's ordering modes
+  (strict, drop, reorder with a grace window), retention by count or age,
+  key lookups, stats, `to_json` / `from_json` and batch snapshots. `filter`
+  and fixed-bucket `aggregate` build nodes on it, reached through copyable
+  `Node` handles; `watch` picks which outputs a push returns, and `remove`
+  drops a node. Results match pond-ts event for event on 31 of the 51 live
+  replay cases (the rest need later steps).
+
+### Fixed
+
+- **`LiveSeries.push` one event at a time no longer slows down as the series
+  grows** ([PND-LIVEPUSHSCAN]). On a `strict` time-keyed series each push
+  looked up the newest row by walking every stored push from the oldest, so
+  100k pushes took 18.6 s; they now take 0.2 s.
+
+- **`LiveSeries.push` / `pushMany` refuse a batch with a bad row whole, in
+  every ordering mode** ([PND-BATCHATOM]). Under `ordering: 'drop'` or
+  `'reorder'`, and for interval / time-range keys under `'strict'`, a bad
+  cell, a wrong row width or a row the ordering refuses used to throw only
+  after the rows before it were committed and their `'event'`s had fired,
+  skipping retention, `'batch'` and `'evict'` (a `maxEvents: 2` series could
+  hold 4 rows). The whole batch is now checked first, as it already was for
+  time-keyed `'strict'` series, so a throw leaves the series and its
+  listeners untouched. Batches with no bad row behave as before.
+
+### Added
+
+- **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
+  annotation draws at 0.4 alpha, which was too loud for a focus tint behind
+  data and too quiet for a mark that carries the chart's point, so consumers
+  replaced `theme.annotation` wholesale in both directions. `annotation.roles`
+  entries can now set `depth` (their own three-level ramp), and `color` is
+  optional (a role without it takes the register hue). `defaultTheme` and
+  `estelaTheme` ship two roles: `wash` (edges rest at 0.2, fill 0.06; estela's
+  is a 7% foam tint) and `argument` (rests at 0.85). Use them as
+  `<Region role="wash">` / `<Marker role="argument">`. Marks with no `role`
+  are unchanged. A theme that replaces `annotation` without spreading the
+  base's `roles` has neither role, so `role="wash"` falls back to the register.
+
+### Changed
+
+- **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
+  to emit from a microtask, so several `push()` calls with no `await` between
+  them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output
+  (6) instead of 1, 3, 6, and `Trigger.count(2)` over four pushes gave 10, 10
+  instead of 3, 10. Now every `push` / `pushMany` / `pushJson` call emits
+  synchronously, after retention, before it returns, whether or not the caller
+  awaits. Code that awaited between pushes sees no change; code that pushed
+  several times without awaiting now gets one output per push. A `pushMany`
+  still emits once. A reduce built over a source that already holds events
+  still emits its replay once, on a microtask.
+
+### Added
+
 - **Chain-friendly options on `rolling`, `diff`, `rate` and `pctChange`**
   ([PND-CHAIN]). `rolling(window, mapping, { append: true })` keeps every
   source column and adds the outputs after them (before, `rolling` returned

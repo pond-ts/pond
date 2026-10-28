@@ -1,3 +1,4 @@
+import { onSourceSettle } from './settle.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -105,6 +106,8 @@ export class LiveAggregation<
   #statsEventsObserved = 0;
   #statsBucketsClosed = 0;
 
+  readonly #settleSource: unknown;
+
   constructor(
     source: LiveSource<S>,
     sequence: Sequence,
@@ -154,6 +157,7 @@ export class LiveAggregation<
       this.#ingest(source.at(i)!);
     }
 
+    this.#settleSource = source;
     this.#unsubscribe = source.on('event', (event) => {
       this.#ingest(event);
       for (const fn of this.#onUpdate) fn();
@@ -162,6 +166,11 @@ export class LiveAggregation<
 
   get length(): number {
     return this.#closedEvents.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#settleSource, fn);
   }
 
   get closedCount(): number {

@@ -78,6 +78,42 @@ stateful transform — overlaps with streaming Milestone A
 ([PND-CHANGE](PND_STREAMING_PLAN.md)). Archive has the full scope note and
 test matrix.
 
+Worse than "does not re-flow" for plain views (found 2026-10-27 writing the
+pond-rs live fixture, case `partition-apply-and-retention`): on an
+`ordering: 'reorder'` source, a late event the source accepts makes every
+`LiveView` built on it (even `filter(() => true)`) throw "processed event has
+key … older than the previous tail", so `push` throws after the source has
+already stored the event; the source then holds it and the views do not.
+Reproduced: `reorder` series, `fill('hold')` / `filter` / `diff` views, push
+5000 then 2600 → push throws, source length 2, each view length 1.
+
+### [PND-BATCHATOM] — done 2026-10-27
+
+Found by the pond-rs live fixture (R3 step 1, cases `series-drop-late` /
+`series-reorder`): on the per-row backing (`drop`, `reorder`, and non-time
+keys under `strict`) `pushMany` validated and inserted row by row, so a bad
+row threw after the earlier rows were committed and their `'event'`s fired,
+and retention / `'batch'` / `'evict'` never ran for them (`maxEvents: 2`
+held 4 rows). pjm17971 chose to fix pond-ts rather than have pond-rs copy
+it. Fix: validate every row, then dry-run the ordering policy over the
+batch (`#checkOrder`, tracking the latest key as the inserts would), then
+commit. Error messages are unchanged; batches with no bad row behave as
+before; 200k rows in 1k batches measured the same before and after (within
+run-to-run noise, ~66-80 ms). `_pushTrustedEvents` gets the same order
+check.
+
+### [PND-LIVEPUSHSCAN] — done 2026-10-27
+
+Found timing pond-rs R3 step 2 against pond-ts: one-at-a-time `push` on a
+`strict` time-keyed series got slower as the series grew (10k pushes 0.15 s,
+50k 5.1 s, 100k 18.6 s; 1M would take most of an hour). Each `push` adds a
+one-row chunk to the chunked backing, and the order check reads the last
+row through `#locate`, which walked every chunk from the front. Fix:
+`#locate` walks from the nearer end, so the newest rows are found at once
+(10k 0.07 s, 50k 0.18 s, 100k 0.21 s). Not changed: one chunk per `push`
+still costs an object per row; coalescing small pushes into the pending tier
+(as partition routing does) would cut that, not measured.
+
 ### [PND-LJOIN] — Live merge / join
 
 No way to combine multiple `LiveSeries` into one live source (interleave
@@ -136,6 +172,47 @@ Pending evaluation (gRPC RFC #20): a per-partition observer callback for
 slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
+
+### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits — **fixed 2026-10-25**
+
+Found 2026-10-25 by a review of the pond-rs R3 plan, reproduced on main
+(9bf0b1d). `LiveReduce` emits from a `queueMicrotask` (`live-reduce.ts`
+`#ingest` / `#flushPendingEmit`) so its output reflects the buffer after
+retention. Side effect: pushes with no `await` between them share one
+emission.
+
+| calls (sum reducer)                     | outputs             |
+| --------------------------------------- | ------------------- |
+| `push` ×3 (values 1, 2, 3), no `await`  | 6                   |
+| `push` ×3, `await` after each           | 1, 3, 6             |
+| `count(2)`, `push` ×4 (1..4), no await  | 10, 10              |
+| `count(2)`, `push` ×4, await after each | 3, 10               |
+| `count(2)`, `pushMany` of 4             | 10, 10 (documented) |
+
+The class doc says "each individual `push()` is one row → one emission",
+so the first and third rows are a bug: the output depends on the caller's
+code layout, not on the data. It is the only deferred output in `live/`.
+Proposed fix: emit at the end of each `push` / `pushMany` call, after
+retention and `'evict'`, through an internal "push finished" hook on
+`LiveSeries` instead of a microtask. Behaviour change for callers who push
+several times without awaiting (they get one output per push again). The
+pond-rs live layer ([PND-RUST-R3]) waits on this for `reduce` parity.
+
+**Outcome (2026-10-25, pjm17971 said "fix it").** `LiveSeries` got an
+internal end-of-push hook (`_onSettle`, `src/live/settle.ts`): it fires once
+per push from the outermost re-entrancy guard, after `'evict'`, while still
+guarded, so a push made by a settle listener is queued like any re-entrant
+push. `LiveView`, `LiveAggregation`, `LiveRollingAggregation` and
+`LiveReduce` forward it to their source, so a reduce over a view (or a view
+over an aggregation) reaches the root series. `LiveReduce` flushes its
+pending emission there. Kept, deliberately: the construction-replay
+emission stays on a microtask (listeners attach after the constructor
+returns, so a synchronous emit would reach nobody), and a custom
+`LiveSource` without the hook falls back to the microtask. `count(n)` over
+one `pushMany` still emits floor(K / n) copies of the post-push value
+(documented; per-row values are not available after retention). Not
+changed: `LiveFusedRolling` and partitioned sources don't forward the hook,
+since neither is a `reduce` source today. Tests: `test/live/reducetick.test.ts`.
 
 ## Decisions
 

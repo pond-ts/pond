@@ -59,7 +59,7 @@ impl Key<'_> {
 /// pond-ts `compareScalars`: numbers, then text, then true/false; within a
 /// kind JavaScript's `<`, which orders text by UTF-16 code units (not by
 /// UTF-8 bytes: `"\u{FFFF}"` comes after `"😀"`).
-fn compare_scalars(a: &Scalar, b: &Scalar) -> Ordering {
+pub(crate) fn compare_scalars(a: &Scalar, b: &Scalar) -> Ordering {
     match (a, b) {
         (Scalar::Number(x), Scalar::Number(y)) => x.partial_cmp(y).expect("finite"),
         (Scalar::String(x), Scalar::String(y)) => x.encode_utf16().cmp(y.encode_utf16()),

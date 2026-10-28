@@ -607,7 +607,24 @@ the study oracle) is done.
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
   statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. ~~the
-  catalog~~ — done; 5. perf check and an agent trial. Detail in the breakout plan.
+  catalog~~ — done; 5. ~~perf check and an agent trial~~ — done
+  (2026-10-23): all 109 studies same bits, 2.3–32.5x pond-ts on 4 cores;
+  trial pond-rs 9/10 right (one wrong column order) vs polars 10/10,
+  0 failed runs vs polars' 12. **R2 is
+  complete.** Detail in the breakout plan.
+
+- **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
+  2026-10-23 after R2, revised twice 2026-10-25 after two reviews; in
+  progress (step 1, the pond-ts replay fixture, landed 2026-10-27; step 2,
+  `LiveSeries` with `filter` and fixed-bucket `aggregate`, built 2026-10-27). Port pond-ts's live layer (`LiveSeries`, views, live
+  aggregation / rolling / reduce, triggers, partitioned live) so each push
+  returns the same ordered list of outputs as pond-ts and every operator
+  ends in the same state, checked against a new pond-ts replay fixture.
+  Design (pjm17971 switched to it from channels on 2026-10-25): the root series owns every operator; callers
+  hold copyable handles to query them; `push` returns a `Vec<Output>`;
+  channels are a caller-side adapter. pond-ts `reduce` now emits at the end of each push ([PND-REDUCETICK], done).
+  Steps 1–7 in the breakout plan; React hooks, charts and
+  `@pond-ts/process` stay out of scope.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).

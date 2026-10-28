@@ -255,6 +255,8 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onBatch: ListenerSet<BatchListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
+  /** [PND-REDUCETICK] End-of-push listeners; see `settle.ts`. */
+  readonly #onSettle: ListenerSet<() => void> = new ListenerSet();
   /**
    * [PND-LIVFIX] Re-entrancy guard. `> 0` while a push is fanning out to
    * listeners. A push that arrives from inside a listener (`#dispatchDepth
@@ -465,6 +467,16 @@ export class LiveSeries<S extends SeriesSchema> {
     return this.#storage.at(this.bisect(key));
   }
 
+  /**
+   * @internal [PND-REDUCETICK] Subscribe to the end of every push: fires
+   * once per `push` / `pushMany` / `pushJson` (and each internal push),
+   * after `'evict'`, still inside the push. See `settle.ts`.
+   */
+  _onSettle(fn: () => void): () => void {
+    this.#onSettle.add(fn);
+    return () => this.#onSettle.delete(fn);
+  }
+
   push(...rows: RowForSchema<S>[]): void {
     this.pushMany(rows);
   }
@@ -526,12 +538,17 @@ export class LiveSeries<S extends SeriesSchema> {
         return;
       }
 
-      // Per-row (Event[]) path.
+      // Per-row (Event[]) path. [PND-BATCHATOM] Validate every row and
+      // check the whole batch's ordering BEFORE committing any of it, so a
+      // bad row refuses the batch whole (as the chunked path does) instead
+      // of leaving earlier rows committed with retention, 'batch' and
+      // 'evict' skipped.
+      const events = rows.map((row) => this.#validateRow(row));
+      this.#checkOrder(events);
       const added: EventForSchema<S>[] = [];
       const errors: unknown[] = [];
 
-      for (const row of rows) {
-        const event = this.#validateRow(row);
+      for (const event of events) {
         if (this.#insertPerRow(event)) {
           // Increment the counter immediately after a successful
           // insert and BEFORE listener fan-out. If a listener throws
@@ -587,6 +604,14 @@ export class LiveSeries<S extends SeriesSchema> {
     } catch (error) {
       failure = { error };
     } finally {
+      // [PND-REDUCETICK] Settle once per push, after every phase, from the
+      // outermost guard only and while still guarded, so a push made by a
+      // settle listener is queued like any other re-entrant push.
+      if (this.#dispatchDepth === 1 && this.#onSettle.size > 0) {
+        const errors: unknown[] = [];
+        this.#dispatch(this.#onSettle, undefined, errors);
+        if (errors.length > 0) failure ??= { error: errors[0] };
+      }
       this.#dispatchDepth -= 1;
     }
     if (this.#dispatchDepth === 0 && !this.#draining) {
@@ -828,6 +853,7 @@ export class LiveSeries<S extends SeriesSchema> {
         return;
       }
 
+      this.#checkOrder(events);
       const added: EventForSchema<S>[] = [];
       const errors: unknown[] = [];
 
@@ -1552,6 +1578,41 @@ export class LiveSeries<S extends SeriesSchema> {
       row.push(event.get((this.schema[col] as { name: string }).name));
     }
     return row as RowForSchema<S>;
+  }
+
+  /**
+   * [PND-BATCHATOM] Dry run of {@link #insertPerRow}'s ordering policy over
+   * a whole batch: throws the error the per-row insert would throw on the
+   * first row it would refuse, before any row is committed. Tracks the
+   * running latest key exactly as the inserts would move it (an accepted
+   * in-order row raises it; a dropped row or a sorted reorder insert
+   * leaves it).
+   */
+  #checkOrder(events: ReadonlyArray<EventForSchema<S>>): void {
+    const lastEvent = this.#perRow!.last();
+    let last = lastEvent?.key();
+    for (const event of events) {
+      const key = event.key();
+      if (last === undefined || compareKeys(last, key) <= 0) {
+        last = key;
+        continue;
+      }
+      if (this.#ordering === 'strict') {
+        throw new ValidationError(
+          `out-of-order event: timestamp ${event.begin()} is before latest ${last.begin()}`,
+        );
+      }
+      if (
+        this.#ordering === 'reorder' &&
+        this.#graceWindowMs !== Infinity &&
+        last.begin() - event.begin() > this.#graceWindowMs
+      ) {
+        throw new ValidationError(
+          `event at ${event.begin()} is outside grace window ` +
+            `(latest: ${last.begin()}, grace: ${this.#graceWindowMs}ms)`,
+        );
+      }
+    }
   }
 
   /**
