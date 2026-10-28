@@ -77,13 +77,11 @@ anchored VWAP) are built, all 109 pond-ts studies; see
 
 **Started:** the live layer: series that take events as they arrive, with
 live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
-…), per-minute (or any fixed step) `aggregate`, rolling windows and
-`reduce`; see
-[Live series](./live).
+…), `aggregate` by minute or by calendar day in a time zone, rolling
+windows, `reduce`, and partitions (one series per host, with views and
+windows on each); see [Live series](./live).
 
-**Not built yet:** the rest of the live layer (calendar buckets in a live
-`aggregate`, partitions), and a WASM build that pond-ts can call. They
-come in that order; see the
+**Not built yet:** a WASM build that pond-ts can call; see the
 [roadmap](#roadmap) below.
 
 ## Where to go next
@@ -99,7 +97,8 @@ come in that order; see the
 - [Finance studies](./finance-studies): moving averages, MACD, bands, RSI
   and more over price bars, as `@pond-ts/financial`.
 - [Live series](./live): events as they arrive, with live filters,
-  per-minute buckets, rolling windows and running totals.
+  per-minute buckets, rolling windows, running totals and per-host
+  partitions.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is

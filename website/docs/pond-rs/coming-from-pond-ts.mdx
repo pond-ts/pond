@@ -36,6 +36,9 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `live.rolling({ '1m': m1, '5m': m5 })`                            | `live.rolling_windows(live.root(), &[RollingWindow::new("1m", &m1), …], &opts)?`                              |
 | `live.reduce(m)`                                                  | `live.reduce(live.root(), &aggs)?`                                                                            |
 | `Trigger.every('1m')`, `Trigger.count(10)`                        | `Trigger::every("1m")?`, `Trigger::count(10)?`                                                                |
+| `live.partitionBy('host')`                                        | `live.partition_by(live.root(), "host", &PartitionOptions::new())?`                                           |
+| `live.partitionBy('host').diff('cpu').collect()`                  | `live.apply(hosts, \|live, h\| Ok(live.diff(h, &["cpu"])?.id()), &CollectOptions::new())?`                    |
+| `live.partitionBy('host').rolling('30s', m, { trigger })`         | `live.partition_rolling(hosts, "30s", &aggs, &RollingOptions::new().trigger(t))?`                             |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                                          |
