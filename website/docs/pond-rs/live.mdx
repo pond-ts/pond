@@ -67,7 +67,9 @@ fn main() -> Result<(), pond_rs::PondError> {
 The lookups are the batch ones: `at` (negative counts from the end),
 `first` / `last`, `bisect`, `at_or_before` / `at_or_after`,
 `includes_key`, `find` / `some` / `every`, and `events()` to walk them
-all. `time_range()` is the span from the first event to the last,
+all. Events are stored column by column, so each read builds the event
+it hands you: `at`, `last`, `events()` and the rest give you your own
+copy (a `LiveEvent`), not a reference into the series. `time_range()` is the span from the first event to the last,
 `event_rate()` the events per second over it, and `stats()` the counters
 (events taken, evicted and skipped). `to_json` writes what it holds as
 pond-ts JSON, and `LiveSeries::from_json` starts one from it.
@@ -547,10 +549,34 @@ microsecond per event. These timings also found a pond-ts slowdown
 case took pond-ts 115 s before the fix), fixed in pond-ts at the same
 time.
 
-pond-ts is faster on big batches because it stores a batch column by
-column and makes no object per event when nothing listens. pond-rs keeps
-one shared object per event (about 230 bytes each), so storing a million
-and freeing them again takes most of its 260 ms. Storing by column would
-close the gap and is the change to make if memory or batch speed starts
-to matter. These timings also found a pond-ts slowdown (pushing one at a
-time got slower as the series grew), fixed in pond-ts at the same time.
+These timings also found a pond-ts slowdown (pushing one at a time got
+slower as the series grew), fixed in pond-ts at the same time.
+
+The tables above were measured before pond-rs switched to storing events
+by column (#842). On a later run after that change, pond-rs got faster on
+most cases (one at a time 268 → 220 ms, `Reorder` 306 → 230, a filter and
+an aggregate 382 → 293, `fill` + `cumulative` 600 → 450) and a little
+slower on two (`map` + `select` + `sample` 462 → 499, a filter and an
+aggregate on a 10,000-event series 278 → 339), because each view now
+copies the cells it keeps. Batches of 1,000 are still slower than pond-ts
+(204 ms against 92 on that run): pond-rs still makes one short-lived event
+per row.
+
+### Memory
+
+A live series stores each column as its own list: a start time per event,
+numbers as plain 8-byte floats, text and true/false as optional values.
+Bytes held per event, one million events:
+
+| Columns                                                                                 | Before #842 | Now |
+| --------------------------------------------------------------------------------------- | ----------- | --- |
+| Time + 3 numbers                                                                        | 249         | 34  |
+| Time + text + 2 numbers                                                                 | 250         | 51  |
+| Time + 10 numbers                                                                       | 585         | 92  |
+| Time + text + 2 numbers, plus a filter that keeps everything (series and view together) | 266         | 102 |
+
+One thing to plan for: a view keeps its own copy of the events it holds
+rather than sharing the series', so a view that keeps everything costs
+about as much memory as the series itself (before #842 such a view cost
+about 16 bytes per event, against 51 now). Put `window`, `max_events` or
+`max_age` where you can.
