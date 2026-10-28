@@ -819,8 +819,7 @@ impl LiveSeries {
     }
 
     /// The end of a push (pond-ts's settle hook, [PND-REDUCETICK]): each
-    /// reduce emits for what reached it, oldest node first, so a reduce
-    /// built on another sees that one's emission in the same push.
+    /// reduce emits for what reached it, oldest node first.
     fn settle(&mut self, out: &mut Vec<Output>) {
         for i in 1..self.slots.len() {
             let hand_on = !self.slots[i].subs[OutputKind::Event.slot()].is_empty();
@@ -977,7 +976,9 @@ impl LiveSeries {
                     });
                 }
             }
-            State::Reduce(reduce) => reduce.ingest(event, place),
+            State::Reduce(reduce) => {
+                reduce.ingest(event, place.expect("a reduce's source places its events"))
+            }
             State::Aggregation(agg) => {
                 let done = agg.ingest(event, want_bucket);
                 if let Some(bucket) = done.bucket {
@@ -1022,6 +1023,21 @@ impl LiveSeries {
             Some(_) => Err(bad("this node was removed")),
             None => Err(bad("no such node")),
         }
+    }
+
+    /// The node to build on: a reduce and fused rolling windows have
+    /// nothing built on them in pond-ts, so pond-rs refuses them as sources.
+    fn source_of(&self, call: &'static str, id: NodeId) -> Result<usize> {
+        let i = self.slot_of(call, id)?;
+        let message = match &self.slots[i].state {
+            State::Reduce(_) => "nothing can be built on a reduce",
+            State::Rolling(r) if r.is_fused() => "nothing can be built on fused rolling windows",
+            _ => return Ok(i),
+        };
+        Err(PondError::InvalidData {
+            call,
+            message: message.into(),
+        })
     }
 
     /// The events a node holds now, to replay into a node built on it.
@@ -1072,7 +1088,7 @@ impl LiveSeries {
     where
         F: FnMut(&LiveEvent) -> bool + Send + 'static,
     {
-        let source = self.slot_of("LiveSeries::filter", from.into())?;
+        let source = self.source_of("LiveSeries::filter", from.into())?;
         let schema = self.schema_of(source);
         let step: Step = Box::new(move |e: &LiveEvent| keep(e).then(|| e.clone()));
         Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
@@ -1094,7 +1110,7 @@ impl LiveSeries {
         mapping: &[Agg],
     ) -> Result<Node<LiveAggregation>> {
         const CALL: &str = "LiveSeries::aggregate";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
         let step = sequence
             .fixed_step()
             .ok_or_else(|| PondError::Unsupported {
@@ -1194,7 +1210,14 @@ impl LiveSeries {
         from: NodeId,
         build: impl FnOnce(String, &[ColumnDef]) -> Result<LiveRolling>,
     ) -> Result<Node<LiveRolling>> {
-        let source = self.slot_of(call, from)?;
+        let source = self.source_of(call, from)?;
+        if matches!(self.slots[source].state, State::Rolling(_)) {
+            return Err(PondError::InvalidData {
+                call,
+                message: "a rolling window takes a series, a view or an aggregation (as pond-ts)"
+                    .into(),
+            });
+        }
         let schema = self.schema_of(source);
         let mut rolling = build(self.name.clone(), &schema.columns)?;
         for event in self.held(source) {
@@ -1208,11 +1231,12 @@ impl LiveSeries {
     /// removed as `from` evicts them. Emits at the end of each push, keyed
     /// at its last event (one event per push, however many rows).
     ///
-    /// Built over what `from` holds now, it emits once for those events
-    /// straight away: that event is in its [`LiveReduce::events`] but in no
-    /// push's outputs (pond-ts emits it just after the build). A reduce over
-    /// an aggregation, a rolling window or another reduce never removes
-    /// anything (they do not evict).
+    /// `from` is the series or a view (as pond-ts). Built over what `from`
+    /// holds now, it emits once for those events straight away: that event
+    /// is in its [`LiveReduce::events`] but in no push's outputs. pond-ts
+    /// emits it on a microtask just after the build, so this matches a
+    /// caller that yields before its next push; one that pushes again
+    /// without yielding gets a single emission from pond-ts, for both.
     pub fn reduce(&mut self, from: impl Into<NodeId>, mapping: &[Agg]) -> Result<Node<LiveReduce>> {
         self.reduce_with(from, mapping, Trigger::event())
     }
@@ -1228,16 +1252,20 @@ impl LiveSeries {
         trigger: Trigger,
     ) -> Result<Node<LiveReduce>> {
         const CALL: &str = "LiveSeries::reduce";
-        let source = self.slot_of(CALL, from.into())?;
+        let source = self.source_of(CALL, from.into())?;
+        if !matches!(self.slots[source].state, State::Root | State::View(_)) {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "reduce takes a series or a view (as pond-ts)".into(),
+            });
+        }
         let schema = self.schema_of(source);
-        let follows = matches!(self.slots[source].state, State::Root | State::View(_));
         let sorted = source == 0 && self.ordering == OrderingMode::Reorder;
         let reduce = LiveReduce::new(
             self.name.clone(),
             &schema.columns,
             mapping,
             trigger,
-            follows,
             sorted,
             self.held(source),
         )?;

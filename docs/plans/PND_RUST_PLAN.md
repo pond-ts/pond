@@ -3741,9 +3741,17 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          the index it was added with (pond-ts finds it by object identity):
          it keeps the index of each event its source holds, in the
          source's order, inserting a late event where the source put it
-         and dropping what a `window` view trims silently. Over an
-         aggregation, a rolling window or a reduce it never removes (they
-         do not evict), as pond-ts.
+         and dropping what a `window` view trims silently.
+       - Sources as pond-ts allows them: `rolling` on the series, a view
+         or an aggregation; `reduce` on the series or a view; nothing on a
+         reduce or on fused windows (pond-ts has no methods there). The
+         first build allowed any source; review on #843 found those had
+         no pond-ts behaviour to match.
+       - A reduce built over existing events emits for them during the
+         build. pond-ts emits on a microtask after the build, so a caller
+         that pushes again without yielding gets one emission covering
+         both from pond-ts and two from pond-rs. pond-rs has no event loop
+         to wait for; the fixture (which waits after each step) matches.
        - `value()` peeks (copies a `stdev` state before reading), so
          reading changes nothing. In pond-ts a read can move the reference
          point of a running `stdev` and with it the last bit of a later

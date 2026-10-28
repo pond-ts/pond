@@ -639,39 +639,37 @@ fn rolling_and_reduce_arguments_are_checked() {
 }
 
 #[test]
-fn reading_a_value_changes_nothing() {
-    // pond-ts's value() can move a later stdev's last bit; here a read is
-    // a peek, so reading between pushes gives the same events as not.
-    let stdev = [Agg::of("cpu", Reducer::Stdev)];
-    let run = |read: bool| {
-        let mut live = series(LiveOptions::new());
-        let root = live.root();
-        let r = live
-            .rolling_rows(root, 3, &stdev, &RollingOptions::default())
-            .unwrap();
-        let d = live.reduce(root, &stdev).unwrap();
-        for (i, cpu) in [1e9, 3.0, 1e-3, 7.5, 1e12, 0.1, 2.0]
-            .into_iter()
-            .enumerate()
-        {
-            live.push(i as i64 * 1000, row("a", cpu)).unwrap();
-            if read {
-                let _ = live[r].value();
-                let _ = live[d].value();
-            }
-        }
-        let bits = |events: Vec<LiveEvent>| -> Vec<Option<u64>> {
-            events
-                .iter()
-                .map(|e| e.number("cpu").unwrap().map(f64::to_bits))
-                .collect()
-        };
-        (
-            bits(live[r].events().collect()),
-            bits(live[d].events().collect()),
-        )
-    };
-    assert_eq!(run(true), run(false));
+fn rolling_and_reduce_take_the_sources_pond_ts_allows() {
+    // pond-ts: `rolling` on a series, view or aggregation; `reduce` on a
+    // series or view; nothing on a reduce or fused rolling windows.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let opts = RollingOptions::default();
+    let view = live.filter(root, |_| true).unwrap();
+    let agg = live
+        .aggregate(root, &Sequence::every("1s").unwrap(), &sum)
+        .unwrap();
+    let roll = live.rolling(root, "5s", &sum).unwrap();
+    let fused = live
+        .rolling_windows(root, &[RollingWindow::new("5s", &sum)], &opts)
+        .unwrap();
+    let red = live.reduce(root, &sum).unwrap();
+    assert!(live.rolling(view, "5s", &sum).is_ok());
+    assert!(live.rolling(agg, "5s", &sum).is_ok());
+    assert!(live.rolling(roll, "5s", &sum).is_err());
+    assert!(live.reduce(view, &sum).is_ok());
+    for from in [NodeId::from(agg), roll.into(), fused.into(), red.into()] {
+        assert!(live.reduce(from, &sum).is_err());
+    }
+    assert!(live.filter(roll, |_| true).is_ok());
+    assert!(live.filter(fused, |_| true).is_err());
+    assert!(live.filter(red, |_| true).is_err());
+    assert!(live.window(red, "5s").is_err());
+    assert!(
+        live.aggregate(fused, &Sequence::every("1s").unwrap(), &sum)
+            .is_err()
+    );
 }
 
 #[test]

@@ -41,11 +41,10 @@ pub struct LiveReduce {
     name: String,
     schema: Arc<LiveSchema>,
     columns: Vec<(usize, LiveState)>,
-    /// The index each event the source holds was added under, in the
-    /// source's order (sources that evict: a series or a view). An evicted
-    /// event is removed under its own index, whatever order the source
-    /// drops events in.
-    held: Option<VecDeque<usize>>,
+    /// The index each event the source (a series or a view) holds was
+    /// added under, in the source's order. An evicted event is removed
+    /// under its own index, whatever order the source drops events in.
+    held: VecDeque<usize>,
     next: usize,
     trigger: TriggerKind,
     last_bucket: Option<i128>,
@@ -81,14 +80,13 @@ pub struct ReduceStats {
 }
 
 impl LiveReduce {
-    /// `follows`: the source evicts (and says so); `sorted`: it may evict
-    /// out of arrival order. Replays `history` and emits for it once.
+    /// `sorted`: the source may evict out of arrival order. Replays
+    /// `history` and emits for it once.
     pub(crate) fn new(
         name: String,
         source: &[ColumnDef],
         mapping: &[Agg],
         trigger: Trigger,
-        follows: bool,
         sorted: bool,
         history: impl Iterator<Item = LiveEvent>,
     ) -> Result<Self> {
@@ -103,7 +101,7 @@ impl LiveReduce {
                 .into_iter()
                 .map(|(src, r)| (src, LiveState::new(r, sorted)))
                 .collect(),
-            held: follows.then(VecDeque::new),
+            held: VecDeque::new(),
             next: 0,
             trigger: trigger.0,
             last_bucket: None,
@@ -114,7 +112,7 @@ impl LiveReduce {
             emissions: 0,
         };
         for (at, event) in history.enumerate() {
-            reduce.ingest(&event, Some(Place { at, trimmed: 0 }));
+            reduce.ingest(&event, Place { at, trimmed: 0 });
         }
         // pond-ts emits for the replay on a microtask, after the build;
         // here it goes straight into the kept events.
@@ -122,16 +120,13 @@ impl LiveReduce {
         Ok(reduce)
     }
 
-    /// Add one source event; `place` is where it went in a source that
-    /// evicts.
-    pub(crate) fn ingest(&mut self, event: &LiveEvent, place: Option<Place>) {
+    /// Add one source event; `place` is where it went in the source.
+    pub(crate) fn ingest(&mut self, event: &LiveEvent, place: Place) {
         self.events_observed += 1;
         let index = self.next;
         self.next += 1;
-        if let (Some(held), Some(place)) = (&mut self.held, place) {
-            held.insert(place.at, index);
-            held.drain(..place.trimmed.min(held.len()));
-        }
+        self.held.insert(place.at, index);
+        self.held.drain(..place.trimmed.min(self.held.len()));
         for (src, state) in &mut self.columns {
             if let Some(v) = &event.values()[*src] {
                 state.add(index, v);
@@ -145,9 +140,8 @@ impl LiveReduce {
 
     /// The source dropped `events`, its oldest, in its order.
     pub(crate) fn evict(&mut self, events: &[LiveEvent]) {
-        let Some(held) = &mut self.held else { return };
         for event in events {
-            let Some(index) = held.pop_front() else {
+            let Some(index) = self.held.pop_front() else {
                 return;
             };
             self.evictions += 1;

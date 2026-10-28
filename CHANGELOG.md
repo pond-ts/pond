@@ -102,12 +102,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   a trailing window and emit per event or on a `Trigger` (every n events,
   or when a clock bucket ends), keeping what they emit up to a `History`
   limit. `reduce` keeps reducers over everything its source holds now and
-  emits once per push. Every pond-ts reducer works in both, including huge
-  values summed exactly. Results match pond-ts event for event on 52 of the
+  emits once per push. Every built-in pond-ts reducer works in both, including
+  huge values summed exactly. Results match pond-ts event for event on 52 of the
   57 live replay cases (the 5 left are partitioned, a later step). Reading
   `value()` changes nothing in pond-rs, where in pond-ts it can move the
   last bit of a later `stdev`; a clock trigger on interval-keyed events is
-  refused (pond-ts emits time keys under the interval schema).
+  refused (pond-ts emits time keys under the interval schema); a reduce
+  built over existing events emits for them during the build, where
+  pond-ts waits for a microtask.
 
 ### Changed
 
