@@ -34,6 +34,8 @@ const SUPPORTED_OPS: &[&str] = &[
     "pctChange",
     "fill",
     "cumulative",
+    "rolling",
+    "reduce",
 ];
 
 /// Nodes pond-ts builds that pond-rs refuses on purpose, as `(case, node,
@@ -520,8 +522,9 @@ fn compare_outputs_checks_order_and_bits() {
 mod runner {
     use super::*;
     use pond_rs::live::{
-        LiveAggregation, LiveEvent, LiveOptions, LiveSeries, LiveView, Node, NodeId, OrderingMode,
-        Output as RsOutput, OutputKind,
+        History, LiveAggregation, LiveEvent, LiveOptions, LiveReduce, LiveRolling, LiveSeries,
+        LiveView, Node, NodeId, OrderingMode, Output as RsOutput, OutputKind, RollingOptions,
+        RollingWindow, Trigger,
     };
     use pond_rs::{
         Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, Reducer,
@@ -534,6 +537,8 @@ mod runner {
         Root,
         View(Node<LiveView>),
         Agg(Node<LiveAggregation>),
+        Rolling(Node<LiveRolling>),
+        Reduce(Node<LiveReduce>),
     }
 
     fn kind_of(name: &str) -> ColumnKind {
@@ -913,6 +918,120 @@ mod runner {
         }
     }
 
+    /// A trigger as the fixture writes it (`live.mjs` `decodeTrigger`).
+    fn trigger_of(spec: &Value) -> pond_rs::Result<Trigger> {
+        if spec == "event" {
+            return Ok(Trigger::event());
+        }
+        if let Some(d) = spec.get("every") {
+            return Trigger::every(d.as_str().unwrap());
+        }
+        if let Some(n) = spec.get("count") {
+            return Trigger::count(n.as_u64().unwrap() as usize);
+        }
+        Trigger::clock(&sequence_of(&spec["clock"]))
+    }
+
+    /// Rolling / reduce options: `minSamples`, `trigger`, `history`. A
+    /// negative `minSamples` has no Rust form (`usize`); pond-ts refuses it
+    /// too, so it is an error here.
+    fn rolling_options(spec: Option<&Value>) -> Result<RollingOptions, String> {
+        let mut o = RollingOptions::new();
+        let Some(spec) = spec else { return Ok(o) };
+        for (k, v) in spec.as_object().unwrap() {
+            match k.as_str() {
+                "minSamples" => {
+                    let n = v.as_i64().unwrap();
+                    if n < 0 {
+                        return Err(format!("minSamples {n}: no usize"));
+                    }
+                    o = o.min_samples(n as usize);
+                }
+                "trigger" => o = o.trigger(trigger_of(v).map_err(|e| e.to_string())?),
+                "history" => {
+                    o = o.history(match v {
+                        Value::Bool(true) => History::All,
+                        Value::Bool(false) => History::Off,
+                        v => History::Limit {
+                            max_events: v.get("maxEvents").map(|n| n.as_u64().unwrap() as usize),
+                            max_age: v.get("maxAge").map(|d| d.as_str().unwrap().to_string()),
+                        },
+                    })
+                }
+                other => panic!("rolling option {other}"),
+            }
+        }
+        Ok(o)
+    }
+
+    /// `rolling(window, mapping, options?)`, or the keyed (fused) form
+    /// `rolling({ window: mapping | { mapping, minSamples } }, options?)`.
+    fn build_rolling(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LiveRolling>, String> {
+        let err = |e: pond_rs::PondError| e.to_string();
+        match &args[0] {
+            Value::Object(windows) => {
+                let options = rolling_options(args.get(1))?;
+                let windows: Vec<RollingWindow> = windows
+                    .iter()
+                    .map(|(w, m)| match m.get("mapping") {
+                        Some(inner) if inner.get("from").is_none() => {
+                            let mut rw = RollingWindow::new(w, &mapping_of(inner));
+                            if let Some(n) = m.get("minSamples") {
+                                rw = rw.min_samples(n.as_u64().unwrap() as usize);
+                            }
+                            rw
+                        }
+                        _ => RollingWindow::new(w, &mapping_of(m)),
+                    })
+                    .collect();
+                live.rolling_windows(from, &windows, &options).map_err(err)
+            }
+            Value::String(w) => {
+                let options = rolling_options(args.get(2))?;
+                live.rolling_with(from, w, &mapping_of(&args[1]), &options)
+                    .map_err(err)
+            }
+            n => {
+                let options = rolling_options(args.get(2))?;
+                live.rolling_rows(
+                    from,
+                    n.as_u64().unwrap() as usize,
+                    &mapping_of(&args[1]),
+                    &options,
+                )
+                .map_err(err)
+            }
+        }
+    }
+
+    fn build_reduce(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LiveReduce>, String> {
+        let trigger = match args.get(1).and_then(|o| o.get("trigger")) {
+            Some(t) => trigger_of(t).map_err(|e| e.to_string())?,
+            None => Trigger::event(),
+        };
+        live.reduce_with(from, &mapping_of(&args[0]), trigger)
+            .map_err(|e| e.to_string())
+    }
+
+    /// A value record (`{ column: cell }`) in schema order.
+    fn record_json(names: &[String], values: &[Option<RsValue>]) -> Value {
+        Value::Object(
+            names
+                .iter()
+                .zip(values)
+                .map(|(n, v)| (n.clone(), value_json(v.as_ref())))
+                .collect(),
+        )
+    }
+
     fn kind_name(k: OutputKind) -> &'static str {
         match k {
             OutputKind::Event => "event",
@@ -923,13 +1042,21 @@ mod runner {
         }
     }
 
-    fn output_json(o: &RsOutput, names: &HashMap<NodeId, String>) -> Output {
+    fn output_json(
+        o: &RsOutput,
+        names: &HashMap<NodeId, String>,
+        columns: &HashMap<NodeId, Vec<String>>,
+    ) -> Output {
         let payload = match o {
             RsOutput::Event { event, .. } | RsOutput::Bucket { event, .. } => event_json(event),
             RsOutput::Batch { events, .. } | RsOutput::Evict { events, .. } => {
                 Value::Array(events.iter().map(event_json).collect())
             }
-            RsOutput::Update { .. } => Value::Null,
+            RsOutput::Update { values: None, .. } => Value::Null,
+            RsOutput::Update {
+                node,
+                values: Some(values),
+            } => record_json(&columns[node], values),
         };
         Output {
             node: names[&o.node()].clone(),
@@ -971,6 +1098,8 @@ mod runner {
         let class = |id: &str| finals[id].class.clone();
         let mut handles: HashMap<String, Handle> = HashMap::from([("root".into(), Handle::Root)]);
         let mut names: HashMap<NodeId, String> = HashMap::from([(live.root(), "root".into())]);
+        // Value column names per node, for `update` records.
+        let mut columns: HashMap<NodeId, Vec<String>> = HashMap::new();
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let root = live.root();
         watch(&mut live, root, &class("root"))?;
@@ -978,6 +1107,8 @@ mod runner {
             Handle::Root => live.root(),
             Handle::View(n) => n.id(),
             Handle::Agg(n) => n.id(),
+            Handle::Rolling(n) => n.id(),
+            Handle::Reduce(n) => n.id(),
         };
         for (s, step) in case.steps.iter().enumerate() {
             let result: Result<Vec<RsOutput>, String> = if let Some(rows) =
@@ -1005,8 +1136,13 @@ mod runner {
                             &sequence_of(&spec.args[0]),
                             &mapping_of(&spec.args[1]),
                         )
-                        .map(Handle::Agg),
-                    op => build_view(&mut live, from, op, &spec.args).map(Handle::View),
+                        .map(Handle::Agg)
+                        .map_err(|e| e.to_string()),
+                    "rolling" => build_rolling(&mut live, from, &spec.args).map(Handle::Rolling),
+                    "reduce" => build_reduce(&mut live, from, &spec.args).map(Handle::Reduce),
+                    op => build_view(&mut live, from, op, &spec.args)
+                        .map(Handle::View)
+                        .map_err(|e| e.to_string()),
                 };
                 let deviation = REFUSED
                     .iter()
@@ -1019,15 +1155,30 @@ mod runner {
                     Ok(_) if deviation => {
                         return Err(format!("step {s}: pond-rs should refuse node {}", spec.id));
                     }
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e),
                     Ok(h) => {
                         handles.insert(spec.id.clone(), h);
-                        names.insert(id_of(h, &live), spec.id.clone());
+                        let id = id_of(h, &live);
+                        names.insert(id, spec.id.clone());
+                        let schema = match h {
+                            Handle::Rolling(n) => live[n].schema().to_vec(),
+                            _ => Vec::new(),
+                        };
+                        columns.insert(id, schema.iter().skip(1).map(|c| c.name.clone()).collect());
                         if spec.watch != Some(false) {
-                            let id = id_of(h, &live);
                             watch(&mut live, id, &class(&spec.id))?;
                         }
-                        Ok(Vec::new())
+                        // A reduce built over history emits for it at the
+                        // build, into its events; pond-ts emits the same
+                        // event just after (the step's `deferred`).
+                        let replayed: Vec<RsOutput> = match h {
+                            Handle::Reduce(n) if spec.watch != Some(false) => live[n]
+                                .events()
+                                .map(|event| RsOutput::Event { node: id, event })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        Ok(replayed)
                     }
                 }
             };
@@ -1044,7 +1195,7 @@ mod runner {
             let actual: Vec<Output> = result
                 .unwrap_or_default()
                 .iter()
-                .map(|o| output_json(o, &names))
+                .map(|o| output_json(o, &names, &columns))
                 .collect();
             let expected: Vec<Output> = step
                 .all_outputs()
@@ -1063,6 +1214,8 @@ mod runner {
                 let gone = match h {
                     Handle::View(n) => live.get(n).is_err(),
                     Handle::Agg(n) => live.get(n).is_err(),
+                    Handle::Rolling(n) => live.get(n).is_err(),
+                    Handle::Reduce(n) => live.get(n).is_err(),
                     Handle::Root => false,
                 };
                 if !gone {
@@ -1074,6 +1227,8 @@ mod runner {
                 Handle::Root => live.schema().to_vec(),
                 Handle::View(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
                 Handle::Agg(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Rolling(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Reduce(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
             };
             if schema != schema_of(state.schema.as_ref().unwrap()) {
                 return Err(format!("{what}: schema {schema:?}"));
@@ -1104,6 +1259,26 @@ mod runner {
                     compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
                     let held: Vec<Value> = view.events().map(|e| event_json(&e)).collect();
                     compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                }
+                Handle::Rolling(n) => {
+                    let r = &live[n];
+                    let held: Vec<Value> = r.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                    let names: Vec<String> =
+                        r.schema().iter().skip(1).map(|c| c.name.clone()).collect();
+                    let got = record_json(&names, &r.value());
+                    compare_payload(&Value::Object(state.value.clone().unwrap()), &got)
+                        .map_err(|w| format!("{what} value: {w}"))?;
+                }
+                Handle::Reduce(n) => {
+                    let r = &live[n];
+                    let held: Vec<Value> = r.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                    let names: Vec<String> =
+                        r.schema().iter().skip(1).map(|c| c.name.clone()).collect();
+                    let got = record_json(&names, &r.value());
+                    compare_payload(&Value::Object(state.value.clone().unwrap()), &got)
+                        .map_err(|w| format!("{what} value: {w}"))?;
                 }
                 Handle::Agg(n) => {
                     let agg = &live[n];

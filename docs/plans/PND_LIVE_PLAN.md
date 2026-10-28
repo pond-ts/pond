@@ -98,6 +98,23 @@ queries right. Fixture case `views-reorder-late` pins it for both
 libraries. Still open under [PND-LATE]: recomputing the rows after a late
 event in stateful views and in rolling windows.
 
+### [PND-REDUCEMICRO] — done 2026-10-28
+
+Found timing pond-rs R3 step 4 against pond-ts: `live.reduce` on a
+`maxEvents: 10_000` series, 1M pushes in a plain loop, took 12.6 s, and
+each repeat in the same process got slower (5.2, 5.7, 9.7, 9.0 s), with
+~455 MB more held after every run. The [PND-REDUCETICK] fix flushed the
+emission from the end-of-push hook, and that flush cleared the "backstop
+microtask queued" flag, so the next push queued another one: a loop that
+never yields queued one microtask per push, each holding the reduce (and
+its emitted events) until the loop ended. Fix: only the microtask clears
+the flag, so a loop queues one. Outputs unchanged (the backstop finds
+nothing pending after a settle flush; fixture unchanged). 1M pushes, four
+runs in one process: 5.2 / 5.7 / 9.7 / 9.0 s -> 4.4 / 4.3 / 4.5 / 4.3 s;
+the bench case 12.6 -> 6.4 s (its seven runs never yield, so each run's
+reduce is still held by its one queued microtask until the end). Test:
+`test/live/reducetick.test.ts` counts `queueMicrotask` calls.
+
 ### [PND-EVICTSPLICE] — done 2026-10-28
 
 Found timing pond-rs R3 step 3 against pond-ts: views on a

@@ -569,3 +569,134 @@ fn column_store_keeps_late_interval_events_aligned_through_evictions() {
     assert!(live.includes_key(key("b", 20)));
     assert!(!live.includes_key(key("a", 0)));
 }
+
+#[test]
+fn rolling_and_reduce_arguments_are_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let day = Sequence::calendar("day", "UTC").unwrap();
+    assert!(Trigger::count(0).is_err());
+    assert!(Trigger::every("soon").is_err());
+    assert!(Trigger::clock(&day).is_err()); // calendar steps vary in length
+    assert!(live.rolling(root, "soon", &sum).is_err());
+    assert!(
+        live.rolling(root, "5s", &[Agg::of("nope", Reducer::Sum)])
+            .is_err()
+    );
+    assert!(
+        live.rolling(root, "5s", &[Agg::of("host", Reducer::Avg)])
+            .is_err()
+    );
+    let opts = RollingOptions::default();
+    assert!(live.rolling_rows(root, 0, &sum, &opts).is_err());
+    assert!(live.rolling_windows(root, &[], &opts).is_err());
+    let dup = [
+        RollingWindow::new("1s", &sum),
+        RollingWindow::new("2s", &[Agg::of("cpu", Reducer::Max)]),
+    ];
+    assert!(live.rolling_windows(root, &dup, &opts).is_err());
+    let none = History::Limit {
+        max_events: Some(0),
+        max_age: None,
+    };
+    assert!(
+        live.rolling_with(root, "5s", &sum, &opts.clone().history(none))
+            .is_err()
+    );
+    let bad_age = History::Limit {
+        max_events: None,
+        max_age: Some("soon".into()),
+    };
+    assert!(
+        live.rolling_with(root, "5s", &sum, &opts.clone().history(bad_age))
+            .is_err()
+    );
+    assert!(live.reduce(root, &[Agg::of("nope", Reducer::Sum)]).is_err());
+
+    // A clock trigger keys its emissions by bucket start, a time: refused
+    // on a source keyed by interval (pond-ts emits time keys under the
+    // interval schema).
+    let mut intervals = LiveSeries::new(
+        "i",
+        vec![
+            ColumnDef::required("interval", ColumnKind::Interval),
+            ColumnDef::optional("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let iroot = intervals.root();
+    let v = [Agg::of("v", Reducer::Sum)];
+    let clock = Trigger::every("1s").unwrap();
+    assert!(intervals.reduce_with(iroot, &v, clock).is_err());
+    let clocked = RollingOptions::default().trigger(clock);
+    assert!(intervals.rolling_with(iroot, "5s", &v, &clocked).is_err());
+    assert!(
+        intervals
+            .reduce_with(iroot, &v, Trigger::count(2).unwrap())
+            .is_ok()
+    );
+}
+
+#[test]
+fn rolling_and_reduce_take_the_sources_pond_ts_allows() {
+    // pond-ts: `rolling` on a series, view or aggregation; `reduce` on a
+    // series or view; nothing on a reduce or fused rolling windows.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let opts = RollingOptions::default();
+    let view = live.filter(root, |_| true).unwrap();
+    let agg = live
+        .aggregate(root, &Sequence::every("1s").unwrap(), &sum)
+        .unwrap();
+    let roll = live.rolling(root, "5s", &sum).unwrap();
+    let fused = live
+        .rolling_windows(root, &[RollingWindow::new("5s", &sum)], &opts)
+        .unwrap();
+    let red = live.reduce(root, &sum).unwrap();
+    assert!(live.rolling(view, "5s", &sum).is_ok());
+    assert!(live.rolling(agg, "5s", &sum).is_ok());
+    assert!(live.rolling(roll, "5s", &sum).is_err());
+    assert!(live.reduce(view, &sum).is_ok());
+    for from in [NodeId::from(agg), roll.into(), fused.into(), red.into()] {
+        assert!(live.reduce(from, &sum).is_err());
+    }
+    assert!(live.filter(roll, |_| true).is_ok());
+    assert!(live.filter(fused, |_| true).is_err());
+    assert!(live.filter(red, |_| true).is_err());
+    assert!(live.window(red, "5s").is_err());
+    assert!(
+        live.aggregate(fused, &Sequence::every("1s").unwrap(), &sum)
+            .is_err()
+    );
+}
+
+#[test]
+fn rolling_and_reduce_counters() {
+    let mut live = series(LiveOptions::new().max_events(3));
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let r = live
+        .rolling_with(
+            root,
+            "2s",
+            &sum,
+            &RollingOptions::default().trigger(Trigger::count(2).unwrap()),
+        )
+        .unwrap();
+    let d = live.reduce(root, &sum).unwrap();
+    live.push_many((0..5).map(|i| (i * 1000, row("a", 1.0))))
+        .unwrap();
+    let rs = live[r].stats();
+    assert_eq!(rs.events_observed, 5);
+    assert_eq!(rs.emissions, 2);
+    assert_eq!(rs.window_size, 3); // 2000, 3000, 4000: [now - 2s, now]
+    assert_eq!(live[r].len(), 2);
+    let ds = live[d].stats();
+    assert_eq!(ds.events_observed, 5);
+    assert_eq!(ds.evictions, 2); // root keeps 3
+    assert_eq!(ds.buffer_size, 3);
+    assert_eq!(ds.emissions, 1); // one per push
+    assert_eq!(live[d].value(), vec![Some(Value::from(3.0))]);
+}

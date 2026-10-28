@@ -432,9 +432,15 @@ export class LiveReduce<
     // backstop for events that arrive outside any push: construction
     // replay, an upstream reduce's own replay emission, or a source
     // without the hook. After a settle flush it finds nothing pending.
+    // Only the microtask clears the flag ([PND-REDUCEMICRO]): if a settle
+    // flush cleared it, every push of a synchronous loop would queue one
+    // more microtask, each holding this reduce until the loop ends.
     if (!this.#microtaskScheduled) {
       this.#microtaskScheduled = true;
-      queueMicrotask(() => this.#flushPendingEmit());
+      queueMicrotask(() => {
+        this.#microtaskScheduled = false;
+        this.#flushPendingEmit();
+      });
     }
   }
 
@@ -444,7 +450,6 @@ export class LiveReduce<
    * backstop microtask. Reducer state is post-retention by this point.
    */
   #flushPendingEmit(): void {
-    this.#microtaskScheduled = false;
     const key = this.#pendingEmitKey;
     const ts = this.#pendingEmitTs;
     this.#pendingEmitKey = undefined;

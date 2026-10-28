@@ -25,6 +25,7 @@ use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use super::buffer::series_of;
 use super::event::{LiveEvent, LiveSchema};
+use super::states::{ScalarKey, as_key, number, scalar_key, scalars};
 
 const CALL: &str = "LiveSeries::aggregate";
 
@@ -92,53 +93,16 @@ impl LiveAggregation {
         mapping: &[Agg],
         history: impl Iterator<Item = LiveEvent>,
     ) -> Result<Self> {
-        let values = &source[1..];
-        let mut out_defs = vec![ColumnDef::required("time", ColumnKind::Interval)];
-        let mut columns = Vec::with_capacity(mapping.len());
-        for agg in mapping {
-            let reducer = agg.reducer();
-            reducer.check(CALL)?;
-            let i = values
-                .iter()
-                .position(|c| c.name == agg.source())
-                .ok_or_else(|| PondError::UnknownColumn {
-                    call: CALL,
-                    column: agg.source().to_string(),
-                    available: values.iter().map(|c| c.name.clone()).collect(),
-                })?;
-            let kind = values[i].kind;
-            if out_defs.iter().any(|d| d.name == agg.output()) {
-                return Err(PondError::DuplicateOutput {
-                    call: CALL,
-                    column: agg.output().to_string(),
-                });
-            }
-            let numeric = !matches!(
-                reducer,
-                Reducer::Count
-                    | Reducer::First
-                    | Reducer::Last
-                    | Reducer::Keep
-                    | Reducer::Unique
-                    | Reducer::Top(_)
-                    | Reducer::Samples
-            );
-            if numeric && kind != ColumnKind::Number {
-                return Err(PondError::WrongKind {
-                    call: CALL,
-                    column: agg.source().to_string(),
-                    kind: kind.as_str(),
-                    reason: "this reducer needs a number column; string, boolean and array columns take count, first, last, keep, unique, top<N> or samples".into(),
-                });
-            }
-            let out_kind = match reducer {
-                Reducer::First | Reducer::Last | Reducer::Keep => kind,
-                r if r.gives_list() => ColumnKind::Array,
-                _ => ColumnKind::Number,
-            };
-            out_defs.push(ColumnDef::optional(agg.output(), out_kind));
-            columns.push(Mapped { source: i, reducer });
-        }
+        let (out_defs, plan) = plan_mapping(
+            CALL,
+            ColumnDef::required("time", ColumnKind::Interval),
+            source,
+            mapping,
+        )?;
+        let columns = plan
+            .into_iter()
+            .map(|(source, reducer)| Mapped { source, reducer })
+            .collect();
         let (step, anchor) = step_anchor;
         // Every bucket a supported time can fall in must have i64 edges;
         // checked here at the extremes so `ingest` cannot overflow.
@@ -304,46 +268,68 @@ impl LiveAggregation {
     }
 }
 
-/// A number as a cell: non-finite becomes a gap (pond-ts `finiteOrMissing`).
-fn number(v: f64) -> Option<Value> {
-    v.is_finite().then_some(Value::Number(v))
-}
+/// What [`plan_mapping`] gives: the output schema, and per output column
+/// its source value column and reducer.
+pub(super) type MappingPlan = (Vec<ColumnDef>, Vec<(usize, Reducer)>);
 
-/// A scalar as a hash key: numbers by bits with `-0` folded into `0`, as
-/// JavaScript's `Set` and `Map` do.
-#[derive(PartialEq, Eq, Hash)]
-enum ScalarKey {
-    Number(u64),
-    String(String),
-    Boolean(bool),
-}
-
-fn scalar_key(s: &Scalar) -> ScalarKey {
-    match s {
-        Scalar::Number(v) => ScalarKey::Number((v + 0.0).to_bits()),
-        Scalar::String(v) => ScalarKey::String(v.clone()),
-        Scalar::Boolean(v) => ScalarKey::Boolean(*v),
+/// Check a mapping against a source schema (key column first): the
+/// output schema (`key`, then one optional column per entry) and, per
+/// entry, its source value column and reducer. Shared by `aggregate`,
+/// `rolling` and `reduce`.
+pub(super) fn plan_mapping(
+    call: &'static str,
+    key: ColumnDef,
+    source: &[ColumnDef],
+    mapping: &[Agg],
+) -> Result<MappingPlan> {
+    let values = &source[1..];
+    let mut out_defs = vec![key];
+    let mut columns = Vec::with_capacity(mapping.len());
+    for agg in mapping {
+        let reducer = agg.reducer();
+        reducer.check(call)?;
+        let i = values
+            .iter()
+            .position(|c| c.name == agg.source())
+            .ok_or_else(|| PondError::UnknownColumn {
+                call,
+                column: agg.source().to_string(),
+                available: values.iter().map(|c| c.name.clone()).collect(),
+            })?;
+        let kind = values[i].kind;
+        if out_defs.iter().any(|d| d.name == agg.output()) {
+            return Err(PondError::DuplicateOutput {
+                call,
+                column: agg.output().to_string(),
+            });
+        }
+        let numeric = !matches!(
+            reducer,
+            Reducer::Count
+                | Reducer::First
+                | Reducer::Last
+                | Reducer::Keep
+                | Reducer::Unique
+                | Reducer::Top(_)
+                | Reducer::Samples
+        );
+        if numeric && kind != ColumnKind::Number {
+            return Err(PondError::WrongKind {
+                call,
+                column: agg.source().to_string(),
+                kind: kind.as_str(),
+                reason: "this reducer needs a number column; string, boolean and array columns take count, first, last, keep, unique, top<N> or samples".into(),
+            });
+        }
+        let out_kind = match reducer {
+            Reducer::First | Reducer::Last | Reducer::Keep => kind,
+            r if r.gives_list() => ColumnKind::Array,
+            _ => ColumnKind::Number,
+        };
+        out_defs.push(ColumnDef::optional(agg.output(), out_kind));
+        columns.push((i, reducer));
     }
-}
-
-/// `-0` written as `0`, as a `Set` or `Map` key comes back.
-fn as_key(s: &Scalar) -> Scalar {
-    match s {
-        Scalar::Number(v) => Scalar::Number(v + 0.0),
-        other => other.clone(),
-    }
-}
-
-/// A cell's scalars, an array cell's elements flattened one level (pond-ts
-/// `collectInto`).
-fn scalars(v: &Value, mut f: impl FnMut(&Scalar)) {
-    match v {
-        Value::Number(x) => f(&Scalar::Number(*x)),
-        Value::String(x) => f(&Scalar::String(x.clone())),
-        Value::Boolean(x) => f(&Scalar::Boolean(*x)),
-        Value::Array(items) => items.iter().for_each(f),
-        Value::Decimal(_) => unreachable!("live series refuse decimal columns"),
-    }
+    Ok((out_defs, columns))
 }
 
 /// The bucket `[start, end)` holding `ts`, worked out in i128 (as batch

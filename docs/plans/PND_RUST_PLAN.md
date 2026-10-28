@@ -3723,6 +3723,62 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          event and frees the caller's cell list.
     4. Rolling: single-window (`LiveRollingAggregation`), fused
        multi-window (`LiveFusedRolling`), `reduce`.
+       Built 2026-10-28 (`src/live/rolling.rs`, `reduce.rs`, `states.rs`;
+       batch `rolling.rs` states shared). 52 of the 57 fixture cases run
+       (the 5 left are partitioned, step 6), every output and final state
+       equal. Five cases added (`reduce-and-rolling-reorder`,
+       `rolling-reducers`, `rolling-tags`, `rolling-history`,
+       `rolling-overflow`) after mutation testing showed the first fixture
+       missed a reduce that ignored where a late event went, or ignored
+       that a reorder root drops events out of arrival order; 14 planted
+       bugs, all caught now. Decisions and differences from pond-ts:
+       - Triggers for rolling and reduce came with this step (the fixture
+         cases use them): `Trigger::event`, `every(duration)`,
+         `clock(sequence)` (calendar sequences refused), `count(n)`. Step 5
+         is left with the full `LiveAggregation` (closed and open buckets,
+         calendar sequences).
+       - A reduce over a series or view removes each evicted event under
+         the index it was added with (pond-ts finds it by object identity):
+         it keeps the index of each event its source holds, in the
+         source's order, inserting a late event where the source put it
+         and dropping what a `window` view trims silently.
+       - Sources as pond-ts allows them: `rolling` on the series, a view
+         or an aggregation; `reduce` on the series or a view; nothing on a
+         reduce or on fused windows (pond-ts has no methods there). The
+         first build allowed any source; review on #843 found those had
+         no pond-ts behaviour to match.
+       - A reduce built over existing events emits for them during the
+         build. pond-ts emits on a microtask after the build, so a caller
+         that pushes again without yielding gets one emission covering
+         both from pond-ts and two from pond-rs. pond-rs has no event loop
+         to wait for; the fixture (which waits after each step) matches.
+       - `value()` peeks (copies a `stdev` state before reading), so
+         reading changes nothing. In pond-ts a read can move the reference
+         point of a running `stdev` and with it the last bit of a later
+         value; pond-rs copies the reads pond-ts makes inside a push (for
+         `update` listeners, made whether or not any listen), so pushed
+         results match bit for bit.
+       - A clock trigger on a source keyed by time range or interval is
+         refused: pond-ts emits time keys under that schema.
+       - Huge values: sums of values from 2^960 (2^480 for `stdev`) go to
+         an exact big-integer lane as pond-ts (`num-bigint`, new optional
+         dependency of the `live` feature), so a window that overflowed to
+         infinity reads finite again once they leave.
+       - `Output::Update` now carries the rolling window's values (pond-ts
+         passes `value()` to `update` listeners); `None` for an
+         aggregation.
+       - `keep` over array cells counts by event (pond-ts compares array
+         objects, so equal arrays from different events differ).
+       - Timing (1M events, each case alone in its own process, pond-rs
+         vs pond-ts, ms, root keeping 10k events): root alone 182 vs
+         2,049; rolling 30 s avg + max + stdev 328 vs 3,719; rolling 100
+         rows avg, history off, `update` watched 291 vs 2,935; fused 1 m +
+         5 m + 15 m avg 338 vs 3,493; reduce avg + max + count 357 vs
+         6,443. Each node adds 0.11-0.18 µs an event to pond-rs (time
+         over the root alone; not broken down further). Timing found a
+         pond-ts slowdown, fixed in the same PR: [PND-REDUCEMICRO] (reduce
+         queued a microtask per push in a loop that never awaits; the
+         reduce case took 12,633 ms before).
     5. Triggers (`event`, `clock(sequence)`, `every(duration)`,
        `count(n)`; calendar sequences refused for clock triggers) across
        rolling, reduce and the full `LiveAggregation` (closed and open
