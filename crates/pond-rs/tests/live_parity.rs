@@ -37,6 +37,11 @@ const SUPPORTED_OPS: &[&str] = &[
     "cumulative",
     "rolling",
     "reduce",
+    "partitionBy",
+    "partition",
+    "collect",
+    "apply",
+    "partitionClockRolling",
 ];
 
 /// Nodes pond-ts builds that pond-rs refuses on purpose, as `(case, node,
@@ -57,6 +62,17 @@ const REFUSED: &[(&str, &str, &str)] = &[
          diff (and batch pond-ts) do",
     ),
 ];
+
+/// Pushes pond-ts stores in the root and then throws on, which pond-rs
+/// refuses whole, as `(case, step, why)`. The root's final rows and counts
+/// are compared without them.
+#[cfg(feature = "live")]
+const PUSH_REFUSED_WHOLE: &[(&str, usize, &str)] = &[(
+    "partition-groups",
+    6,
+    "a value outside the declared groups: pond-ts stores the row in the root, \
+     then throws while routing it",
+)];
 
 /// Every operator the fixture uses, so a new pond-ts case for an op pond-rs
 /// has no plan for fails here instead of being skipped quietly.
@@ -79,6 +95,9 @@ const KNOWN_OPS: &[&str] = &[
     "partition",
     "collect",
     "apply",
+    // `rolling` on a partitioned series with a clock trigger: one
+    // synchronised node over every partition, not a chain per partition.
+    "partitionClockRolling",
 ];
 
 const KINDS: &[&str] = &["event", "batch", "evict", "bucket", "update"];
@@ -322,11 +341,45 @@ fn run_case(case: &Case) -> Result<(), String> {
 }
 
 fn ops_of(case: &Case) -> BTreeSet<&str> {
+    let partitioned = partitioned_ids(case);
     case.steps
         .iter()
         .filter_map(|s| s.node.as_ref())
-        .map(|n| n.op.as_str())
+        .map(|n| {
+            if is_partition_clock_rolling(n, &partitioned) {
+                "partitionClockRolling"
+            } else {
+                n.op.as_str()
+            }
+        })
         .collect()
+}
+
+/// Nodes that are partitioned series or per-partition chains on one
+/// (pond-ts `LivePartitionedSeries` / `LivePartitionedView`).
+fn partitioned_ids(case: &Case) -> BTreeSet<&str> {
+    let mut ids = BTreeSet::new();
+    for n in case.steps.iter().filter_map(|s| s.node.as_ref()) {
+        let chained = ids.contains(n.from.as_str())
+            && !matches!(n.op.as_str(), "collect" | "apply" | "partition")
+            && !is_partition_clock_rolling(n, &ids);
+        if n.op == "partitionBy" || chained {
+            ids.insert(n.id.as_str());
+        }
+    }
+    ids
+}
+
+/// pond-ts's partitioned `rolling` that builds one synchronised node over
+/// every partition: a clock trigger, or the keyed (several windows) form,
+/// which needs one.
+fn is_partition_clock_rolling(n: &NodeSpec, partitioned: &BTreeSet<&str>) -> bool {
+    n.op == "rolling"
+        && partitioned.contains(n.from.as_str())
+        && (n.args[0].is_object()
+            || n.args
+                .iter()
+                .any(|a| a.get("trigger").is_some_and(|t| t.get("every").is_some())))
 }
 
 #[test]
@@ -523,10 +576,12 @@ fn compare_outputs_checks_order_and_bits() {
 #[cfg(feature = "live")]
 mod runner {
     use super::*;
+    use pond_rs::PondError;
     use pond_rs::live::{
-        History, LiveAggregation, LiveEvent, LiveOptions, LiveReduce, LiveRolling, LiveSeries,
-        LiveView, Node, NodeId, OrderingMode, Output as RsOutput, OutputKind, RollingOptions,
-        RollingWindow, Trigger,
+        CollectOptions, History, LiveAggregation, LiveEvent, LiveOptions, LivePartitioned,
+        LivePartitionedRolling, LiveReduce, LiveRolling, LiveSeries, LiveStats, LiveView, Node,
+        NodeId, OrderingMode, Output as RsOutput, OutputKind, PartitionOptions, PartitionedView,
+        RollingOptions, RollingWindow, SubSeries, Trigger,
     };
     use pond_rs::{
         Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, Reducer,
@@ -541,6 +596,10 @@ mod runner {
         Agg(Node<LiveAggregation>),
         Rolling(Node<LiveRolling>),
         Reduce(Node<LiveReduce>),
+        Series(Node<SubSeries>),
+        Partitioned(Node<LivePartitioned>),
+        PView(Node<PartitionedView>),
+        PRolling(Node<LivePartitionedRolling>),
     }
 
     fn kind_of(name: &str) -> ColumnKind {
@@ -728,6 +787,26 @@ mod runner {
                 Value::Array(row)
             })
             .collect()
+    }
+
+    fn compare_partitions(
+        what: &str,
+        state: &Final,
+        got: &[(String, Vec<Value>)],
+    ) -> Result<(), String> {
+        let want = state.partitions.as_ref().unwrap();
+        let keys = |v: &mut dyn Iterator<Item = &String>| v.cloned().collect::<Vec<_>>();
+        let (wk, gk) = (
+            keys(&mut want.iter().map(|(k, _)| k)),
+            keys(&mut got.iter().map(|(k, _)| k)),
+        );
+        if wk != gk {
+            return Err(format!("{what}: partitions {gk:?}, pond-ts {wk:?}"));
+        }
+        for ((k, rows), (_, held)) in want.iter().zip(got) {
+            compare_rows(&format!("{what}[{k}]"), rows, held)?;
+        }
+        Ok(())
     }
 
     fn compare_rows(what: &str, expected: &[Vec<Value>], actual: &[Value]) -> Result<(), String> {
@@ -1085,6 +1164,201 @@ mod runner {
         Ok(())
     }
 
+    fn ordering_of(v: &Value) -> OrderingMode {
+        match v.as_str().unwrap() {
+            "strict" => OrderingMode::Strict,
+            "drop" => OrderingMode::Drop,
+            "reorder" => OrderingMode::Reorder,
+            other => panic!("unknown ordering {other}"),
+        }
+    }
+
+    /// pond-ts `partitionBy` options. pond-rs's options are a typed
+    /// builder, so an unknown option cannot be written; it is refused here,
+    /// as pond-ts refuses it.
+    fn partition_options(v: Option<&Value>) -> Result<PartitionOptions, String> {
+        let mut o = PartitionOptions::new();
+        for (k, v) in v.and_then(|v| v.as_object()).into_iter().flatten() {
+            match k.as_str() {
+                "groups" => o = o.groups(&refs(&names_of(v))),
+                "ordering" => o = o.ordering(ordering_of(v)),
+                "graceWindow" => o = o.grace_window(v.as_str().unwrap()),
+                "retention" => {
+                    for (rk, rv) in v.as_object().unwrap() {
+                        match rk.as_str() {
+                            "maxEvents" => o = o.max_events(rv.as_u64().unwrap() as usize),
+                            "maxAge" => o = o.max_age(rv.as_str().unwrap()),
+                            other => return Err(format!("unknown retention option {other}")),
+                        }
+                    }
+                }
+                other => return Err(format!("unknown option {other}")),
+            }
+        }
+        Ok(o)
+    }
+
+    /// pond-ts `collect` / `apply` options.
+    fn collect_options(v: Option<&Value>) -> Result<CollectOptions, String> {
+        let mut o = CollectOptions::new();
+        for (k, v) in v.and_then(|v| v.as_object()).into_iter().flatten() {
+            match k.as_str() {
+                "name" => o = o.name(v.as_str().unwrap()),
+                "ordering" => o = o.ordering(ordering_of(v)),
+                "graceWindow" => o = o.grace_window(v.as_str().unwrap()),
+                "retention" => {
+                    for (rk, rv) in v.as_object().unwrap() {
+                        match rk.as_str() {
+                            "maxEvents" => o = o.max_events(rv.as_u64().unwrap() as usize),
+                            "maxAge" => o = o.max_age(rv.as_str().unwrap()),
+                            other => return Err(format!("unknown retention option {other}")),
+                        }
+                    }
+                }
+                other => return Err(format!("unknown option {other}")),
+            }
+        }
+        Ok(o)
+    }
+
+    /// One step of a chain built on each partition (pond-ts's partitioned
+    /// sugar, or a step of an `apply` chain).
+    fn build_step(
+        live: &mut LiveSeries,
+        from: NodeId,
+        op: &str,
+        args: &[Value],
+    ) -> pond_rs::Result<NodeId> {
+        let wrap = |message: String| PondError::InvalidData {
+            call: "live_parity",
+            message,
+        };
+        match op {
+            "rolling" => build_rolling(live, from, args)
+                .map(|n| n.id())
+                .map_err(wrap),
+            "reduce" => build_reduce(live, from, args).map(|n| n.id()).map_err(wrap),
+            _ => build_view(live, from, op, args).map(|n| n.id()),
+        }
+    }
+
+    /// pond-ts's partitioned `rolling` with a clock trigger (or keyed).
+    fn build_partition_rolling(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LivePartitionedRolling>, String> {
+        let err = |e: pond_rs::PondError| e.to_string();
+        match &args[0] {
+            Value::Object(windows) => {
+                let options = rolling_options(args.get(1))?;
+                let windows: Vec<RollingWindow> = windows
+                    .iter()
+                    .map(|(w, m)| match m.get("mapping") {
+                        Some(inner) if inner.get("from").is_none() => {
+                            let mut rw = RollingWindow::new(w, &mapping_of(inner));
+                            if let Some(n) = m.get("minSamples") {
+                                rw = rw.min_samples(n.as_u64().unwrap() as usize);
+                            }
+                            rw
+                        }
+                        _ => RollingWindow::new(w, &mapping_of(m)),
+                    })
+                    .collect();
+                live.partition_rolling_windows(from, &windows, &options)
+                    .map_err(err)
+            }
+            Value::String(w) => {
+                let options = rolling_options(args.get(2))?;
+                live.partition_rolling(from, w, &mapping_of(&args[1]), &options)
+                    .map_err(err)
+            }
+            n => {
+                let options = rolling_options(args.get(2))?;
+                live.partition_rolling_rows(
+                    from,
+                    n.as_u64().unwrap() as usize,
+                    &mapping_of(&args[1]),
+                    &options,
+                )
+                .map_err(err)
+            }
+        }
+    }
+
+    /// pond-ts `apply`'s `{ chain: [[op, ...args], ...] }`.
+    fn chain_recipe(
+        spec: &Value,
+    ) -> impl Fn(&mut LiveSeries, NodeId) -> pond_rs::Result<NodeId> + Send + Sync + 'static {
+        let steps: Vec<(String, Vec<Value>)> = spec["chain"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let s = s.as_array().unwrap();
+                (s[0].as_str().unwrap().to_string(), s[1..].to_vec())
+            })
+            .collect();
+        move |live: &mut LiveSeries, mut node: NodeId| {
+            for (op, args) in &steps {
+                node = build_step(live, node, op, args)?;
+            }
+            Ok(node)
+        }
+    }
+
+    /// The events a node holds, whatever it is.
+    fn held_of(live: &LiveSeries, id: NodeId) -> Result<Vec<Value>, String> {
+        if let Ok(n) = live.node::<LiveView>(id) {
+            return Ok(live[n].events().map(|e| event_json(&e)).collect());
+        }
+        if let Ok(n) = live.node::<LiveRolling>(id) {
+            return Ok(live[n].events().map(|e| event_json(&e)).collect());
+        }
+        if let Ok(n) = live.node::<LiveReduce>(id) {
+            return Ok(live[n].events().map(|e| event_json(&e)).collect());
+        }
+        if let Ok(n) = live.node::<SubSeries>(id) {
+            return Ok(live[n].events().map(|e| event_json(&e)).collect());
+        }
+        Err("a chain output pond-rs cannot read".into())
+    }
+
+    /// A series' rows (as a batch series and as events) and counters.
+    fn compare_series(
+        what: &str,
+        state: &Final,
+        ts: &TimeSeries,
+        held: &[Value],
+        st: LiveStats,
+        refused_rows: &[Value],
+    ) -> Result<(), String> {
+        // Rows pond-ts stored before it threw, pond-rs refused whole.
+        let rows: Vec<Vec<Value>> = state
+            .rows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter(|r| !refused_rows.contains(&Value::Array(r.to_vec())))
+            .cloned()
+            .collect();
+        compare_rows(what, &rows, &series_rows(ts))?;
+        compare_rows(what, &rows, held)?;
+        let mut got = serde_json::json!({
+            "ingested": st.ingested + refused_rows.len() as u64, "evicted": st.evicted,
+            "rejected": st.rejected, "length": st.length + refused_rows.len(),
+        });
+        if let (Some(a), Some(b)) = (st.earliest, st.latest) {
+            got["earliestTs"] = a.into();
+            got["latestTs"] = b.into();
+        }
+        let want = Value::Object(state.stats.clone().unwrap());
+        if got != want {
+            return Err(format!("{what}: stats {got} vs {want}"));
+        }
+        Ok(())
+    }
+
     pub(super) fn run_case(case: &Case) -> Result<(), String> {
         let schema = schema_of(&case.schema);
         let key_kind = schema[0].kind;
@@ -1115,7 +1389,15 @@ mod runner {
             Handle::Agg(n) => n.id(),
             Handle::Rolling(n) => n.id(),
             Handle::Reduce(n) => n.id(),
+            Handle::Series(n) => n.id(),
+            Handle::Partitioned(n) => n.id(),
+            Handle::PView(n) => n.id(),
+            Handle::PRolling(n) => n.id(),
         };
+        let partitioned_ids = partitioned_ids(case);
+        // Rows of a push pond-ts stored in the root before throwing, which
+        // pond-rs refused whole.
+        let mut refused_rows: Vec<Value> = Vec::new();
         for (s, step) in case.steps.iter().enumerate() {
             let result: Result<Vec<RsOutput>, String> = if let Some(rows) =
                 step.push.as_ref().or(step.push_many.as_ref())
@@ -1134,8 +1416,45 @@ mod runner {
                     .map_err(|e| e.to_string())
             } else {
                 let spec = step.node.as_ref().unwrap();
-                let from = id_of(handles[spec.from.as_str()], &live);
+                let source = handles[spec.from.as_str()];
+                let from = id_of(source, &live);
+                let partitioned = matches!(source, Handle::Partitioned(_) | Handle::PView(_));
                 let made = match spec.op.as_str() {
+                    _ if is_partition_clock_rolling(spec, &partitioned_ids) => {
+                        build_partition_rolling(&mut live, from, &spec.args).map(Handle::PRolling)
+                    }
+                    "partitionBy" => partition_options(spec.args.get(1)).and_then(|o| {
+                        live.partition_by(from, spec.args[0].as_str().unwrap(), &o)
+                            .map(Handle::Partitioned)
+                            .map_err(|e| e.to_string())
+                    }),
+                    "partition" => {
+                        let Handle::Partitioned(p) = source else {
+                            return Err(format!("step {s}: partition of a non-partitioned node"));
+                        };
+                        live[p]
+                            .partition(spec.args[0].as_str().unwrap())
+                            .map(Handle::Series)
+                            .ok_or_else(|| "no such partition".to_string())
+                    }
+                    "collect" => collect_options(spec.args.first()).and_then(|o| {
+                        live.collect(from, &o)
+                            .map(Handle::Series)
+                            .map_err(|e| e.to_string())
+                    }),
+                    "apply" => collect_options(spec.args.get(1)).and_then(|o| {
+                        live.apply(from, chain_recipe(&spec.args[0]), &o)
+                            .map(Handle::Series)
+                            .map_err(|e| e.to_string())
+                    }),
+                    op if partitioned => {
+                        let (op, args) = (op.to_string(), spec.args.clone());
+                        live.per_partition(from, move |live: &mut LiveSeries, part| {
+                            build_step(live, part, &op, &args)
+                        })
+                        .map(Handle::PView)
+                        .map_err(|e| e.to_string())
+                    }
                     "aggregate" => live
                         .aggregate(
                             from,
@@ -1197,6 +1516,15 @@ mod runner {
                     }
                 }
             };
+            if result.is_err()
+                && step.error.is_some()
+                && PUSH_REFUSED_WHOLE
+                    .iter()
+                    .any(|(c, k, _)| *c == case.name && *k == s)
+            {
+                let rows = step.push.as_ref().or(step.push_many.as_ref()).unwrap();
+                refused_rows.extend(rows.iter().map(|r| Value::Array(r.clone())));
+            }
             match (&result, &step.error) {
                 (Err(e), None) => return Err(format!("step {s}: pond-rs failed: {e}")),
                 (Ok(_), Some(e)) => {
@@ -1231,7 +1559,11 @@ mod runner {
                     Handle::Agg(n) => live.get(n).is_err(),
                     Handle::Rolling(n) => live.get(n).is_err(),
                     Handle::Reduce(n) => live.get(n).is_err(),
-                    Handle::Root => false,
+                    Handle::PRolling(n) => live.get(n).is_err(),
+                    Handle::Root
+                    | Handle::Series(_)
+                    | Handle::Partitioned(_)
+                    | Handle::PView(_) => false,
                 };
                 if !gone {
                     return Err(format!("{what}: should be removed"));
@@ -1244,6 +1576,10 @@ mod runner {
                 Handle::Agg(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
                 Handle::Rolling(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
                 Handle::Reduce(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Series(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Partitioned(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::PView(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::PRolling(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
             };
             if schema != schema_of(state.schema.as_ref().unwrap()) {
                 return Err(format!("{what}: schema {schema:?}"));
@@ -1251,22 +1587,38 @@ mod runner {
             match h {
                 Handle::Root => {
                     let ts = live.to_time_series().map_err(|e| e.to_string())?;
-                    compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
                     let held: Vec<Value> = live.events().map(|e| event_json(&e)).collect();
+                    compare_series(&what, state, &ts, &held, live.stats(), &refused_rows)?;
+                }
+                Handle::Series(n) => {
+                    let series = &live[n];
+                    let ts = series.to_time_series().map_err(|e| e.to_string())?;
+                    let held: Vec<Value> = series.events().map(|e| event_json(&e)).collect();
+                    compare_series(&what, state, &ts, &held, series.stats(), &[])?;
+                }
+                Handle::Partitioned(n) => {
+                    let got: Vec<(String, Vec<Value>)> = live[n]
+                        .partitions()
+                        .map(|(k, part)| {
+                            (
+                                k.to_string(),
+                                live[part].events().map(|e| event_json(&e)).collect(),
+                            )
+                        })
+                        .collect();
+                    compare_partitions(&what, state, &got)?;
+                }
+                Handle::PRolling(n) => {
+                    let held: Vec<Value> = live[n].events().map(|e| event_json(&e)).collect();
                     compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
-                    let st = live.stats();
-                    let mut got = serde_json::json!({
-                        "ingested": st.ingested, "evicted": st.evicted,
-                        "rejected": st.rejected, "length": st.length,
-                    });
-                    if let (Some(a), Some(b)) = (st.earliest, st.latest) {
-                        got["earliestTs"] = a.into();
-                        got["latestTs"] = b.into();
+                }
+                Handle::PView(n) => {
+                    let outputs = live.partition_outputs(n).map_err(|e| e.to_string())?;
+                    let mut got = Vec::new();
+                    for (k, id) in outputs {
+                        got.push((k, held_of(&live, id)?));
                     }
-                    let want = Value::Object(state.stats.clone().unwrap());
-                    if got != want {
-                        return Err(format!("{what}: stats {got} vs {want}"));
-                    }
+                    compare_partitions(&what, state, &got)?;
                 }
                 Handle::View(n) => {
                     let view = &live[n];

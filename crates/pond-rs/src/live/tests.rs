@@ -718,3 +718,314 @@ fn calendar_aggregations_keep_times_in_jiff_range() {
     live.remove(d).unwrap();
     live.push(hi, row("a", 1.0)).unwrap(); // the guard goes with the node
 }
+
+#[test]
+fn a_push_the_partitions_refuse_is_refused_whole() {
+    // A value outside the declared groups: pond-ts stores the row in the
+    // root and then throws; pond-rs stores nothing.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new().groups(&["a", "b"]))
+        .unwrap();
+    let err = live
+        .push_many([(0, row("a", 1.0)), (1000, row("c", 2.0))])
+        .unwrap_err();
+    assert!(err.to_string().contains("declared groups"), "{err}");
+    assert_eq!(live.len(), 0);
+    let a = live[p].partition("a").unwrap();
+    assert_eq!(live[a].len(), 0);
+
+    // A partition stricter than the root.
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let root = live.root();
+    let p = live
+        .partition_by(
+            root,
+            "host",
+            &PartitionOptions::new().ordering(OrderingMode::Strict),
+        )
+        .unwrap();
+    live.push(1000, row("a", 1.0)).unwrap();
+    live.push(500, row("b", 1.0)).unwrap();
+    assert!(live.push(800, row("a", 2.0)).is_err());
+    assert_eq!(live.len(), 2);
+    assert_eq!(live[p].keys(), ["a", "b"]);
+    assert_eq!(live[p].stats().events_routed, 2);
+}
+
+#[test]
+fn partition_by_is_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let view = live.filter(root, |_| true).unwrap();
+    assert!(
+        live.partition_by(view, "host", &PartitionOptions::new())
+            .is_err()
+    );
+    assert!(matches!(
+        live.partition_by(root, "nope", &PartitionOptions::new()),
+        Err(PondError::UnknownColumn { .. })
+    ));
+    let empty: [&str; 0] = [];
+    for bad in [
+        PartitionOptions::new().groups(&empty),
+        PartitionOptions::new().groups(&["a", "a"]),
+        PartitionOptions::new().grace_window("1s"),
+        PartitionOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("5s")
+            .max_age("1s"),
+    ] {
+        assert!(live.partition_by(root, "host", &bad).is_err(), "{bad:?}");
+    }
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    // Built on with per_partition / collect / apply only.
+    assert!(live.filter(p, |_| true).is_err());
+    assert!(
+        live.remove(live[p].partition("a").map_or(root, |n| n.id()))
+            .is_err()
+    );
+}
+
+#[test]
+fn typed_lookup_checks_the_node_type() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    assert!(live.node::<SubSeries>(root).is_ok());
+    assert!(live.node::<LiveView>(root).is_err());
+    let view = live.filter(root, |_| true).unwrap();
+    assert_eq!(live.node::<LiveView>(view.id()).unwrap().id(), view.id());
+}
+
+#[test]
+fn partition_values_are_written_as_pond_ts_writes_them() {
+    let schema = vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("n", ColumnKind::Number),
+    ];
+    let mut live = LiveSeries::new("n", schema).unwrap();
+    let root = live.root();
+    let p = live
+        .partition_by(root, "n", &PartitionOptions::new())
+        .unwrap();
+    for (t, n) in [
+        (0, Some(1.0)),
+        (1, Some(0.1 + 0.2)),
+        (2, None),
+        (3, Some(1e21)),
+    ] {
+        live.push(t, vec![n.map(Value::from)]).unwrap();
+    }
+    assert_eq!(
+        live[p].keys(),
+        ["1", "0.30000000000000004", " undefined", "1e+21"]
+    );
+}
+
+#[test]
+fn a_gathered_series_reports_an_order_it_refuses_after_the_push() {
+    // Partitions keep reorder (from the root); the gathered series is
+    // strict, so a late event reaching it fails the push, but only after
+    // the root and its partition took it (as pond-ts throws mid-delivery).
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    let all = live
+        .collect(p, &CollectOptions::new().ordering(OrderingMode::Strict))
+        .unwrap();
+    live.push(1000, row("a", 1.0)).unwrap();
+    assert!(live.push(500, row("b", 2.0)).is_err());
+    assert_eq!(live.len(), 2);
+    assert_eq!(live[all].len(), 1);
+    // The next push goes through.
+    live.push(2000, row("b", 3.0)).unwrap();
+    assert_eq!(begins(live[all].events()), [1000, 2000]);
+}
+
+#[test]
+fn partition_rolling_is_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    let every = RollingOptions::new().trigger(Trigger::every("5s").unwrap());
+    // A clock trigger only.
+    assert!(
+        live.partition_rolling(p, "5s", &sum, &RollingOptions::new())
+            .is_err()
+    );
+    // Not on the root, and not over the partition column.
+    assert!(live.partition_rolling(root, "5s", &sum, &every).is_err());
+    let clash = [Agg::new("host", "cpu", Reducer::Sum)];
+    assert!(matches!(
+        live.partition_rolling(p, "5s", &clash, &every),
+        Err(PondError::DuplicateOutput { .. })
+    ));
+    assert!(live.partition_rolling_rows(p, 0, &sum, &every).is_err());
+    let r = live.partition_rolling(p, "5s", &sum, &every).unwrap();
+    assert!(live.filter(r, |_| true).is_err());
+    assert_eq!(live[r].schema()[1].kind, ColumnKind::String);
+}
+
+#[test]
+fn removing_partition_rolling_unhooks_it() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    let held = live
+        .per_partition(p, |live, part| {
+            live.fill(part, &[("cpu", Fill::Hold)]).map(|n| n.id())
+        })
+        .unwrap();
+    let every = RollingOptions::new().trigger(Trigger::every("5s").unwrap());
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    let r = live.partition_rolling(held, "5s", &sum, &every).unwrap();
+    live.watch(r, OutputKind::Event).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    let out = live.push(5000, row("b", 2.0)).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(live[r].stats().partitions, 2);
+    let nodes = live.slots.len();
+    live.remove(r).unwrap();
+    assert!(live.get(r).is_err());
+    // The fill chains it built went with it; a new partition builds none.
+    let removed = live.slots[..nodes]
+        .iter()
+        .filter(|s| matches!(s.state, State::View(_)))
+        .count();
+    assert_eq!(removed, 0);
+    assert!(live.push(10000, row("c", 3.0)).unwrap().is_empty());
+    assert_eq!(live.slots.len(), nodes + 1);
+}
+
+#[test]
+fn removing_a_partitioned_node_removes_its_chains() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    let view = live
+        .per_partition(p, |live, part| live.filter(part, |_| true).map(|n| n.id()))
+        .unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.remove(p).unwrap();
+    assert!(live.collect(view, &CollectOptions::new()).is_err());
+    assert!(live.partition_outputs(view).is_err());
+    assert!(
+        live.per_partition(view, |live, part| live
+            .filter(part, |_| true)
+            .map(|n| n.id()))
+            .is_err()
+    );
+    let every = RollingOptions::new().trigger(Trigger::every("5s").unwrap());
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    assert!(live.partition_rolling(view, "5s", &sum, &every).is_err());
+}
+
+#[test]
+fn a_push_after_clear_is_checked_against_the_partitions() {
+    // The partitions keep what a clear drops from the root, so an event
+    // before their latest is refused (pond-ts throws after storing it in
+    // the root; pond-rs stores nothing).
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    live.push(10000, row("a", 1.0)).unwrap();
+    live.clear();
+    let err = live.push(5000, row("a", 2.0)).unwrap_err();
+    assert!(err.to_string().contains("strict order"), "{err}");
+    assert_eq!(live.len(), 0);
+    let a = live[p].partition("a").unwrap();
+    assert_eq!(live[a].len(), 1);
+    // Another partition, and later times, still go through.
+    live.push(6000, row("b", 2.0)).unwrap();
+    live.push(20000, row("a", 3.0)).unwrap();
+    assert_eq!(live[a].len(), 2);
+    assert_eq!(live.len(), 2);
+}
+
+#[test]
+fn a_failing_hook_drops_only_its_row() {
+    // pond-ts `#routeChunk`: the row whose partition could not be built is
+    // dropped, the rest routed, and the push then fails.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    let gathered = live
+        .apply(
+            p,
+            |live, part| {
+                let name = live.node::<SubSeries>(part)?;
+                if live[name].name().ends_with("/b") {
+                    return Err(PondError::InvalidData {
+                        call: "test",
+                        message: "no b".into(),
+                    });
+                }
+                live.filter(part, |_| true).map(|n| n.id())
+            },
+            &CollectOptions::new(),
+        )
+        .unwrap();
+    let err = live
+        .push_many([
+            (1000, row("a", 2.0)),
+            (2000, row("b", 3.0)),
+            (3000, row("a", 4.0)),
+        ])
+        .unwrap_err();
+    assert!(err.to_string().contains("no b"), "{err}");
+    assert_eq!(live.len(), 4);
+    let a = live[p].partition("a").unwrap();
+    assert_eq!(live[a].len(), 3);
+    assert_eq!(live[gathered].len(), 3);
+    // The partition stays, so its later rows reach it.
+    let b = live[p].partition("b").unwrap();
+    assert_eq!(live[b].len(), 0);
+    live.push(4000, row("b", 5.0)).unwrap();
+    assert_eq!(live[b].len(), 1);
+}
+
+#[test]
+fn removing_partition_rolling_removes_its_whole_chain() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new())
+        .unwrap();
+    let chain = live
+        .per_partition(p, |live, part| {
+            let kept = live.filter(part, |_| true)?;
+            live.fill(kept, &[("cpu", Fill::Hold)]).map(|n| n.id())
+        })
+        .unwrap();
+    let every = RollingOptions::new().trigger(Trigger::every("5s").unwrap());
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    let r = live.partition_rolling(chain, "5s", &sum, &every).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.push(1000, row("b", 2.0)).unwrap();
+    let views = |live: &LiveSeries| {
+        live.slots
+            .iter()
+            .filter(|s| matches!(s.state, State::View(_)))
+            .count()
+    };
+    assert_eq!(views(&live), 4);
+    live.remove(r).unwrap();
+    assert_eq!(views(&live), 0);
+}

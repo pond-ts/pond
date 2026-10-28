@@ -621,7 +621,8 @@ the study oracle) is done.
   by column before step 4, about 5-7x less memory for the series (#842);
   step 4, rolling windows and `reduce` with their triggers, merged
   2026-10-28 (#843); step 5, calendar buckets for live `aggregate` in both
-  libraries plus its own grace option, built 2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
+  libraries plus its own grace option, merged 2026-10-28 (#844); step 6,
+  live partitions with synchronised rolling, built 2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.
