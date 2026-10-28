@@ -11,12 +11,15 @@
 //! output column of the open bucket (plus a lookup in the open buckets,
 //! O(log open)). Retention drops from the front, O(evicted). Watched outputs
 //! add one shared event (two reference counts) per output; a watched
-//! `Bucket` builds the bucket's snapshot each time.
+//! `Bucket` builds the bucket's snapshot each time. The step 3 views
+//! (`map`, `select`, `sample`, `window`, `diff` / `rate` / `pct_change`,
+//! `fill`, `cumulative`) each build at most one new event per source event
+//! (a copy of its cells), O(columns); a time window trims from the front.
 
 use std::time::Instant;
 
 use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode, OutputKind};
-use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence, Value};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Sample, Sequence, Value};
 
 /// Median of five timed runs after a warm-up. Each run gets its own copy of
 /// the rows, made before the clock starts: a caller hands pond-rs rows it
@@ -160,6 +163,77 @@ fn main() -> pond_rs::Result<()> {
         live.watch(f, OutputKind::Evict).unwrap();
         one_by_one(&mut live, rows);
     });
+    // Step 3 views, each on a root that keeps 10k events (views mirror
+    // its evictions), so memory stays flat as in a real dashboard.
+    let capped = || {
+        let opts = LiveOptions::new().max_events(10_000);
+        LiveSeries::with_options("live", schema(), opts).unwrap()
+    };
+    run(
+        "diff + rate + pct_change, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            live.diff(root, &["cpu"]).unwrap();
+            live.rate(root, &["cpu"]).unwrap();
+            live.pct_change(root, &["mem"]).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "fill hold + cumulative sum, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            live.fill_all(root, Fill::Hold).unwrap();
+            live.cumulative(root, &[("cpu", Reducer::Sum)]).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run(
+        "map + select + sample 10, max_events 10k",
+        &rows,
+        &mut |rows| {
+            let mut live = capped();
+            let root = live.root();
+            live.map(root, |e| {
+                let mut v = e.values().to_vec();
+                if let Some(Value::Number(x)) = v[1] {
+                    v[1] = Some(Value::Number(x * 2.0));
+                }
+                v
+            })
+            .unwrap();
+            live.select(root, &["cpu"]).unwrap();
+            live.sample(root, Sample::Stride(10)).unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
+    run("window 1000 rows + window 30s", &rows, &mut |rows| {
+        let mut live = capped();
+        let root = live.root();
+        live.window_rows(root, 1000).unwrap();
+        live.window(root, "30s").unwrap();
+        one_by_one(&mut live, rows);
+    });
+    run(
+        "reorder 5% late: diff + fill + window 30s",
+        &late,
+        &mut |rows| {
+            let opts = LiveOptions::new()
+                .ordering(OrderingMode::Reorder)
+                .grace_window("2s")
+                .max_events(10_000);
+            let mut live = LiveSeries::with_options("live", schema(), opts).unwrap();
+            let root = live.root();
+            live.diff(root, &["cpu"]).unwrap();
+            live.fill_all(root, Fill::Hold).unwrap();
+            live.window(root, "30s").unwrap();
+            one_by_one(&mut live, rows);
+        },
+    );
     println!("{{{}}}", report.join(", "));
     Ok(())
 }

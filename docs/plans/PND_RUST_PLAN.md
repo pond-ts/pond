@@ -3644,6 +3644,57 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          grew).
     3. Views: `map`, `select`, `sample`, `window`; live `diff` / `rate` /
        `pct_change` / `fill` / `cumulative`.
+       Built 2026-10-28 (`src/live/views.rs`; `window` trimming in
+       `view.rs`). 39 of the 52 fixture cases run, every output and final
+       state equal; one case added, `views-reorder-late`. Decisions and
+       differences from pond-ts:
+       - Late events ([PND-LATE]): pjm17971 chose insert in order
+         (2026-10-28; the other options were stateful views skip it, or
+         refuse the push). pond-ts was changed to match (its
+         views threw after the root had stored the event): every view puts
+         a late event at its key position, after equal keys; `diff`,
+         `rate`, `pct_change`, `fill`, `cumulative` and `sample` work in
+         arrival order. A pond-ts re-keying `map` that went backwards also
+         threw; it now inserts in order too (pond-rs `map` cannot re-key).
+       - Fixed in pond-ts on the way: live `fill('zero')` wrote `0` into
+         text columns (batch skips them); case `fill-cumulative` showed it.
+       - pond-rs refuses at build what pond-ts takes silently: unknown or
+         repeated columns, `diff` / `rate` / `pct_change` / `cumulative`
+         on a column that is not a number (pond-ts gives gaps; case
+         `diff-rate-pct` node `bad` is listed as refused in the harness),
+         `Zero` or a value of the wrong kind in a per-column `fill` (batch
+         pond-rs refuses the same), `Bfill` / `Linear`, `sample` with
+         `Reservoir` (pond-ts has stride only) or stride 0, a row window of
+         0, `cumulative` with a reducer other than sum / max / min / count.
+       - `map(from, |event| cells)` returns the new cells in schema order
+         and keeps the key and schema (no re-keying, no new columns);
+         a wrong number of cells or a cell of the wrong kind panics during
+         the push. Non-finite numbers become gaps, as pond-ts.
+       - `fill_with(.., limit)`: a live view fills the first `limit` gaps
+         of a longer run and leaves the rest (pond-ts live); batch
+         `fill_with` leaves the whole run unfilled.
+       - A `window` view trims itself silently (no `Evict` output, and
+         views on it keep what it trimmed), as pond-ts. `filter`, `map`
+         and `select` on a time window keep its length for `event_rate`.
+       - Timing (1M events, same quiet run, pond-rs vs pond-ts, ms): on a
+         `max_events` 10k root, diff + rate + pct_change 739 vs 4,404;
+         fill hold + cumulative 606 vs 3,523; map + select + sample 480
+         vs 3,678; two windows 309 vs 3,173; reorder 5% late with diff +
+         fill + window 761 vs 1,239. Each view that makes new events costs
+         pond-rs ~0.2-0.3 µs an event (an `Arc`, a `Vec` and a text clone
+         per event; the row layout noted under memory below). Timing found
+         a pond-ts slowdown, fixed in the same PR: [PND-EVICTSPLICE]
+         (dropping old events copied the whole buffer per push; before the
+         fix pond-ts took 115 s on the first case). pond-rs also stopped
+         collecting a view's evicted events when nothing follows them.
+       - Memory (gRPC experiment friction, 2026-10-28,
+         pjm17971/pond-grpc-experiment#45): a 30 s window at 1000 hosts x
+         1000 events/s held ~10.3M rows in 2,540 MB, ~250 bytes per row
+         against ~67 for a plain `VecDeque` of the same rows, and the batch
+         handler's p99 doubled; cause is one `Arc` + a `Vec` of 48-byte
+         `Option<Value>` cells per event. Same column-store point as the
+         step 2 `push_many` timing; to weigh before step 4. Also
+         `LiveSeries::to_json` copies into a `TimeSeries` first.
     4. Rolling: single-window (`LiveRollingAggregation`), fused
        multi-window (`LiveFusedRolling`), `reduce`.
     5. Triggers (`event`, `clock(sequence)`, `every(duration)`,

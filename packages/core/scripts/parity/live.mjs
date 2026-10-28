@@ -425,6 +425,39 @@ const CASES = [
     ],
   },
   {
+    // [PND-LATE]: a late event the reorder root accepts goes into each
+    // view at its key position (after equal keys); stateful views compute
+    // in arrival order.
+    name: 'views-reorder-late',
+    schema: SCHEMA,
+    options: { ordering: 'reorder' },
+    steps: [
+      node('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('m', 'map', 'f', { map: { column: 'cpu', mul: 2, add: -1 } }),
+      node('s', 'select', 'root', 'mem'),
+      node('t', 'sample', 'root', { stride: 2 }),
+      node('w3', 'window', 'root', 3),
+      node('w2s', 'window', 'root', '2s'),
+      node('d', 'diff', 'root', ['cpu', 'mem']),
+      node('r', 'rate', 'root', 'cpu'),
+      node('p', 'pctChange', 'root', 'mem'),
+      node('h', 'fill', 'root', 'hold'),
+      node('c', 'cumulative', 'root', { cpu: 'sum', mem: 'max' }),
+      ...each(ROWS.slice(0, 7)),
+      { push: [[2600, 'a', 99, null]] },
+      { push: [[1000, 'c', 5, 9]] },
+      {
+        pushMany: [
+          [4500, 'b', null, 30],
+          [100, 'a', -4, 2],
+          [4000, 'c', 1, 1],
+        ],
+      },
+      ...each(ROWS.slice(7, 12)),
+      { push: [[0, 'z', 3, 3]] },
+    ],
+  },
+  {
     name: 'views-after-clear',
     schema: SCHEMA,
     steps: [

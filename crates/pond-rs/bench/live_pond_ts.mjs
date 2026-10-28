@@ -55,6 +55,9 @@ const median = (f) => {
 const oneByOne = (live, rs) => {
   for (const r of rs) live.push(r);
 };
+const capped = () =>
+  new LiveSeries({ name: 'live', schema, retention: { maxEvents: 10_000 } });
+
 const cases = [
   [
     'push one at a time',
@@ -133,6 +136,63 @@ const cases = [
       f.aggregate(minute, mapping);
       f.on('evict', () => {});
       oneByOne(live, rows);
+    },
+  ],
+  [
+    'diff + rate + pct_change, max_events 10k',
+    () => {
+      const live = capped();
+      live.diff('cpu');
+      live.rate('cpu');
+      live.pctChange('mem');
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'fill hold + cumulative sum, max_events 10k',
+    () => {
+      const live = capped();
+      live.fill('hold');
+      live.cumulative({ cpu: 'sum' });
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'map + select + sample 10, max_events 10k',
+    () => {
+      const live = capped();
+      live.map((e) => {
+        const v = e.get('cpu');
+        return v === undefined ? e : e.set('cpu', v * 2);
+      });
+      live.select('cpu');
+      live.sample({ stride: 10 });
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'window 1000 rows + window 30s',
+    () => {
+      const live = capped();
+      live.window(1000);
+      live.window('30s');
+      oneByOne(live, rows);
+    },
+  ],
+  [
+    'reorder 5% late: diff + fill + window 30s',
+    () => {
+      const live = new LiveSeries({
+        name: 'live',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '2s',
+        retention: { maxEvents: 10_000 },
+      });
+      live.diff('cpu');
+      live.fill('hold');
+      live.window('30s');
+      oneByOne(live, late);
     },
   ],
 ];
