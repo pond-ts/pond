@@ -1029,3 +1029,202 @@ fn removing_partition_rolling_removes_its_whole_chain() {
     live.remove(r).unwrap();
     assert_eq!(views(&live), 0);
 }
+
+/// Random pipelines on partitions, run with the partitions on one thread
+/// and split over 2 to 5 shards (every push through them): the same
+/// outputs in the same order, the same refusals and the same contents.
+#[test]
+fn shards_give_what_one_thread_gives() {
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for round in 0..40 {
+        let hosts = 1 + (next() % 40) as usize;
+        let max_events = (next() % 3 == 0).then(|| 2 + (next() % 30) as usize);
+        let max_age = (next() % 3 == 0).then_some("6s");
+        let refuse = (next() % 4 == 0).then(|| format!("h{}", next() % hosts as u64));
+        let mut pushes: Vec<Vec<(i64, Vec<Option<Value>>)>> = Vec::new();
+        let mut t = 0i64;
+        for _ in 0..12 {
+            let n = match next() % 4 {
+                0 => 1,
+                1 => 1 + (next() % 20) as usize,
+                _ => 1 + (next() % 700) as usize,
+            };
+            let rows = (0..n)
+                .map(|_| {
+                    t += (next() % 400) as i64;
+                    let host = format!("h{}", next() % hosts as u64);
+                    let cpu = (next() % 7 != 0).then(|| Value::from((next() % 1000) as f64 / 7.0));
+                    (t, vec![Some(Value::from(host.as_str())), cpu])
+                })
+                .collect();
+            pushes.push(rows);
+        }
+        let run = |threads: usize| -> Vec<String> {
+            let mut live = series(LiveOptions::new());
+            let root = live.root();
+            let mut options = PartitionOptions::new()
+                .threads(threads)
+                .parallel_min_rows(0);
+            if let Some(n) = max_events {
+                options = options.max_events(n);
+            }
+            if let Some(a) = max_age {
+                options = options.max_age(a);
+            }
+            let p = live.partition_by(root, "host", &options).unwrap();
+            let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+            let rolled = live
+                .per_partition(p, |live, part| {
+                    let kept = live.filter(part, |e| {
+                        e.value("cpu")
+                            .unwrap()
+                            .and_then(|v| v.as_f64())
+                            .is_some_and(|c| c > 30.0)
+                    })?;
+                    live.rolling(kept, "3s", &[Agg::new("cpu", "cpu", Reducer::Avg)])
+                        .map(|n| n.id())
+                })
+                .unwrap();
+            let held = live
+                .per_partition(p, |live, part| {
+                    live.fill(part, &[("cpu", Fill::Hold)]).map(|n| n.id())
+                })
+                .unwrap();
+            let mut watched = vec![
+                live.collect(rolled, &CollectOptions::new()).unwrap().id(),
+                live.collect(p, &CollectOptions::new()).unwrap().id(),
+                live.apply(
+                    p,
+                    |live, part| {
+                        live.reduce(part, &[Agg::new("cpu", "cpu", Reducer::Sum)])
+                            .map(|n| n.id())
+                    },
+                    &CollectOptions::new(),
+                )
+                .unwrap()
+                .id(),
+                live.apply(
+                    p,
+                    |live, part| {
+                        live.aggregate(
+                            part,
+                            &Sequence::every("2s").unwrap(),
+                            &[Agg::new("cpu", "cpu", Reducer::Max)],
+                        )
+                        .map(|n| n.id())
+                    },
+                    &CollectOptions::new(),
+                )
+                .unwrap()
+                .id(),
+                live.partition_rolling(
+                    p,
+                    "4s",
+                    &sum,
+                    &RollingOptions::new().trigger(Trigger::every("2s").unwrap()),
+                )
+                .unwrap()
+                .id(),
+            ];
+            if let Some(bad) = refuse.clone() {
+                watched.push(
+                    live.apply(
+                        p,
+                        move |live, part| {
+                            let s = live.node::<SubSeries>(part)?;
+                            if live[s].name().ends_with(&format!("/{bad}")) {
+                                return Err(PondError::InvalidData {
+                                    call: "test",
+                                    message: "refused".into(),
+                                });
+                            }
+                            live.filter(part, |_| true).map(|n| n.id())
+                        },
+                        &CollectOptions::new(),
+                    )
+                    .unwrap()
+                    .id(),
+                );
+            }
+            for &w in &watched {
+                live.watch(w, OutputKind::Event).unwrap();
+            }
+            let mut log = Vec::new();
+            let name = |id: NodeId| id.index;
+            let mut seen = 0;
+            for (k, rows) in pushes.iter().enumerate() {
+                // Watch the partitions built so far, every kind.
+                let parts: Vec<NodeId> = live[p].partitions().map(|(_, n)| n.id()).collect();
+                for &part in &parts[seen..] {
+                    for kind in [OutputKind::Event, OutputKind::Batch, OutputKind::Evict] {
+                        live.watch(part, kind).unwrap();
+                    }
+                }
+                seen = parts.len();
+                // And views on the partitions there are by now.
+                if k == 3 {
+                    for (_, n) in live.partition_outputs(held).unwrap() {
+                        live.watch(n, OutputKind::Event).unwrap();
+                        live.watch(n, OutputKind::Evict).unwrap();
+                    }
+                }
+                match live.push_many(rows.clone()) {
+                    Ok(out) => {
+                        for o in out {
+                            let o = match o {
+                                Output::Event { node, event } => {
+                                    format!("{} event {event:?}", name(node))
+                                }
+                                Output::Batch { node, events } => {
+                                    format!("{} batch {events:?}", name(node))
+                                }
+                                Output::Evict { node, events } => {
+                                    format!("{} evict {events:?}", name(node))
+                                }
+                                Output::Bucket { node, event } => {
+                                    format!("{} bucket {event:?}", name(node))
+                                }
+                                Output::Update { node, values } => {
+                                    format!("{} update {values:?}", name(node))
+                                }
+                            };
+                            log.push(o);
+                        }
+                    }
+                    Err(e) => log.push(format!("refused: {e}")),
+                }
+            }
+            for &w in &watched {
+                let s = live
+                    .node::<SubSeries>(w)
+                    .ok()
+                    .map(|s| begins(live[s].events()));
+                log.push(format!("{} holds {s:?}", name(w)));
+            }
+            for (key, part) in live[p].partitions() {
+                log.push(format!("{key}: {:?}", begins(live[part].events())));
+            }
+            log
+        };
+        let one = run(1);
+        assert!(one.len() > 20, "round {round}: {} outputs", one.len());
+        for threads in 2..=5 {
+            let many = run(threads);
+            if let Some(i) = (0..one.len().max(many.len())).find(|&i| one.get(i) != many.get(i)) {
+                panic!(
+                    "round {round}, {threads} shards, output {i} of {}/{}:\n one:  {:?}\n many: {:?}",
+                    one.len(),
+                    many.len(),
+                    one.get(i),
+                    many.get(i)
+                );
+            }
+        }
+    }
+}

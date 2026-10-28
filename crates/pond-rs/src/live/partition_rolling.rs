@@ -359,6 +359,7 @@ impl LiveSeries {
             source: Some(p),
             series: self.slots[p].series,
             subs: Default::default(),
+            shard: 0,
         });
         // Each partition's feed (the partition, or the chain built on it),
         // what they hold replayed in time order, then subscribed.

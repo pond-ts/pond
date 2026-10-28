@@ -143,6 +143,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   synchronised rolling output is text (the partition value as pond-ts
   writes it, `" undefined"` for a row without one), which pond-ts declares
   with the source column's type but also fills with text.
+- **pond-rs: live partitions on several threads.**
+  `PartitionOptions::threads(n)` splits a partitioned node's partitions
+  over `n` shards. A push of 256 rows or more that reaches at least two
+  shards then stores each partition's rows and runs everything built on
+  each partition (views, rolling windows, aggregations, reduces) in all
+  shards at once, on rayon's pool; what the shards hand on (outputs,
+  events for `collect` / `apply` and synchronised rolling) is put back in
+  the order one thread makes it, so outputs are the same, in the same
+  order. Only a strict, time-keyed root uses shards (other roots route
+  each event as it arrives); the default, 1, is unchanged.
 
 ### Changed
 

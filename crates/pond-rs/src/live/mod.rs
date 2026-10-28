@@ -119,11 +119,13 @@ mod aggregation;
 mod buffer;
 mod event;
 mod json;
+mod net;
 mod partition;
 mod partition_rolling;
 mod reduce;
 mod rolling;
 mod series;
+mod shard;
 mod states;
 mod view;
 mod views;
@@ -157,6 +159,7 @@ use crate::sequence::{CALENDAR_RANGE_MS, Sequence};
 use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use event::LiveSchema;
+use net::Net;
 use reduce::Place;
 use rolling::{After, Span};
 use view::Step;
@@ -480,6 +483,9 @@ struct Slot {
     /// The nearest series at or above this node: whose push settles it.
     series: usize,
     subs: [Vec<Sub>; KINDS],
+    /// The shard this node runs in (see `shard.rs`); 0 is the owner's
+    /// own thread.
+    shard: u16,
 }
 
 impl Slot {
@@ -509,6 +515,8 @@ pub struct LiveSeries {
     calendar_aggregations: usize,
     /// Slot 0 is the root series.
     slots: Vec<Slot>,
+    /// The next shard number to hand out (see `shard.rs`).
+    next_shard: u16,
     /// Partitioned nodes routed a push at a time (see `partition.rs`).
     routers: Vec<usize>,
     /// Every partitioned node built and not removed: the nodes a push
@@ -616,7 +624,9 @@ impl LiveSeries {
                 source: None,
                 series: 0,
                 subs: Default::default(),
+                shard: 0,
             }],
+            next_shard: 1,
             routers: Vec::new(),
             partitions: Vec::new(),
             reduces: Vec::new(),
@@ -949,249 +959,6 @@ impl LiveSeries {
         self.settle(i, out);
     }
 
-    /// The end of a push into series `series` (pond-ts's settle hook,
-    /// [PND-REDUCETICK]): each reduce below it emits for what reached it,
-    /// oldest node first.
-    fn settle(&mut self, series: usize, out: &mut Vec<Output>) {
-        for k in 0..self.reduces.len() {
-            let i = self.reduces[k];
-            if self.slots[i].series != series {
-                continue;
-            }
-            let hand_on = !self.slots[i].subs[OutputKind::Event.slot()].is_empty();
-            let State::Reduce(r) = &mut self.slots[i].state else {
-                continue;
-            };
-            if !r.has_pending() {
-                continue;
-            }
-            for event in r.settle(hand_on) {
-                self.emit_event(i, &event, None, out);
-            }
-        }
-    }
-
-    /// Drop series `i`'s oldest `n` events (n > 0) and tell what follows.
-    fn evict_series(&mut self, i: usize, n: usize, out: &mut Vec<Output>) {
-        let keep = self.wants_evicted(i);
-        let series = self.series_mut(i);
-        series.evicted += n as u64;
-        let cutoff = series.buffer.begin_at(n - 1);
-        let evicted = series.buffer.evict(n, keep);
-        self.emit_evict(i, cutoff, &evicted, out);
-    }
-
-    /// Whether something needs the events `node` evicts: a watcher, or a
-    /// reduce removing them (a view only needs where they end).
-    fn wants_evicted(&self, node: usize) -> bool {
-        self.slots[node].subs[OutputKind::Evict.slot()]
-            .iter()
-            .any(|sub| match sub {
-                Sub::Watch => true,
-                Sub::Child(c) => matches!(self.slots[*c].state, State::Reduce(_)),
-            })
-    }
-
-    // ── Fan-out ─────────────────────────────────────────────────────
-
-    /// Hand `make`'s output to each watcher of `node`'s `kind` (children
-    /// are not reached this way).
-    fn emit(
-        &self,
-        node: usize,
-        kind: OutputKind,
-        out: &mut Vec<Output>,
-        make: impl Fn(NodeId) -> Output,
-    ) {
-        let id = self.id_of(node);
-        for sub in &self.slots[node].subs[kind.slot()] {
-            if *sub == Sub::Watch {
-                out.push(make(id));
-            }
-        }
-    }
-
-    /// `node` took `event` (at `place` among the events it holds, for a
-    /// series or a view): hand it to watchers and to the nodes built on it.
-    fn emit_event(
-        &mut self,
-        node: usize,
-        event: &LiveEvent,
-        place: Option<Place>,
-        out: &mut Vec<Output>,
-    ) {
-        let kind = OutputKind::Event.slot();
-        let mut k = 0;
-        while k < self.slots[node].subs[kind].len() {
-            match self.slots[node].subs[kind][k] {
-                Sub::Watch => out.push(Output::Event {
-                    node: self.id_of(node),
-                    event: event.clone(),
-                }),
-                Sub::Child(c) => self.deliver(c, node, event, place, out),
-            }
-            k += 1;
-        }
-    }
-
-    /// `node` dropped events, the last starting at `cutoff`; `evicted`
-    /// holds them when `node` watches its evictions (empty otherwise).
-    fn emit_evict(
-        &mut self,
-        node: usize,
-        cutoff: i64,
-        evicted: &[LiveEvent],
-        out: &mut Vec<Output>,
-    ) {
-        let kind = OutputKind::Evict.slot();
-        let mut k = 0;
-        while k < self.slots[node].subs[kind].len() {
-            match self.slots[node].subs[kind][k] {
-                Sub::Watch => out.push(Output::Evict {
-                    node: self.id_of(node),
-                    events: evicted.to_vec(),
-                }),
-                Sub::Child(c) => {
-                    let keep = self.wants_evicted(c);
-                    match &mut self.slots[c].state {
-                        State::View(view) => {
-                            let (last, removed) = view.mirror_evict(cutoff, keep);
-                            if let Some(last) = last {
-                                self.emit_evict(c, last, &removed, out);
-                            }
-                        }
-                        State::Reduce(reduce) => reduce.evict(evicted),
-                        _ => unreachable!("only views and reduces follow evictions"),
-                    }
-                }
-            }
-            k += 1;
-        }
-    }
-
-    /// One event from `from` reaching child `c` (at `place` in `from`).
-    fn deliver(
-        &mut self,
-        c: usize,
-        from: usize,
-        event: &LiveEvent,
-        place: Option<Place>,
-        out: &mut Vec<Output>,
-    ) {
-        let want_bucket = !self.slots[c].subs[OutputKind::Bucket.slot()].is_empty();
-        let want_update = !self.slots[c].subs[OutputKind::Update.slot()].is_empty();
-        let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
-        match &mut self.slots[c].state {
-            State::View(view) => {
-                if let Some((Some(kept), place)) = view.take(event, hand_on) {
-                    self.emit_event(c, &kept, Some(place), out);
-                }
-            }
-            State::Rolling(rolling) => {
-                let after = if want_update {
-                    After::Record
-                } else {
-                    After::Touch
-                };
-                let rolled = rolling.ingest(event, hand_on, after);
-                if let Some(emitted) = rolled.event {
-                    self.emit_event(c, &emitted, None, out);
-                }
-                if let Some(values) = rolled.update {
-                    self.emit(c, OutputKind::Update, out, |node| Output::Update {
-                        node,
-                        values: Some(values.clone()),
-                    });
-                }
-            }
-            State::Reduce(reduce) => {
-                reduce.ingest(event, place.expect("a reduce's source places its events"))
-            }
-            State::Aggregation(agg) => {
-                let done = agg.ingest(event, want_bucket);
-                if let Some(bucket) = done.bucket {
-                    self.emit(c, OutputKind::Bucket, out, |node| Output::Bucket {
-                        node,
-                        event: bucket.clone(),
-                    });
-                }
-                for closed in &done.closed {
-                    self.emit_event(c, closed, None, out);
-                }
-                self.emit(c, OutputKind::Update, out, |node| Output::Update {
-                    node,
-                    values: None,
-                });
-            }
-            State::PartitionRolling(_) | State::Partitioned(_) | State::Series(_) => {
-                self.deliver_partitioned(c, from, event, hand_on, out)
-            }
-            State::PartitionedView(_) | State::Removed => unreachable!("never a child"),
-        }
-    }
-
-    /// [`LiveSeries::deliver`] to a node of the partition layer: kept out
-    /// of line so the common path (views, rolling, aggregations) stays
-    /// small.
-    #[inline(never)]
-    fn deliver_partitioned(
-        &mut self,
-        c: usize,
-        from: usize,
-        event: &LiveEvent,
-        hand_on: bool,
-        out: &mut Vec<Output>,
-    ) {
-        match &mut self.slots[c].state {
-            State::PartitionRolling(rolling) => {
-                let key = rolling.feeds[&from].clone();
-                for row in rolling.ingest(&key, event, hand_on) {
-                    self.emit_event(c, &row, None, out);
-                }
-            }
-            State::Partitioned(_) => {
-                if let Err(e) = self.route_one(c, event, out) {
-                    self.fail(e);
-                }
-            }
-            State::Series(series) => {
-                // A gathered series (collect / apply) takes each event as
-                // one push; pond-ts throws on an order it refuses.
-                let late = series
-                    .buffer
-                    .last_key()
-                    .filter(|l| compare_keys(l, event.key()) == Ordering::Greater)
-                    .map(|l| l.begin());
-                let refused = match (late, series.ordering) {
-                    (Some(latest), OrderingMode::Strict) => Some(format!(
-                        "out-of-order event: starts at {} but the latest starts at {latest}",
-                        event.begin()
-                    )),
-                    (Some(latest), OrderingMode::Reorder) => series
-                        .grace_ms
-                        .filter(|g| latest - event.begin() > *g)
-                        .map(|g| {
-                            format!(
-                                "event at {} is outside the grace window (latest {latest}, grace {g} ms)",
-                                event.begin()
-                            )
-                        }),
-                    _ => None,
-                };
-                if let Some(message) = refused {
-                    let message = format!("series '{}': {message}", series.name);
-                    self.fail(PondError::InvalidData {
-                        call: "LiveSeries::push",
-                        message,
-                    });
-                    return;
-                }
-                self.ingest_series(c, vec![event.clone()], out);
-            }
-            _ => unreachable!("not a partition-layer node"),
-        }
-    }
-
     /// Keep the first refusal met while handing events on.
     fn fail(&mut self, e: PondError) {
         self.failure.get_or_insert(e);
@@ -1302,6 +1069,7 @@ impl LiveSeries {
             source: Some(source),
             series,
             subs: Default::default(),
+            shard: self.slots[source].shard,
         });
         self.slots[source].subs[OutputKind::Event.slot()].push(Sub::Child(index));
         if follows_evict {
@@ -1765,6 +1533,93 @@ impl LiveSeries {
     /// The events held as pond-ts JSON ([`TimeSeries::to_json`]).
     pub fn to_json(&self, format: RowFormat) -> Result<String> {
         self.to_time_series()?.to_json(format)
+    }
+}
+
+impl Net for LiveSeries {
+    #[inline]
+    fn slot(&self, i: usize) -> &Slot {
+        &self.slots[i]
+    }
+
+    #[inline]
+    fn slot_mut(&mut self, i: usize) -> &mut Slot {
+        &mut self.slots[i]
+    }
+
+    #[inline]
+    fn here(&self, _: usize) -> bool {
+        true
+    }
+
+    fn reduces(&self) -> &[usize] {
+        &self.reduces
+    }
+
+    fn node_id(&self, i: usize) -> NodeId {
+        self.id_of(i)
+    }
+
+    /// Kept out of line so the common path (views, rolling, aggregations)
+    /// stays small.
+    #[inline(never)]
+    fn far(
+        &mut self,
+        c: usize,
+        from: usize,
+        event: &LiveEvent,
+        _place: Option<Place>,
+        hand_on: bool,
+        out: &mut Vec<Output>,
+    ) {
+        match &mut self.slots[c].state {
+            State::PartitionRolling(rolling) => {
+                let key = rolling.feeds[&from].clone();
+                for row in rolling.ingest(&key, event, hand_on) {
+                    self.emit_event(c, &row, None, out);
+                }
+            }
+            State::Partitioned(_) => {
+                if let Err(e) = self.route_one(c, event, out) {
+                    self.fail(e);
+                }
+            }
+            State::Series(series) => {
+                // A gathered series (collect / apply) takes each event as
+                // one push; pond-ts throws on an order it refuses.
+                let late = series
+                    .buffer
+                    .last_key()
+                    .filter(|l| compare_keys(l, event.key()) == Ordering::Greater)
+                    .map(|l| l.begin());
+                let refused = match (late, series.ordering) {
+                    (Some(latest), OrderingMode::Strict) => Some(format!(
+                        "out-of-order event: starts at {} but the latest starts at {latest}",
+                        event.begin()
+                    )),
+                    (Some(latest), OrderingMode::Reorder) => series
+                        .grace_ms
+                        .filter(|g| latest - event.begin() > *g)
+                        .map(|g| {
+                            format!(
+                                "event at {} is outside the grace window (latest {latest}, grace {g} ms)",
+                                event.begin()
+                            )
+                        }),
+                    _ => None,
+                };
+                if let Some(message) = refused {
+                    let message = format!("series '{}': {message}", series.name);
+                    self.fail(PondError::InvalidData {
+                        call: "LiveSeries::push",
+                        message,
+                    });
+                    return;
+                }
+                self.ingest_series(c, vec![event.clone()], out);
+            }
+            _ => unreachable!("not a partition-layer node"),
+        }
     }
 }
 

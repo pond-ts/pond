@@ -553,6 +553,33 @@ fn supported_cases_match_pond_ts() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Every partitioned case again with its partitions split over shards,
+/// each push going through them: the same outputs, in the same order.
+#[cfg(feature = "live")]
+#[test]
+fn partitioned_cases_match_in_shards() {
+    let fixture = load();
+    let supported: BTreeSet<&str> = SUPPORTED_OPS.iter().copied().collect();
+    let mut failures = Vec::new();
+    let mut ran = 0;
+    for shards in [2, 3, 4] {
+        runner::SHARDS.with(|s| s.set(shards));
+        for case in &fixture.cases {
+            let ops = ops_of(case);
+            if !ops.contains("partitionBy") || !ops.is_subset(&supported) {
+                continue;
+            }
+            ran += 1;
+            if let Err(why) = run_case(case) {
+                failures.push(format!("{shards} shards: {why}"));
+            }
+        }
+    }
+    runner::SHARDS.with(|s| s.set(1));
+    assert!(ran >= 30, "{ran} runs");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn compare_outputs_checks_order_and_bits() {
     let out = |node: &str, kind: &str, payload: Value| Output {
@@ -576,6 +603,11 @@ fn compare_outputs_checks_order_and_bits() {
 #[cfg(feature = "live")]
 mod runner {
     use super::*;
+
+    thread_local! {
+        /// Shards for every `partitionBy` this thread builds (1: none).
+        pub(super) static SHARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(1) };
+    }
     use pond_rs::PondError;
     use pond_rs::live::{
         CollectOptions, History, LiveAggregation, LiveEvent, LiveOptions, LivePartitioned,
@@ -1178,6 +1210,10 @@ mod runner {
     /// as pond-ts refuses it.
     fn partition_options(v: Option<&Value>) -> Result<PartitionOptions, String> {
         let mut o = PartitionOptions::new();
+        let shards = SHARDS.with(|s| s.get());
+        if shards > 1 {
+            o = o.threads(shards).parallel_min_rows(0);
+        }
         for (k, v) in v.and_then(|v| v.as_object()).into_iter().flatten() {
             match k.as_str() {
                 "groups" => o = o.groups(&refs(&names_of(v))),

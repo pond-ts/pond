@@ -409,6 +409,62 @@ fn main() -> pond_rs::Result<()> {
             batches(&mut live, rows);
         },
     );
+    // The same with the partitions split over shards that run at once
+    // (PartitionOptions::threads); without collect, the work stays in
+    // the shards.
+    for threads in [2, 4] {
+        let split = PartitionOptions::new().max_events(100).threads(threads);
+        run(
+            &format!("partition 1000 hosts, batches of 1000: rolling, {threads} threads"),
+            &rows1k,
+            &mut |rows| {
+                let mut live = capped();
+                let p = live.partition_by(live.root(), "host", &split).unwrap();
+                let m = avg.clone();
+                let chain = live
+                    .per_partition(p, move |live, part| Ok(live.rolling(part, "30s", &m)?.id()))
+                    .unwrap();
+                live.collect(chain, &all).unwrap();
+                batches(&mut live, rows);
+            },
+        );
+        run(
+            &format!("partition 1000 hosts, batches of 1000: sync, {threads} threads"),
+            &rows1k,
+            &mut |rows| {
+                let mut live = capped();
+                let p = live.partition_by(live.root(), "host", &split).unwrap();
+                live.partition_rolling(p, "30s", &avg, &every("10s"))
+                    .unwrap();
+                batches(&mut live, rows);
+            },
+        );
+    }
+    // Hosts declared up front, so the chain is built on each now.
+    let names: Vec<String> = (0..1000).map(|i| format!("h{i}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    for threads in [1, 2, 4] {
+        let split = PartitionOptions::new()
+            .groups(&names)
+            .max_events(100)
+            .threads(threads);
+        run(
+            &format!(
+                "partition 1000 hosts, batches of 1000: rolling, no collect, {threads} threads"
+            ),
+            &rows1k,
+            &mut |rows| {
+                let mut live = capped();
+                let p = live.partition_by(live.root(), "host", &split).unwrap();
+                let m = avg.clone();
+                let chain = live
+                    .per_partition(p, move |live, part| Ok(live.rolling(part, "30s", &m)?.id()))
+                    .unwrap();
+                live.partition_outputs(chain).unwrap();
+                batches(&mut live, rows);
+            },
+        );
+    }
     println!("{{{}}}", report.join(", "));
     Ok(())
 }

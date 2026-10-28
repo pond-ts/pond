@@ -17,7 +17,7 @@
 //! - Otherwise each root event is routed when it reaches the partitioned
 //!   node, as one push into its partition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -29,6 +29,7 @@ use crate::query::{EventKey, compare_keys};
 use crate::series::ColumnDef;
 
 use super::event::{LiveEvent, LiveSchema};
+use super::net::Net;
 use super::sealed::State;
 use super::{LiveSeries, Node, NodeId, OrderingMode, Output, OutputKind, Slot, Sub, SubSeries};
 
@@ -47,6 +48,8 @@ pub struct PartitionOptions {
     grace_window: Option<String>,
     max_events: Option<usize>,
     max_age: Option<String>,
+    threads: Option<usize>,
+    parallel_min: Option<usize>,
 }
 
 impl PartitionOptions {
@@ -82,6 +85,26 @@ impl PartitionOptions {
     /// latest event the root has routed (a quiet partition ages out too).
     pub fn max_age(mut self, duration: &str) -> Self {
         self.max_age = Some(duration.into());
+        self
+    }
+
+    /// Split the partitions over `n` shards (at least 1; 1, the default,
+    /// keeps everything on the caller's thread). A push big enough to be
+    /// worth it then stores rows and runs what is built on each partition
+    /// in every shard at once, on rayon's pool. Results and outputs are
+    /// the same as on one thread, in the same order. Only a root routed a
+    /// push at a time (strict, keyed by time) uses shards; without the
+    /// `parallel` feature they run one after another.
+    pub fn threads(mut self, n: usize) -> Self {
+        self.threads = Some(n);
+        self
+    }
+
+    /// The fewest rows a push needs before shards run at once (default
+    /// 256). For tests: 0 runs every push through the shards.
+    #[doc(hidden)]
+    pub fn parallel_min_rows(mut self, rows: usize) -> Self {
+        self.parallel_min = Some(rows);
         self
     }
 }
@@ -185,6 +208,11 @@ pub struct LivePartitioned {
     sweep_every: Option<i64>,
     watermark: Option<i64>,
     last_sweep: Option<i64>,
+    /// Each shard's number and how many partitions it holds (empty: no
+    /// shards, everything on the caller's thread).
+    pub(crate) shards: Vec<(u16, usize)>,
+    /// The fewest rows a push needs before its shards run at once.
+    pub(crate) parallel_min: usize,
     /// The root's latest key when it was last cleared: the partitions keep
     /// events up to it that the root no longer holds, so a push's order
     /// against the root no longer implies its order in each partition.
@@ -320,9 +348,9 @@ impl PartitionedView {
 }
 
 /// One partition's share of a push routed a push at a time.
-struct Share {
-    slot: usize,
-    rows: Vec<usize>,
+pub(super) struct Share {
+    pub(super) slot: usize,
+    pub(super) rows: Vec<usize>,
 }
 
 impl LiveSeries {
@@ -390,8 +418,28 @@ impl LiveSeries {
         };
         check_series_options(CALL, ordering, grace_ms, max_age_ms)?;
         let chunked = root.chunked && ordering == OrderingMode::Strict;
+        let name = root.name.clone();
+        let threads = options.threads.unwrap_or(1);
+        if threads == 0 || threads > 256 {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: format!("threads must be 1 to 256, got {threads}"),
+            });
+        }
+        let shards: Vec<(u16, usize)> = if threads > 1 {
+            let base = self.next_shard;
+            self.next_shard =
+                base.checked_add(threads as u16)
+                    .ok_or_else(|| PondError::InvalidData {
+                        call: CALL,
+                        message: "too many shards in one LiveSeries".into(),
+                    })?;
+            (0..threads as u16).map(|k| (base + k, 0)).collect()
+        } else {
+            Vec::new()
+        };
         let partitioned = LivePartitioned {
-            name: root.name.clone(),
+            name,
             schema,
             column: column.into(),
             by,
@@ -410,6 +458,8 @@ impl LiveSeries {
             watermark: None,
             last_sweep: None,
             cleared_at: None,
+            shards,
+            parallel_min: options.parallel_min.unwrap_or(256),
         };
         // Declared partitions, then the root's history.
         let p = self.slots.len();
@@ -418,6 +468,7 @@ impl LiveSeries {
             source: Some(0),
             series: 0,
             subs: Default::default(),
+            shard: 0,
         });
         self.partitions.push(p);
         if let Some(groups) = options.groups.clone() {
@@ -487,6 +538,7 @@ impl LiveSeries {
             source: None,
             series: 0,
             subs: Default::default(),
+            shard: 0,
         });
         Ok(Node {
             id: self.id_of(index),
@@ -677,6 +729,7 @@ impl LiveSeries {
             source: Some(p),
             series: index,
             subs: Default::default(),
+            shard: 0,
         });
         Ok(index)
     }
@@ -729,12 +782,14 @@ impl LiveSeries {
             pt.chunked,
         );
         let hooks = pt.hooks.clone();
+        let shard = self.partitioned_mut(p).take_shard();
         let index = self.slots.len();
         self.slots.push(Slot {
             state: State::Series(series),
             source: Some(p),
             series: index,
             subs: Default::default(),
+            shard,
         });
         let id = self.id_of(index);
         let pt = self.partitioned_mut(p);
@@ -826,6 +881,14 @@ impl LiveSeries {
             self.partitioned_mut(p).routed += share.rows.len() as u64;
             self.series_mut(share.slot).ingested += share.rows.len() as u64;
         }
+        let mut close: Vec<usize> = (0..shares.len()).collect();
+        close.sort_unstable_by_key(|&s| shares[s].rows.last());
+        if self.route_in_shards(p, events, &shares, &share_of, &close, out) {
+            if let Some(last) = events.last() {
+                self.advance_watermark(p, last.begin(), out);
+            }
+            return Ok(());
+        }
         // 2. Every row's `Event`, in the push's order.
         for (r, event) in events.iter().enumerate() {
             let Some(s) = share_of[r] else {
@@ -840,8 +903,6 @@ impl LiveSeries {
             self.series_mut(part).buffer.insert(event);
         }
         // 3. Each partition finishes, in order of its last row.
-        let mut close: Vec<usize> = (0..shares.len()).collect();
-        close.sort_unstable_by_key(|&s| shares[s].rows.last());
         for &s in &close {
             let share = &shares[s];
             let part = share.slot;
@@ -930,6 +991,12 @@ impl LiveSeries {
             if !order_check && !behind && pt.groups.is_none() {
                 continue;
             }
+            // Only the declared groups to check: no partition's order.
+            let groups_only = !order_check && !behind;
+            let declared: Option<HashSet<&str>> = pt
+                .groups
+                .as_ref()
+                .map(|g| g.iter().map(String::as_str).collect());
             let mut part_last: HashMap<String, Option<EventKey>> = HashMap::new();
             for (i, event) in events.iter().enumerate() {
                 let key = event.key();
@@ -943,8 +1010,8 @@ impl LiveSeries {
                     root_last = Some(key.clone());
                 }
                 let value = pt.key_of(event);
-                if let Some(groups) = &pt.groups
-                    && !groups.contains(&value)
+                if let (Some(groups), Some(declared)) = (&pt.groups, &declared)
+                    && !declared.contains(value.as_str())
                 {
                     let shown = if value == " undefined" {
                         "no value".to_string()
@@ -958,6 +1025,9 @@ impl LiveSeries {
                             pt.column, groups
                         ),
                     });
+                }
+                if groups_only {
+                    continue;
                 }
                 let last = part_last.entry(value.clone()).or_insert_with(|| {
                     pt.slot_of(&value).and_then(|s| match &self.slots[s].state {
@@ -1034,4 +1104,16 @@ pub(super) fn check_series_options(
         )));
     }
     Ok(())
+}
+
+impl LivePartitioned {
+    /// The shard a new partition goes to: the one holding fewest (0, the
+    /// caller's thread, without shards).
+    pub(crate) fn take_shard(&mut self) -> u16 {
+        let Some(least) = self.shards.iter_mut().min_by_key(|(_, load)| *load) else {
+            return 0;
+        };
+        least.1 += 1;
+        least.0
+    }
 }
