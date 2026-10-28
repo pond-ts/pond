@@ -615,7 +615,13 @@ the study oracle) is done.
 
 - **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
   2026-10-23 after R2, revised twice 2026-10-25 after two reviews; in
-  progress (step 1, the pond-ts replay fixture, landed 2026-10-27). Port pond-ts's live layer (`LiveSeries`, views, live
+  progress (step 1, the pond-ts replay fixture, landed 2026-10-27; step 2,
+  `LiveSeries` with `filter` and fixed-bucket `aggregate`, merged 2026-10-28
+  (#839); step 3, the other views, merged 2026-10-28 (#840); events stored
+  by column before step 4, about 5-7x less memory for the series (#842);
+  step 4, rolling windows and `reduce` with their triggers, merged
+  2026-10-28 (#843); step 5, calendar buckets for live `aggregate` in both
+  libraries plus its own grace option, built 2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.
@@ -629,7 +635,7 @@ the study oracle) is done.
   independent).
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
-  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3 and 8i4. Keep them in step as each R1b step lands. Every Rust example is a
+  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2, 3 and 4 (live series page). Keep them in step as each step lands. Every Rust example is a
   whole program checked by `website/scripts/check-rust-snippets.sh`; not yet
   run in CI. Open: run that script in CI, and publish `cargo doc` output as
   the pond-rs API reference.
@@ -881,7 +887,15 @@ Robustness debt plus the queued composition workstreams. Plan:
 [PND_LIVE_PLAN.md](docs/plans/PND_LIVE_PLAN.md).
 
 - **[PND-LATE]** — Late-event propagation through stateful live transforms
-  (needs a reorder-aware event payload; overlaps [PND-CHANGE]).
+  (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
+  longer throw on a late event (2026-10-28, they insert it in order); the
+  recompute of later rows is what remains.
+- **[PND-EVICTDEQUE]** — Live per-event buffers (`LiveView`, the
+  `drop` / `reorder` row backing, rolling history) past ~16k events still
+  copy the whole array on each eviction (~150 µs at 100k events), because
+  V8 cannot move a large array's start in place. Needs a start index with
+  occasional compaction behind every reader. Found 2026-10-28 reviewing
+  [PND-EVICTSPLICE].
 - **[PND-LJOIN]** — Live merge / join across sources.
 - **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
   prerequisite-or-sibling of [PND-LJOIN].

@@ -20,13 +20,49 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const FIXTURE: &str = "packages/core/test/fixtures/live-parity.json";
 
-/// Operators pond-rs's live layer builds so far (none until R3 step 2).
-const SUPPORTED_OPS: &[&str] = &[];
+/// Operators pond-rs's live layer builds so far.
+#[cfg(feature = "live")]
+const SUPPORTED_OPS: &[&str] = &[
+    "filter",
+    "aggregateWith",
+    "aggregate",
+    "map",
+    "select",
+    "sample",
+    "window",
+    "diff",
+    "rate",
+    "pctChange",
+    "fill",
+    "cumulative",
+    "rolling",
+    "reduce",
+];
+
+/// Nodes pond-ts builds that pond-rs refuses on purpose, as `(case, node,
+/// why)`. pond-rs must refuse them; their outputs and state are not
+/// compared.
+#[cfg(feature = "live")]
+const REFUSED: &[(&str, &str, &str)] = &[
+    (
+        "aggregate-bad-mapping",
+        "b",
+        "avg on a text column: pond-ts gives gaps, pond-rs refuses it as batch \
+         aggregate does ([PND-KINDREDUCE])",
+    ),
+    (
+        "diff-rate-pct",
+        "bad",
+        "diff on a text column: pond-ts gives gaps, pond-rs refuses it as batch \
+         diff (and batch pond-ts) do",
+    ),
+];
 
 /// Every operator the fixture uses, so a new pond-ts case for an op pond-rs
 /// has no plan for fails here instead of being skipped quietly.
 const KNOWN_OPS: &[&str] = &[
     "filter",
+    "aggregateWith",
     "map",
     "select",
     "sample",
@@ -76,7 +112,7 @@ struct Case {
     name: String,
     schema: Vec<ColumnDef>,
     #[serde(default)]
-    #[allow(dead_code)] // read by the runner from R3 step 2
+    #[cfg_attr(not(feature = "live"), allow(dead_code))]
     options: Option<Map<String, Value>>,
     /// The root could not be built (then `steps` is empty).
     #[serde(default)]
@@ -124,7 +160,7 @@ struct NodeSpec {
     id: String,
     op: String,
     from: String,
-    #[allow(dead_code)] // read by the runner from R3 step 2
+    #[cfg_attr(not(feature = "live"), allow(dead_code))]
     args: Vec<Value>,
     /// `false`: pond-ts attached no listeners to this node.
     #[serde(default)]
@@ -190,14 +226,18 @@ impl Step {
     }
 }
 
-/// A cell: null, text, true/false, a number, or a tagged `f64`.
+/// A cell: null, text, true/false, a number, a tagged `f64`, or an array
+/// of those (no gaps or nested arrays inside).
 fn check_cell(cell: &Value) -> Result<(), String> {
     match cell {
         Value::Null | Value::String(_) | Value::Bool(_) | Value::Number(_) => Ok(()),
+        Value::Array(items) => items.iter().try_for_each(|e| match e {
+            Value::Null | Value::Array(_) => Err(format!("not an array element: {e}")),
+            _ => check_cell(e),
+        }),
         Value::Object(_) => common::cell_number(cell)
             .map(|_| ())
             .ok_or_else(|| format!("not a cell: {cell}")),
-        _ => Err(format!("not a cell: {cell}")),
     }
 }
 
@@ -276,9 +316,9 @@ fn compare_outputs(expected: &[Output], actual: &[Output]) -> Result<(), String>
 }
 
 /// Run one case through pond-rs's live layer and compare every step.
-/// Filled in from R3 step 2 on.
+#[cfg(feature = "live")]
 fn run_case(case: &Case) -> Result<(), String> {
-    Err(format!("{}: no live layer yet", case.name))
+    runner::run_case(case).map_err(|why| format!("{}: {why}", case.name))
 }
 
 fn ops_of(case: &Case) -> BTreeSet<&str> {
@@ -394,7 +434,7 @@ fn fixture_is_well_formed() {
             assert_eq!(state.value.is_some(), has_value, "{}: {id}", case.name);
             assert_eq!(
                 state.stats.is_some(),
-                class == "LiveSeries",
+                class == "LiveSeries" || class == "LiveAggregation",
                 "{}: {id} stats",
                 case.name
             );
@@ -436,6 +476,7 @@ fn fixture_is_well_formed() {
     );
 }
 
+#[cfg(feature = "live")]
 #[test]
 fn supported_cases_match_pond_ts() {
     let fixture = load();
@@ -443,7 +484,7 @@ fn supported_cases_match_pond_ts() {
     let mut ran = 0;
     let mut failures = Vec::new();
     for case in &fixture.cases {
-        if !ops_of(case).is_subset(&supported) || SUPPORTED_OPS.is_empty() {
+        if !ops_of(case).is_subset(&supported) {
             continue;
         }
         ran += 1;
@@ -477,4 +518,810 @@ fn compare_outputs_checks_order_and_bits() {
     let zero = out("root", "event", serde_json::json!([0, 0]));
     let neg = out("root", "event", serde_json::json!([0, {"f64": "-0"}]));
     assert!(compare_outputs(&[zero], &[neg]).is_err());
+}
+
+#[cfg(feature = "live")]
+mod runner {
+    use super::*;
+    use pond_rs::live::{
+        History, LiveAggregation, LiveEvent, LiveOptions, LiveReduce, LiveRolling, LiveSeries,
+        LiveView, Node, NodeId, OrderingMode, Output as RsOutput, OutputKind, RollingOptions,
+        RollingWindow, Trigger,
+    };
+    use pond_rs::{
+        Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, Reducer,
+        Sample, Scalar, Sequence, TimeSeries, Value as RsValue,
+    };
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    enum Handle {
+        Root,
+        View(Node<LiveView>),
+        Agg(Node<LiveAggregation>),
+        Rolling(Node<LiveRolling>),
+        Reduce(Node<LiveReduce>),
+    }
+
+    fn kind_of(name: &str) -> ColumnKind {
+        match name {
+            "time" => ColumnKind::Time,
+            "timeRange" => ColumnKind::TimeRange,
+            "interval" => ColumnKind::Interval,
+            "number" => ColumnKind::Number,
+            "string" => ColumnKind::String,
+            "boolean" => ColumnKind::Boolean,
+            "array" => ColumnKind::Array,
+            other => panic!("unknown kind {other}"),
+        }
+    }
+
+    fn schema_of(defs: &[ColumnDef]) -> Vec<RsColumnDef> {
+        defs.iter()
+            .map(|d| RsColumnDef {
+                name: d.name.clone(),
+                kind: kind_of(&d.kind),
+                required: d.required != Some(false),
+            })
+            .collect()
+    }
+
+    fn options_of(map: &Option<Map<String, Value>>) -> LiveOptions {
+        let mut o = LiveOptions::new();
+        let Some(map) = map else { return o };
+        for (k, v) in map {
+            match k.as_str() {
+                "ordering" => {
+                    o = o.ordering(match v.as_str().unwrap() {
+                        "strict" => OrderingMode::Strict,
+                        "drop" => OrderingMode::Drop,
+                        "reorder" => OrderingMode::Reorder,
+                        other => panic!("ordering {other}"),
+                    })
+                }
+                "graceWindow" => o = o.grace_window(v.as_str().unwrap()),
+                "retention" => {
+                    for (rk, rv) in v.as_object().unwrap() {
+                        match rk.as_str() {
+                            "maxEvents" => o = o.max_events(rv.as_u64().unwrap() as usize),
+                            "maxAge" => o = o.max_age(rv.as_str().unwrap()),
+                            other => panic!("retention {other}"),
+                        }
+                    }
+                }
+                other => panic!("option {other}"),
+            }
+        }
+        o
+    }
+
+    /// A row key; `None` for one Rust's key type cannot hold (a NaN time),
+    /// which the push then refuses.
+    fn key_of(kind: ColumnKind, v: &Value) -> Option<EventKey> {
+        let ms = |v: &Value| v.as_i64();
+        Some(match kind {
+            ColumnKind::Time => EventKey::time(ms(v)?),
+            ColumnKind::TimeRange => {
+                let a = v.as_array()?;
+                EventKey::time_range(ms(&a[0])?, ms(&a[1])?).ok()?
+            }
+            _ => {
+                let a = v.as_array()?;
+                let label = match &a[0] {
+                    Value::String(s) => Label::String(s.clone()),
+                    n => Label::Number(n.as_f64()?),
+                };
+                EventKey::interval(label, ms(&a[1])?, ms(&a[2])?).ok()?
+            }
+        })
+    }
+
+    fn cell_of(v: &Value) -> Option<RsValue> {
+        match v {
+            Value::Null => None,
+            Value::String(s) => Some(RsValue::String(s.clone())),
+            Value::Bool(b) => Some(RsValue::Boolean(*b)),
+            Value::Array(items) => Some(RsValue::Array(
+                items
+                    .iter()
+                    .map(|e| match e {
+                        Value::String(s) => Scalar::String(s.clone()),
+                        Value::Bool(b) => Scalar::Boolean(*b),
+                        n => Scalar::Number(common::cell_number(n).unwrap()),
+                    })
+                    .collect(),
+            )),
+            n => Some(RsValue::Number(common::cell_number(n).unwrap())),
+        }
+    }
+
+    type Rows = Vec<(EventKey, Vec<Option<RsValue>>)>;
+
+    fn rows_of(kind: ColumnKind, rows: &[Vec<Value>]) -> Result<Rows, String> {
+        rows.iter()
+            .map(|r| {
+                let key = key_of(kind, &r[0]).ok_or(format!("no Rust key for {}", r[0]))?;
+                Ok((key, r[1..].iter().map(cell_of).collect()))
+            })
+            .collect()
+    }
+
+    fn number_json(v: f64) -> Value {
+        if v == 0.0 && v.is_sign_negative() {
+            serde_json::json!({"f64": "-0"})
+        } else if v.is_nan() {
+            serde_json::json!({"f64": "NaN"})
+        } else if v.is_infinite() {
+            serde_json::json!({"f64": if v > 0.0 { "inf" } else { "-inf" }})
+        } else {
+            serde_json::json!(v)
+        }
+    }
+
+    fn key_json(key: &EventKey) -> Value {
+        match key.kind() {
+            "time" => serde_json::json!(key.begin()),
+            "timeRange" => serde_json::json!([key.begin(), key.end()]),
+            _ => {
+                let label = match key.label().unwrap() {
+                    Label::Number(v) => serde_json::json!(v),
+                    Label::String(s) => serde_json::json!(s),
+                };
+                serde_json::json!([label, key.begin(), key.end()])
+            }
+        }
+    }
+
+    fn value_json(v: Option<&RsValue>) -> Value {
+        match v {
+            None => Value::Null,
+            Some(RsValue::Number(x)) => number_json(*x),
+            Some(RsValue::String(s)) => serde_json::json!(s),
+            Some(RsValue::Boolean(b)) => serde_json::json!(b),
+            Some(RsValue::Array(items)) => Value::Array(
+                items
+                    .iter()
+                    .map(|e| match e {
+                        Scalar::Number(x) => number_json(*x),
+                        Scalar::String(s) => serde_json::json!(s),
+                        Scalar::Boolean(b) => serde_json::json!(b),
+                    })
+                    .collect(),
+            ),
+            Some(other) => panic!("unexpected cell {other:?}"),
+        }
+    }
+
+    fn event_json(e: &LiveEvent) -> Value {
+        let mut row = vec![key_json(e.key())];
+        row.extend(e.values().iter().map(|v| value_json(v.as_ref())));
+        Value::Array(row)
+    }
+
+    /// A batch series' rows, read back through its columns.
+    fn series_rows(ts: &TimeSeries) -> Vec<Value> {
+        ts.rows()
+            .map(|r| {
+                let mut row = vec![key_json(&r.key())];
+                for col in ts.columns() {
+                    let name = col.name();
+                    row.push(match col.kind() {
+                        ColumnKind::Number => {
+                            r.number(name).unwrap().map_or(Value::Null, number_json)
+                        }
+                        ColumnKind::String => r
+                            .string(name)
+                            .unwrap()
+                            .map_or(Value::Null, |s| serde_json::json!(s)),
+                        ColumnKind::Boolean => r
+                            .boolean(name)
+                            .unwrap()
+                            .map_or(Value::Null, |b| serde_json::json!(b)),
+                        _ => value_json(
+                            r.array(name)
+                                .unwrap()
+                                .map(|a| RsValue::Array(a.to_vec()))
+                                .as_ref(),
+                        ),
+                    });
+                }
+                Value::Array(row)
+            })
+            .collect()
+    }
+
+    fn compare_rows(what: &str, expected: &[Vec<Value>], actual: &[Value]) -> Result<(), String> {
+        if expected.len() != actual.len() {
+            return Err(format!(
+                "{what}: expected {} rows, got {}",
+                expected.len(),
+                actual.len()
+            ));
+        }
+        for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
+            compare_payload(&Value::Array(e.clone()), a)
+                .map_err(|w| format!("{what} row {i}: {w}"))?;
+        }
+        Ok(())
+    }
+
+    fn predicate(spec: &Value) -> impl FnMut(&LiveEvent) -> bool + Send + 'static {
+        let spec = spec["fn"].clone();
+        move |e: &LiveEvent| {
+            if let Some(col) = spec.get("missing").and_then(Value::as_str) {
+                return e.value(col).unwrap().is_none();
+            }
+            let col = spec["column"].as_str().unwrap();
+            let Some(v) = e.value(col).unwrap() else {
+                return false;
+            };
+            if let Some(gt) = spec.get("gt") {
+                return v.as_f64().is_some_and(|x| x > gt.as_f64().unwrap());
+            }
+            match (v, &spec["eq"]) {
+                (RsValue::String(s), Value::String(t)) => s == t,
+                (RsValue::Number(x), n) => Some(*x) == n.as_f64(),
+                (RsValue::Boolean(b), Value::Bool(c)) => b == c,
+                _ => false,
+            }
+        }
+    }
+
+    fn sequence_of(spec: &Value) -> Sequence {
+        let seq = &spec["sequence"];
+        if let Some(every) = seq.get("every") {
+            Sequence::every(every.as_str().unwrap()).unwrap()
+        } else {
+            let calendar = Sequence::calendar(
+                seq["calendar"].as_str().unwrap(),
+                seq["timeZone"].as_str().unwrap(),
+            )
+            .unwrap();
+            match seq.get("weekStartsOn").and_then(Value::as_i64) {
+                Some(day) => calendar.with_week_start(day as i8).unwrap(),
+                None => calendar,
+            }
+        }
+    }
+
+    fn mapping_of(spec: &Value) -> Vec<Agg> {
+        spec.as_object()
+            .unwrap()
+            .iter()
+            .map(|(out, v)| match v {
+                Value::String(r) => Agg::new(out, out, Reducer::parse(r).unwrap()),
+                _ => Agg::new(
+                    out,
+                    v["from"].as_str().unwrap(),
+                    Reducer::parse(v["using"].as_str().unwrap()).unwrap(),
+                ),
+            })
+            .collect()
+    }
+
+    /// A column list: one name or a list of names.
+    fn names_of(v: &Value) -> Vec<String> {
+        match v {
+            Value::String(s) => vec![s.clone()],
+            v => v
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str().unwrap().to_string())
+                .collect(),
+        }
+    }
+
+    fn fill_of(v: &Value) -> Fill {
+        match v.as_str() {
+            Some("hold") => Fill::Hold,
+            Some("zero") => Fill::Zero,
+            Some("bfill") => Fill::Bfill,
+            Some("linear") => Fill::Linear,
+            _ => Fill::Value(cell_of(v).unwrap()),
+        }
+    }
+
+    /// The `map` spec the fixture uses: `column` becomes `v * mul + add`.
+    fn mapper(spec: &Value) -> impl FnMut(&LiveEvent) -> Vec<Option<RsValue>> + Send + 'static {
+        let spec = spec["map"].clone();
+        let column = spec["column"].as_str().unwrap().to_string();
+        let (mul, add) = (spec["mul"].as_f64().unwrap(), spec["add"].as_f64().unwrap());
+        move |e: &LiveEvent| {
+            let at = e.schema()[1..]
+                .iter()
+                .position(|c| c.name == column)
+                .unwrap();
+            let mut values = e.values().to_vec();
+            if let Some(RsValue::Number(v)) = values[at] {
+                values[at] = Some(RsValue::Number(v * mul + add));
+            }
+            values
+        }
+    }
+
+    fn refs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+
+    fn build_view(
+        live: &mut LiveSeries,
+        from: NodeId,
+        op: &str,
+        args: &[Value],
+    ) -> pond_rs::Result<Node<LiveView>> {
+        let strs = |v: &Value| names_of(v);
+        let first = |o: Option<&Value>| {
+            if o.is_some_and(|o| o["drop"] == Value::Bool(true)) {
+                FirstRow::Drop
+            } else {
+                FirstRow::Keep
+            }
+        };
+        match op {
+            "filter" => live.filter(from, predicate(&args[0])),
+            "map" => live.map(from, mapper(&args[0])),
+            "select" => {
+                let names: Vec<String> = args.iter().flat_map(strs).collect();
+                live.select(from, &refs(&names))
+            }
+            "sample" => {
+                let n = args[0]["stride"].as_i64().unwrap();
+                live.sample(from, Sample::Stride(n.max(0) as usize))
+            }
+            "window" => match &args[0] {
+                Value::String(d) => live.window(from, d),
+                n => live.window_rows(from, n.as_u64().unwrap() as usize),
+            },
+            "diff" | "rate" | "pctChange" => {
+                let cols = strs(&args[0]);
+                let first = first(args.get(1));
+                match op {
+                    "diff" => live.diff_with(from, &refs(&cols), first),
+                    "rate" => live.rate_with(from, &refs(&cols), first),
+                    _ => live.pct_change_with(from, &refs(&cols), first),
+                }
+            }
+            "fill" => {
+                let limit = args
+                    .get(1)
+                    .and_then(|o| o.get("limit"))
+                    .map(|l| l.as_u64().unwrap() as usize);
+                match &args[0] {
+                    Value::String(_) => {
+                        let fill = fill_of(&args[0]);
+                        match limit {
+                            Some(l) => live.fill_all_with(from, fill, l),
+                            None => live.fill_all(from, fill),
+                        }
+                    }
+                    spec => {
+                        let spec: Vec<(String, Fill)> = spec
+                            .as_object()
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), fill_of(v)))
+                            .collect();
+                        let spec: Vec<(&str, Fill)> =
+                            spec.iter().map(|(k, f)| (k.as_str(), f.clone())).collect();
+                        match limit {
+                            Some(l) => live.fill_with(from, &spec, l),
+                            None => live.fill(from, &spec),
+                        }
+                    }
+                }
+            }
+            "cumulative" => {
+                let spec: Vec<(&str, Reducer)> = args[0]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), Reducer::parse(v.as_str().unwrap()).unwrap()))
+                    .collect();
+                live.cumulative(from, &spec)
+            }
+            other => panic!("op {other}"),
+        }
+    }
+
+    /// A trigger as the fixture writes it (`live.mjs` `decodeTrigger`).
+    fn trigger_of(spec: &Value) -> pond_rs::Result<Trigger> {
+        if spec == "event" {
+            return Ok(Trigger::event());
+        }
+        if let Some(d) = spec.get("every") {
+            return Trigger::every(d.as_str().unwrap());
+        }
+        if let Some(n) = spec.get("count") {
+            return Trigger::count(n.as_u64().unwrap() as usize);
+        }
+        Trigger::clock(&sequence_of(&spec["clock"]))
+    }
+
+    /// Rolling / reduce options: `minSamples`, `trigger`, `history`. A
+    /// negative `minSamples` has no Rust form (`usize`); pond-ts refuses it
+    /// too, so it is an error here.
+    fn rolling_options(spec: Option<&Value>) -> Result<RollingOptions, String> {
+        let mut o = RollingOptions::new();
+        let Some(spec) = spec else { return Ok(o) };
+        for (k, v) in spec.as_object().unwrap() {
+            match k.as_str() {
+                "minSamples" => {
+                    let n = v.as_i64().unwrap();
+                    if n < 0 {
+                        return Err(format!("minSamples {n}: no usize"));
+                    }
+                    o = o.min_samples(n as usize);
+                }
+                "trigger" => o = o.trigger(trigger_of(v).map_err(|e| e.to_string())?),
+                "history" => {
+                    o = o.history(match v {
+                        Value::Bool(true) => History::All,
+                        Value::Bool(false) => History::Off,
+                        v => History::Limit {
+                            max_events: v.get("maxEvents").map(|n| n.as_u64().unwrap() as usize),
+                            max_age: v.get("maxAge").map(|d| d.as_str().unwrap().to_string()),
+                        },
+                    })
+                }
+                other => panic!("rolling option {other}"),
+            }
+        }
+        Ok(o)
+    }
+
+    /// `rolling(window, mapping, options?)`, or the keyed (fused) form
+    /// `rolling({ window: mapping | { mapping, minSamples } }, options?)`.
+    fn build_rolling(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LiveRolling>, String> {
+        let err = |e: pond_rs::PondError| e.to_string();
+        match &args[0] {
+            Value::Object(windows) => {
+                let options = rolling_options(args.get(1))?;
+                let windows: Vec<RollingWindow> = windows
+                    .iter()
+                    .map(|(w, m)| match m.get("mapping") {
+                        Some(inner) if inner.get("from").is_none() => {
+                            let mut rw = RollingWindow::new(w, &mapping_of(inner));
+                            if let Some(n) = m.get("minSamples") {
+                                rw = rw.min_samples(n.as_u64().unwrap() as usize);
+                            }
+                            rw
+                        }
+                        _ => RollingWindow::new(w, &mapping_of(m)),
+                    })
+                    .collect();
+                live.rolling_windows(from, &windows, &options).map_err(err)
+            }
+            Value::String(w) => {
+                let options = rolling_options(args.get(2))?;
+                live.rolling_with(from, w, &mapping_of(&args[1]), &options)
+                    .map_err(err)
+            }
+            n => {
+                let options = rolling_options(args.get(2))?;
+                live.rolling_rows(
+                    from,
+                    n.as_u64().unwrap() as usize,
+                    &mapping_of(&args[1]),
+                    &options,
+                )
+                .map_err(err)
+            }
+        }
+    }
+
+    fn build_reduce(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LiveReduce>, String> {
+        let trigger = match args.get(1).and_then(|o| o.get("trigger")) {
+            Some(t) => trigger_of(t).map_err(|e| e.to_string())?,
+            None => Trigger::event(),
+        };
+        live.reduce_with(from, &mapping_of(&args[0]), trigger)
+            .map_err(|e| e.to_string())
+    }
+
+    /// A value record (`{ column: cell }`) in schema order.
+    fn record_json(names: &[String], values: &[Option<RsValue>]) -> Value {
+        Value::Object(
+            names
+                .iter()
+                .zip(values)
+                .map(|(n, v)| (n.clone(), value_json(v.as_ref())))
+                .collect(),
+        )
+    }
+
+    fn kind_name(k: OutputKind) -> &'static str {
+        match k {
+            OutputKind::Event => "event",
+            OutputKind::Batch => "batch",
+            OutputKind::Evict => "evict",
+            OutputKind::Bucket => "bucket",
+            OutputKind::Update => "update",
+        }
+    }
+
+    fn output_json(
+        o: &RsOutput,
+        names: &HashMap<NodeId, String>,
+        columns: &HashMap<NodeId, Vec<String>>,
+    ) -> Output {
+        let payload = match o {
+            RsOutput::Event { event, .. } | RsOutput::Bucket { event, .. } => event_json(event),
+            RsOutput::Batch { events, .. } | RsOutput::Evict { events, .. } => {
+                Value::Array(events.iter().map(event_json).collect())
+            }
+            RsOutput::Update { values: None, .. } => Value::Null,
+            RsOutput::Update {
+                node,
+                values: Some(values),
+            } => record_json(&columns[node], values),
+        };
+        Output {
+            node: names[&o.node()].clone(),
+            kind: kind_name(o.kind()).into(),
+            payload,
+        }
+    }
+
+    fn watch(live: &mut LiveSeries, id: NodeId, class: &str) -> Result<(), String> {
+        for kind in kinds_of(class) {
+            let k = match *kind {
+                "event" => OutputKind::Event,
+                "batch" => OutputKind::Batch,
+                "evict" => OutputKind::Evict,
+                "bucket" => OutputKind::Bucket,
+                _ => OutputKind::Update,
+            };
+            live.watch(id, k).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn run_case(case: &Case) -> Result<(), String> {
+        let schema = schema_of(&case.schema);
+        let key_kind = schema[0].kind;
+        let built = LiveSeries::with_options(case.name.clone(), schema, options_of(&case.options));
+        let mut live = match (built, &case.error) {
+            (Err(_), Some(_)) => return Ok(()),
+            (Ok(_), Some(e)) => {
+                return Err(format!(
+                    "pond-ts refused the root ({}), pond-rs built it",
+                    e.message
+                ));
+            }
+            (Err(e), None) => return Err(format!("root: {e}")),
+            (Ok(live), None) => live,
+        };
+        let finals = case.r#final.as_ref().unwrap();
+        let class = |id: &str| finals[id].class.clone();
+        let mut handles: HashMap<String, Handle> = HashMap::from([("root".into(), Handle::Root)]);
+        let mut names: HashMap<NodeId, String> = HashMap::from([(live.root(), "root".into())]);
+        // Value column names per node, for `update` records.
+        let mut columns: HashMap<NodeId, Vec<String>> = HashMap::new();
+        let mut refused: BTreeSet<String> = BTreeSet::new();
+        let root = live.root();
+        watch(&mut live, root, &class("root"))?;
+        let id_of = |h: Handle, live: &LiveSeries| match h {
+            Handle::Root => live.root(),
+            Handle::View(n) => n.id(),
+            Handle::Agg(n) => n.id(),
+            Handle::Rolling(n) => n.id(),
+            Handle::Reduce(n) => n.id(),
+        };
+        for (s, step) in case.steps.iter().enumerate() {
+            let result: Result<Vec<RsOutput>, String> = if let Some(rows) =
+                step.push.as_ref().or(step.push_many.as_ref())
+            {
+                rows_of(key_kind, rows)
+                    .and_then(|rows| live.push_many(rows).map_err(|e| e.to_string()))
+            } else if let Some(rows) = &step.push_json {
+                live.push_json(&serde_json::to_string(rows).unwrap())
+                    .map_err(|e| e.to_string())
+            } else if step.clear.is_some() {
+                Ok(live.clear())
+            } else if let Some(id) = &step.dispose {
+                let h = handles[id.as_str()];
+                live.remove(id_of(h, &live))
+                    .map(|_| Vec::new())
+                    .map_err(|e| e.to_string())
+            } else {
+                let spec = step.node.as_ref().unwrap();
+                let from = id_of(handles[spec.from.as_str()], &live);
+                let made = match spec.op.as_str() {
+                    "aggregate" => live
+                        .aggregate(
+                            from,
+                            &sequence_of(&spec.args[0]),
+                            &mapping_of(&spec.args[1]),
+                        )
+                        .map(Handle::Agg)
+                        .map_err(|e| e.to_string()),
+                    "aggregateWith" => live
+                        .aggregate_with(
+                            from,
+                            &sequence_of(&spec.args[0]),
+                            &mapping_of(&spec.args[1]),
+                            spec.args[2]["grace"].as_str(),
+                        )
+                        .map(Handle::Agg)
+                        .map_err(|e| e.to_string()),
+                    "rolling" => build_rolling(&mut live, from, &spec.args).map(Handle::Rolling),
+                    "reduce" => build_reduce(&mut live, from, &spec.args).map(Handle::Reduce),
+                    op => build_view(&mut live, from, op, &spec.args)
+                        .map(Handle::View)
+                        .map_err(|e| e.to_string()),
+                };
+                let deviation = REFUSED
+                    .iter()
+                    .any(|(c, n, _)| *c == case.name && *n == spec.id);
+                match made {
+                    Err(_) if deviation => {
+                        refused.insert(spec.id.clone());
+                        Ok(Vec::new())
+                    }
+                    Ok(_) if deviation => {
+                        return Err(format!("step {s}: pond-rs should refuse node {}", spec.id));
+                    }
+                    Err(e) => Err(e),
+                    Ok(h) => {
+                        handles.insert(spec.id.clone(), h);
+                        let id = id_of(h, &live);
+                        names.insert(id, spec.id.clone());
+                        let schema = match h {
+                            Handle::Rolling(n) => live[n].schema().to_vec(),
+                            _ => Vec::new(),
+                        };
+                        columns.insert(id, schema.iter().skip(1).map(|c| c.name.clone()).collect());
+                        if spec.watch != Some(false) {
+                            watch(&mut live, id, &class(&spec.id))?;
+                        }
+                        // A reduce built over history emits for it at the
+                        // build, into its events; pond-ts emits the same
+                        // event just after (the step's `deferred`).
+                        let replayed: Vec<RsOutput> = match h {
+                            Handle::Reduce(n) if spec.watch != Some(false) => live[n]
+                                .events()
+                                .map(|event| RsOutput::Event { node: id, event })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        Ok(replayed)
+                    }
+                }
+            };
+            match (&result, &step.error) {
+                (Err(e), None) => return Err(format!("step {s}: pond-rs failed: {e}")),
+                (Ok(_), Some(e)) => {
+                    return Err(format!(
+                        "step {s}: pond-ts failed ({}), pond-rs did not",
+                        e.message
+                    ));
+                }
+                _ => {}
+            }
+            let actual: Vec<Output> = result
+                .unwrap_or_default()
+                .iter()
+                .map(|o| output_json(o, &names, &columns))
+                .collect();
+            let expected: Vec<Output> = step
+                .all_outputs()
+                .filter(|o| !refused.contains(&o.node))
+                .cloned()
+                .collect();
+            compare_outputs(&expected, &actual).map_err(|w| format!("step {s}: {w}"))?;
+        }
+        for (id, state) in finals {
+            if refused.contains(id) {
+                continue;
+            }
+            let h = handles[id.as_str()];
+            let what = format!("final {id}");
+            if state.disposed == Some(true) {
+                let gone = match h {
+                    Handle::View(n) => live.get(n).is_err(),
+                    Handle::Agg(n) => live.get(n).is_err(),
+                    Handle::Rolling(n) => live.get(n).is_err(),
+                    Handle::Reduce(n) => live.get(n).is_err(),
+                    Handle::Root => false,
+                };
+                if !gone {
+                    return Err(format!("{what}: should be removed"));
+                }
+                continue;
+            }
+            let schema = match h {
+                Handle::Root => live.schema().to_vec(),
+                Handle::View(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Agg(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Rolling(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::Reduce(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+            };
+            if schema != schema_of(state.schema.as_ref().unwrap()) {
+                return Err(format!("{what}: schema {schema:?}"));
+            }
+            match h {
+                Handle::Root => {
+                    let ts = live.to_time_series().map_err(|e| e.to_string())?;
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
+                    let held: Vec<Value> = live.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                    let st = live.stats();
+                    let mut got = serde_json::json!({
+                        "ingested": st.ingested, "evicted": st.evicted,
+                        "rejected": st.rejected, "length": st.length,
+                    });
+                    if let (Some(a), Some(b)) = (st.earliest, st.latest) {
+                        got["earliestTs"] = a.into();
+                        got["latestTs"] = b.into();
+                    }
+                    let want = Value::Object(state.stats.clone().unwrap());
+                    if got != want {
+                        return Err(format!("{what}: stats {got} vs {want}"));
+                    }
+                }
+                Handle::View(n) => {
+                    let view = &live[n];
+                    let ts = view.to_time_series().map_err(|e| e.to_string())?;
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &series_rows(&ts))?;
+                    let held: Vec<Value> = view.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                }
+                Handle::Rolling(n) => {
+                    let r = &live[n];
+                    let held: Vec<Value> = r.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                    let names: Vec<String> =
+                        r.schema().iter().skip(1).map(|c| c.name.clone()).collect();
+                    let got = record_json(&names, &r.value());
+                    compare_payload(&Value::Object(state.value.clone().unwrap()), &got)
+                        .map_err(|w| format!("{what} value: {w}"))?;
+                }
+                Handle::Reduce(n) => {
+                    let r = &live[n];
+                    let held: Vec<Value> = r.events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
+                    let names: Vec<String> =
+                        r.schema().iter().skip(1).map(|c| c.name.clone()).collect();
+                    let got = record_json(&names, &r.value());
+                    compare_payload(&Value::Object(state.value.clone().unwrap()), &got)
+                        .map_err(|w| format!("{what} value: {w}"))?;
+                }
+                Handle::Agg(n) => {
+                    let agg = &live[n];
+                    let closed = agg.closed().map_err(|e| e.to_string())?;
+                    compare_rows(&what, state.closed.as_ref().unwrap(), &series_rows(&closed))?;
+                    let held: Vec<Value> = agg.events().map(event_json).collect();
+                    compare_rows(&what, state.closed.as_ref().unwrap(), &held)?;
+                    let snap = agg.snapshot().map_err(|e| e.to_string())?;
+                    compare_rows(&what, state.snapshot.as_ref().unwrap(), &series_rows(&snap))?;
+                    if Some(agg.has_open_bucket()) != state.has_open_bucket {
+                        return Err(format!("{what}: has_open_bucket"));
+                    }
+                    let st = agg.stats();
+                    let mut got = serde_json::json!({
+                        "eventsObserved": st.events_observed,
+                        "bucketsClosed": st.buckets_closed,
+                        "openBuckets": st.open_buckets,
+                    });
+                    if let Some(start) = st.open_bucket_start {
+                        got["openBucketStart"] = start.into();
+                    }
+                    let want = Value::Object(state.stats.clone().unwrap());
+                    if got != want {
+                        return Err(format!("{what}: stats {got} vs {want}"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }

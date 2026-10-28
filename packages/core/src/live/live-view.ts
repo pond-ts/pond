@@ -57,6 +57,7 @@ export type LiveFillMapping<S extends SeriesSchema> = {
 
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
+import { dropFront, removeFront } from './array-front.js';
 
 type EventListener<S extends SeriesSchema> = (event: EventForSchema<S>) => void;
 type EvictListener<S extends SeriesSchema> = (
@@ -117,15 +118,6 @@ function dispatchIsolated<T>(set: ListenerSet<(arg: T) => void>, arg: T) {
     }
   }
   if (first) throw first.error;
-}
-
-/** A readable key for error messages — `String(key)` on a key object is `[object Object]`. */
-function describeKey(event: { begin(): number; end?(): number }): string {
-  const begin = new Date(event.begin()).toISOString();
-  const end = event.end?.();
-  return end !== undefined && end !== event.begin()
-    ? `[${begin}, ${new Date(end).toISOString()})`
-    : begin;
 }
 
 export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
@@ -207,7 +199,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
         while (i < this.#events.length && this.#events[i]!.begin() <= cutoff)
           i++;
         if (i > 0) {
-          const removed = this.#events.splice(0, i);
+          const removed = removeFront(this.#events, i);
           this.#version += 1;
           dispatchIsolated(this.#onEvict, removed as any);
         }
@@ -245,16 +237,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   // ── Query primitives ─────────────────────────────────────────
   //
   // Mirror `TimeSeries` / `LiveSeries` query parity. Live views
-  // are sorted by key (events flow through in source-order; views
-  // never re-sort). Same binary-search shape as `TimeSeries.bisect`.
-  //
-  // Sort-order assumption: the four binary-search methods below
-  // assume the underlying buffer is sorted by key. This holds for
-  // every built-in view operation (`filter` / `select` / `window` /
-  // `diff` / `rate` / `pctChange` / `cumulative` / `fill`) because
-  // they preserve the source's keys. The exception is
-  // {@link LiveView.map} when the user-supplied function rewrites
-  // the key — see that method's JSDoc.
+  // are sorted by key: an event is appended, or inserted at its key
+  // position when it is older than the tail (a late event from a
+  // `reorder` source, or a `map` that rewrites keys). Same
+  // binary-search shape as `TimeSeries.bisect`.
 
   /** Example: `view.find(e => e.get('value') > 0)`. */
   find(
@@ -331,19 +317,13 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
   /**
    * Per-event transform. Each source event is run through `fn` and
-   * the result is appended to the view's buffer. The view does NOT
-   * re-sort by key — events flow through in source order, which
-   * preserves the upstream's sort invariant only if `fn` returns
-   * events with the same key.
-   *
-   * **If `fn` rewrites the event's key** (e.g. shifting timestamps,
-   * changing the interval), the view's buffer is no longer
-   * key-sorted. The Tier 2 query primitives ({@link LiveView.bisect},
-   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
-   * {@link LiveView.atOrAfter}) all assume sorted-by-key and will
-   * return wrong answers on a re-keying map. Use `map` only for
-   * data transforms; use a separate live primitive for time-axis
-   * transforms.
+   * the result is added to the view's buffer at its key position, so a
+   * `fn` that rewrites keys (shifting timestamps, changing the interval)
+   * still leaves the buffer key-sorted and the Tier 2 queries
+   * ({@link LiveView.bisect}, {@link LiveView.includesKey},
+   * {@link LiveView.atOrBefore}, {@link LiveView.atOrAfter}) right. An
+   * event whose new key is older than the tail costs an insert, not an
+   * append.
    */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return makeMapView(this, fn, this.#windowMs);
@@ -737,41 +717,46 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     if (!this.#evict) return;
     const count = this.#evict(this.#events);
     if (count > 0) {
-      this.#events.splice(0, count);
+      dropFront(this.#events, count);
       this.#version += 1;
     }
   }
 
   /**
-   * Append a processed event to the view's buffer, asserting that
-   * the buffer remains key-sorted. Re-keying maps that produce
-   * non-monotonic outputs would silently break the four binary-
-   * search query primitives ({@link LiveView.bisect},
+   * Add a processed event to the view's buffer, keeping it key-sorted
+   * so the binary-search queries ({@link LiveView.bisect},
    * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
-   * {@link LiveView.atOrAfter}) — Codex caught this on PR #125
-   * review. Throwing at append time turns silent wrong answers
-   * into a clear, debuggable error.
+   * {@link LiveView.atOrAfter}) stay right.
    *
-   * Sane transforms (`map(e => e.set('x', f(x)))`,
-   * `filter(...)`, `select(...)`, etc.) preserve keys and never
-   * trip the check. Time-axis transforms (e.g. shifting all
-   * timestamps by N ms) are also fine — they preserve relative
-   * order. The only failure mode is a re-keying map that produces
-   * out-of-order events.
+   * The common case is an append. An event older than the tail goes in
+   * at its key position, after any events with an equal key: a late
+   * event that an `ordering: 'reorder'` source accepted, or the output of
+   * a re-keying map that is not monotonic. Before [PND-LATE] this threw,
+   * after the source had already stored the event, so the source and its
+   * views disagreed. Stateful views (`diff`, `rate`, `pctChange`,
+   * `fill`, `cumulative`, `sample`) still compute in arrival order: a
+   * late event is compared with the previous arrival, not the previous
+   * time. Recomputing later rows is the rest of [PND-LATE]. A `window`
+   * view trims silently, so a late event older than its cutoff is trimmed
+   * at once but still dispatched to views built on the window, which keep
+   * it.
    */
   #appendChecked(event: EventForSchema<S>): void {
-    const last = this.#events[this.#events.length - 1];
+    const events = this.#events;
+    const last = events[events.length - 1];
     if (last && event.key().compare(last.key()) < 0) {
-      throw new ValidationError(
-        `LiveView: processed event has key ${describeKey(event)} ` +
-          `older than the previous tail ${describeKey(last)}. ` +
-          `Re-keying maps that produce non-monotonic output break the ` +
-          `view's sorted-buffer invariant. Use a transform that ` +
-          `preserves keys, or perform time-axis rewrites on a snapshot ` +
-          `(\`live.toTimeSeries()\`) instead.`,
-      );
+      const key = event.key();
+      let low = 0;
+      let high = events.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (events[mid]!.key().compare(key) <= 0) low = mid + 1;
+        else high = mid;
+      }
+      events.splice(low, 0, event);
+    } else {
+      events.push(event);
     }
-    this.#events.push(event);
     this.#version += 1;
   }
 }
@@ -1031,6 +1016,14 @@ export function makeFillView<S extends SeriesSchema>(
       } else {
         specs.set(name, { mode: 'literal', value: spec as ScalarValue });
       }
+    }
+  }
+
+  // `zero` is numeric-only: skip non-number columns, as batch `fill`
+  // does, rather than writing `0` into a text or boolean column.
+  for (const col of source.schema.slice(1)) {
+    if (col.kind !== 'number' && specs.get(col.name)?.mode === 'zero') {
+      specs.delete(col.name);
     }
   }
 

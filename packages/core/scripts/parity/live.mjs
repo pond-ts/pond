@@ -55,8 +55,9 @@
  * `final` holds each node's state after the last step: its pond-ts `class`
  * (constructor name, which fixes the output kinds above) and output `schema`;
  * `rows` (every event it holds, via `at(i)`) for series, views, rolling,
- * reduce and partitioned rolling; `stats` for a `LiveSeries`; `closed` and
- * `snapshot` rows plus `hasOpenBucket` for an aggregation; `value` for
+ * reduce and partitioned rolling; `stats` for a `LiveSeries` and an
+ * aggregation; `closed` and `snapshot` rows plus `hasOpenBucket` for an
+ * aggregation; `value` for
  * rolling and reduce; `partitions` (`[key, rows]` pairs from `toMap()`) for
  * partitioned series and views. A partition key is the `toMap()` key: the
  * partition value as text, and `" undefined"` (pond-ts's own marker, with
@@ -123,6 +124,26 @@ const INTERVAL_ROWS = [
   [['b4', 20000, 25000], -3],
 ];
 
+// True/false and array cells, for reducers on columns that are not numbers.
+// Runs of equal values (so `keep` holds) and a gap in each column.
+const TAG_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'ok', kind: 'boolean', required: false },
+  { name: 'tags', kind: 'array', required: false },
+];
+const TAG_ROWS = [
+  [0, true, ['a']],
+  [1000, true, ['a', 'b']],
+  [2000, null, null],
+  [3000, true, []],
+  [5000, false, ['b']],
+  [6000, true, [1, 'a']],
+  [7000, false, ['b']],
+  [10000, false, null],
+  [11000, false, [true]],
+  [16000, true, ['c']],
+];
+
 const RANGE_SCHEMA = [
   { name: 'timeRange', kind: 'timeRange' },
   { name: 'v', kind: 'number', required: false },
@@ -137,6 +158,26 @@ const RANGE_ROWS = [
 
 // ── Case builders ────────────────────────────────────────────────
 
+// Calendar rows: from 2026-03-06 12:00 UTC (New York's DST change is
+// 2026-03-08 07:00 UTC), every 7 hours for ~four weeks into April.
+const HOUR = 3_600_000;
+const CAL_T0 = Date.UTC(2026, 2, 6, 12);
+const CAL_ROWS = Array.from({ length: 100 }, (_, i) => [
+  CAL_T0 + i * 7 * HOUR,
+  ['a', 'b', 'c'][i % 3],
+  i % 5 === 0 ? null : (i * 37) % 11,
+  i % 4,
+]);
+// Rows across the autumn DST edges: every 5 hours from 2026-09-03
+// 00:00 UTC to 2026-11-04 (Santiago skips midnight 2026-09-06, New York
+// falls back 2026-11-01).
+const DST_ROWS = Array.from({ length: 300 }, (_, i) => [
+  Date.UTC(2026, 8, 3) + i * 5 * HOUR,
+  ['a', 'b', 'c'][i % 3],
+  i % 7 === 0 ? null : (i * 13) % 9,
+  i % 3,
+]);
+const NY_DAY = { sequence: { calendar: 'day', timeZone: 'America/New_York' } };
 const each = (rows) => rows.map((row) => ({ push: [row] }));
 const node = (id, op, from, ...args) => ({ node: { id, op, from, args } });
 const every = (d) => ({ sequence: { every: d } });
@@ -404,6 +445,39 @@ const CASES = [
     ],
   },
   {
+    // [PND-LATE]: a late event the reorder root accepts goes into each
+    // view at its key position (after equal keys); stateful views compute
+    // in arrival order.
+    name: 'views-reorder-late',
+    schema: SCHEMA,
+    options: { ordering: 'reorder' },
+    steps: [
+      node('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('m', 'map', 'f', { map: { column: 'cpu', mul: 2, add: -1 } }),
+      node('s', 'select', 'root', 'mem'),
+      node('t', 'sample', 'root', { stride: 2 }),
+      node('w3', 'window', 'root', 3),
+      node('w2s', 'window', 'root', '2s'),
+      node('d', 'diff', 'root', ['cpu', 'mem']),
+      node('r', 'rate', 'root', 'cpu'),
+      node('p', 'pctChange', 'root', 'mem'),
+      node('h', 'fill', 'root', 'hold'),
+      node('c', 'cumulative', 'root', { cpu: 'sum', mem: 'max' }),
+      ...each(ROWS.slice(0, 7)),
+      { push: [[2600, 'a', 99, null]] },
+      { push: [[1000, 'c', 5, 9]] },
+      {
+        pushMany: [
+          [4500, 'b', null, 30],
+          [100, 'a', -4, 2],
+          [4000, 'c', 1, 1],
+        ],
+      },
+      ...each(ROWS.slice(7, 12)),
+      { push: [[0, 'z', 3, 3]] },
+    ],
+  },
+  {
     name: 'views-after-clear',
     schema: SCHEMA,
     steps: [
@@ -456,6 +530,60 @@ const CASES = [
 
   // ── Aggregation ──
   {
+    // view-dispose-chain with filters only: disposing 'g' disposes the
+    // unwatched 'f' it was built on (frozen at its rows so far); disposing
+    // 'm' leaves the watched 'k' running.
+    name: 'view-dispose-chain-filters',
+    schema: SCHEMA,
+    steps: [
+      quiet('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('g', 'filter', 'f', filterGt('mem', 12)),
+      node('k', 'filter', 'root', filterGt('mem', 0)),
+      node('m', 'filter', 'k', filterGt('cpu', 2)),
+      ...each(ROWS.slice(0, 6)),
+      { dispose: 'g' },
+      { dispose: 'm' },
+      ...each(ROWS.slice(6, 12)),
+    ],
+  },
+  {
+    // pond-ts compares array cells by object in `keep`, so arrays get no
+    // `keep` here ([PND-ARRAYKEY]; pond-rs compares their elements).
+    name: 'aggregate-boolean-array',
+    schema: TAG_SCHEMA,
+    steps: [
+      node('a', 'aggregate', 'root', every('5s'), {
+        okN: { from: 'ok', using: 'count' },
+        okFirst: { from: 'ok', using: 'first' },
+        okLast: { from: 'ok', using: 'last' },
+        okKeep: { from: 'ok', using: 'keep' },
+        okUnique: { from: 'ok', using: 'unique' },
+        okTop: { from: 'ok', using: 'top1' },
+        okSamples: { from: 'ok', using: 'samples' },
+        tagN: { from: 'tags', using: 'count' },
+        tagFirst: { from: 'tags', using: 'first' },
+        tagLast: { from: 'tags', using: 'last' },
+        tagUnique: { from: 'tags', using: 'unique' },
+        tagTop: { from: 'tags', using: 'top2' },
+        tagSamples: { from: 'tags', using: 'samples' },
+      }),
+      ...each(TAG_ROWS),
+    ],
+  },
+  {
+    // Disposing an aggregation does not dispose the unwatched view it was
+    // built on (only a view's dispose walks up).
+    name: 'aggregate-dispose-on-view',
+    schema: SCHEMA,
+    steps: [
+      quiet('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('a', 'aggregate', 'f', every('5s'), { cpu: 'sum' }),
+      ...each(ROWS.slice(0, 8)),
+      { dispose: 'a' },
+      ...each(ROWS.slice(8, 14)),
+    ],
+  },
+  {
     name: 'aggregate-5s',
     schema: SCHEMA,
     steps: [
@@ -493,6 +621,158 @@ const CASES = [
       ...each(ROWS),
       { clear: true },
       ...each(ROWS.slice(0, 3)),
+    ],
+  },
+  {
+    // Every built-in reducer, on a number column (with -0, ties and gaps)
+    // and on a text column.
+    name: 'aggregate-reducers',
+    schema: SCHEMA,
+    steps: [
+      node('a', 'aggregate', 'root', every('5s'), {
+        n: { from: 'cpu', using: 'count' },
+        sum: { from: 'cpu', using: 'sum' },
+        avg: { from: 'cpu', using: 'avg' },
+        min: { from: 'cpu', using: 'min' },
+        max: { from: 'cpu', using: 'max' },
+        first: { from: 'cpu', using: 'first' },
+        last: { from: 'cpu', using: 'last' },
+        median: { from: 'cpu', using: 'median' },
+        stdev: { from: 'cpu', using: 'stdev' },
+        p90: { from: 'cpu', using: 'p90' },
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+        unique: { from: 'cpu', using: 'unique' },
+        top2: { from: 'cpu', using: 'top2' },
+        samples: { from: 'cpu', using: 'samples' },
+        hostN: { from: 'host', using: 'count' },
+        hostFirst: { from: 'host', using: 'first' },
+        hostLast: { from: 'host', using: 'last' },
+        hostKeep: { from: 'host', using: 'keep' },
+        hosts: { from: 'host', using: 'unique' },
+        hostTop: { from: 'host', using: 'top1' },
+        hostSamples: { from: 'host', using: 'samples' },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // A grace window keeps 1s buckets open until the newest event is 2s
+    // past their end; a late row within grace joins its bucket, one past
+    // it is refused.
+    name: 'aggregate-grace',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '2s' },
+    steps: [
+      node('a', 'aggregate', 'root', every('1s'), { cpu: 'sum', mem: 'max' }),
+      ...LATE_STEPS,
+    ],
+  },
+  {
+    // `new LiveAggregation(source, sequence, mapping, { grace })`: its
+    // own grace overrides the series' (here 0 below 2s, and 3s on a view,
+    // which has none of its own).
+    name: 'aggregate-own-grace',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '2s' },
+    steps: [
+      node(
+        'z',
+        'aggregateWith',
+        'root',
+        every('1s'),
+        { cpu: 'sum' },
+        { grace: '0s' },
+      ),
+      node('v', 'filter', 'root', filterGt('cpu', 1)),
+      node(
+        'g',
+        'aggregateWith',
+        'v',
+        every('1s'),
+        { cpu: 'count' },
+        { grace: '3s' },
+      ),
+      node('d', 'aggregate', 'v', every('1s'), { cpu: 'count' }),
+      node(
+        'bad',
+        'aggregateWith',
+        'root',
+        every('1s'),
+        { cpu: 'sum' },
+        { grace: 'soon' },
+      ),
+      ...LATE_STEPS,
+    ],
+  },
+  {
+    // Calendar buckets vary in length: New York days across the March
+    // 2026 DST change (a 23-hour day), Sunday-start weeks, months, and
+    // late rows (6h grace): one into the day before, still open, one past
+    // the grace the root refuses.
+    name: 'aggregate-calendar-zones',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '6h' },
+    steps: [
+      node('day', 'aggregate', 'root', NY_DAY, { cpu: 'sum', mem: 'count' }),
+      node(
+        'week',
+        'aggregate',
+        'root',
+        {
+          sequence: {
+            calendar: 'week',
+            timeZone: 'America/New_York',
+            weekStartsOn: 7,
+          },
+        },
+        { cpu: 'max' },
+      ),
+      node(
+        'month',
+        'aggregate',
+        'root',
+        { sequence: { calendar: 'month', timeZone: 'Europe/London' } },
+        { cpu: 'avg' },
+      ),
+      node('f', 'filter', 'root', filterGt('cpu', 2)),
+      node('fday', 'aggregate', 'f', NY_DAY, { cpu: 'count' }),
+      node(
+        'own',
+        'aggregateWith',
+        'root',
+        NY_DAY,
+        { cpu: 'last' },
+        { grace: '1h' },
+      ),
+      ...each(CAL_ROWS.slice(0, 4)),
+      // Late: 15h is 22:00 the day before in New York, a bucket still
+      // open (the latest is 21h) and before the one last looked up.
+      { push: [[CAL_T0 + 15 * HOUR, 'b', 7, 2]] },
+      ...each(CAL_ROWS.slice(4, 9)),
+      // Late past the 6h grace (the latest is 56h): the root refuses it.
+      { push: [[CAL_T0 + 40 * HOUR, 'c', 8, 3]] },
+      { pushMany: CAL_ROWS.slice(9) },
+    ],
+  },
+  {
+    // The other DST edges: New York's fall-back day (2026-11-01, 25
+    // hours) and Santiago's skipped midnight (2026-09-06 starts at 01:00,
+    // a 23-hour day). Rows every 5 hours from 2026-09-03 to 2026-11-04.
+    name: 'aggregate-calendar-fallback',
+    schema: SCHEMA,
+    steps: [
+      node('ny', 'aggregate', 'root', NY_DAY, { cpu: 'sum', mem: 'count' }),
+      node(
+        'scl',
+        'aggregate',
+        'root',
+        { sequence: { calendar: 'day', timeZone: 'America/Santiago' } },
+        { cpu: 'sum', mem: 'count' },
+      ),
+      ...each(DST_ROWS.slice(0, 40)),
+      { pushMany: DST_ROWS.slice(40, 250) },
+      ...each(DST_ROWS.slice(250)),
     ],
   },
   {
@@ -647,6 +927,214 @@ const CASES = [
     ],
   },
 
+  {
+    // A reorder source with retention evicts its key-order prefix, which
+    // can be a late (recent) arrival: a reduce on the root must remove
+    // that event, not the oldest arrival, and switches min / max / first /
+    // last / difference to states that remove any event ([PND-LIVFIX]).
+    // A reduce on a filter of it keeps the arrival-order states; one on a
+    // window view never hears of what the window trims. Rolling windows
+    // take late events as new arrivals.
+    name: 'reduce-and-rolling-reorder',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', retention: { maxEvents: 4 } },
+    steps: [
+      node('r', 'reduce', 'root', {
+        cpu: 'min',
+        mem: 'max',
+        f: { from: 'cpu', using: 'first' },
+        l: { from: 'mem', using: 'last' },
+        d: { from: 'cpu', using: 'difference' },
+        s: { from: 'cpu', using: 'samples' },
+        t: { from: 'cpu', using: 'sum' },
+        k: { from: 'host', using: 'keep' },
+      }),
+      node('f', 'filter', 'root', filterGt('cpu', 0)),
+      node('rf', 'reduce', 'f', {
+        cpu: 'min',
+        l: { from: 'cpu', using: 'last' },
+        s: { from: 'cpu', using: 'samples' },
+      }),
+      node('w', 'window', 'root', 3),
+      node('rw', 'reduce', 'w', {
+        cpu: 'sum',
+        s: { from: 'cpu', using: 'samples' },
+      }),
+      node('ro', 'rolling', 'root', '2s', {
+        cpu: 'avg',
+        n: { from: 'cpu', using: 'count' },
+      }),
+      node('fu', 'rolling', 'root', {
+        '1s': { cpu: 'max' },
+        '3s': { s: { from: 'cpu', using: 'samples' } },
+      }),
+      ...LATE_STEPS,
+      { pushMany: [ROWS[15], [9500, 'a', 5, 5], ROWS[16]] },
+    ],
+  },
+  {
+    // Every built-in reducer in a count window, on a number column (with
+    // -0, ties and gaps) and on a text column; the stdev is read for the
+    // update listener after each event as well as for the event.
+    name: 'rolling-reducers',
+    schema: SCHEMA,
+    steps: [
+      node('r', 'rolling', 'root', 4, {
+        n: { from: 'cpu', using: 'count' },
+        sum: { from: 'cpu', using: 'sum' },
+        avg: { from: 'cpu', using: 'avg' },
+        min: { from: 'cpu', using: 'min' },
+        max: { from: 'cpu', using: 'max' },
+        first: { from: 'cpu', using: 'first' },
+        last: { from: 'cpu', using: 'last' },
+        median: { from: 'cpu', using: 'median' },
+        stdev: { from: 'cpu', using: 'stdev' },
+        p90: { from: 'cpu', using: 'p90' },
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+        unique: { from: 'cpu', using: 'unique' },
+        top2: { from: 'cpu', using: 'top2' },
+        samples: { from: 'cpu', using: 'samples' },
+        hostN: { from: 'host', using: 'count' },
+        hostFirst: { from: 'host', using: 'first' },
+        hostLast: { from: 'host', using: 'last' },
+        hostKeep: { from: 'host', using: 'keep' },
+        hosts: { from: 'host', using: 'unique' },
+        hostTop: { from: 'host', using: 'top1' },
+        hostSamples: { from: 'host', using: 'samples' },
+      }),
+      node('z', 'rolling', 'root', 2, {
+        spread: { from: 'cpu', using: 'difference' },
+        keep: { from: 'cpu', using: 'keep' },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // True/false and array cells: arrays are flattened for unique, top
+    // and samples, and `keep` compares array cells as objects (two equal
+    // arrays from different events are different).
+    name: 'rolling-tags',
+    schema: TAG_SCHEMA,
+    steps: [
+      node('r', 'rolling', 'root', 3, {
+        okN: { from: 'ok', using: 'count' },
+        okFirst: { from: 'ok', using: 'first' },
+        okLast: { from: 'ok', using: 'last' },
+        okKeep: { from: 'ok', using: 'keep' },
+        oks: { from: 'ok', using: 'unique' },
+        tagN: { from: 'tags', using: 'count' },
+        tagLast: { from: 'tags', using: 'last' },
+        tagKeep: { from: 'tags', using: 'keep' },
+        tags: { from: 'tags', using: 'unique' },
+        tagTop: { from: 'tags', using: 'top2' },
+        tagSamples: { from: 'tags', using: 'samples' },
+      }),
+      node('one', 'rolling', 'root', 1, {
+        tagKeep: { from: 'tags', using: 'keep' },
+      }),
+      node('red', 'reduce', 'root', {
+        okKeep: { from: 'ok', using: 'keep' },
+        tags: { from: 'tags', using: 'unique' },
+      }),
+      ...each(TAG_ROWS),
+    ],
+  },
+  {
+    // How many emitted events a rolling keeps, and the options it refuses.
+    name: 'rolling-history',
+    schema: SCHEMA,
+    steps: [
+      node('off', 'rolling', 'root', '5s', { cpu: 'sum' }, { history: false }),
+      node(
+        'n',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxEvents: 3 } },
+      ),
+      node(
+        'age',
+        'rolling',
+        'root',
+        3,
+        { cpu: 'max' },
+        { history: { maxAge: '5s' }, trigger: { every: '2s' } },
+      ),
+      node(
+        'both',
+        'rolling',
+        'root',
+        { '2s': { cpu: 'min' } },
+        { history: { maxEvents: 4, maxAge: '9s' } },
+      ),
+      node(
+        'zero',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxEvents: 0 } },
+      ),
+      node(
+        'bad',
+        'rolling',
+        'root',
+        '5s',
+        { cpu: 'sum' },
+        { history: { maxAge: 'soon' } },
+      ),
+      node('rows0', 'rolling', 'root', 0, { cpu: 'sum' }),
+      node('dup', 'rolling', 'root', {
+        '1s': { cpu: 'sum' },
+        '2s': { cpu: 'max' },
+      }),
+      node('none', 'rolling', 'root', {}),
+      node('fs', 'rolling', 'root', {
+        '2s': { mapping: { cpu: 'avg' }, minSamples: 3 },
+      }),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // Values from 2^480 (stdev) and 2^960 (sum, avg) up go to an exact
+    // big-integer lane, so a window that overflowed reads finite again
+    // once the huge values leave it.
+    name: 'rolling-overflow',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ],
+    steps: [
+      node('r', 'rolling', 'root', 2, {
+        sum: { from: 'v', using: 'sum' },
+        avg: { from: 'v', using: 'avg' },
+        stdev: { from: 'v', using: 'stdev' },
+      }),
+      node('red', 'reduce', 'root', {
+        sum: { from: 'v', using: 'sum' },
+        stdev: { from: 'v', using: 'stdev' },
+      }),
+      ...each([
+        [0, 1],
+        [1, 1.7e308],
+        [2, 1.7e308],
+        [3, -1.3e308],
+        [4, 2],
+        [5, 3e150],
+        [6, -2.5e200],
+        [7, 7],
+        [8, 1e300],
+        [9, 4.5],
+        [10, -8.98846567431158e307],
+        [11, 3.0000000000000004e145],
+        [12, 3e145],
+        [13, 0.5],
+      ]),
+    ],
+  },
+
   // ── Partitioned ──
   {
     name: 'partition-collect',
@@ -780,10 +1268,10 @@ function decodeCell(cell) {
 const decodeRows = (rows) => rows.map((row) => row.map(decodeCell));
 
 function decodeSequence(pond, spec) {
-  const { every: step, calendar, timeZone } = spec;
+  const { every: step, calendar, timeZone, weekStartsOn } = spec;
   return step !== undefined
     ? pond.Sequence.every(step)
-    : pond.Sequence.calendar(calendar, { timeZone });
+    : pond.Sequence.calendar(calendar, { timeZone, weekStartsOn });
 }
 
 function decodeTrigger(pond, spec) {
@@ -872,6 +1360,7 @@ function finalOf(obj) {
     out.closed = encodeRows(obj.closed());
     out.snapshot = encodeRows(obj.snapshot());
     out.hasOpenBucket = obj.hasOpenBucket;
+    out.stats = obj.stats();
     return out;
   }
   if (kind === 'LivePartitionedSeries' || kind === 'LivePartitionedView') {
@@ -923,7 +1412,12 @@ async function runCase(pond, spec) {
         const made =
           op === 'partition'
             ? parent.toMap().get(args[0])
-            : parent[op](...args.map((a) => decodeArg(pond, a)));
+            : op === 'aggregateWith'
+              ? new pond.LiveAggregation(
+                  parent,
+                  ...args.map((a) => decodeArg(pond, a)),
+                )
+              : parent[op](...args.map((a) => decodeArg(pond, a)));
         if (made === undefined) throw new Error(`${op} gave nothing`);
         nodes.set(id, made);
         if (step.node.watch !== false) attach(made, id, record);

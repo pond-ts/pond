@@ -94,8 +94,9 @@ Call `dispose()` to unsubscribe a view from its source and stop receiving events
 
 ## LiveAggregation: bucketed aggregation
 
-`LiveAggregation` incrementally aggregates events into fixed-size time buckets.
-Buckets finalize as the data advances past their boundary.
+`LiveAggregation` incrementally aggregates events into time buckets: fixed-size
+(`Sequence.every`) or calendar ones (`Sequence.calendar`). Buckets finalize as
+the data advances past their boundary.
 
 ```ts
 const agg = live.aggregate(Sequence.every('1m'), {
@@ -116,6 +117,16 @@ Or create it from a view for filtered aggregation:
 const agg = live
   .filter((e) => e.get('host') === 'api-1')
   .aggregate(Sequence.every('1m'), { cpu: 'avg' });
+```
+
+Calendar buckets follow the sequence's time zone, so a day is 23 or 25 hours
+across a daylight-saving change and a month is as long as that month:
+
+```ts
+const daily = live.aggregate(
+  Sequence.calendar('day', { timeZone: 'America/New_York' }),
+  { cpu: 'avg' },
+);
 ```
 
 ### Reading the current value

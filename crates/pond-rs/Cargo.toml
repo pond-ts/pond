@@ -33,6 +33,11 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 serde = "1"
 # Shortest digits for numbers in `to_json` (serde_json already depends on it).
 zmij = "1"
+# Live rolling sum / avg / stdev keep values of 2^960 (2^480 for stdev) and
+# up in an exact big-integer lane, as pond-ts does with BigInt. Already built
+# for arrow-buffer.
+num-bigint = { version = "0.5.1", default-features = false, optional = true }
+num-traits = { version = "0.2", default-features = false, optional = true }
 
 # Threads are not available on wasm32, so rayon is never built there; the
 # `parallel` feature then does nothing.
@@ -40,7 +45,9 @@ zmij = "1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-default = ["parallel"]
+default = ["parallel", "live"]
+# The live layer (`pond_rs::live`): series that take events as they arrive.
+live = ["dep:num-bigint", "dep:num-traits"]
 # Work on independent output columns runs on several cores (rayon's pool;
 # RAYON_NUM_THREADS sets its size). Results are the same bits either way:
 # each column is still computed start to finish by one thread.
@@ -51,3 +58,11 @@ serde = { version = "1", features = ["derive"] }
 # float_roundtrip: fixture numbers must parse to the exact f64 pond-ts wrote.
 # preserve_order: mapping objects keep their key order (it sets column order).
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[[example]]
+name = "perf_live"
+required-features = ["live"]
+
+[[example]]
+name = "mem_live"
+required-features = ["live"]

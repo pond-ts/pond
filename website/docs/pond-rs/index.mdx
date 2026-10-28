@@ -66,9 +66,24 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Per entity            | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                                                                                                                                     |
 | Arrow and JSON        | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it. Read and write pond-ts's JSON format                                                                             |
 
-**Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
-layer, and a WASM build that
-pond-ts can call. They come in roughly that order; see the
+**Also built:** financial studies. Moving averages and rolling statistics,
+the moving-average family (MACD, …), bands (Bollinger, Keltner, …),
+momentum (RSI, stochastics, CCI, …), trend (ADX, Ichimoku, …), volatility
+(ATR, …), statistics (linear regression, beta, …), volume (OBV,
+money flow index, VWAP, …), price (typical price, balance of power, …),
+trading calendars and the session studies (session VWAP, pivot points,
+anchored VWAP) are built, all 109 pond-ts studies; see
+[Finance studies](./finance-studies).
+
+**Started:** the live layer: series that take events as they arrive, with
+live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
+…), per-minute (or any fixed step) `aggregate`, rolling windows and
+`reduce`; see
+[Live series](./live).
+
+**Not built yet:** the rest of the live layer (calendar buckets in a live
+`aggregate`, partitions), and a WASM build that pond-ts can call. They
+come in that order; see the
 [roadmap](#roadmap) below.
 
 ## Where to go next
@@ -81,6 +96,10 @@ pond-ts can call. They come in roughly that order; see the
   filtering and mapping.
 - [Partitions](./partitions): the same work per host, per symbol, per
   anything.
+- [Finance studies](./finance-studies): moving averages, MACD, bands, RSI
+  and more over price bars, as `@pond-ts/financial`.
+- [Live series](./live): events as they arrive, with live filters,
+  per-minute buckets, rolling windows and running totals.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
@@ -92,11 +111,11 @@ pond-rs follows a written plan in the repository
 ([`docs/rfcs/pond-rs.md`](https://github.com/pond-ts/pond/blob/main/docs/rfcs/pond-rs.md)
 for the reasoning, `PLAN.md` for the current steps). In order:
 
-1. **Batch core** (in progress). The first slice, R1a, met every target it
-   set itself; the rest of the core, R1b, is being built step by step.
-2. **Financial studies**, checked against the same pandas / TA-Lib test
+1. **Batch core** (done). The first slice, R1a, met every target it set
+   itself; R1b added the rest of pond-ts's batch operations, step by step.
+2. **Financial studies** (done), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
-3. **Live layer**: series that update as data arrives.
+3. **Live layer** (in progress): series that update as data arrives.
 4. **WASM bridge**: the same Rust code running inside pond-ts where it
    measurably helps.
 

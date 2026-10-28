@@ -3562,8 +3562,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `drop` / `reorder`, `pushMany` with a bad second row commits and
        emits the first row's `event` (no `batch`) before throwing, while
        `strict` refuses the whole batch, so the "never half-committed"
-       rule in the design above holds for pond-ts only under `strict`
-       (step 2 decides: copy, or fix pond-ts first); disposing the last
+       rule in the design above held for pond-ts only under `strict`
+       (pjm17971 chose to fix pond-ts: [PND-BATCHATOM], so every mode
+       now refuses a bad batch whole); disposing the last
        view on an intermediate view disposes the intermediate too, but
        only when nothing listens to it (case `view-dispose-chain`, an
        unwatched node; pond-rs's `remove` goes down the tree, so this
@@ -3581,14 +3582,238 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `event_rate`, snapshots incl. `to_json` / `from_json`, `stats`),
        plus `filter` and a fixed-bucket `aggregate` queried through
        handles, `watch`, and `remove`.
+       Built 2026-10-27 (`src/live/`: `mod.rs` owner, `event.rs`,
+       `buffer.rs`, `view.rs`, `aggregation.rs`, `json.rs`; cargo feature
+       `live`, on by default). 31 of the 51 fixture cases run (every case
+       whose nodes are only `filter` / `aggregate`), each push's outputs and
+       every node's final state (aggregation `stats` included) equal. Five
+       cases were added to the fixture for this step:
+       `view-dispose-chain-filters`, `aggregate-reducers` (every reducer),
+       `aggregate-grace`, `aggregate-boolean-array`,
+       `aggregate-dispose-on-view`. Decisions
+       and differences from pond-ts:
+       - Rows were first stored as a `VecDeque` of shared events
+         (`Arc` key + values, `Arc` schema): a filter or a watched output
+         handed the same event on with two reference counts. Cost was about
+         250 bytes per event (each cell a 48-byte `Value`). Replaced by a
+         column store before step 4 (below, "Memory").
+       - `push_many` checks every row, then dry-runs the ordering over the
+         batch, then commits, in every mode (pond-ts after [PND-BATCHATOM]).
+       - `remove(node)`: that node's handle then returns `Err`; nodes
+         built on it stay readable but get no more events. When a view is
+         removed, a source view left with no children and no watched
+         output is detached too, and so on up (pond-ts's upward dispose,
+         case `view-dispose-chain`); it stays readable. Removing an
+         aggregation does not walk up (`LiveAggregation.dispose` only
+         unsubscribes; case `aggregate-dispose-on-view`, found in review).
+         The root cannot be removed.
+       - pond-rs refuses what pond-ts accepts and gets wrong: number
+         reducers on text columns ([PND-KINDREDUCE]; case
+         `aggregate-bad-mapping` is listed as refused in the harness),
+         decimal columns and duplicate column names in a live schema, and
+         intervals whose label kind differs from the events held.
+       - `keep` on an array column compares the arrays' elements, as
+         batch pond-rs does; pond-ts compares the array objects, so two
+         equal arrays give a gap there ([PND-ARRAYKEY], logged with the
+         batch reducers). The fixture's array case leaves `keep` out.
+       - Bucket edges are worked out in i128, and `aggregate` refuses a
+         step and anchor whose edges for a supported time would not fit
+         an i64 (an anchor of `i64::MIN` panicked before review).
+       - A late event a `reorder` source accepts goes into each view in
+         key order; pond-ts views throw ([PND-LATE]). No fixture case
+         reaches it with only step 2 nodes; step 3 decides.
+       - `aggregate` refuses calendar sequences for now (step 5 with the
+         full `LiveAggregation`).
+       - For step 6: pond-ts #838 (partition fan-out per `pushMany`)
+         finishes partitions (retention, `batch`, `evict`, settle) in the
+         order of each partition's last row in the batch; fixture case
+         `partition-pushmany`.
+       - Timing (`examples/perf_live.rs` vs `bench/live_pond_ts.mjs`, 1M
+         events, pond-ts after the fix below): one at a time 298 ms vs
+         3,548 (12x); `max_events` 10k 220 vs 2,667; reorder 398 vs 587;
+         filter + aggregate 418 vs 3,864, all outputs watched 696 vs
+         4,401, on a 10k window 408 vs 10,766. Batches of 1,000: 260 vs
+         148, pond-rs slower: storing takes ~125 ms and freeing the 1M
+         events when the series is dropped ~130 ms (counted in the time);
+         pond-ts stores batches by column and makes no per-event object
+         when nothing listens. A column store would close that.
+       - Timing found a pond-ts bug, fixed in the same PR:
+         [PND-LIVEPUSHSCAN] (one-at-a-time `push` slowed as the series
+         grew).
     3. Views: `map`, `select`, `sample`, `window`; live `diff` / `rate` /
        `pct_change` / `fill` / `cumulative`.
+       Built 2026-10-28 (`src/live/views.rs`; `window` trimming in
+       `view.rs`). 39 of the 52 fixture cases run, every output and final
+       state equal; one case added, `views-reorder-late`. Decisions and
+       differences from pond-ts:
+       - Late events ([PND-LATE]): pjm17971 chose insert in order
+         (2026-10-28; the other options were stateful views skip it, or
+         refuse the push). pond-ts was changed to match (its
+         views threw after the root had stored the event): every view puts
+         a late event at its key position, after equal keys; `diff`,
+         `rate`, `pct_change`, `fill`, `cumulative` and `sample` work in
+         arrival order. A pond-ts re-keying `map` that went backwards also
+         threw; it now inserts in order too (pond-rs `map` cannot re-key).
+       - Fixed in pond-ts on the way: live `fill('zero')` wrote `0` into
+         text columns (batch skips them); case `fill-cumulative` showed it.
+       - pond-rs refuses at build what pond-ts takes silently: unknown or
+         repeated columns, `diff` / `rate` / `pct_change` / `cumulative`
+         on a column that is not a number (pond-ts gives gaps; case
+         `diff-rate-pct` node `bad` is listed as refused in the harness),
+         `Zero` or a value of the wrong kind in a per-column `fill` (batch
+         pond-rs refuses the same), `Bfill` / `Linear`, `sample` with
+         `Reservoir` (pond-ts has stride only) or stride 0, a row window of
+         0, `cumulative` with a reducer other than sum / max / min / count.
+       - `map(from, |event| cells)` returns the new cells in schema order
+         and keeps the key and schema (no re-keying, no new columns);
+         a wrong number of cells or a cell of the wrong kind panics during
+         the push. Non-finite numbers become gaps, as pond-ts.
+       - `fill_with(.., limit)`: a live view fills the first `limit` gaps
+         of a longer run and leaves the rest (pond-ts live); batch
+         `fill_with` leaves the whole run unfilled.
+       - A `window` view trims itself silently (no `Evict` output, and
+         views on it keep what it trimmed), as pond-ts. `filter`, `map`
+         and `select` on a time window keep its length for `event_rate`.
+       - Timing (1M events, same quiet run, pond-rs vs pond-ts, ms): on a
+         `max_events` 10k root, diff + rate + pct_change 739 vs 4,404;
+         fill hold + cumulative 606 vs 3,523; map + select + sample 480
+         vs 3,678; two windows 309 vs 3,173; reorder 5% late with diff +
+         fill + window 761 vs 1,239. Each view that makes new events costs
+         pond-rs ~0.2-0.3 µs an event (an `Arc`, a `Vec` and a text clone
+         per event; the row layout noted under memory below). Timing found
+         a pond-ts slowdown, fixed in the same PR: [PND-EVICTSPLICE]
+         (dropping old events copied the whole buffer per push; before the
+         fix pond-ts took 115 s on the first case). pond-rs also stopped
+         collecting a view's evicted events when nothing follows them.
+       - Memory (gRPC experiment friction, 2026-10-28,
+         pjm17971/pond-grpc-experiment#45): a 30 s window at 1000 hosts x
+         1000 events/s held ~10.3M rows in 2,540 MB, ~250 bytes per row
+         against ~67 for a plain `VecDeque` of the same rows, and the batch
+         handler's p99 doubled; cause is one `Arc` + a `Vec` of 48-byte
+         `Option<Value>` cells per event. Same column-store point as the
+         step 2 `push_many` timing. Also `LiveSeries::to_json` copies into
+         a `TimeSeries` first.
+       - Fixed 2026-10-28, before step 4 (pjm17971 asked whether to fix it
+         now; yes, since steps 4-6 add more nodes that keep events): series
+         and views store events by column (`live/buffer.rs`): a start time
+         per event (plus end and label for range and interval keys) and a
+         `VecDeque` per value column, numbers as `f64` with NaN for a gap
+         (live number columns never hold NaN otherwise), text as
+         `Option<String>`, true/false as `Option<bool>`. A `LiveEvent` is
+         built when read (`at`, `events`, `find`, … now return owned events)
+         or when a push hands an event down the tree; the root stores an
+         event after handing it on, moving its cells in when no output kept
+         it. Simpler than the sealed chunks the design above names: no
+         `Arc` sharing of chunks with `to_time_series` (which builds
+         columns straight from the store). Memory (`examples/mem_live.rs`,
+         1M events, bytes held per event): time + 3 numbers 249 → 34;
+         time + text + 2 numbers 250 → 51; the same plus a pass-all filter
+         133 → 51 per event summed over both nodes (the view alone went
+         from ~16 to ~51: it now holds its own copy rather than sharing the
+         root's events, so each pass-through view costs about as much as
+         the series; worth remembering as steps 4-6 add nodes); time + 10
+         numbers 585 → 92. Timing
+         (`perf_live`, ms, best of two interleaved runs, before → after):
+         one at a time 268 → 220; batches of 1,000 217 → 204; reorder 306
+         → 230; filter + aggregate 382 → 293; fill + cumulative 600 → 450;
+         filter + aggregate on a 10k-capped root 278 → 339 and map +
+         select + sample 462 → 499 (copying cells into each view, text
+         cells allocate); the rest within ±6%. Batches of 1,000 are still
+         slower than pond-ts (92 ms): each row still makes one short-lived
+         event and frees the caller's cell list.
     4. Rolling: single-window (`LiveRollingAggregation`), fused
        multi-window (`LiveFusedRolling`), `reduce`.
+       Built 2026-10-28 (`src/live/rolling.rs`, `reduce.rs`, `states.rs`;
+       batch `rolling.rs` states shared). 52 of the 57 fixture cases run
+       (the 5 left are partitioned, step 6), every output and final state
+       equal. Five cases added (`reduce-and-rolling-reorder`,
+       `rolling-reducers`, `rolling-tags`, `rolling-history`,
+       `rolling-overflow`) after mutation testing showed the first fixture
+       missed a reduce that ignored where a late event went, or ignored
+       that a reorder root drops events out of arrival order; 14 planted
+       bugs, all caught now. Decisions and differences from pond-ts:
+       - Triggers for rolling and reduce came with this step (the fixture
+         cases use them): `Trigger::event`, `every(duration)`,
+         `clock(sequence)` (calendar sequences refused), `count(n)`. Step 5
+         is left with the full `LiveAggregation` (closed and open buckets,
+         calendar sequences).
+       - A reduce over a series or view removes each evicted event under
+         the index it was added with (pond-ts finds it by object identity):
+         it keeps the index of each event its source holds, in the
+         source's order, inserting a late event where the source put it
+         and dropping what a `window` view trims silently.
+       - Sources as pond-ts allows them: `rolling` on the series, a view
+         or an aggregation; `reduce` on the series or a view; nothing on a
+         reduce or on fused windows (pond-ts has no methods there). The
+         first build allowed any source; review on #843 found those had
+         no pond-ts behaviour to match.
+       - A reduce built over existing events emits for them during the
+         build. pond-ts emits on a microtask after the build, so a caller
+         that pushes again without yielding gets one emission covering
+         both from pond-ts and two from pond-rs. pond-rs has no event loop
+         to wait for; the fixture (which waits after each step) matches.
+       - `value()` peeks (copies a `stdev` state before reading), so
+         reading changes nothing. In pond-ts a read can move the reference
+         point of a running `stdev` and with it the last bit of a later
+         value; pond-rs copies the reads pond-ts makes inside a push (for
+         `update` listeners, made whether or not any listen), so pushed
+         results match bit for bit.
+       - A clock trigger on a source keyed by time range or interval is
+         refused: pond-ts emits time keys under that schema.
+       - Huge values: sums of values from 2^960 (2^480 for `stdev`) go to
+         an exact big-integer lane as pond-ts (`num-bigint`, new optional
+         dependency of the `live` feature), so a window that overflowed to
+         infinity reads finite again once they leave.
+       - `Output::Update` now carries the rolling window's values (pond-ts
+         passes `value()` to `update` listeners); `None` for an
+         aggregation.
+       - `keep` over array cells counts by event (pond-ts compares array
+         objects, so equal arrays from different events differ).
+       - Timing (1M events, each case alone in its own process, pond-rs
+         vs pond-ts, ms, root keeping 10k events): root alone 182 vs
+         2,049; rolling 30 s avg + max + stdev 328 vs 3,719; rolling 100
+         rows avg, history off, `update` watched 291 vs 2,935; fused 1 m +
+         5 m + 15 m avg 338 vs 3,493; reduce avg + max + count 357 vs
+         6,443. Each node adds 0.11-0.18 µs an event to pond-rs (time
+         over the root alone; not broken down further). Timing found a
+         pond-ts slowdown, fixed in the same PR: [PND-REDUCEMICRO] (reduce
+         queued a microtask per push in a loop that never awaits; the
+         reduce case took 12,633 ms before).
     5. Triggers (`event`, `clock(sequence)`, `every(duration)`,
        `count(n)`; calendar sequences refused for clock triggers) across
        rolling, reduce and the full `LiveAggregation` (closed and open
        buckets).
+       Built 2026-10-28. Triggers had come with step 4, and closed and
+       open buckets with step 2, so what was left was pond-ts's
+       per-aggregation grace (the `LiveAggregation` constructor's
+       `{ grace }`, now `aggregate_with`) and calendar sequences.
+       pond-ts refused those in live `aggregate` too (`stepMs()` throws),
+       so they were new work in both libraries; pjm17971 chose to add them
+       (2026-10-28) rather than close the step with grace only.
+       - pond-ts: `LiveAggregation` takes the bucket holding each event
+         from `sequence.bounded` over the single instant (coverage
+         `'overlap'`) and keeps the last one, so only an event outside it
+         does time-zone arithmetic. Fixed sequences keep the arithmetic
+         path. Clock triggers still refuse calendar sequences.
+       - pond-rs: `Sequence::calendar_bucket` (one bucket, no walk past
+         it: `buckets_overlapping` computes the next bucket's end first,
+         which fails a year earlier near jiff's limits). While a calendar
+         aggregation exists the series refuses times outside years -9997
+         to 9997 UTC (`CALENDAR_RANGE_MS`; jiff handles ±9999 and a year
+         bucket in a zone 14 h off needs the year beside it), and building
+         one over such an event is refused. pond-ts takes any time.
+       - Fixture: cases `aggregate-own-grace` and
+         `aggregate-calendar-zones` (New York days across the 2026 DST
+         change, Sunday weeks, London months, a filter view, a late row
+         into the day before the cached one), `aggregate-calendar-fallback`
+         (New York's 25-hour fall-back day, Santiago's skipped midnight);
+         `aggregate-calendar` now records buckets instead of an error. 55
+         of 60 cases run, all equal. A cache that checked only `ts < end` survived until the
+         late row went into an earlier bucket.
+       - Timing (1M events, root keeping 10k, each case alone, ms): daily
+         New York buckets 198 vs pond-ts 2,469; the fixed path unchanged
+         (filter + aggregate 1 m 315 vs 3,103, 3,489 for pond-ts in the
+         step 4 run).
     6. Partitioned: `partition_by` (a node owning one subtree per key),
        `to_map` / `apply` / `collect` (append-only fan-in), partitioned
        fused rolling with synchronised emission.

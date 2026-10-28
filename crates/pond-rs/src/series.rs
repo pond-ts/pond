@@ -60,6 +60,26 @@ pub struct ColumnDef {
     pub required: bool,
 }
 
+impl ColumnDef {
+    /// A column that may not have gaps (pond-ts's default).
+    pub fn required(name: impl Into<String>, kind: ColumnKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            required: true,
+        }
+    }
+
+    /// A column that may have gaps (pond-ts `required: false`).
+    pub fn optional(name: impl Into<String>, kind: ColumnKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            required: false,
+        }
+    }
+}
+
 /// Time-range keys (pond-ts `timeRange`): row `i` spans `begin[i]` to
 /// `end[i]`, epoch milliseconds.
 #[derive(Debug, Clone, PartialEq, Eq)]

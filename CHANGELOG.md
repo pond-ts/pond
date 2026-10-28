@@ -80,6 +80,104 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
+  on by default). `LiveSeries` takes events one at a time or in batches
+  (`push` / `push_many` / `push_json`), with pond-ts's ordering modes
+  (strict, drop, reorder with a grace window), retention by count or age,
+  key lookups, stats, `to_json` / `from_json` and batch snapshots. `filter`
+  and fixed-bucket `aggregate` build nodes on it, reached through copyable
+  `Node` handles; `watch` picks which outputs a push returns, and `remove`
+  drops a node. Results match pond-ts event for event on 31 of the 51 live
+  replay cases (the rest need later steps).
+- **pond-rs: live views** (R3 step 3). `map`, `select`, `sample` (by stride),
+  `window` (by time or rows), `diff` / `rate` / `pct_change`, `fill` and
+  `cumulative` on a `LiveSeries` or on another view, plus `count` /
+  `event_rate` on a view. Results match pond-ts event for event on 39 of
+  the 52 live replay cases. Where pond-ts takes a bad argument silently
+  (an unknown column, `diff` on a text column, a fill value of the wrong
+  kind), pond-rs refuses it when the view is built.
+- **pond-rs: live rolling windows and reduce** (R3 step 4). `rolling`
+  (over a duration), `rolling_rows` (over a count of events) and
+  `rolling_windows` (several windows sharing one buffer) keep reducers over
+  a trailing window and emit per event or on a `Trigger` (every n events,
+  or when a clock bucket ends), keeping what they emit up to a `History`
+  limit. `reduce` keeps reducers over everything its source holds now and
+  emits once per push. Every built-in pond-ts reducer works in both, including
+  huge values summed exactly. Results match pond-ts event for event on 52 of the
+  57 live replay cases (the 5 left are partitioned, a later step). Reading
+  `value()` changes nothing in pond-rs, where in pond-ts it can move the
+  last bit of a later `stdev`; a clock trigger on interval-keyed events is
+  refused (pond-ts emits time keys under the interval schema); a reduce
+  built over existing events emits for them during the build, where
+  pond-ts waits for a microtask.
+- **Live `aggregate` takes calendar sequences.**
+  `live.aggregate(Sequence.calendar('day', { timeZone }), mapping)` buckets
+  events by day, week, month, quarter or year in that time zone, so a day
+  across a clock change is 23 or 25 hours. It used to throw ("calendar
+  sequences do not have a fixed millisecond step size"). Clock triggers
+  still take fixed sequences only.
+- **pond-rs: calendar buckets and `aggregate_with` for live aggregation**
+  (R3 step 5). `LiveSeries::aggregate` takes `Sequence::calendar`, as
+  pond-ts now does; while one exists the series refuses times outside
+  years -9997 to 9997 (UTC). `aggregate_with` gives an aggregation its own
+  grace, as the pond-ts constructor's `{ grace }` option. Results match
+  pond-ts on 55 of the 60 live replay cases.
+
+### Changed
+
+- **pond-rs: live series and views store events by column**, not as one
+  shared object per event: 5 to 7 times less memory for number columns,
+  about 5 times with a text column (1M events with three number columns:
+  249 MB before, 34 MB now). A view now holds its own copy of the events it
+  keeps instead of sharing the series' events. Reads (`at`, `first`,
+  `last`, `events`, `at_or_before`, `at_or_after`, `find`) now return a
+  `LiveEvent` built from the stored cells instead of a reference.
+- **Live views take a late event instead of throwing** ([PND-LATE]). On an
+  `ordering: 'reorder'` series, a late event the series accepted made every
+  `LiveView` on it throw ("processed event has key … older than the previous
+  tail"), after the series had already stored it, so the series and its
+  views disagreed. A view now stores the event at its key position (after
+  any events with the same key), as the series does. Views that carry state
+  (`diff`, `rate`, `pctChange`, `fill`, `cumulative`, `sample`) still work
+  in arrival order: a late event is compared with the event that arrived
+  before it, not the one before it in time. The same applies to a `map`
+  whose new keys go backwards, which used to throw too.
+
+### Fixed
+
+- **`live.reduce` no longer slows down a loop of pushes** ([PND-REDUCEMICRO]).
+  Each push queued one more microtask when pushes ran in a loop without
+  awaiting, and each held the reduce and everything it had emitted until
+  the loop ended. Now a loop queues one. 1M pushes into a series keeping
+  10k events, with a reduce: 5.2-9.7 s (slower on each repeat) to 4.3-4.5 s.
+- **Live views and `drop` / `reorder` series with retention evict much
+  faster on buffers up to ~16k events** ([PND-EVICTSPLICE]). Dropping the
+  oldest event copied the whole buffer on every push (~20 µs at 10k
+  events); it now moves the array's start in place. Larger buffers still
+  copy on eviction ([PND-EVICTDEQUE]). With
+  `maxEvents: 10_000`, 100k pushes into a `reorder` series went from 2.4 s
+  to 31 ms, and into a series with three `diff`-style views from 5.7 s to
+  0.25 s.
+- **Live `fill('zero')` no longer writes `0` into text and true/false
+  columns.** `zero` now fills number columns only and skips the others
+  (both `fill('zero')` and `fill({ col: 'zero' })`), as batch `fill` does.
+- **`LiveSeries.push` one event at a time no longer slows down as the series
+  grows** ([PND-LIVEPUSHSCAN]). On a `strict` time-keyed series each push
+  looked up the newest row by walking every stored push from the oldest, so
+  100k pushes took 18.6 s; they now take 0.2 s.
+
+- **`LiveSeries.push` / `pushMany` refuse a batch with a bad row whole, in
+  every ordering mode** ([PND-BATCHATOM]). Under `ordering: 'drop'` or
+  `'reorder'`, and for interval / time-range keys under `'strict'`, a bad
+  cell, a wrong row width or a row the ordering refuses used to throw only
+  after the rows before it were committed and their `'event'`s had fired,
+  skipping retention, `'batch'` and `'evict'` (a `maxEvents: 2` series could
+  hold 4 rows). The whole batch is now checked first, as it already was for
+  time-keyed `'strict'` series, so a throw leaves the series and its
+  listeners untouched. Batches with no bad row behave as before.
+
+### Added
+
 - **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
   annotation draws at 0.4 alpha, which was too loud for a focus tint behind
   data and too quiet for a mark that carries the chart's point, so consumers

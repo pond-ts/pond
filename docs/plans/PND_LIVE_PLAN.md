@@ -78,14 +78,90 @@ stateful transform — overlaps with streaming Milestone A
 ([PND-CHANGE](PND_STREAMING_PLAN.md)). Archive has the full scope note and
 test matrix.
 
-Worse than "does not re-flow" for plain views (found 2026-10-27 writing the
-pond-rs live fixture, case `partition-apply-and-retention`): on an
-`ordering: 'reorder'` source, a late event the source accepts makes every
-`LiveView` built on it (even `filter(() => true)`) throw "processed event has
-key … older than the previous tail", so `push` throws after the source has
-already stored the event; the source then holds it and the views do not.
-Reproduced: `reorder` series, `fill('hold')` / `filter` / `diff` views, push
-5000 then 2600 → push throws, source length 2, each view length 1.
+Plain views used to be worse than "does not re-flow" (found 2026-10-27
+writing the pond-rs live fixture, case `partition-apply-and-retention`): on
+an `ordering: 'reorder'` source, a late event the source accepted made every
+`LiveView` built on it (even `filter(() => true)`) throw "processed event
+has key … older than the previous tail", so `push` threw after the source
+had already stored the event, and the source held it while the views did
+not. **Fixed 2026-10-28** with pond-rs R3 step 3 (pjm17971 chose insert in
+order over stateful views skipping it or refusing the push):
+`#appendChecked` inserts an out-of-order event at its key position, after
+equal keys, instead of throwing. Stateful views (`diff`, `rate`,
+`pctChange`, `fill`, `cumulative`, `sample`) still work in arrival order,
+so their value for a late event (and for the event after it) is computed
+against the previous arrival, not the previous time; order-free folds
+(cumulative sum / count / max / min) end up right. A re-keying `map` whose
+output goes backwards, which threw since PR #125 to protect the
+binary-search queries, now inserts in order too, which also keeps those
+queries right. Fixture case `views-reorder-late` pins it for both
+libraries. Still open under [PND-LATE]: recomputing the rows after a late
+event in stateful views and in rolling windows.
+
+### [PND-REDUCEMICRO] — done 2026-10-28
+
+Found timing pond-rs R3 step 4 against pond-ts: `live.reduce` on a
+`maxEvents: 10_000` series, 1M pushes in a plain loop, took 12.6 s, and
+each repeat in the same process got slower (5.2, 5.7, 9.7, 9.0 s), with
+~455 MB more held after every run. The [PND-REDUCETICK] fix flushed the
+emission from the end-of-push hook, and that flush cleared the "backstop
+microtask queued" flag, so the next push queued another one: a loop that
+never yields queued one microtask per push, each holding the reduce (and
+its emitted events) until the loop ended. Fix: only the microtask clears
+the flag, so a loop queues one. Outputs unchanged (the backstop finds
+nothing pending after a settle flush; fixture unchanged). 1M pushes, four
+runs in one process: 5.2 / 5.7 / 9.7 / 9.0 s -> 4.4 / 4.3 / 4.5 / 4.3 s;
+the bench case 12.6 -> 6.4 s (its seven runs never yield, so each run's
+reduce is still held by its one queued microtask until the end). Test:
+`test/live/reducetick.test.ts` counts `queueMicrotask` calls.
+
+### [PND-EVICTSPLICE] — done 2026-10-28
+
+Found timing pond-rs R3 step 3 against pond-ts: views on a
+`maxEvents: 10_000` series took ~38 µs a push each (three `diff`-style views
+on 1M pushes: 115 s). Every per-event buffer dropped its oldest events with
+`splice(0, n)`, and V8 copies the whole remaining array for that (~20 µs at
+10k events), where `shift()` moves the array's start in place. Same cost in
+the row backing of `drop` / `reorder` roots with retention and in rolling
+history. Fix: `removeFront` / `dropFront` (`src/live/array-front.ts`) shift
+when under a quarter of the buffer goes and the buffer is at most 16k items,
+else splice (one item: shift). The first version shifted at any size; the
+Layer 2 review on #840 found that past ~16k items (V8's large-object space)
+each `shift()` copies the whole array, so a 20k burst from a 1M buffer took
+33 s against 14 ms for one splice. Large buffers still copy on every
+eviction either way: [PND-EVICTDEQUE]. 100k pushes,
+`maxEvents` 10k: reorder root 2.36 s -> 31 ms, root + filter view 2.26 s ->
+164 ms, root + 3 diff views 5.66 s -> 247 ms; strict root alone and no
+retention unchanged (`scripts/perf-live-evict.mjs`). Not changed: the
+rolling buffers' `splice(0, frontIdx)` (already amortized by a front index)
+and the chunked store's small `#pending` array.
+
+### [PND-BATCHATOM] — done 2026-10-27
+
+Found by the pond-rs live fixture (R3 step 1, cases `series-drop-late` /
+`series-reorder`): on the per-row backing (`drop`, `reorder`, and non-time
+keys under `strict`) `pushMany` validated and inserted row by row, so a bad
+row threw after the earlier rows were committed and their `'event'`s fired,
+and retention / `'batch'` / `'evict'` never ran for them (`maxEvents: 2`
+held 4 rows). pjm17971 chose to fix pond-ts rather than have pond-rs copy
+it. Fix: validate every row, then dry-run the ordering policy over the
+batch (`#checkOrder`, tracking the latest key as the inserts would), then
+commit. Error messages are unchanged; batches with no bad row behave as
+before; 200k rows in 1k batches measured the same before and after (within
+run-to-run noise, ~66-80 ms). `_pushTrustedEvents` gets the same order
+check.
+
+### [PND-LIVEPUSHSCAN] — done 2026-10-27
+
+Found timing pond-rs R3 step 2 against pond-ts: one-at-a-time `push` on a
+`strict` time-keyed series got slower as the series grew (10k pushes 0.15 s,
+50k 5.1 s, 100k 18.6 s; 1M would take most of an hour). Each `push` adds a
+one-row chunk to the chunked backing, and the order check reads the last
+row through `#locate`, which walked every chunk from the front. Fix:
+`#locate` walks from the nearer end, so the newest rows are found at once
+(10k 0.07 s, 50k 0.18 s, 100k 0.21 s). Not changed: one chunk per `push`
+still costs an object per row; coalescing small pushes into the pending tier
+(as partition routing does) would cut that, not measured.
 
 ### [PND-LJOIN] — Live merge / join
 

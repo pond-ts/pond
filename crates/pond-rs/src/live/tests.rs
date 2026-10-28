@@ -1,0 +1,720 @@
+//! What the replay fixture (`tests/live_parity.rs`) does not reach: the
+//! lookups, JSON, handles and the errors.
+
+use super::*;
+use crate::{Fill, FirstRow, Reducer, Sample};
+
+fn schema() -> Vec<ColumnDef> {
+    vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("host", ColumnKind::String),
+        ColumnDef::optional("cpu", ColumnKind::Number),
+    ]
+}
+
+fn row(host: &str, cpu: f64) -> Vec<Option<Value>> {
+    vec![Some(host.into()), Some(cpu.into())]
+}
+
+fn series(options: LiveOptions) -> LiveSeries {
+    LiveSeries::with_options("cpu", schema(), options).unwrap()
+}
+
+fn begins(events: impl Iterator<Item = LiveEvent>) -> Vec<i64> {
+    events.map(|e| e.begin()).collect()
+}
+
+#[test]
+fn handles_are_copy_and_send() {
+    fn send<T: Send>() {}
+    fn sync<T: Sync>() {}
+    send::<LiveSeries>();
+    send::<Node<LiveView>>();
+    sync::<Node<LiveAggregation>>();
+    send::<Output>();
+}
+
+#[test]
+fn lookups_on_the_root_and_a_view() {
+    let mut live = series(LiveOptions::new());
+    for (t, cpu) in [(0, 1.0), (1000, 5.0), (1000, 6.0), (4000, 2.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    assert_eq!(live.len(), 4);
+    assert_eq!(live.at(-1).map(|e| e.begin()), Some(4000));
+    assert_eq!(live.at(4), None);
+    assert_eq!(live.at(-5), None);
+    assert_eq!(live.bisect(1000), 1);
+    assert_eq!(live.bisect(1001), 3);
+    assert!(live.includes_key(1000));
+    assert!(!live.includes_key(2000));
+    assert_eq!(live.at_or_before(2000).map(|e| e.begin()), Some(1000));
+    assert_eq!(
+        live.at_or_before(1000).unwrap().number("cpu").unwrap(),
+        Some(5.0)
+    );
+    assert_eq!(live.at_or_before(-1), None);
+    assert_eq!(live.at_or_after(2000).map(|e| e.begin()), Some(4000));
+    assert_eq!(live.at_or_after(4001), None);
+    let busy = |e: &LiveEvent| e.number("cpu").ok().flatten() > Some(4.0);
+    assert_eq!(live.find(busy).map(|e| e.begin()), Some(1000));
+    assert!(live.some(busy));
+    assert!(!live.every(busy));
+    assert_eq!(live.time_range(), 4000);
+    assert_eq!(live.event_rate(), 1.0);
+
+    let v = live.filter(live.root(), busy).unwrap();
+    let view = &live[v];
+    assert_eq!(begins(view.events()), [1000, 1000]);
+    assert_eq!(view.at(-1).unwrap().number("cpu").unwrap(), Some(6.0));
+    assert!(view.includes_key(1000));
+    assert_eq!(view.at_or_after(0).map(|e| e.begin()), Some(1000));
+    assert!(view.every(busy));
+    assert_eq!(view.to_time_series().unwrap().len(), 2);
+
+    let one = series(LiveOptions::new());
+    assert_eq!((one.time_range(), one.event_rate()), (0, 0.0));
+    assert!(one.every(|_| false));
+}
+
+#[test]
+fn event_values_by_name_and_kind() {
+    let mut live = series(LiveOptions::new());
+    live.push(0, [Some("a".into()), None]).unwrap();
+    let e = live.first().unwrap();
+    assert_eq!(e.string("host").unwrap(), Some("a"));
+    assert_eq!(e.number("cpu").unwrap(), None);
+    assert!(e.number("host").is_err()); // a text column
+    assert!(e.value("nope").is_err());
+    assert_eq!(e.values().len(), 2);
+    assert_eq!(e.schema()[0].name, "time");
+}
+
+#[test]
+fn a_bad_row_refuses_the_whole_batch_in_every_mode() {
+    for mode in [
+        OrderingMode::Strict,
+        OrderingMode::Drop,
+        OrderingMode::Reorder,
+    ] {
+        let mut live = series(LiveOptions::new().ordering(mode).max_events(2));
+        live.watch(live.root(), OutputKind::Event).unwrap();
+        live.push(0, row("a", 1.0)).unwrap();
+        let bad = live.push_many([
+            (1000, row("a", 2.0)),
+            (2000, vec![Some("a".into()), Some(f64::NAN.into())]),
+        ]);
+        assert!(bad.is_err(), "{mode:?}");
+        assert_eq!(live.len(), 1, "{mode:?}");
+        assert_eq!(live.stats().ingested, 1, "{mode:?}");
+    }
+}
+
+#[test]
+fn rows_are_checked() {
+    let mut live = series(LiveOptions::new());
+    assert!(live.push(0, [Some("a".into())]).is_err()); // one value short
+    assert!(live.push(0, [Some(1.0.into()), None]).is_err()); // number for text
+    assert!(
+        live.push(EventKey::time_range(0, 5).unwrap(), row("a", 1.0))
+            .is_err()
+    );
+    assert!(live.push(MAX_TIME_MS + 1, row("a", 1.0)).is_err());
+    let mut req = LiveSeries::new(
+        "r",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    assert!(req.push(0, [None]).is_err());
+    assert!(req.push(0, [Some(Value::Number(f64::INFINITY))]).is_err());
+    assert!(req.push(0, [Some(1.0.into())]).is_ok());
+    assert!(!req.is_empty());
+}
+
+#[test]
+fn interval_labels_keep_one_kind() {
+    let mut live = LiveSeries::new(
+        "i",
+        vec![
+            ColumnDef::required("interval", ColumnKind::Interval),
+            ColumnDef::optional("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    live.push(EventKey::interval("a", 0, 10).unwrap(), [None])
+        .unwrap();
+    assert!(
+        live.push(EventKey::interval(1.0, 10, 20).unwrap(), [None])
+            .is_err()
+    );
+    live.push(EventKey::interval("b", 10, 20).unwrap(), [None])
+        .unwrap();
+    let ts = live.to_time_series().unwrap();
+    assert_eq!(ts.len(), 2);
+}
+
+#[test]
+fn schemas_and_options_are_checked() {
+    let decimal = vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("d", ColumnKind::Decimal),
+    ];
+    assert!(LiveSeries::new("x", decimal).is_err());
+    assert!(LiveSeries::new("x", vec![ColumnDef::required("v", ColumnKind::Number)]).is_err());
+    assert!(LiveSeries::new("x", vec![]).is_err());
+    let twice = vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("v", ColumnKind::Number),
+        ColumnDef::optional("v", ColumnKind::Number),
+    ];
+    assert!(LiveSeries::new("x", twice).is_err());
+    let opts = |o: LiveOptions| LiveSeries::with_options("x", schema(), o).is_ok();
+    assert!(!opts(LiveOptions::new().grace_window("1s")));
+    assert!(!opts(
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("1x")
+    ));
+    assert!(!opts(
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("10s")
+            .max_age("5s")
+    ));
+    assert!(opts(
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("5s")
+            .max_age("5s")
+    ));
+}
+
+#[test]
+fn handles_belong_to_one_owner() {
+    let mut live = series(LiveOptions::new());
+    let mut other = series(LiveOptions::new());
+    let f = live.filter(live.root(), |_| true).unwrap();
+    let g = other.filter(other.root(), |_| true).unwrap();
+    assert!(live.get(g).is_err());
+    assert!(live.filter(other.root(), |_| true).is_err());
+    assert!(live.watch(f, OutputKind::Batch).is_err()); // views have no batch
+    assert!(live.watch(f, OutputKind::Event).is_ok());
+    assert!(live.watch(f, OutputKind::Event).is_ok()); // twice is once
+    let out = live.push(0, row("a", 1.0)).unwrap();
+    assert_eq!(out.len(), 1);
+    live.unwatch(f, OutputKind::Event).unwrap();
+    assert!(live.push(1, row("a", 1.0)).unwrap().is_empty());
+    assert!(live.remove(live.root()).is_err());
+    live.remove(f).unwrap();
+    assert!(live.get(f).is_err());
+    assert!(live.remove(f).is_err());
+    assert!(live.filter(f, |_| true).is_err());
+}
+
+#[test]
+#[should_panic(expected = "removed")]
+fn indexing_a_removed_node_panics() {
+    let mut live = series(LiveOptions::new());
+    let f = live.filter(live.root(), |_| true).unwrap();
+    live.remove(f).unwrap();
+    let _ = &live[f];
+}
+
+#[test]
+fn removing_a_node_freezes_what_was_built_on_it() {
+    let mut live = series(LiveOptions::new());
+    let f = live.filter(live.root(), |_| true).unwrap();
+    let g = live.filter(f, |_| true).unwrap();
+    live.watch(g, OutputKind::Event).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.remove(f).unwrap();
+    assert!(live.push(1, row("a", 1.0)).unwrap().is_empty());
+    assert_eq!(live[g].len(), 1); // frozen, still readable
+    live.remove(g).unwrap(); // its source is already gone
+}
+
+#[test]
+fn a_late_event_reaches_views_in_key_order() {
+    // Both libraries store it at its key position ([PND-LATE]).
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let f = live.filter(live.root(), |_| true).unwrap();
+    live.watch(f, OutputKind::Event).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.push(2000, row("a", 2.0)).unwrap();
+    let out = live.push(1000, row("a", 3.0)).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(begins(live[f].events()), [0, 1000, 2000]);
+    assert_eq!(begins(live.events()), [0, 1000, 2000]);
+}
+
+#[test]
+fn clear_empties_views_but_not_buckets() {
+    let mut live = series(LiveOptions::new());
+    let f = live.filter(live.root(), |_| true).unwrap();
+    let a = live
+        .aggregate(
+            live.root(),
+            &Sequence::every("1s").unwrap(),
+            &[Agg::of("cpu", Reducer::Sum)],
+        )
+        .unwrap();
+    for t in [0, 500, 1500] {
+        live.push(t, row("a", 1.0)).unwrap();
+    }
+    live.watch(f, OutputKind::Evict).unwrap();
+    let out = live.clear();
+    assert!(matches!(&out[..], [Output::Evict { events, .. }] if events.len() == 3));
+    assert!(live.is_empty() && live[f].is_empty());
+    assert_eq!(live[a].len(), 1);
+    assert!(live[a].has_open_bucket());
+    assert_eq!(live.stats().evicted, 3);
+    assert!(live.clear().is_empty());
+    let stats = live[a].stats();
+    assert_eq!((stats.events_observed, stats.buckets_closed), (3, 1));
+    assert_eq!(stats.open_bucket_start, Some(1000));
+}
+
+#[test]
+fn aggregate_mappings_are_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let every = Sequence::every("1s").unwrap();
+    assert!(
+        live.aggregate(root, &every, &[Agg::of("nope", Reducer::Sum)])
+            .is_err()
+    );
+    assert!(
+        live.aggregate(root, &every, &[Agg::of("host", Reducer::Avg)])
+            .is_err()
+    );
+    let dup = [
+        Agg::of("cpu", Reducer::Sum),
+        Agg::new("cpu", "cpu", Reducer::Max),
+    ];
+    assert!(live.aggregate(root, &every, &dup).is_err());
+    assert!(
+        live.aggregate(root, &every, &[Agg::of("cpu", Reducer::Percentile(101.0))])
+            .is_err()
+    );
+    let a = live
+        .aggregate(
+            root,
+            &every.with_anchor(250),
+            &[Agg::of("host", Reducer::Last)],
+        )
+        .unwrap();
+    assert_eq!(live[a].schema()[1].kind, ColumnKind::String);
+    live.push(0, row("a", 1.0)).unwrap();
+    live.push(300, row("b", 1.0)).unwrap();
+    let closed = live[a].closed().unwrap();
+    assert_eq!(closed.key().begin(), [-750]); // anchored at 250
+    assert_eq!(live[a].snapshot().unwrap().len(), 2);
+}
+
+#[test]
+fn extreme_anchors_are_refused_or_handled() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::new("cpu", "cpu", Reducer::Sum)];
+    // Bucket edges that do not fit an i64 are refused up front.
+    let far = Sequence::every("1s").unwrap().with_anchor(i64::MIN);
+    assert!(live.aggregate(root, &far, &sum).is_ok());
+    // The earliest supported time would fall in a bucket starting one
+    // i64::MAX step before the anchor, below i64::MIN.
+    let huge = Sequence::every_ms(i64::MAX)
+        .unwrap()
+        .with_anchor(-MAX_TIME_MS + 1);
+    assert!(live.aggregate(root, &huge, &sum).is_err());
+    // An extreme but representable anchor puts events in the right bucket.
+    let a = live.aggregate(root, &far, &sum).unwrap();
+    live.push(1_500, row("a", 2.0)).unwrap();
+    live.push(2_300, row("a", 3.0)).unwrap();
+    // i64::MIN ends in ...808, so bucket edges sit 192 ms past each second.
+    assert_eq!(live[a].len(), 1);
+    assert_eq!(live[a].at(0).unwrap().begin(), 1_192);
+}
+
+#[test]
+fn json_in_and_out() {
+    let mut live = series(LiveOptions::new());
+    live.watch(live.root(), OutputKind::Batch).unwrap();
+    let out = live
+        .push_json(
+            r#"[[0, "a", 1], {"time": "1970-01-01T00:00:01Z", "cpu": 2}, [2000, null, null]]"#,
+        )
+        .unwrap();
+    assert!(matches!(&out[..], [Output::Batch { events, .. }] if events.len() == 3));
+    assert_eq!(live.at(1).unwrap().string("host").unwrap(), None);
+    assert!(live.push_json(r#"[[3000, 5, 1]]"#).is_err());
+    assert!(live.push_json(r#"{"rows": []}"#).is_err());
+    assert!(live.push_json("not json").is_err());
+    assert_eq!(live.len(), 3);
+    let text = live.to_json(RowFormat::Array).unwrap();
+    let back = LiveSeries::from_json(&text, LiveOptions::new().max_events(2)).unwrap();
+    assert_eq!(back.name(), "cpu");
+    assert_eq!(back.schema(), live.schema());
+    assert_eq!(begins(back.events()), [1000, 2000]);
+    assert!(back.to_json(RowFormat::Array).unwrap().len() < text.len());
+}
+
+#[test]
+fn view_arguments_are_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let err = |r: Result<Node<LiveView>>| r.unwrap_err().to_string();
+    // Unknown, repeated and wrong-kind columns.
+    assert!(err(live.diff(root, &["nope"])).contains("nope"));
+    assert!(err(live.diff(root, &["cpu", "cpu"])).contains("twice"));
+    assert!(err(live.rate(root, &["host"])).contains("host"));
+    assert!(err(live.pct_change(root, &[])).contains("at least one"));
+    assert!(err(live.cumulative(root, &[("host", Reducer::Sum)])).contains("host"));
+    assert!(err(live.cumulative(root, &[("cpu", Reducer::Avg)])).contains("sum, max, min"));
+    assert!(err(live.cumulative_with(root, "nope", |a, b| a + b)).contains("nope"));
+    assert!(err(live.select(root, &["nope"])).contains("nope"));
+    // Fills a live view cannot do, or of the wrong kind.
+    assert!(err(live.fill(root, &[("cpu", Fill::Linear)])).contains("later events"));
+    assert!(err(live.fill_all(root, Fill::Bfill)).contains("later events"));
+    assert!(err(live.fill(root, &[("host", Fill::Zero)])).contains("host"));
+    assert!(err(live.fill(root, &[("cpu", Fill::Value("x".into()))])).contains("cpu"));
+    assert!(err(live.fill(root, &[("cpu", Fill::Value(f64::NAN.into()))])).contains("cpu"));
+    assert!(err(live.fill_all(root, Fill::Value(1.0.into()))).contains("per column"));
+    // Samples and windows.
+    assert!(err(live.sample(root, Sample::Stride(0))).contains("at least 1"));
+    let reservoir = Sample::Reservoir { size: 2, seed: 1 };
+    assert!(err(live.sample(root, reservoir)).contains("Stride"));
+    assert!(err(live.window_rows(root, 0)).contains("at least 1"));
+    assert!(live.window(root, "soon").is_err());
+}
+
+#[test]
+fn deltas_and_running_values() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let d = live.diff(root, &["cpu"]).unwrap();
+    let r = live.rate(root, &["cpu"]).unwrap();
+    let p = live
+        .pct_change_with(root, &["cpu"], FirstRow::Drop)
+        .unwrap();
+    let c = live.cumulative(root, &[("cpu", Reducer::Max)]).unwrap();
+    let mul = live.cumulative_with(root, "cpu", |a, v| a * v).unwrap();
+    live.push(0, row("a", 0.0)).unwrap();
+    live.push(0, row("a", 2.0)).unwrap(); // same time: rate gap
+    live.push(500, vec![Some("a".into()), None]).unwrap();
+    live.push(1000, row("a", 5.0)).unwrap();
+    let cpu = |n: Node<LiveView>, live: &LiveSeries| -> Vec<Option<f64>> {
+        live[n].events().map(|e| e.number("cpu").unwrap()).collect()
+    };
+    assert_eq!(cpu(d, &live), [None, Some(2.0), None, None]);
+    assert_eq!(cpu(r, &live), [None, None, None, None]);
+    // The first row is dropped; 0 before gives a gap.
+    assert_eq!(cpu(p, &live), [None, None, None]);
+    assert_eq!(cpu(c, &live), [Some(0.0), Some(2.0), Some(2.0), Some(5.0)]);
+    assert_eq!(
+        cpu(mul, &live),
+        [Some(0.0), Some(0.0), Some(0.0), Some(0.0)]
+    );
+    // The changed columns become optional numbers.
+    assert!(!live[d].schema()[2].required);
+}
+
+#[test]
+fn fills_and_maps() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let zero = live.fill_all(root, Fill::Zero).unwrap();
+    let held = live.fill_all_with(root, Fill::Hold, 1).unwrap();
+    let text = live
+        .fill(root, &[("host", Fill::Value("?".into()))])
+        .unwrap();
+    let m = live
+        .map(root, |e| {
+            let cpu = e.number("cpu").unwrap().map(|v| (v / 0.0).into());
+            vec![e.value("host").unwrap().cloned(), cpu]
+        })
+        .unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.push(1000, vec![None, None]).unwrap();
+    live.push(2000, vec![None, None]).unwrap();
+    let col = |n: Node<LiveView>, name: &str, live: &LiveSeries| -> Vec<Option<Value>> {
+        live[n]
+            .events()
+            .map(|e| e.value(name).unwrap().cloned())
+            .collect()
+    };
+    // Zero skips the text column.
+    assert_eq!(
+        col(zero, "cpu", &live),
+        [Some(1.0.into()), Some(0.0.into()), Some(0.0.into())]
+    );
+    assert_eq!(col(zero, "host", &live), [Some("a".into()), None, None]);
+    // A limit of 1 fills the first gap of a run, not the second.
+    assert_eq!(
+        col(held, "cpu", &live),
+        [Some(1.0.into()), Some(1.0.into()), None]
+    );
+    assert_eq!(col(text, "host", &live)[2], Some("?".into()));
+    // map stores an infinite number as a gap.
+    assert_eq!(col(m, "cpu", &live), [None, None, None]);
+}
+
+#[test]
+#[should_panic(expected = "one cell per value column")]
+fn a_map_returning_the_wrong_width_panics() {
+    let mut live = series(LiveOptions::new());
+    live.map(live.root(), |_| vec![None]).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+}
+
+#[test]
+fn windows_and_rates() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let w = live.window(root, "2s").unwrap();
+    let rows = live.window_rows(root, 2).unwrap();
+    let f = live.filter(w, |_| true).unwrap();
+    let s = live.select(w, &["cpu"]).unwrap();
+    let t = live.sample(root, Sample::Stride(2)).unwrap();
+    for t in [0, 1000, 2500, 3000] {
+        live.push(t, row("a", 1.0)).unwrap();
+    }
+    assert_eq!(begins(live[w].events()), [1000, 2500, 3000]);
+    assert_eq!(begins(live[rows].events()), [2500, 3000]);
+    assert_eq!(begins(live[t].events()), [1000, 3000]);
+    // 3 events over a 2 s window.
+    assert_eq!(live[w].event_rate().unwrap(), 1.5);
+    assert_eq!(live[w].count(), 3);
+    // filter and select on a time window keep its span (not its trimming).
+    assert_eq!(live[f].event_rate().unwrap(), 4.0 / 2.0);
+    assert_eq!(live[s].schema().len(), 2);
+    assert!(live[rows].event_rate().is_err());
+}
+
+/// Column storage with everything that moves cells around at once: interval
+/// keys with text labels, late events inserted mid-buffer, retention, and a
+/// two-level view chain mirroring the evictions.
+#[test]
+fn column_store_keeps_late_interval_events_aligned_through_evictions() {
+    let mut live = LiveSeries::with_options(
+        "s",
+        vec![
+            ColumnDef::required("interval", ColumnKind::Interval),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .max_events(4),
+    )
+    .unwrap();
+    let all = live.filter(live.root(), |_| true).unwrap();
+    let up = live
+        .filter(all, |e| e.number("cpu").ok().flatten() > Some(0.0))
+        .unwrap();
+    live.watch(up, OutputKind::Evict).unwrap();
+    let key = |l: &str, b: i64| EventKey::interval(l, b, b + 10).unwrap();
+    let push = |live: &mut LiveSeries, l: &str, b: i64, cpu: Option<f64>| {
+        live.push(key(l, b), [cpu.map(Value::Number)]).unwrap()
+    };
+    push(&mut live, "a", 0, Some(1.0));
+    push(&mut live, "b", 20, Some(-0.0));
+    push(&mut live, "c", 40, Some(2.0));
+    push(&mut live, "d", 10, Some(3.0)); // late: a, d, b, c
+    let labels = |events: Vec<LiveEvent>| -> Vec<String> {
+        events
+            .iter()
+            .map(|e| match e.key().label() {
+                Some(Label::String(s)) => s.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(labels(live.events().collect()), ["a", "d", "b", "c"]);
+    // A fifth event evicts `a`; the chain drops it and says so.
+    let out = push(&mut live, "e", 60, None);
+    let evicted: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Output::Evict { events, .. } => Some(labels(events.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(evicted, [vec!["a".to_string()]]);
+    // Late again, between `d` and `b`; the root then evicts `d`.
+    let out = push(&mut live, "f", 15, Some(5.0));
+    let evicted: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Output::Evict { events, .. } => Some(labels(events.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(evicted, [vec!["d".to_string()]]);
+    assert_eq!(labels(live.events().collect()), ["f", "b", "c", "e"]);
+    assert_eq!(labels(live[all].events().collect()), ["f", "b", "c", "e"]);
+    assert_eq!(labels(live[up].events().collect()), ["f", "c"]);
+    // Cells stayed with their keys: a gap and a -0 included.
+    let ts = live.to_time_series().unwrap();
+    let cpu = ts.column("cpu").unwrap().numbers().unwrap();
+    let got: Vec<Option<f64>> = (0..4).map(|i| cpu.get(i)).collect();
+    assert_eq!(got, [Some(5.0), Some(0.0), Some(2.0), None]);
+    assert!(cpu.get(1).unwrap().is_sign_negative());
+    assert_eq!(ts.key().begin(), &[15, 20, 40, 60]);
+    let at = live.at_or_before(key("c", 40)).unwrap();
+    assert_eq!(at.number("cpu").unwrap(), Some(2.0));
+    assert!(live.includes_key(key("b", 20)));
+    assert!(!live.includes_key(key("a", 0)));
+}
+
+#[test]
+fn rolling_and_reduce_arguments_are_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let day = Sequence::calendar("day", "UTC").unwrap();
+    assert!(Trigger::count(0).is_err());
+    assert!(Trigger::every("soon").is_err());
+    assert!(Trigger::clock(&day).is_err()); // calendar steps vary in length
+    assert!(live.rolling(root, "soon", &sum).is_err());
+    assert!(
+        live.rolling(root, "5s", &[Agg::of("nope", Reducer::Sum)])
+            .is_err()
+    );
+    assert!(
+        live.rolling(root, "5s", &[Agg::of("host", Reducer::Avg)])
+            .is_err()
+    );
+    let opts = RollingOptions::default();
+    assert!(live.rolling_rows(root, 0, &sum, &opts).is_err());
+    assert!(live.rolling_windows(root, &[], &opts).is_err());
+    let dup = [
+        RollingWindow::new("1s", &sum),
+        RollingWindow::new("2s", &[Agg::of("cpu", Reducer::Max)]),
+    ];
+    assert!(live.rolling_windows(root, &dup, &opts).is_err());
+    let none = History::Limit {
+        max_events: Some(0),
+        max_age: None,
+    };
+    assert!(
+        live.rolling_with(root, "5s", &sum, &opts.clone().history(none))
+            .is_err()
+    );
+    let bad_age = History::Limit {
+        max_events: None,
+        max_age: Some("soon".into()),
+    };
+    assert!(
+        live.rolling_with(root, "5s", &sum, &opts.clone().history(bad_age))
+            .is_err()
+    );
+    assert!(live.reduce(root, &[Agg::of("nope", Reducer::Sum)]).is_err());
+
+    // A clock trigger keys its emissions by bucket start, a time: refused
+    // on a source keyed by interval (pond-ts emits time keys under the
+    // interval schema).
+    let mut intervals = LiveSeries::new(
+        "i",
+        vec![
+            ColumnDef::required("interval", ColumnKind::Interval),
+            ColumnDef::optional("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let iroot = intervals.root();
+    let v = [Agg::of("v", Reducer::Sum)];
+    let clock = Trigger::every("1s").unwrap();
+    assert!(intervals.reduce_with(iroot, &v, clock).is_err());
+    let clocked = RollingOptions::default().trigger(clock);
+    assert!(intervals.rolling_with(iroot, "5s", &v, &clocked).is_err());
+    assert!(
+        intervals
+            .reduce_with(iroot, &v, Trigger::count(2).unwrap())
+            .is_ok()
+    );
+}
+
+#[test]
+fn rolling_and_reduce_take_the_sources_pond_ts_allows() {
+    // pond-ts: `rolling` on a series, view or aggregation; `reduce` on a
+    // series or view; nothing on a reduce or fused rolling windows.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let opts = RollingOptions::default();
+    let view = live.filter(root, |_| true).unwrap();
+    let agg = live
+        .aggregate(root, &Sequence::every("1s").unwrap(), &sum)
+        .unwrap();
+    let roll = live.rolling(root, "5s", &sum).unwrap();
+    let fused = live
+        .rolling_windows(root, &[RollingWindow::new("5s", &sum)], &opts)
+        .unwrap();
+    let red = live.reduce(root, &sum).unwrap();
+    assert!(live.rolling(view, "5s", &sum).is_ok());
+    assert!(live.rolling(agg, "5s", &sum).is_ok());
+    assert!(live.rolling(roll, "5s", &sum).is_err());
+    assert!(live.reduce(view, &sum).is_ok());
+    for from in [NodeId::from(agg), roll.into(), fused.into(), red.into()] {
+        assert!(live.reduce(from, &sum).is_err());
+    }
+    assert!(live.filter(roll, |_| true).is_ok());
+    assert!(live.filter(fused, |_| true).is_err());
+    assert!(live.filter(red, |_| true).is_err());
+    assert!(live.window(red, "5s").is_err());
+    assert!(
+        live.aggregate(fused, &Sequence::every("1s").unwrap(), &sum)
+            .is_err()
+    );
+}
+
+#[test]
+fn rolling_and_reduce_counters() {
+    let mut live = series(LiveOptions::new().max_events(3));
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let r = live
+        .rolling_with(
+            root,
+            "2s",
+            &sum,
+            &RollingOptions::default().trigger(Trigger::count(2).unwrap()),
+        )
+        .unwrap();
+    let d = live.reduce(root, &sum).unwrap();
+    live.push_many((0..5).map(|i| (i * 1000, row("a", 1.0))))
+        .unwrap();
+    let rs = live[r].stats();
+    assert_eq!(rs.events_observed, 5);
+    assert_eq!(rs.emissions, 2);
+    assert_eq!(rs.window_size, 3); // 2000, 3000, 4000: [now - 2s, now]
+    assert_eq!(live[r].len(), 2);
+    let ds = live[d].stats();
+    assert_eq!(ds.events_observed, 5);
+    assert_eq!(ds.evictions, 2); // root keeps 3
+    assert_eq!(ds.buffer_size, 3);
+    assert_eq!(ds.emissions, 1); // one per push
+    assert_eq!(live[d].value(), vec![Some(Value::from(3.0))]);
+}
+
+#[test]
+fn calendar_aggregations_keep_times_in_jiff_range() {
+    let (lo, hi) = crate::sequence::CALENDAR_RANGE_MS;
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let sum = [Agg::of("cpu", Reducer::Sum)];
+    let day = Sequence::calendar("day", "Pacific/Kiritimati").unwrap();
+    live.push(lo - 1, row("a", 1.0)).unwrap(); // no calendar node yet
+    // Built over an event outside the range: refused.
+    assert!(live.aggregate(root, &day, &sum).is_err());
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let d = live.aggregate(root, &day, &sum).unwrap();
+    assert!(live.push(lo - 1, row("a", 1.0)).is_err());
+    live.push(lo, row("a", 1.0)).unwrap();
+    assert!(live.push(hi, row("a", 1.0)).is_err());
+    live.push(hi - 1, row("a", 1.0)).unwrap();
+    live.remove(d).unwrap();
+    live.push(hi, row("a", 1.0)).unwrap(); // the guard goes with the node
+}
