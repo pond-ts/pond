@@ -18,7 +18,8 @@ itself (pushing, ordering rules, how many events to keep, lookups); the
 views `filter`, `map`, `select`, `sample` and `window`; the running ones
 `diff`, `rate`, `pct_change`, `fill` and `cumulative`; `aggregate`
 into fixed-length or calendar buckets; rolling windows and `reduce`, with
-triggers that set when they emit. Still to come: per-entity partitions.
+triggers that set when they emit; and partitions, one series per host
+(or any column) with views and windows on each.
 
 It lives in `pond_rs::live`, behind the `live` cargo feature, which is on
 by default.
@@ -592,6 +593,151 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Partitions: one series per host
+
+Events from many sources often arrive mixed together: readings from a
+thousand hosts, trades in many symbols. Running a `diff` or a rolling
+average over the mixed stream compares one host with another.
+`partition_by(live.root(), "host", &options)` splits the series into one
+series per value of a column, built when the value first arrives, so each
+host's events get their own views and windows.
+
+- **`PartitionOptions`**: each partition takes the root's ordering, grace
+  window and retention unless you set them (`.ordering`, `.grace_window`,
+  `.max_events`, `.max_age`; setting either retention limit replaces
+  both). `.groups(&["a", "b"])` declares the values up front: their
+  partitions are built at once, and a push with any other value is
+  refused.
+- **`live[hosts]`** reads the partitioned node: `.keys()` lists the
+  values in the order their partitions were built, `.partition("a")`
+  gives that host's series (read it like the root: `len`, `events`,
+  `at`, `last`…), and `.partitions()` gives every value with its series.
+- **`per_partition(hosts, |live, host| …)`** describes a chain of nodes to
+  build on every partition: the closure gets one partition, builds on it
+  with the usual methods (`diff`, `fill`, `rolling`, …) and returns the
+  last node's id. Nothing is built yet. The closure runs again for every
+  partition, including hosts that appear later, so it must build the same
+  chain each time. It also runs once straight away on an empty series, to
+  learn the output columns and catch mistakes.
+- **`collect(from, &CollectOptions::new())`** gathers into one series
+  everything the partitions take, or everything a `per_partition` chain
+  emits. It only gathers: what a partition drops stays.
+  `apply(hosts, |live, host| …, &options)` is `per_partition` and
+  `collect` in one call.
+- **`partition_outputs(chain)`** builds the chain on each partition there
+  is now and returns each value with its output's id;
+  `live.node::<LiveView>(id)?` turns an id into a handle you can read.
+
+```rust
+use pond_rs::live::{CollectOptions, LiveSeries, LiveView, PartitionOptions};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "net",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("bytes", ColumnKind::Number),
+        ],
+    )?;
+    // One series per host, each keeping its last 100 events.
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new().max_events(100))?;
+    // The change in bytes since the same host's previous event: a diff
+    // built on every host's series, including hosts that appear later.
+    let per_host_diff =
+        live.per_partition(hosts, |live, host| Ok(live.diff(host, &["bytes"])?.id()))?;
+    // Every host's diffs gathered back into one series.
+    let changes = live.collect(per_host_diff, &CollectOptions::new())?;
+
+    live.push(0, [Some("a".into()), Some(100.0.into())])?;
+    live.push(1_000, [Some("b".into()), Some(500.0.into())])?;
+    live.push(2_000, [Some("a".into()), Some(160.0.into())])?;
+    live.push(3_000, [Some("b".into()), Some(520.0.into())])?;
+
+    assert_eq!(live[hosts].keys(), ["a", "b"]);
+    let a = live[hosts].partition("a").unwrap();
+    assert_eq!(live[a].len(), 2);
+
+    // Each change is against the same host's previous value, not the
+    // previous event overall.
+    let diffs: Vec<_> = live[changes]
+        .events()
+        .map(|e| (e.begin(), e.string("host").unwrap().map(String::from), e.number("bytes").unwrap()))
+        .collect();
+    assert_eq!(
+        diffs,
+        [
+            (0, Some("a".into()), None),
+            (1_000, Some("b".into()), None),
+            (2_000, Some("a".into()), Some(60.0)),
+            (3_000, Some("b".into()), Some(20.0)),
+        ]
+    );
+
+    // Or build the chain on each host there is now, and read one host's.
+    let built = live.partition_outputs(per_host_diff)?;
+    let (key, id) = &built[1];
+    let b_diff = live.node::<LiveView>(*id)?;
+    assert_eq!(key, "b");
+    assert_eq!(live[b_diff].last().unwrap().number("bytes")?, Some(20.0));
+    Ok(())
+}
+```
+
+**Every host on one clock.** `partition_rolling(hosts, "30s", &aggs,
+&options)` keeps a rolling window per host and, each time the clock in
+`Trigger::every` passes a mark, emits one row for every host seen so far,
+keyed at the mark: the time, the host, then the columns. A quiet host's
+window is first brought up to date, so it reports what its last 30
+seconds hold at that moment. `partition_rolling_rows` and
+`partition_rolling_windows` do the same with a count window or several
+time windows. These need a clock trigger; for a window that emits on
+every event, build `rolling` with `per_partition`.
+
+```rust
+use pond_rs::live::{LiveSeries, PartitionOptions, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    // Each host's average over its last 30 seconds, every host reported
+    // together each time the clock passes a 10-second mark.
+    let every_10s = live.partition_rolling(
+        hosts,
+        "30s",
+        &[Agg::new("load_avg", "load", Reducer::Avg)],
+        &RollingOptions::new().trigger(Trigger::every("10s")?),
+    )?;
+
+    live.push(0, [Some("a".into()), Some(1.0.into())])?;
+    live.push(5_000, [Some("b".into()), Some(3.0.into())])?;
+    live.push(10_000, [Some("a".into()), Some(2.0.into())])?; // passes 10 s
+
+    // One row per host, keyed at the 10-second mark.
+    let rows: Vec<_> = live[every_10s]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (e.begin(), host, e.number("load_avg").unwrap())
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [(10_000, "a".to_string(), Some(1.5)), (10_000, "b".to_string(), Some(3.0))]
+    );
+    Ok(())
+}
+```
+
 ## What a push returns: outputs
 
 In pond-ts you attach listeners (`series.on('event', fn)`) and pond-ts
@@ -768,7 +914,19 @@ fn main() -> Result<(), pond_rs::PondError> {
 - **A clock trigger on a source keyed by ranges or intervals is
   refused**; pond-ts emits time keys under the interval schema there.
 - **Calendar aggregations take years −9997 to 9997 only**, as above.
-- **Not built yet:** per-entity partitions.
+- **Partitions are built on the root only**; pond-ts can partition any
+  series.
+- **A push a partition would refuse is refused whole**, before anything is
+  stored: a value outside the declared `groups`, or an event a
+  partition's ordering refuses (as after a `clear`, which empties the root
+  but not the partitions). pond-ts stores it in the root, delivers the
+  rest and then throws.
+- **Removing a partitioned node also removes the `per_partition` chains**
+  described on it.
+- **The host column of `partition_rolling` output is text** (the value as
+  pond-ts writes it, `" undefined"` for a row without one). pond-ts
+  declares it with the source column's type but also fills it with
+  text.
 
 ## Speed
 
@@ -816,6 +974,17 @@ Rolling windows and reduce, on a series keeping its last 10,000 events
 | `rolling_windows` 1 m + 5 m + 15 m: avg | 338     | 3,493   | 10×    |
 | `reduce`: avg + max + count             | 357     | 6,443   | 18×    |
 | `aggregate` by New York day             | 198     | 2,469   | 12×    |
+
+Partitions, one million events (ms; one run each on the same machine,
+where repeat runs differ by up to a third):
+
+| Case                                                      | pond-rs | pond-ts | Faster |
+| --------------------------------------------------------- | ------- | ------- | ------ |
+| 4 hosts, `collect`, keeping the last 10,000               | 858     | 9,159   | 11×    |
+| 4 hosts, `diff` + `fill` on each, `collect`               | 2,215   | 11,024  | 5.0×   |
+| 4 hosts, `partition_rolling_windows` 1 m + 5 m, every 1 m | 909     | 9,137   | 10×    |
+| 1,000 hosts in batches of 1,000, `rolling` on each        | 1,347   | 4,209   | 3.1×   |
+| 1,000 hosts in batches of 1,000, `partition_rolling`      | 2,980   | 8,760   | 2.9×   |
 
 These found a pond-ts slowdown too: a loop of pushes that never waited
 queued one task per push behind a `reduce`, each holding on to it until
