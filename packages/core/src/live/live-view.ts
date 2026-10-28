@@ -57,6 +57,7 @@ export type LiveFillMapping<S extends SeriesSchema> = {
 
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
+import { dropFront, removeFront } from './array-front.js';
 
 type EventListener<S extends SeriesSchema> = (event: EventForSchema<S>) => void;
 type EvictListener<S extends SeriesSchema> = (
@@ -198,7 +199,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
         while (i < this.#events.length && this.#events[i]!.begin() <= cutoff)
           i++;
         if (i > 0) {
-          const removed = this.#events.splice(0, i);
+          const removed = removeFront(this.#events, i);
           this.#version += 1;
           dispatchIsolated(this.#onEvict, removed as any);
         }
@@ -716,7 +717,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     if (!this.#evict) return;
     const count = this.#evict(this.#events);
     if (count > 0) {
-      this.#events.splice(0, count);
+      dropFront(this.#events, count);
       this.#version += 1;
     }
   }

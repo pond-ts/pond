@@ -84,9 +84,8 @@ an `ordering: 'reorder'` source, a late event the source accepted made every
 `LiveView` built on it (even `filter(() => true)`) throw "processed event
 has key … older than the previous tail", so `push` threw after the source
 had already stored the event, and the source held it while the views did
-not. **Fixed 2026-10-28** with pond-rs R3 step 3 (pjm17971's decision card
-offered insert in order / stateful views skip it / refuse the push;
-insert in order was the recommendation and the work went ahead on it):
+not. **Fixed 2026-10-28** with pond-rs R3 step 3 (pjm17971 chose insert in
+order over stateful views skipping it or refusing the push):
 `#appendChecked` inserts an out-of-order event at its key position, after
 equal keys, instead of throwing. Stateful views (`diff`, `rate`,
 `pctChange`, `fill`, `cumulative`, `sample`) still work in arrival order,
@@ -98,6 +97,22 @@ binary-search queries, now inserts in order too, which also keeps those
 queries right. Fixture case `views-reorder-late` pins it for both
 libraries. Still open under [PND-LATE]: recomputing the rows after a late
 event in stateful views and in rolling windows.
+
+### [PND-EVICTSPLICE] — done 2026-10-28
+
+Found timing pond-rs R3 step 3 against pond-ts: views on a
+`maxEvents: 10_000` series took ~38 µs a push each (three `diff`-style views
+on 1M pushes: 115 s). Every per-event buffer dropped its oldest events with
+`splice(0, n)`, and V8 copies the whole remaining array for that (~20 µs at
+10k events), where `shift()` moves the array's start in place. Same cost in
+the row backing of `drop` / `reorder` roots with retention and in rolling
+history. Fix: `removeFront` / `dropFront` (`src/live/array-front.ts`) shift
+when under a quarter of the buffer goes, else splice. 100k pushes,
+`maxEvents` 10k: reorder root 2.36 s -> 31 ms, root + filter view 2.26 s ->
+164 ms, root + 3 diff views 5.66 s -> 247 ms; strict root alone and no
+retention unchanged (`scripts/perf-live-evict.mjs`). Not changed: the
+rolling buffers' `splice(0, frontIdx)` (already amortized by a front index)
+and the chunked store's small `#pending` array.
 
 ### [PND-BATCHATOM] — done 2026-10-27
 
