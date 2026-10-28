@@ -135,16 +135,24 @@ impl CollectOptions {
 #[derive(Clone)]
 pub(crate) enum Hook {
     Collect(usize),
-    Apply { recipe: Recipe, target: usize },
+    Apply {
+        recipe: Recipe,
+        target: usize,
+    },
     /// Partition rolling `target` takes what the partition (or `recipe`
     /// built on it) emits.
-    Rolling { recipe: Option<Recipe>, target: usize },
+    Rolling {
+        recipe: Option<Recipe>,
+        target: usize,
+    },
 }
 
 impl Hook {
     pub(crate) fn target(&self) -> usize {
         match self {
-            Hook::Collect(t) | Hook::Apply { target: t, .. } | Hook::Rolling { target: t, .. } => *t,
+            Hook::Collect(t) | Hook::Apply { target: t, .. } | Hook::Rolling { target: t, .. } => {
+                *t
+            }
         }
     }
 }
@@ -330,16 +338,18 @@ impl LiveSeries {
         let source = self.slot_of(CALL, from.into())?;
         if source != 0 {
             return Err(bad(
-                "partitions are built on the root series only (pond-rs)".into()
+                "partitions are built on the root series only (pond-rs)".into(),
             ));
         }
         let root = self.core();
         let schema = Arc::clone(&root.schema);
-        let by = schema.value_index(column).ok_or_else(|| PondError::UnknownColumn {
-            call: CALL,
-            column: column.into(),
-            available: schema.values().iter().map(|c| c.name.clone()).collect(),
-        })?;
+        let by = schema
+            .value_index(column)
+            .ok_or_else(|| PondError::UnknownColumn {
+                call: CALL,
+                column: column.into(),
+                available: schema.values().iter().map(|c| c.name.clone()).collect(),
+            })?;
         if let Some(groups) = &options.groups {
             if groups.is_empty() {
                 return Err(bad("groups cannot be empty".into()));
@@ -532,7 +542,10 @@ impl LiveSeries {
     /// Build the chain `from` describes on each partition there is now, and
     /// return each output with its partition value (pond-ts's partitioned
     /// view `toMap()`). Partitions that appear later get nothing from this.
-    pub fn partition_outputs(&mut self, from: Node<PartitionedView>) -> Result<Vec<(String, NodeId)>> {
+    pub fn partition_outputs(
+        &mut self,
+        from: Node<PartitionedView>,
+    ) -> Result<Vec<(String, NodeId)>> {
         const CALL: &str = "LiveSeries::partition_outputs";
         let i = self.slot_of(CALL, from.id)?;
         let State::PartitionedView(v) = &self.slots[i].state else {
@@ -541,7 +554,11 @@ impl LiveSeries {
         let (p, recipe) = (v.partitioned, Arc::clone(&v.recipe));
         let parts: Vec<(String, NodeId)> = {
             let pt = self.partitioned(p);
-            pt.keys.iter().cloned().zip(pt.parts.iter().copied()).collect()
+            pt.keys
+                .iter()
+                .cloned()
+                .zip(pt.parts.iter().copied())
+                .collect()
         };
         let mut outs = Vec::with_capacity(parts.len());
         for (key, part) in parts {
@@ -577,7 +594,9 @@ impl LiveSeries {
         for o in outputs {
             self.subscribe(o, target);
         }
-        self.partitioned_mut(p).hooks.push(Hook::Apply { recipe, target });
+        self.partitioned_mut(p)
+            .hooks
+            .push(Hook::Apply { recipe, target });
         self.take_failure()?;
         Ok(self.series_node(target))
     }
@@ -732,7 +751,12 @@ impl LiveSeries {
 
     /// One root event reaching partitioned slot `p` (not routed a push at
     /// a time): one push into its partition.
-    pub(super) fn route_one(&mut self, p: usize, event: &LiveEvent, out: &mut Vec<Output>) -> Result<()> {
+    pub(super) fn route_one(
+        &mut self,
+        p: usize,
+        event: &LiveEvent,
+        out: &mut Vec<Output>,
+    ) -> Result<()> {
         let key = self.partitioned(p).key_of(event);
         let part = self.ensure_partition(p, &key)?;
         self.partitioned_mut(p).routed += 1;
@@ -743,7 +767,12 @@ impl LiveSeries {
 
     /// A push routed a push at a time to partitioned slot `p` (see the
     /// module docs).
-    pub(super) fn route_push(&mut self, p: usize, events: &[LiveEvent], out: &mut Vec<Output>) -> Result<()> {
+    pub(super) fn route_push(
+        &mut self,
+        p: usize,
+        events: &[LiveEvent],
+        out: &mut Vec<Output>,
+    ) -> Result<()> {
         // 1. Each partition's rows, partitions in order of first row
         //    (built here when new).
         let mut shares: Vec<Share> = Vec::new();
@@ -945,7 +974,7 @@ pub(super) fn check_series_options(
     let bad = |message: String| PondError::InvalidData { call, message };
     if grace_ms.is_some() && ordering != OrderingMode::Reorder {
         return Err(bad(
-            "grace_window is only valid with OrderingMode::Reorder".into(),
+            "grace_window is only valid with OrderingMode::Reorder".into()
         ));
     }
     if let (Some(g), Some(a)) = (grace_ms, max_age_ms)

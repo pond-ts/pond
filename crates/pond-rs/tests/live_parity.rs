@@ -579,10 +579,9 @@ mod runner {
     use pond_rs::PondError;
     use pond_rs::live::{
         CollectOptions, History, LiveAggregation, LiveEvent, LiveOptions, LivePartitioned,
-        LivePartitionedRolling,
-        LiveReduce, LiveRolling, LiveSeries, LiveStats, LiveView, Node, NodeId, OrderingMode,
-        Output as RsOutput, OutputKind, PartitionOptions, PartitionedView, RollingOptions,
-        RollingWindow, SubSeries, Trigger,
+        LivePartitionedRolling, LiveReduce, LiveRolling, LiveSeries, LiveStats, LiveView, Node,
+        NodeId, OrderingMode, Output as RsOutput, OutputKind, PartitionOptions, PartitionedView,
+        RollingOptions, RollingWindow, SubSeries, Trigger,
     };
     use pond_rs::{
         Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, Reducer,
@@ -1235,7 +1234,9 @@ mod runner {
             message,
         };
         match op {
-            "rolling" => build_rolling(live, from, args).map(|n| n.id()).map_err(wrap),
+            "rolling" => build_rolling(live, from, args)
+                .map(|n| n.id())
+                .map_err(wrap),
             "reduce" => build_reduce(live, from, args).map(|n| n.id()).map_err(wrap),
             _ => build_view(live, from, op, args).map(|n| n.id()),
         }
@@ -1517,7 +1518,9 @@ mod runner {
             };
             if result.is_err()
                 && step.error.is_some()
-                && PUSH_REFUSED_WHOLE.iter().any(|(c, k, _)| *c == case.name && *k == s)
+                && PUSH_REFUSED_WHOLE
+                    .iter()
+                    .any(|(c, k, _)| *c == case.name && *k == s)
             {
                 let rows = step.push.as_ref().or(step.push_many.as_ref()).unwrap();
                 refused_rows.extend(rows.iter().map(|r| Value::Array(r.clone())));
@@ -1557,9 +1560,10 @@ mod runner {
                     Handle::Rolling(n) => live.get(n).is_err(),
                     Handle::Reduce(n) => live.get(n).is_err(),
                     Handle::PRolling(n) => live.get(n).is_err(),
-                    Handle::Root | Handle::Series(_) | Handle::Partitioned(_) | Handle::PView(_) => {
-                        false
-                    }
+                    Handle::Root
+                    | Handle::Series(_)
+                    | Handle::Partitioned(_)
+                    | Handle::PView(_) => false,
                 };
                 if !gone {
                     return Err(format!("{what}: should be removed"));
@@ -1596,7 +1600,10 @@ mod runner {
                     let got: Vec<(String, Vec<Value>)> = live[n]
                         .partitions()
                         .map(|(k, part)| {
-                            (k.to_string(), live[part].events().map(|e| event_json(&e)).collect())
+                            (
+                                k.to_string(),
+                                live[part].events().map(|e| event_json(&e)).collect(),
+                            )
                         })
                         .collect();
                     compare_partitions(&what, state, &got)?;

@@ -349,8 +349,8 @@ impl LiveSeries {
             emissions: 0,
         };
         if let Some(groups) = self.partitioned(p).groups() {
-            for g in groups.to_vec() {
-                node.ensure(&g);
+            for g in groups {
+                node.ensure(g);
             }
         }
         let index = self.slots.len();

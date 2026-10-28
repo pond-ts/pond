@@ -138,10 +138,12 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 pub use aggregation::{AggregationStats, LiveAggregation};
 pub use event::LiveEvent;
+pub use partition::{
+    CollectOptions, LivePartitioned, PartitionOptions, PartitionStats, PartitionedView,
+};
+pub use partition_rolling::{LivePartitionedRolling, PartitionRollingStats};
 pub use reduce::{LiveReduce, ReduceStats};
 pub use rolling::{History, LiveRolling, RollingOptions, RollingStats, RollingWindow, Trigger};
-pub use partition::{CollectOptions, LivePartitioned, PartitionOptions, PartitionStats, PartitionedView};
-pub use partition_rolling::{LivePartitionedRolling, PartitionRollingStats};
 pub use series::SubSeries;
 pub use view::LiveView;
 
@@ -1693,7 +1695,8 @@ impl LiveSeries {
 
     /// The events held, as a batch series (copied).
     pub fn to_time_series(&self) -> Result<TimeSeries> {
-        self.core().buffer
+        self.core()
+            .buffer
             .snapshot("LiveSeries::to_time_series", &self.core().name)
     }
 

@@ -648,7 +648,12 @@ impl LiveRolling {
                 w.head += 1;
             }
         }
-        let oldest = self.windows.iter().map(|w| w.head).min().unwrap_or(self.next);
+        let oldest = self
+            .windows
+            .iter()
+            .map(|w| w.head)
+            .min()
+            .unwrap_or(self.next);
         let n = oldest - front;
         if n > 0 {
             self.starts.drain(..n);

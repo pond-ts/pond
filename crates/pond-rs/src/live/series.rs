@@ -188,6 +188,7 @@ impl SubSeries {
 
     /// The events held, as a batch series (copied).
     pub fn to_time_series(&self) -> Result<TimeSeries> {
-        self.buffer.snapshot("LiveSeries::to_time_series", &self.name)
+        self.buffer
+            .snapshot("LiveSeries::to_time_series", &self.name)
     }
 }
