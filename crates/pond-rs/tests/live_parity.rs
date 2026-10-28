@@ -41,6 +41,7 @@ const SUPPORTED_OPS: &[&str] = &[
     "partition",
     "collect",
     "apply",
+    "partitionClockRolling",
 ];
 
 /// Nodes pond-ts builds that pond-rs refuses on purpose, as `(case, node,
@@ -340,12 +341,10 @@ fn run_case(case: &Case) -> Result<(), String> {
 }
 
 fn ops_of(case: &Case) -> BTreeSet<&str> {
-    let nodes = || case.steps.iter().filter_map(|s| s.node.as_ref());
-    let partitioned: BTreeSet<&str> = nodes()
-        .filter(|n| n.op == "partitionBy")
-        .map(|n| n.id.as_str())
-        .collect();
-    nodes()
+    let partitioned = partitioned_ids(case);
+    case.steps
+        .iter()
+        .filter_map(|s| s.node.as_ref())
         .map(|n| {
             if is_partition_clock_rolling(n, &partitioned) {
                 "partitionClockRolling"
@@ -356,13 +355,31 @@ fn ops_of(case: &Case) -> BTreeSet<&str> {
         .collect()
 }
 
-/// `rolling` straight on a partitioned series with a clock trigger.
+/// Nodes that are partitioned series or per-partition chains on one
+/// (pond-ts `LivePartitionedSeries` / `LivePartitionedView`).
+fn partitioned_ids(case: &Case) -> BTreeSet<&str> {
+    let mut ids = BTreeSet::new();
+    for n in case.steps.iter().filter_map(|s| s.node.as_ref()) {
+        let chained = ids.contains(n.from.as_str())
+            && !matches!(n.op.as_str(), "collect" | "apply" | "partition")
+            && !is_partition_clock_rolling(n, &ids);
+        if n.op == "partitionBy" || chained {
+            ids.insert(n.id.as_str());
+        }
+    }
+    ids
+}
+
+/// pond-ts's partitioned `rolling` that builds one synchronised node over
+/// every partition: a clock trigger, or the keyed (several windows) form,
+/// which needs one.
 fn is_partition_clock_rolling(n: &NodeSpec, partitioned: &BTreeSet<&str>) -> bool {
     n.op == "rolling"
         && partitioned.contains(n.from.as_str())
-        && n.args
-            .iter()
-            .any(|a| a.get("trigger").is_some_and(|t| t.get("every").is_some()))
+        && (n.args[0].is_object()
+            || n.args
+                .iter()
+                .any(|a| a.get("trigger").is_some_and(|t| t.get("every").is_some())))
 }
 
 #[test]
@@ -562,6 +579,7 @@ mod runner {
     use pond_rs::PondError;
     use pond_rs::live::{
         CollectOptions, History, LiveAggregation, LiveEvent, LiveOptions, LivePartitioned,
+        LivePartitionedRolling,
         LiveReduce, LiveRolling, LiveSeries, LiveStats, LiveView, Node, NodeId, OrderingMode,
         Output as RsOutput, OutputKind, PartitionOptions, PartitionedView, RollingOptions,
         RollingWindow, SubSeries, Trigger,
@@ -582,6 +600,7 @@ mod runner {
         Series(Node<SubSeries>),
         Partitioned(Node<LivePartitioned>),
         PView(Node<PartitionedView>),
+        PRolling(Node<LivePartitionedRolling>),
     }
 
     fn kind_of(name: &str) -> ColumnKind {
@@ -1222,6 +1241,50 @@ mod runner {
         }
     }
 
+    /// pond-ts's partitioned `rolling` with a clock trigger (or keyed).
+    fn build_partition_rolling(
+        live: &mut LiveSeries,
+        from: NodeId,
+        args: &[Value],
+    ) -> Result<Node<LivePartitionedRolling>, String> {
+        let err = |e: pond_rs::PondError| e.to_string();
+        match &args[0] {
+            Value::Object(windows) => {
+                let options = rolling_options(args.get(1))?;
+                let windows: Vec<RollingWindow> = windows
+                    .iter()
+                    .map(|(w, m)| match m.get("mapping") {
+                        Some(inner) if inner.get("from").is_none() => {
+                            let mut rw = RollingWindow::new(w, &mapping_of(inner));
+                            if let Some(n) = m.get("minSamples") {
+                                rw = rw.min_samples(n.as_u64().unwrap() as usize);
+                            }
+                            rw
+                        }
+                        _ => RollingWindow::new(w, &mapping_of(m)),
+                    })
+                    .collect();
+                live.partition_rolling_windows(from, &windows, &options)
+                    .map_err(err)
+            }
+            Value::String(w) => {
+                let options = rolling_options(args.get(2))?;
+                live.partition_rolling(from, w, &mapping_of(&args[1]), &options)
+                    .map_err(err)
+            }
+            n => {
+                let options = rolling_options(args.get(2))?;
+                live.partition_rolling_rows(
+                    from,
+                    n.as_u64().unwrap() as usize,
+                    &mapping_of(&args[1]),
+                    &options,
+                )
+                .map_err(err)
+            }
+        }
+    }
+
     /// pond-ts `apply`'s `{ chain: [[op, ...args], ...] }`.
     fn chain_recipe(
         spec: &Value,
@@ -1328,7 +1391,9 @@ mod runner {
             Handle::Series(n) => n.id(),
             Handle::Partitioned(n) => n.id(),
             Handle::PView(n) => n.id(),
+            Handle::PRolling(n) => n.id(),
         };
+        let partitioned_ids = partitioned_ids(case);
         // Rows of a push pond-ts stored in the root before throwing, which
         // pond-rs refused whole.
         let mut refused_rows: Vec<Value> = Vec::new();
@@ -1354,6 +1419,9 @@ mod runner {
                 let from = id_of(source, &live);
                 let partitioned = matches!(source, Handle::Partitioned(_) | Handle::PView(_));
                 let made = match spec.op.as_str() {
+                    _ if is_partition_clock_rolling(spec, &partitioned_ids) => {
+                        build_partition_rolling(&mut live, from, &spec.args).map(Handle::PRolling)
+                    }
                     "partitionBy" => partition_options(spec.args.get(1)).and_then(|o| {
                         live.partition_by(from, spec.args[0].as_str().unwrap(), &o)
                             .map(Handle::Partitioned)
@@ -1488,6 +1556,7 @@ mod runner {
                     Handle::Agg(n) => live.get(n).is_err(),
                     Handle::Rolling(n) => live.get(n).is_err(),
                     Handle::Reduce(n) => live.get(n).is_err(),
+                    Handle::PRolling(n) => live.get(n).is_err(),
                     Handle::Root | Handle::Series(_) | Handle::Partitioned(_) | Handle::PView(_) => {
                         false
                     }
@@ -1506,6 +1575,7 @@ mod runner {
                 Handle::Series(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
                 Handle::Partitioned(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
                 Handle::PView(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
+                Handle::PRolling(n) => live.get(n).map_err(|e| e.to_string())?.schema().to_vec(),
             };
             if schema != schema_of(state.schema.as_ref().unwrap()) {
                 return Err(format!("{what}: schema {schema:?}"));
@@ -1530,6 +1600,10 @@ mod runner {
                         })
                         .collect();
                     compare_partitions(&what, state, &got)?;
+                }
+                Handle::PRolling(n) => {
+                    let held: Vec<Value> = live[n].events().map(|e| event_json(&e)).collect();
+                    compare_rows(&what, state.rows.as_ref().unwrap(), &held)?;
                 }
                 Handle::PView(n) => {
                     let outputs = live.partition_outputs(n).map_err(|e| e.to_string())?;

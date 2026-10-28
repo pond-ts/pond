@@ -136,6 +136,17 @@ impl CollectOptions {
 pub(crate) enum Hook {
     Collect(usize),
     Apply { recipe: Recipe, target: usize },
+    /// Partition rolling `target` takes what the partition (or `recipe`
+    /// built on it) emits.
+    Rolling { recipe: Option<Recipe>, target: usize },
+}
+
+impl Hook {
+    pub(crate) fn target(&self) -> usize {
+        match self {
+            Hook::Collect(t) | Hook::Apply { target: t, .. } | Hook::Rolling { target: t, .. } => *t,
+        }
+    }
 }
 
 /// The root's events split by the value of one column, one [`SubSeries`]
@@ -591,7 +602,7 @@ impl LiveSeries {
 
     /// The output schema of `recipe`, from a run on an empty series with
     /// the partitions' schema (pond-ts's stub).
-    fn stub_schema(&self, p: usize, recipe: &Recipe) -> Result<Arc<LiveSchema>> {
+    pub(super) fn stub_schema(&self, p: usize, recipe: &Recipe) -> Result<Arc<LiveSchema>> {
         let pt = self.partitioned(p);
         let mut stub = LiveSeries::new(format!("{}/_stub", pt.name), pt.schema.columns.clone())?;
         let root = stub.root();
@@ -655,7 +666,7 @@ impl LiveSeries {
         }
     }
 
-    fn partitioned_mut(&mut self, p: usize) -> &mut LivePartitioned {
+    pub(super) fn partitioned_mut(&mut self, p: usize) -> &mut LivePartitioned {
         match &mut self.slots[p].state {
             State::Partitioned(pt) => pt,
             _ => unreachable!("slot {p} is not partitioned"),
@@ -694,7 +705,7 @@ impl LiveSeries {
         let id = self.id_of(index);
         let pt = self.partitioned_mut(p);
         pt.index.insert(key.clone(), pt.keys.len());
-        pt.keys.push(key);
+        pt.keys.push(key.clone());
         pt.parts.push(id);
         for hook in hooks {
             match hook {
@@ -703,6 +714,16 @@ impl LiveSeries {
                     let o = recipe(self, id)?;
                     let o = self.slot_of("LiveSeries::apply", o)?;
                     self.subscribe(o, target);
+                }
+                Hook::Rolling { recipe, target } => {
+                    let feed = match recipe {
+                        Some(r) => {
+                            let o = r(self, id)?;
+                            self.slot_of("LiveSeries::partition_rolling", o)?
+                        }
+                        None => index,
+                    };
+                    self.feed_rolling(target, feed, key.clone());
                 }
             }
         }
@@ -906,7 +927,7 @@ impl LiveSeries {
     }
 }
 
-fn not_partitioned(call: &'static str) -> PondError {
+pub(super) fn not_partitioned(call: &'static str) -> PondError {
     PondError::InvalidData {
         call,
         message: "expected a partitioned series (partition_by) or a per_partition chain".into(),

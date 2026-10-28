@@ -120,6 +120,7 @@ mod buffer;
 mod event;
 mod json;
 mod partition;
+mod partition_rolling;
 mod reduce;
 mod rolling;
 mod series;
@@ -140,6 +141,7 @@ pub use event::LiveEvent;
 pub use reduce::{LiveReduce, ReduceStats};
 pub use rolling::{History, LiveRolling, RollingOptions, RollingStats, RollingWindow, Trigger};
 pub use partition::{CollectOptions, LivePartitioned, PartitionOptions, PartitionStats, PartitionedView};
+pub use partition_rolling::{LivePartitionedRolling, PartitionRollingStats};
 pub use series::SubSeries;
 pub use view::LiveView;
 
@@ -354,8 +356,8 @@ pub trait NodeType: sealed::Sealed + Sized {}
 
 mod sealed {
     use super::{
-        LiveAggregation, LivePartitioned, LiveReduce, LiveRolling, LiveView, PartitionedView,
-        SubSeries,
+        LiveAggregation, LivePartitioned, LivePartitionedRolling, LiveReduce, LiveRolling,
+        LiveView, PartitionedView, SubSeries,
     };
 
     /// What a slot holds. Public only inside this private module, so
@@ -371,6 +373,8 @@ mod sealed {
         Partitioned(LivePartitioned),
         /// A chain to build on every partition, not built yet.
         PartitionedView(PartitionedView),
+        /// Rolling windows per partition, emitted together on a clock.
+        PartitionRolling(LivePartitionedRolling),
         Removed,
     }
 
@@ -432,6 +436,15 @@ mod sealed {
         }
     }
 
+    impl Sealed for LivePartitionedRolling {
+        fn of(state: &State) -> Option<&Self> {
+            match state {
+                State::PartitionRolling(r) => Some(r),
+                _ => None,
+            }
+        }
+    }
+
     impl Sealed for PartitionedView {
         fn of(state: &State) -> Option<&Self> {
             match state {
@@ -449,6 +462,7 @@ impl NodeType for LiveRolling {}
 impl NodeType for LiveReduce {}
 impl NodeType for LivePartitioned {}
 impl NodeType for PartitionedView {}
+impl NodeType for LivePartitionedRolling {}
 
 use sealed::State;
 
@@ -474,7 +488,7 @@ impl Slot {
             State::Aggregation(_) => &[OutputKind::Event, OutputKind::Bucket, OutputKind::Update],
             State::Rolling(r) if r.is_fused() => &[OutputKind::Event],
             State::Rolling(_) => &[OutputKind::Event, OutputKind::Update],
-            State::Reduce(_) => &[OutputKind::Event],
+            State::Reduce(_) | State::PartitionRolling(_) => &[OutputKind::Event],
             State::Partitioned(_) | State::PartitionedView(_) | State::Removed => &[],
         }
     }
@@ -988,7 +1002,7 @@ impl LiveSeries {
                     node: self.id_of(node),
                     event: event.clone(),
                 }),
-                Sub::Child(c) => self.deliver(c, event, place, out),
+                Sub::Child(c) => self.deliver(c, node, event, place, out),
             }
             k += 1;
         }
@@ -1029,10 +1043,11 @@ impl LiveSeries {
         }
     }
 
-    /// One source event reaching child `c` (at `place` in its source).
+    /// One event from `from` reaching child `c` (at `place` in `from`).
     fn deliver(
         &mut self,
         c: usize,
+        from: usize,
         event: &LiveEvent,
         place: Option<Place>,
         out: &mut Vec<Output>,
@@ -1081,6 +1096,12 @@ impl LiveSeries {
                     node,
                     values: None,
                 });
+            }
+            State::PartitionRolling(rolling) => {
+                let key = rolling.feeds[&from].clone();
+                for row in rolling.ingest(&key, event, hand_on) {
+                    self.emit_event(c, &row, None, out);
+                }
             }
             State::Partitioned(_) => {
                 if let Err(e) = self.route_one(c, event, out) {
@@ -1174,6 +1195,7 @@ impl LiveSeries {
             State::Partitioned(_) | State::PartitionedView(_) => {
                 "build on partitions with per_partition, collect or apply"
             }
+            State::PartitionRolling(_) => "nothing can be built on partition rolling",
             _ => return Ok(i),
         };
         Err(PondError::InvalidData {
@@ -1196,6 +1218,7 @@ impl LiveSeries {
             State::Aggregation(a) => Box::new(a.events().cloned()),
             State::Rolling(r) => Box::new(r.kept().iter()),
             State::Reduce(r) => Box::new(r.kept().iter()),
+            State::PartitionRolling(r) => Box::new(r.kept().iter()),
             State::Partitioned(_) | State::PartitionedView(_) | State::Removed => {
                 Box::new(std::iter::empty())
             }
@@ -1210,6 +1233,7 @@ impl LiveSeries {
             State::Rolling(r) => r.schema_arc(),
             State::Reduce(r) => r.schema_arc(),
             State::Partitioned(p) => Arc::clone(&p.schema),
+            State::PartitionRolling(r) => r.schema_arc(),
             State::PartitionedView(v) => Arc::clone(&v.schema),
             State::Removed => unreachable!("checked"),
         }
@@ -1532,6 +1556,27 @@ impl LiveSeries {
         if matches!(self.slots[i].state, State::Partitioned(_)) {
             // Its partitions keep their events and get no more.
             self.routers.retain(|&p| p != i);
+        }
+        if let State::PartitionRolling(r) = &self.slots[i].state {
+            // Unhook from every feed and from new partitions; a chain built
+            // for it goes too (pond-ts disposes it).
+            let feeds: Vec<usize> = r.feeds.keys().copied().collect();
+            for f in feeds {
+                for subs in &mut self.slots[f].subs {
+                    subs.retain(|sub| *sub != Sub::Child(i));
+                }
+                if !matches!(self.slots[f].state, State::Series(_)) && !self.slots[f].has_subs() {
+                    let _ = self.remove(self.id_of(f));
+                }
+            }
+            if let Some(p) = self.slots[i].source.take()
+                && let State::Partitioned(pt) = &mut self.slots[p].state
+            {
+                pt.hooks.retain(|h| h.target() != i);
+            }
+            self.slots[i].state = State::Removed;
+            self.slots[i].subs = Default::default();
+            return Ok(());
         }
         let was_view = matches!(self.slots[i].state, State::View(_));
         if matches!(&self.slots[i].state, State::Aggregation(a) if a.is_calendar()) {

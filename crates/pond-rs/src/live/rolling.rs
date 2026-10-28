@@ -152,9 +152,9 @@ pub enum History {
 /// [`LiveSeries::rolling_windows`](super::LiveSeries::rolling_windows).
 #[derive(Debug, Clone, Default)]
 pub struct RollingOptions {
-    min_samples: usize,
-    trigger: Trigger,
-    history: History,
+    pub(crate) min_samples: usize,
+    pub(crate) trigger: Trigger,
+    pub(crate) history: History,
 }
 
 impl RollingOptions {
@@ -238,7 +238,11 @@ pub(crate) struct Keep {
 }
 
 impl Keep {
-    fn of(call: &'static str, history: &History) -> Result<Self> {
+    pub(crate) fn on(&self) -> bool {
+        self.on
+    }
+
+    pub(crate) fn of(call: &'static str, history: &History) -> Result<Self> {
         Ok(match history {
             History::All => Self {
                 on: true,
@@ -538,12 +542,17 @@ impl LiveRolling {
 
     /// pond-ts `LiveRollingAggregation.#ingest`: add, then drop what left.
     fn ingest_single(&mut self, event: &LiveEvent, index: usize, ts: i64) {
-        let w = &mut self.windows[0];
-        for c in &mut w.columns {
+        for c in &mut self.windows[0].columns {
             if let Some(v) = &event.values()[c.source] {
                 c.state.add(index, v);
             }
         }
+        self.evict_single(ts);
+    }
+
+    /// Drop what has left the single window, measured back from `ts`.
+    fn evict_single(&mut self, ts: i64) {
+        let w = &mut self.windows[0];
         loop {
             let len = self.starts.len();
             let out = match w.span {
@@ -595,6 +604,67 @@ impl LiveRolling {
             self.stores.iter_mut().for_each(|s| s.drop_front(n));
             self.evictions += n as u64;
         }
+    }
+
+    /// Take a source event without emitting: one partition's windows in
+    /// synchronised partition rolling (pond-ts `LivePartitionedSyncRolling`
+    /// / `LivePartitionedFusedRolling` `ingest`, which add and drop as
+    /// [`LiveRolling`] does).
+    pub(crate) fn take(&mut self, event: &LiveEvent) {
+        self.events_observed += 1;
+        let ts = event.begin();
+        let index = self.next;
+        self.next += 1;
+        self.starts.push_back(ts);
+        for (store, &src) in self.stores.iter_mut().zip(&self.stored) {
+            store.push(event.values()[src].as_ref());
+        }
+        if self.fused {
+            self.ingest_fused(event, index, ts);
+        } else {
+            self.ingest_single(event, index, ts);
+        }
+    }
+
+    /// Drop what has left the windows by `ts`, adding nothing (a
+    /// synchronised tick catching up a quiet partition).
+    pub(crate) fn advance(&mut self, ts: i64) {
+        if !self.fused {
+            self.evict_single(ts);
+            return;
+        }
+        let front = self.next - self.starts.len();
+        for w in &mut self.windows {
+            let Span::Time(ms) = w.span else {
+                unreachable!("fused windows are time windows")
+            };
+            let cutoff = ts.saturating_sub(ms);
+            while w.head < self.next && self.starts[w.head - front] < cutoff {
+                for c in &mut w.columns {
+                    if let Some(v) = self.stores[c.store].get(w.head - front) {
+                        c.state.remove(w.head, &v);
+                    }
+                }
+                w.head += 1;
+            }
+        }
+        let oldest = self.windows.iter().map(|w| w.head).min().unwrap_or(self.next);
+        let n = oldest - front;
+        if n > 0 {
+            self.starts.drain(..n);
+            self.stores.iter_mut().for_each(|s| s.drop_front(n));
+            self.evictions += n as u64;
+        }
+    }
+
+    /// Every column now (gaps while warming up), as a tick reads it.
+    pub(crate) fn values(&mut self) -> Vec<Option<Value>> {
+        self.record(true)
+    }
+
+    /// Source events held now.
+    pub(crate) fn held_len(&self) -> usize {
+        self.starts.len()
     }
 
     /// Whether window `w` is still warming up (fewer events than

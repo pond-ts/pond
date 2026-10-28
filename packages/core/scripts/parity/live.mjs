@@ -1281,6 +1281,36 @@ const CASES = [
     ],
   },
   {
+    // Synchronised rolling built over history: declared groups set the
+    // emitting order (c, a, b, not the order they first arrive), the
+    // history replays in time order across partitions, and a clock rolling
+    // on a per-partition chain (fill, then rolling) emits the same way.
+    name: 'partition-rolling-history',
+    schema: SCHEMA,
+    steps: [
+      { pushMany: ROWS.slice(0, 12).filter((r) => r[1] !== null) },
+      node('p', 'partitionBy', 'root', 'host', { groups: ['c', 'a', 'b'] }),
+      node(
+        'sync',
+        'rolling',
+        'p',
+        '5s',
+        { cpu: 'sum' },
+        { trigger: { every: '5s' } },
+      ),
+      node('fh', 'fill', 'p', 'hold'),
+      node(
+        'chain',
+        'rolling',
+        'fh',
+        3,
+        { cpu: 'avg' },
+        { trigger: { every: '5s' }, minSamples: 2 },
+      ),
+      ...each(ROWS.slice(12).filter((r) => r[1] !== null)),
+    ],
+  },
+  {
     name: 'partition-bad-options',
     schema: SCHEMA,
     steps: [
