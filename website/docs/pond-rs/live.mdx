@@ -17,9 +17,8 @@ The live layer is being built in steps. Built so far: the live series
 itself (pushing, ordering rules, how many events to keep, lookups); the
 views `filter`, `map`, `select`, `sample` and `window`; the running ones
 `diff`, `rate`, `pct_change`, `fill` and `cumulative`; `aggregate`
-into fixed-length buckets; rolling windows and `reduce`, with triggers
-that set when they emit. Still to come: calendar buckets in `aggregate`,
-and per-entity partitions.
+into fixed-length or calendar buckets; rolling windows and `reduce`, with
+triggers that set when they emit. Still to come: per-entity partitions.
 
 It lives in `pond_rs::live`, behind the `live` cargo feature, which is on
 by default.
@@ -176,8 +175,8 @@ A view drops the events its source drops (by `max_events`, `max_age` or
 A bucket closes when an event arrives at or after its end. Under
 `OrderingMode::Reorder` with a grace window, it stays open until the
 latest event is a grace window past its end, so late events can still
-land in it. Only even steps (`Sequence::every`) work so far; calendar
-buckets (days in a time zone) come later.
+land in it. Calendar buckets (days in a time zone) are
+[below](#calendar-buckets-and-a-grace-of-its-own).
 
 ```rust
 use pond_rs::live::LiveSeries;
@@ -228,6 +227,73 @@ Aggregating a text, true/false or array column works with `count`,
 `first`, `last`, `keep`, `unique`, `top<N>` and `samples`. Number
 reducers (`sum`, `avg`, …) on those columns are an error; pond-ts gives 0
 or gaps instead (logged as a pond-ts issue, [PND-KINDREDUCE]).
+
+### Calendar buckets and a grace of its own
+
+`aggregate` also takes calendar buckets:
+`Sequence::calendar("day", "America/New_York")` makes one bucket per day
+in that time zone, so the day the clocks move is 23 or 25 hours long, as
+in the batch `aggregate`. Days, weeks, months, quarters and years all
+work. While a calendar aggregation exists, the series refuses times
+outside the years −9997 to 9997; pond-ts takes any time.
+
+By default an aggregation built on the series waits for the series'
+grace window before closing a bucket. `aggregate_with(from, &sequence,
+&aggs, Some("10m"))` gives it its own grace instead (`Some("0s")` closes a
+bucket as soon as an event lands past its end), as pond-ts's
+`new LiveAggregation(source, sequence, mapping, { grace })`. An
+aggregation built on a view has no grace unless you give it one.
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hour = 3_600_000;
+    // Midnight UTC on 9, 10 and 11 March 2024. New York's clocks moved
+    // forward on the 10th, so that day there is 23 hours long.
+    let (mar9, mar10, mar11) = (1_709_942_400_000, 1_710_028_800_000, 1_710_115_200_000);
+
+    let mut live = LiveSeries::with_options(
+        "sales",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("amount", ColumnKind::Number),
+        ],
+        // Late events up to 2 hours are put in place.
+        LiveOptions::new().ordering(OrderingMode::Reorder).grace_window("2h"),
+    )?;
+    let new_york_day = Sequence::calendar("day", "America/New_York")?;
+    let total = [Agg::new("total", "amount", Reducer::Sum)];
+    // Takes the series' 2-hour grace: a day stays open 2 hours past its end.
+    let daily = live.aggregate(live.root(), &new_york_day, &total)?;
+    // Its own grace of 0: a day closes as soon as the next one starts.
+    let daily_now = live.aggregate_with(live.root(), &new_york_day, &total, Some("0s"))?;
+
+    live.push(mar9 + 17 * hour, [Some(10.0.into())])?; // noon on the 9th, New York
+    live.push(mar10 + 16 * hour, [Some(20.0.into())])?; // noon on the 10th
+    live.push(mar11 + 5 * hour, [Some(30.0.into())])?; // 1 am on the 11th
+    // 11 pm on the 10th, arriving 2 hours late.
+    live.push(mar11 + 3 * hour, [Some(5.0.into())])?;
+    // 4 am on the 11th: now 2 hours past the end of the 10th.
+    live.push(mar11 + 8 * hour, [Some(1.0.into())])?;
+
+    let day = live[daily].at(1).unwrap();
+    // The 10th runs from 05:00 UTC (midnight EST) to 04:00 UTC the next
+    // day (midnight EDT): 23 hours.
+    assert_eq!(day.begin(), mar10 + 5 * hour);
+    assert_eq!(day.end() - day.begin(), 23 * hour);
+    assert_eq!(day.number("total")?, Some(25.0)); // the late 5 counted
+
+    // With no grace, the 10th had closed before the late event came.
+    let day = live[daily_now].at(1).unwrap();
+    assert_eq!(day.number("total")?, Some(20.0));
+    Ok(())
+}
+```
+
+Clock triggers on rolling windows and reduce still take even steps only
+(`Trigger::every`), as in pond-ts.
 
 ## More views
 
@@ -701,8 +767,8 @@ fn main() -> Result<(), pond_rs::PondError> {
   and two from pond-rs.
 - **A clock trigger on a source keyed by ranges or intervals is
   refused**; pond-ts emits time keys under the interval schema there.
-- **Not built yet:** calendar buckets in a live `aggregate`, and
-  per-entity partitions.
+- **Calendar aggregations take years −9997 to 9997 only**, as above.
+- **Not built yet:** per-entity partitions.
 
 ## Speed
 
@@ -749,6 +815,7 @@ Rolling windows and reduce, on a series keeping its last 10,000 events
 | `rolling_rows` 100: avg, history off    | 291     | 2,935   | 10×    |
 | `rolling_windows` 1 m + 5 m + 15 m: avg | 338     | 3,493   | 10×    |
 | `reduce`: avg + max + count             | 357     | 6,443   | 18×    |
+| `aggregate` by New York day             | 198     | 2,469   | 12×    |
 
 These found a pond-ts slowdown too: a loop of pushes that never waited
 queued one task per push behind a `reduce`, each holding on to it until

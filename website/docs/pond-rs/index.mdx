@@ -77,12 +77,11 @@ anchored VWAP) are built, all 109 pond-ts studies; see
 
 **Started:** the live layer: series that take events as they arrive, with
 live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
-…), per-minute (or any fixed step) `aggregate`, rolling windows and
-`reduce`; see
+…), `aggregate` by minute or by calendar day in a time zone, rolling
+windows and `reduce`; see
 [Live series](./live).
 
-**Not built yet:** the rest of the live layer (calendar buckets in a live
-`aggregate`, partitions), and a WASM build that pond-ts can call. They
+**Not built yet:** the rest of the live layer (partitions), and a WASM build that pond-ts can call. They
 come in that order; see the
 [roadmap](#roadmap) below.
 
