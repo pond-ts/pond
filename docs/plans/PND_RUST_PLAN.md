@@ -3708,8 +3708,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          columns straight from the store). Memory (`examples/mem_live.rs`,
          1M events, bytes held per event): time + 3 numbers 249 → 34;
          time + text + 2 numbers 250 → 51; the same plus a pass-all filter
-         133 → 51 (a view now holds its own copy rather than sharing the
-         root's events); time + 10 numbers 585 → 92. Timing
+         133 → 51 per event summed over both nodes (the view alone went
+         from ~16 to ~51: it now holds its own copy rather than sharing the
+         root's events, so each pass-through view costs about as much as
+         the series; worth remembering as steps 4-6 add nodes); time + 10
+         numbers 585 → 92. Timing
          (`perf_live`, ms, best of two interleaved runs, before → after):
          one at a time 268 → 220; batches of 1,000 217 → 204; reorder 306
          → 230; filter + aggregate 382 → 293; fill + cumulative 600 → 450;

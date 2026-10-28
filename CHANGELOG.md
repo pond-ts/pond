@@ -100,8 +100,10 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Changed
 
 - **pond-rs: live series and views store events by column**, not as one
-  shared object per event: about 5 to 7 times less memory (1M events with
-  three number columns: 249 MB before, 34 MB now). Reads (`at`, `first`,
+  shared object per event: 5 to 7 times less memory for number columns,
+  about 5 times with a text column (1M events with three number columns:
+  249 MB before, 34 MB now). A view now holds its own copy of the events it
+  keeps instead of sharing the series' events. Reads (`at`, `first`,
   `last`, `events`, `at_or_before`, `at_or_after`, `find`) now return a
   `LiveEvent` built from the stored cells instead of a reference.
 - **Live views take a late event instead of throwing** ([PND-LATE]). On an

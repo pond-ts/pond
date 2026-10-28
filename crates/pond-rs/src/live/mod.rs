@@ -67,9 +67,11 @@
 //! ```
 //!
 //! **Storage.** Series and views store their events by column (a number
-//! cell is 8 bytes); reading one (`at`, `events`, `find`, …) builds a
-//! [`LiveEvent`] from its cells. A view holds its own copy of the events
-//! it keeps.
+//! cell is 8 bytes). Reading builds a [`LiveEvent`] from the cells:
+//! `at`, `events`, `find`, `some` and `every` build each event they visit,
+//! and a lookup by key on interval keys copies the label it compares with.
+//! A view holds its own copy of the events it keeps, so each pass-through
+//! view costs about as much memory as the series.
 //!
 //! Threads: the owner is `Send`; to share it, put it behind a lock, or
 //! publish a [`LiveSeries::to_time_series`] snapshot after each push.
@@ -827,7 +829,7 @@ impl LiveSeries {
         let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
         match &mut self.slots[c].state {
             State::View(view) => {
-                if let (_, Some(kept)) = view.take(event, hand_on) {
+                if let Some(kept) = view.take(event, hand_on) {
                     self.emit_event(c, &kept, out);
                 }
             }

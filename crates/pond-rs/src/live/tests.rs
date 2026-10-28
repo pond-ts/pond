@@ -494,3 +494,78 @@ fn windows_and_rates() {
     assert_eq!(live[s].schema().len(), 2);
     assert!(live[rows].event_rate().is_err());
 }
+
+/// Column storage with everything that moves cells around at once: interval
+/// keys with text labels, late events inserted mid-buffer, retention, and a
+/// two-level view chain mirroring the evictions.
+#[test]
+fn column_store_keeps_late_interval_events_aligned_through_evictions() {
+    let mut live = LiveSeries::with_options(
+        "s",
+        vec![
+            ColumnDef::required("interval", ColumnKind::Interval),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .max_events(4),
+    )
+    .unwrap();
+    let all = live.filter(live.root(), |_| true).unwrap();
+    let up = live
+        .filter(all, |e| e.number("cpu").ok().flatten() > Some(0.0))
+        .unwrap();
+    live.watch(up, OutputKind::Evict).unwrap();
+    let key = |l: &str, b: i64| EventKey::interval(l, b, b + 10).unwrap();
+    let push = |live: &mut LiveSeries, l: &str, b: i64, cpu: Option<f64>| {
+        live.push(key(l, b), [cpu.map(Value::Number)]).unwrap()
+    };
+    push(&mut live, "a", 0, Some(1.0));
+    push(&mut live, "b", 20, Some(-0.0));
+    push(&mut live, "c", 40, Some(2.0));
+    push(&mut live, "d", 10, Some(3.0)); // late: a, d, b, c
+    let labels = |events: Vec<LiveEvent>| -> Vec<String> {
+        events
+            .iter()
+            .map(|e| match e.key().label() {
+                Some(Label::String(s)) => s.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(labels(live.events().collect()), ["a", "d", "b", "c"]);
+    // A fifth event evicts `a`; the chain drops it and says so.
+    let out = push(&mut live, "e", 60, None);
+    let evicted: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Output::Evict { events, .. } => Some(labels(events.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(evicted, [vec!["a".to_string()]]);
+    // Late again, between `d` and `b`; the root then evicts `d`.
+    let out = push(&mut live, "f", 15, Some(5.0));
+    let evicted: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Output::Evict { events, .. } => Some(labels(events.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(evicted, [vec!["d".to_string()]]);
+    assert_eq!(labels(live.events().collect()), ["f", "b", "c", "e"]);
+    assert_eq!(labels(live[all].events().collect()), ["f", "b", "c", "e"]);
+    assert_eq!(labels(live[up].events().collect()), ["f", "c"]);
+    // Cells stayed with their keys: a gap and a -0 included.
+    let ts = live.to_time_series().unwrap();
+    let cpu = ts.column("cpu").unwrap().numbers().unwrap();
+    let got: Vec<Option<f64>> = (0..4).map(|i| cpu.get(i)).collect();
+    assert_eq!(got, [Some(5.0), Some(0.0), Some(2.0), None]);
+    assert!(cpu.get(1).unwrap().is_sign_negative());
+    assert_eq!(ts.key().begin(), &[15, 20, 40, 60]);
+    let at = live.at_or_before(key("c", 40)).unwrap();
+    assert_eq!(at.number("cpu").unwrap(), Some(2.0));
+    assert!(live.includes_key(key("b", 20)));
+    assert!(!live.includes_key(key("a", 0)));
+}

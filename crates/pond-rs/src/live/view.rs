@@ -90,13 +90,11 @@ impl LiveView {
     }
 
     /// Run the step on one source event and hold what it keeps. Returns
-    /// whether it kept one, and that event when `hand_on` is set (something
-    /// takes this view's events): handed on even if a window trims it
-    /// straight away. Without `hand_on` the cells are moved into storage.
-    pub(crate) fn take(&mut self, event: &LiveEvent, hand_on: bool) -> (bool, Option<LiveEvent>) {
-        let Some(kept) = (self.step)(event) else {
-            return (false, None);
-        };
+    /// the kept event when `hand_on` is set (something takes this view's
+    /// events): handed on even if a window trims it straight away. Without
+    /// `hand_on` the cells are moved into storage.
+    pub(crate) fn take(&mut self, event: &LiveEvent, hand_on: bool) -> Option<LiveEvent> {
+        let kept = (self.step)(event)?;
         let out = if hand_on {
             self.buffer.insert(&kept);
             Some(kept)
@@ -105,7 +103,7 @@ impl LiveView {
             None
         };
         self.trim();
-        (true, out)
+        out
     }
 
     /// Apply the window, if any: drop the oldest events past it.
