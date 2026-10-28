@@ -1235,7 +1235,7 @@ const CASES = [
     // inherited), then fed more rows: collect replays sorted by time.
     name: 'partition-over-history',
     schema: SCHEMA,
-    options: { retention: { maxEvents: 12 } },
+    options: { retention: { maxEvents: 6 } },
     steps: [
       { pushMany: ROWS.slice(0, 14) },
       node('p', 'partitionBy', 'root', 'host'),
@@ -1259,6 +1259,25 @@ const CASES = [
       node('pc', 'partition', 'p', 'c'),
       ...each(ROWS.slice(0, 12)),
       { pushMany: ROWS.slice(12) },
+    ],
+  },
+  {
+    // The quiet-partition sweep runs when time has moved maxAge / 8 (here
+    // exactly 1s) since the last one: c's only row ages out on the sweep
+    // at 8001, a full step after the one at 7001.
+    name: 'partition-max-age-sweep',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxAge: '8s' },
+      }),
+      node('pa', 'partition', 'p', 'a'),
+      ...each([
+        [0, 'c', 1, 1],
+        [0, 'a', 2, 2],
+        [7001, 'a', 3, 3],
+        [8001, 'a', 4, 4],
+      ]),
     ],
   },
   {
