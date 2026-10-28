@@ -22,18 +22,38 @@ const FIXTURE: &str = "packages/core/test/fixtures/live-parity.json";
 
 /// Operators pond-rs's live layer builds so far.
 #[cfg(feature = "live")]
-const SUPPORTED_OPS: &[&str] = &["filter", "aggregate"];
+const SUPPORTED_OPS: &[&str] = &[
+    "filter",
+    "aggregate",
+    "map",
+    "select",
+    "sample",
+    "window",
+    "diff",
+    "rate",
+    "pctChange",
+    "fill",
+    "cumulative",
+];
 
 /// Nodes pond-ts builds that pond-rs refuses on purpose, as `(case, node,
 /// why)`. pond-rs must refuse them; their outputs and state are not
 /// compared.
 #[cfg(feature = "live")]
-const REFUSED: &[(&str, &str, &str)] = &[(
-    "aggregate-bad-mapping",
-    "b",
-    "avg on a text column: pond-ts gives gaps, pond-rs refuses it as batch \
-     aggregate does ([PND-KINDREDUCE])",
-)];
+const REFUSED: &[(&str, &str, &str)] = &[
+    (
+        "aggregate-bad-mapping",
+        "b",
+        "avg on a text column: pond-ts gives gaps, pond-rs refuses it as batch \
+         aggregate does ([PND-KINDREDUCE])",
+    ),
+    (
+        "diff-rate-pct",
+        "bad",
+        "diff on a text column: pond-ts gives gaps, pond-rs refuses it as batch \
+         diff (and batch pond-ts) do",
+    ),
+];
 
 /// Every operator the fixture uses, so a new pond-ts case for an op pond-rs
 /// has no plan for fails here instead of being skipped quietly.
@@ -504,8 +524,8 @@ mod runner {
         Output as RsOutput, OutputKind,
     };
     use pond_rs::{
-        Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Label, Reducer, Scalar, Sequence,
-        TimeSeries, Value as RsValue,
+        Agg, ColumnDef as RsColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, Reducer,
+        Sample, Scalar, Sequence, TimeSeries, Value as RsValue,
     };
     use std::collections::HashMap;
 
@@ -768,6 +788,131 @@ mod runner {
             .collect()
     }
 
+    /// A column list: one name or a list of names.
+    fn names_of(v: &Value) -> Vec<String> {
+        match v {
+            Value::String(s) => vec![s.clone()],
+            v => v
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str().unwrap().to_string())
+                .collect(),
+        }
+    }
+
+    fn fill_of(v: &Value) -> Fill {
+        match v.as_str() {
+            Some("hold") => Fill::Hold,
+            Some("zero") => Fill::Zero,
+            Some("bfill") => Fill::Bfill,
+            Some("linear") => Fill::Linear,
+            _ => Fill::Value(cell_of(v).unwrap()),
+        }
+    }
+
+    /// The `map` spec the fixture uses: `column` becomes `v * mul + add`.
+    fn mapper(spec: &Value) -> impl FnMut(&LiveEvent) -> Vec<Option<RsValue>> + Send + 'static {
+        let spec = spec["map"].clone();
+        let column = spec["column"].as_str().unwrap().to_string();
+        let (mul, add) = (spec["mul"].as_f64().unwrap(), spec["add"].as_f64().unwrap());
+        move |e: &LiveEvent| {
+            let at = e.schema()[1..]
+                .iter()
+                .position(|c| c.name == column)
+                .unwrap();
+            let mut values = e.values().to_vec();
+            if let Some(RsValue::Number(v)) = values[at] {
+                values[at] = Some(RsValue::Number(v * mul + add));
+            }
+            values
+        }
+    }
+
+    fn refs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+
+    fn build_view(
+        live: &mut LiveSeries,
+        from: NodeId,
+        op: &str,
+        args: &[Value],
+    ) -> pond_rs::Result<Node<LiveView>> {
+        let strs = |v: &Value| names_of(v);
+        let first = |o: Option<&Value>| {
+            if o.is_some_and(|o| o["drop"] == Value::Bool(true)) {
+                FirstRow::Drop
+            } else {
+                FirstRow::Keep
+            }
+        };
+        match op {
+            "filter" => live.filter(from, predicate(&args[0])),
+            "map" => live.map(from, mapper(&args[0])),
+            "select" => {
+                let names: Vec<String> = args.iter().flat_map(strs).collect();
+                live.select(from, &refs(&names))
+            }
+            "sample" => {
+                let n = args[0]["stride"].as_i64().unwrap();
+                live.sample(from, Sample::Stride(n.max(0) as usize))
+            }
+            "window" => match &args[0] {
+                Value::String(d) => live.window(from, d),
+                n => live.window_rows(from, n.as_u64().unwrap() as usize),
+            },
+            "diff" | "rate" | "pctChange" => {
+                let cols = strs(&args[0]);
+                let first = first(args.get(1));
+                match op {
+                    "diff" => live.diff_with(from, &refs(&cols), first),
+                    "rate" => live.rate_with(from, &refs(&cols), first),
+                    _ => live.pct_change_with(from, &refs(&cols), first),
+                }
+            }
+            "fill" => {
+                let limit = args
+                    .get(1)
+                    .and_then(|o| o.get("limit"))
+                    .map(|l| l.as_u64().unwrap() as usize);
+                match &args[0] {
+                    Value::String(_) => {
+                        let fill = fill_of(&args[0]);
+                        match limit {
+                            Some(l) => live.fill_all_with(from, fill, l),
+                            None => live.fill_all(from, fill),
+                        }
+                    }
+                    spec => {
+                        let spec: Vec<(String, Fill)> = spec
+                            .as_object()
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), fill_of(v)))
+                            .collect();
+                        let spec: Vec<(&str, Fill)> =
+                            spec.iter().map(|(k, f)| (k.as_str(), f.clone())).collect();
+                        match limit {
+                            Some(l) => live.fill_with(from, &spec, l),
+                            None => live.fill(from, &spec),
+                        }
+                    }
+                }
+            }
+            "cumulative" => {
+                let spec: Vec<(&str, Reducer)> = args[0]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), Reducer::parse(v.as_str().unwrap()).unwrap()))
+                    .collect();
+                live.cumulative(from, &spec)
+            }
+            other => panic!("op {other}"),
+        }
+    }
+
     fn kind_name(k: OutputKind) -> &'static str {
         match k {
             OutputKind::Event => "event",
@@ -854,9 +999,6 @@ mod runner {
                 let spec = step.node.as_ref().unwrap();
                 let from = id_of(handles[spec.from.as_str()], &live);
                 let made = match spec.op.as_str() {
-                    "filter" => live
-                        .filter(from, predicate(&spec.args[0]))
-                        .map(Handle::View),
                     "aggregate" => live
                         .aggregate(
                             from,
@@ -864,7 +1006,7 @@ mod runner {
                             &mapping_of(&spec.args[1]),
                         )
                         .map(Handle::Agg),
-                    other => panic!("op {other}"),
+                    op => build_view(&mut live, from, op, &spec.args).map(Handle::View),
                 };
                 let deviation = REFUSED
                     .iter()

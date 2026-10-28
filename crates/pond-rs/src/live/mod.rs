@@ -3,16 +3,17 @@
 //! `LiveAggregation`).
 //!
 //! **One owner, handles, outputs in order.** A [`LiveSeries`] owns every
-//! node built from it. Building one ([`LiveSeries::filter`],
-//! [`LiveSeries::aggregate`]) returns a [`Node`] handle: `Copy`, `Send`, no
+//! node built from it. Building one (a view such as [`LiveSeries::filter`],
+//! [`LiveSeries::map`], [`LiveSeries::diff`], [`LiveSeries::fill`] or
+//! [`LiveSeries::window`], or [`LiveSeries::aggregate`]) returns a [`Node`] handle: `Copy`, `Send`, no
 //! lifetime. Read a node through the owner with `live.get(node)?` (or
 //! `live[node]`, which panics on a bad handle). Each push returns what it
 //! caused, as [`Output`]s, in the order pond-ts's listeners would see them:
 //! each event down the tree (a node's subscribers in the order they were
 //! added), then the root's retention, `Batch` and `Evict`. Outputs are
 //! opt-in: [`LiveSeries::watch`] a node for a kind, and pushes return only
-//! what is watched. Nothing inside a push runs your code except a filter's
-//! test, and nothing blocks.
+//! what is watched. Nothing inside a push runs your code except the closures you
+//! gave `filter`, `map` and `cumulative_with`, and nothing blocks.
 //!
 //! **A batch is all or nothing.** [`LiveSeries::push_many`] checks every
 //! row, and the whole batch's order under the ordering mode, before storing
@@ -22,7 +23,9 @@
 //! that starts before the latest one; [`OrderingMode::Drop`] skips it and
 //! counts it in [`LiveStats::rejected`]; [`OrderingMode::Reorder`] stores it
 //! in key order, refusing it only when it is older than the latest by more
-//! than [`LiveOptions::grace_window`].
+//! than [`LiveOptions::grace_window`]. Views take such a late event at its
+//! key position too; the ones that carry state (`diff`, `fill`,
+//! `cumulative`, …) work in arrival order.
 //!
 //! **Retention.** [`LiveOptions::max_events`] and [`LiveOptions::max_age`]
 //! (age measured back from the latest event's start; there is no clock)
@@ -71,6 +74,7 @@ mod buffer;
 mod event;
 mod json;
 mod view;
+mod views;
 
 #[cfg(test)]
 mod tests;
@@ -95,6 +99,7 @@ use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 
 use buffer::EventBuffer;
 use event::LiveSchema;
+use view::Step;
 
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -784,10 +789,11 @@ impl LiveSeries {
                     events: evicted.to_vec(),
                 }),
                 Sub::Child(c) => {
+                    let follow = !self.slots[c].subs[kind].is_empty();
                     let State::View(view) = &mut self.slots[c].state else {
                         unreachable!("only views follow evictions")
                     };
-                    let removed = view.mirror_evict(evicted);
+                    let removed = view.mirror_evict(evicted, follow);
                     if !removed.is_empty() {
                         self.emit_evict(c, &removed, out);
                     }
@@ -895,14 +901,8 @@ impl LiveSeries {
     {
         let source = self.slot_of("LiveSeries::filter", from.into())?;
         let schema = self.schema_of(source);
-        let name = self.name.clone();
-        let view = LiveView::new(
-            name,
-            schema,
-            Box::new(move |e: &LiveEvent| keep(e).then(|| e.clone())),
-            self.held(source),
-        );
-        Ok(self.add_node(source, State::View(view)))
+        let step: Step = Box::new(move |e: &LiveEvent| keep(e).then(|| e.clone()));
+        Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
     }
 
     /// Fixed-length buckets (`sequence` must be [`Sequence::every`]) over

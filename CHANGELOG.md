@@ -89,9 +89,40 @@ include new features and type-level changes; patch bumps are strictly additive.
   `Node` handles; `watch` picks which outputs a push returns, and `remove`
   drops a node. Results match pond-ts event for event on 31 of the 51 live
   replay cases (the rest need later steps).
+- **pond-rs: live views** (R3 step 3). `map`, `select`, `sample` (by stride),
+  `window` (by time or rows), `diff` / `rate` / `pct_change`, `fill` and
+  `cumulative` on a `LiveSeries` or on another view, plus `count` /
+  `event_rate` on a view. Results match pond-ts event for event on 39 of
+  the 52 live replay cases. Where pond-ts takes a bad argument silently
+  (an unknown column, `diff` on a text column, a fill value of the wrong
+  kind), pond-rs refuses it when the view is built.
+
+### Changed
+
+- **Live views take a late event instead of throwing** ([PND-LATE]). On an
+  `ordering: 'reorder'` series, a late event the series accepted made every
+  `LiveView` on it throw ("processed event has key … older than the previous
+  tail"), after the series had already stored it, so the series and its
+  views disagreed. A view now stores the event at its key position (after
+  any events with the same key), as the series does. Views that carry state
+  (`diff`, `rate`, `pctChange`, `fill`, `cumulative`, `sample`) still work
+  in arrival order: a late event is compared with the event that arrived
+  before it, not the one before it in time. The same applies to a `map`
+  whose new keys go backwards, which used to throw too.
 
 ### Fixed
 
+- **Live views and `drop` / `reorder` series with retention evict much
+  faster on buffers up to ~16k events** ([PND-EVICTSPLICE]). Dropping the
+  oldest event copied the whole buffer on every push (~20 µs at 10k
+  events); it now moves the array's start in place. Larger buffers still
+  copy on eviction ([PND-EVICTDEQUE]). With
+  `maxEvents: 10_000`, 100k pushes into a `reorder` series went from 2.4 s
+  to 31 ms, and into a series with three `diff`-style views from 5.7 s to
+  0.25 s.
+- **Live `fill('zero')` no longer writes `0` into text and true/false
+  columns.** `zero` now fills number columns only and skips the others
+  (both `fill('zero')` and `fill({ col: 'zero' })`), as batch `fill` does.
 - **`LiveSeries.push` one event at a time no longer slows down as the series
   grows** ([PND-LIVEPUSHSCAN]). On a `strict` time-keyed series each push
   looked up the newest row by walking every stored push from the oldest, so

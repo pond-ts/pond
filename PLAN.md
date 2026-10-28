@@ -616,7 +616,8 @@ the study oracle) is done.
 - **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
   2026-10-23 after R2, revised twice 2026-10-25 after two reviews; in
   progress (step 1, the pond-ts replay fixture, landed 2026-10-27; step 2,
-  `LiveSeries` with `filter` and fixed-bucket `aggregate`, built 2026-10-27). Port pond-ts's live layer (`LiveSeries`, views, live
+  `LiveSeries` with `filter` and fixed-bucket `aggregate`, merged 2026-10-28
+  (#839); step 3, the other views, built 2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.
@@ -882,7 +883,15 @@ Robustness debt plus the queued composition workstreams. Plan:
 [PND_LIVE_PLAN.md](docs/plans/PND_LIVE_PLAN.md).
 
 - **[PND-LATE]** — Late-event propagation through stateful live transforms
-  (needs a reorder-aware event payload; overlaps [PND-CHANGE]).
+  (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
+  longer throw on a late event (2026-10-28, they insert it in order); the
+  recompute of later rows is what remains.
+- **[PND-EVICTDEQUE]** — Live per-event buffers (`LiveView`, the
+  `drop` / `reorder` row backing, rolling history) past ~16k events still
+  copy the whole array on each eviction (~150 µs at 100k events), because
+  V8 cannot move a large array's start in place. Needs a start index with
+  occasional compaction behind every reader. Found 2026-10-28 reviewing
+  [PND-EVICTSPLICE].
 - **[PND-LJOIN]** — Live merge / join across sources.
 - **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
   prerequisite-or-sibling of [PND-LJOIN].

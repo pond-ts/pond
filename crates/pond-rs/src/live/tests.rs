@@ -2,7 +2,7 @@
 //! lookups, JSON, handles and the errors.
 
 use super::*;
-use crate::Reducer;
+use crate::{Fill, FirstRow, Reducer, Sample};
 
 fn schema() -> Vec<ColumnDef> {
     vec![
@@ -238,7 +238,7 @@ fn removing_a_node_freezes_what_was_built_on_it() {
 
 #[test]
 fn a_late_event_reaches_views_in_key_order() {
-    // pond-ts's view throws here ([PND-LATE]); pond-rs stores it in order.
+    // Both libraries store it at its key position ([PND-LATE]).
     let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
     let f = live.filter(live.root(), |_| true).unwrap();
     live.watch(f, OutputKind::Event).unwrap();
@@ -361,4 +361,136 @@ fn json_in_and_out() {
     assert_eq!(back.schema(), live.schema());
     assert_eq!(begins(back.events()), [1000, 2000]);
     assert!(back.to_json(RowFormat::Array).unwrap().len() < text.len());
+}
+
+#[test]
+fn view_arguments_are_checked() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let err = |r: Result<Node<LiveView>>| r.unwrap_err().to_string();
+    // Unknown, repeated and wrong-kind columns.
+    assert!(err(live.diff(root, &["nope"])).contains("nope"));
+    assert!(err(live.diff(root, &["cpu", "cpu"])).contains("twice"));
+    assert!(err(live.rate(root, &["host"])).contains("host"));
+    assert!(err(live.pct_change(root, &[])).contains("at least one"));
+    assert!(err(live.cumulative(root, &[("host", Reducer::Sum)])).contains("host"));
+    assert!(err(live.cumulative(root, &[("cpu", Reducer::Avg)])).contains("sum, max, min"));
+    assert!(err(live.cumulative_with(root, "nope", |a, b| a + b)).contains("nope"));
+    assert!(err(live.select(root, &["nope"])).contains("nope"));
+    // Fills a live view cannot do, or of the wrong kind.
+    assert!(err(live.fill(root, &[("cpu", Fill::Linear)])).contains("later events"));
+    assert!(err(live.fill_all(root, Fill::Bfill)).contains("later events"));
+    assert!(err(live.fill(root, &[("host", Fill::Zero)])).contains("host"));
+    assert!(err(live.fill(root, &[("cpu", Fill::Value("x".into()))])).contains("cpu"));
+    assert!(err(live.fill(root, &[("cpu", Fill::Value(f64::NAN.into()))])).contains("cpu"));
+    assert!(err(live.fill_all(root, Fill::Value(1.0.into()))).contains("per column"));
+    // Samples and windows.
+    assert!(err(live.sample(root, Sample::Stride(0))).contains("at least 1"));
+    let reservoir = Sample::Reservoir { size: 2, seed: 1 };
+    assert!(err(live.sample(root, reservoir)).contains("Stride"));
+    assert!(err(live.window_rows(root, 0)).contains("at least 1"));
+    assert!(live.window(root, "soon").is_err());
+}
+
+#[test]
+fn deltas_and_running_values() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let d = live.diff(root, &["cpu"]).unwrap();
+    let r = live.rate(root, &["cpu"]).unwrap();
+    let p = live
+        .pct_change_with(root, &["cpu"], FirstRow::Drop)
+        .unwrap();
+    let c = live.cumulative(root, &[("cpu", Reducer::Max)]).unwrap();
+    let mul = live.cumulative_with(root, "cpu", |a, v| a * v).unwrap();
+    live.push(0, row("a", 0.0)).unwrap();
+    live.push(0, row("a", 2.0)).unwrap(); // same time: rate gap
+    live.push(500, vec![Some("a".into()), None]).unwrap();
+    live.push(1000, row("a", 5.0)).unwrap();
+    let cpu = |n: Node<LiveView>, live: &LiveSeries| -> Vec<Option<f64>> {
+        live[n].events().map(|e| e.number("cpu").unwrap()).collect()
+    };
+    assert_eq!(cpu(d, &live), [None, Some(2.0), None, None]);
+    assert_eq!(cpu(r, &live), [None, None, None, None]);
+    // The first row is dropped; 0 before gives a gap.
+    assert_eq!(cpu(p, &live), [None, None, None]);
+    assert_eq!(cpu(c, &live), [Some(0.0), Some(2.0), Some(2.0), Some(5.0)]);
+    assert_eq!(
+        cpu(mul, &live),
+        [Some(0.0), Some(0.0), Some(0.0), Some(0.0)]
+    );
+    // The changed columns become optional numbers.
+    assert!(!live[d].schema()[2].required);
+}
+
+#[test]
+fn fills_and_maps() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let zero = live.fill_all(root, Fill::Zero).unwrap();
+    let held = live.fill_all_with(root, Fill::Hold, 1).unwrap();
+    let text = live
+        .fill(root, &[("host", Fill::Value("?".into()))])
+        .unwrap();
+    let m = live
+        .map(root, |e| {
+            let cpu = e.number("cpu").unwrap().map(|v| (v / 0.0).into());
+            vec![e.value("host").unwrap().cloned(), cpu]
+        })
+        .unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+    live.push(1000, vec![None, None]).unwrap();
+    live.push(2000, vec![None, None]).unwrap();
+    let col = |n: Node<LiveView>, name: &str, live: &LiveSeries| -> Vec<Option<Value>> {
+        live[n]
+            .events()
+            .map(|e| e.value(name).unwrap().cloned())
+            .collect()
+    };
+    // Zero skips the text column.
+    assert_eq!(
+        col(zero, "cpu", &live),
+        [Some(1.0.into()), Some(0.0.into()), Some(0.0.into())]
+    );
+    assert_eq!(col(zero, "host", &live), [Some("a".into()), None, None]);
+    // A limit of 1 fills the first gap of a run, not the second.
+    assert_eq!(
+        col(held, "cpu", &live),
+        [Some(1.0.into()), Some(1.0.into()), None]
+    );
+    assert_eq!(col(text, "host", &live)[2], Some("?".into()));
+    // map stores an infinite number as a gap.
+    assert_eq!(col(m, "cpu", &live), [None, None, None]);
+}
+
+#[test]
+#[should_panic(expected = "one cell per value column")]
+fn a_map_returning_the_wrong_width_panics() {
+    let mut live = series(LiveOptions::new());
+    live.map(live.root(), |_| vec![None]).unwrap();
+    live.push(0, row("a", 1.0)).unwrap();
+}
+
+#[test]
+fn windows_and_rates() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    let w = live.window(root, "2s").unwrap();
+    let rows = live.window_rows(root, 2).unwrap();
+    let f = live.filter(w, |_| true).unwrap();
+    let s = live.select(w, &["cpu"]).unwrap();
+    let t = live.sample(root, Sample::Stride(2)).unwrap();
+    for t in [0, 1000, 2500, 3000] {
+        live.push(t, row("a", 1.0)).unwrap();
+    }
+    assert_eq!(begins(live[w].events()), [1000, 2500, 3000]);
+    assert_eq!(begins(live[rows].events()), [2500, 3000]);
+    assert_eq!(begins(live[t].events()), [1000, 3000]);
+    // 3 events over a 2 s window.
+    assert_eq!(live[w].event_rate().unwrap(), 1.5);
+    assert_eq!(live[w].count(), 3);
+    // filter and select on a time window keep its span (not its trimming).
+    assert_eq!(live[f].event_rate().unwrap(), 4.0 / 2.0);
+    assert_eq!(live[s].schema().len(), 2);
+    assert!(live[rows].event_rate().is_err());
 }
