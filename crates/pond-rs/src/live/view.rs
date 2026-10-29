@@ -181,6 +181,7 @@ impl LiveView {
         Ok(self.buffer.len() as f64 / (ms as f64 / 1000.0))
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.buffer.len() == 0
     }
@@ -191,10 +192,12 @@ impl LiveView {
         self.buffer.at(index)
     }
 
+    /// The first event, if any.
     pub fn first(&self) -> Option<LiveEvent> {
         self.buffer.at(0)
     }
 
+    /// The latest event, if any.
     pub fn last(&self) -> Option<LiveEvent> {
         self.buffer.at(-1)
     }

@@ -8,6 +8,6 @@ exclude = ["spikes"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/pond-ts/pond"

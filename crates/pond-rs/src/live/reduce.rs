@@ -219,6 +219,7 @@ impl LiveReduce {
         self.out.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.out.len() == 0
     }
@@ -240,6 +241,7 @@ impl LiveReduce {
         self.columns.iter().map(|c| c.1.peek()).collect()
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> ReduceStats {
         ReduceStats {
             events_observed: self.events_observed,

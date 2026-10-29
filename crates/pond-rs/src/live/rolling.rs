@@ -142,7 +142,9 @@ pub enum History {
     /// Keep at most `max_events` (at least 1), and only those starting no
     /// more than `max_age` (a duration such as `"5m"`) before the newest.
     Limit {
+        /// Most events kept; `None` for no limit.
         max_events: Option<usize>,
+        /// Oldest event kept, as a duration before the newest; `None` for no limit.
         max_age: Option<String>,
     },
 }
@@ -158,6 +160,7 @@ pub struct RollingOptions {
 }
 
 impl RollingOptions {
+    /// The default options: no minimum, emit on every event, keep every emitted event.
     pub fn new() -> Self {
         Self::default()
     }
@@ -169,11 +172,13 @@ impl RollingOptions {
         self
     }
 
+    /// When the window emits (default: on every event).
     pub fn trigger(mut self, trigger: Trigger) -> Self {
         self.trigger = trigger;
         self
     }
 
+    /// How many emitted events are kept to read back (default: all).
     pub fn history(mut self, history: History) -> Self {
         self.history = history;
         self
@@ -753,6 +758,7 @@ impl LiveRolling {
         self.out.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.out.len() == 0
     }
@@ -788,6 +794,7 @@ impl LiveRolling {
         self.starts.len()
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> RollingStats {
         RollingStats {
             events_observed: self.events_observed,

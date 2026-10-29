@@ -929,11 +929,11 @@ fn read_time_values(
 /// checked to fit the field's precision (a file can hold values that do
 /// not).
 fn read_decimals(batches: &[RecordBatch], c: usize) -> Result<DecimalColumn> {
-    if let [batch] = batches {
-        if let Some(a) = batch.column(c).as_primitive_opt::<Decimal128Type>() {
-            // A clone shares the buffers; nothing is copied.
-            return DecimalColumn::with_type(a.clone(), a.precision(), a.scale());
-        }
+    if let [batch] = batches
+        && let Some(a) = batch.column(c).as_primitive_opt::<Decimal128Type>()
+    {
+        // A clone shares the buffers; nothing is copied.
+        return DecimalColumn::with_type(a.clone(), a.precision(), a.scale());
     }
     let (precision, scale) = match batches[0].column(c).data_type() {
         DataType::Decimal32(p, s) | DataType::Decimal64(p, s) | DataType::Decimal128(p, s) => {
@@ -971,10 +971,10 @@ fn read_strings(batches: &[RecordBatch], c: usize, name: &str) -> Result<StringC
         if array.data_type() == &DataType::Utf8 {
             return Ok(StringColumn::plain(array.as_string::<i32>().clone()));
         }
-        if let Some(dict) = array.as_dictionary_opt::<Int32Type>() {
-            if let Some(column) = StringColumn::dictionary(dict.clone()) {
-                return Ok(column);
-            }
+        if let Some(dict) = array.as_dictionary_opt::<Int32Type>()
+            && let Some(column) = StringColumn::dictionary(dict.clone())
+        {
+            return Ok(column);
         }
     }
     let mut values: Vec<Option<&str>> = Vec::new();

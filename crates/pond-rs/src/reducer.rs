@@ -22,7 +22,9 @@ pub enum Reducer {
     /// Mean of present values; missing when there are none. `"mean"` parses
     /// to this too.
     Avg,
+    /// Smallest present value.
     Min,
+    /// Largest present value.
     Max,
     /// First present value.
     First,
@@ -199,14 +201,17 @@ impl Agg {
         }
     }
 
+    /// The output column's name.
     pub fn output(&self) -> &str {
         &self.output
     }
 
+    /// The column read.
     pub fn source(&self) -> &str {
         &self.source
     }
 
+    /// The reducer applied.
     pub fn reducer(&self) -> Reducer {
         self.reducer
     }

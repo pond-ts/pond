@@ -1,13 +1,24 @@
 [package]
 name = "pond-rs"
-version = "0.0.0"
-description = "Time series analytics: a native Rust implementation of pond"
+version = "0.1.0"
+description = "Time series analytics: rolling windows, calendar buckets in any time zone, joins, 109 finance studies and live streams, with Arrow I/O. Same results as pond-ts."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-# Not published until R1 lands something worth using.
-publish = false
+homepage = "https://pond-ts.org"
+documentation = "https://docs.rs/pond-rs"
+readme = "README.md"
+keywords = ["timeseries", "time-series", "analytics", "finance", "arrow"]
+categories = ["date-and-time", "finance", "science", "data-structures"]
+# Only the library, its README and licence go to crates.io. Tests, benches
+# and the perf examples read fixtures elsewhere in the monorepo.
+include = ["/src/**/*.rs", "/examples/quickstart.rs", "/examples/rsi.rs", "/examples/live_stream.rs", "/README.md", "/LICENSE"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 arrow-array = { version = "59.3.1", default-features = false }
@@ -65,4 +76,8 @@ required-features = ["live"]
 
 [[example]]
 name = "mem_live"
+required-features = ["live"]
+
+[[example]]
+name = "live_stream"
 required-features = ["live"]

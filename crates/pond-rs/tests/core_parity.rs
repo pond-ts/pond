@@ -1385,22 +1385,22 @@ fn implemented_ops_match_pond_ts() {
         // output required even when it holds gaps; pond-rs marks it
         // optional then (and required when it has none, as pond-ts).
         let mut case = case.clone();
-        if case.op == "collapse" {
-            if let Some(expected) = case.expected.as_mut() {
-                let name = case.args[1].as_str().expect("output");
-                let at = expected
-                    .schema
-                    .iter()
-                    .position(|c| c.name == name)
-                    .expect("collapse output in the schema");
-                if expected.rows.iter().any(|r| r[at].is_null()) {
-                    assert_eq!(
-                        expected.schema[at].required, None,
-                        "{}: pond-ts fixed [PND-COLLAPSEREQ]",
-                        case.id
-                    );
-                    expected.schema[at].required = Some(false);
-                }
+        if case.op == "collapse"
+            && let Some(expected) = case.expected.as_mut()
+        {
+            let name = case.args[1].as_str().expect("output");
+            let at = expected
+                .schema
+                .iter()
+                .position(|c| c.name == name)
+                .expect("collapse output in the schema");
+            if expected.rows.iter().any(|r| r[at].is_null()) {
+                assert_eq!(
+                    expected.schema[at].required, None,
+                    "{}: pond-ts fixed [PND-COLLAPSEREQ]",
+                    case.id
+                );
+                expected.schema[at].required = Some(false);
             }
         }
         if let Err(why) = check_case(&case, &actual) {

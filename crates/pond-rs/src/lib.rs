@@ -1,61 +1,85 @@
 //! # pond-rs
 //!
-//! A native Rust implementation of [pond](https://github.com/pond-ts/pond),
-//! the time series analytics library. See `docs/rfcs/pond-rs.md` in the
-//! repository for the plan.
+//! Time series analytics for Rust: rolling windows, time and calendar
+//! buckets (time-zone and daylight-saving aware), joins, per-entity
+//! partitions, 109 technical-analysis studies, trading calendars, and live
+//! series that update as events arrive. Arrow and JSON in and out.
 //!
-//! **Status: R1b, in progress** (the rest of the batch core). What exists:
-//! series keyed by time, by time ranges or by intervals labelled with
-//! numbers or text, with number, exact decimal, text, true/false and array
-//! columns (gaps allowed; see [`Column`] and [`ArrayColumn`]),
-//! [`TimeSeries::rolling`] over a window of time or rows (trailing, leading
-//! or centred, or on a sequence's grid), [`TimeSeries::aggregate`] into fixed-length buckets
-//! ([`Sequence::every`]) or calendar buckets in a time zone
-//! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
-//! row-by-row [`TimeSeries::diff`] / `rate` / `pct_change` / `shift` /
-//! `cumulative` / `fill`, picking rows with [`TimeSeries::slice`] /
-//! `filter` (a closure over each [`Row`]) and changing columns with
-//! `with_column` / `map_numbers` and its siblings, running any of these per
-//! entity with [`TimeSeries::partition_by`] (partitions on several cores),
-//! putting a series on a grid with [`TimeSeries::align`] /
-//! [`TimeSeries::materialize`] and collapsing repeated keys with
-//! [`TimeSeries::dedupe`], putting series side by side with
-//! [`TimeSeries::join`] / [`TimeSeries::join_many`],
-//! the trailing window with [`TimeSeries::tail`] and a whole-series
-//! [`TimeSeries::reduce`],
-//! finding rows by key or test with [`TimeSeries::bisect`] /
-//! `at_or_before` / `at_or_after` / `nearest` / `find` (keys as
-//! [`EventKey`]), picking a time span with [`TimeSeries::within`] /
-//! `overlapping` / `trim` / `before` / `after`,
-//! changing the key with [`TimeSeries::as_time_range`] /
-//! `as_interval` / `offset_time`,
-//! pond-ts's JSON formats with [`TimeSeries::from_json`] /
-//! [`TimeSeries::to_json`] (rows), `from_columns_json` /
-//! `to_columns_json` (one array per column) and `from_points_json` /
-//! `to_points_json` (wide points for charts),
-//! working with array columns through [`TimeSeries::array_contains`] /
-//! `array_aggregate` / `array_explode`,
-//! smoothing with [`TimeSeries::smooth`] (EMA, moving average, loess),
-//! rolling bands with [`TimeSeries::baseline`] / `outliers`, a fold of your
-//! own with [`TimeSeries::scan`], and picking some rows with
-//! [`TimeSeries::sample`] (all five per partition too),
-//! stacking series with [`TimeSeries::concat`], replacing columns with one
-//! computed per row with [`TimeSeries::collapse`], long rows into wide ones
-//! with [`TimeSeries::pivot_by_group`],
-//! histograms and splits by a number column's value with
-//! [`TimeSeries::by_column`], and windows along one with
-//! [`TimeSeries::rolling_by_column`],
-//! rows keyed by a number column instead of time with
-//! [`TimeSeries::by_value`] (a [`ValueSeries`]: nearest row, slices, JSON
-//! and Arrow),
-//! reading times written as text with [`parse_time`] / [`parse_time_in`]
-//! (as pond-ts `Time.parse`),
-//! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
-//! [`ArrowKey`], [`TimeSeries::write_ipc`]), array columns as Arrow lists
-//! (pond-rs only). Results match
-//! pond-ts bit for bit; the parity
-//! harness under `tests/` checks that against pond-ts's own output
-//! (`packages/core/test/fixtures/parity.json`).
+//! pond-rs is the Rust implementation of [pond](https://pond-ts.org). The
+//! TypeScript packages (`pond-ts`, `@pond-ts/financial`) and this crate
+//! give the same results, bit for bit: a parity harness checks every
+//! operation against output written by pond-ts. Pick the language that
+//! fits the program; the numbers do not change.
+//!
+//! ```toml
+//! [dependencies]
+//! pond-rs = "0.1"
+//! ```
+//!
+//! ## Where to start
+//!
+//! | You want to… | Start at |
+//! |---|---|
+//! | Build a series, or read one from Arrow or JSON | [`TimeSeries::new`], [`TimeSeries::read_ipc`], [`TimeSeries::from_json`] |
+//! | Roll a window over it | [`TimeSeries::rolling`], [`TimeSeries::rolling_with`] |
+//! | Bucket it by minute, day, month… in a time zone | [`TimeSeries::aggregate`] with [`Sequence::every`] or [`Sequence::calendar`] |
+//! | Do the same per host, symbol or user | [`TimeSeries::partition_by`] |
+//! | Line several series up | [`TimeSeries::join`], [`TimeSeries::align`], [`TimeSeries::materialize`] |
+//! | Compute RSI, Bollinger bands, VWAP… | [`financial`] |
+//! | Process events as they arrive | [`live`] (the `live` feature) |
+//!
+//! ## What is in the crate
+//!
+//! - **Series.** A [`TimeSeries`] is keyed by time, by time ranges or by
+//!   intervals labelled with numbers or text. Value columns hold numbers,
+//!   exact decimals, text, true/false values or arrays, and may have gaps
+//!   ([`Column`], [`ColumnData`]). Keys are always in order.
+//! - **Windows and buckets.** [`TimeSeries::rolling`] over a span of time or
+//!   a count of rows (trailing, leading or centred), [`TimeSeries::aggregate`]
+//!   into fixed-length or calendar buckets, [`TimeSeries::reduce`] over the
+//!   whole series, with the built-in [`Reducer`]s (count, sum, avg, min,
+//!   max, percentiles, stdev, unique, top, …).
+//! - **Row by row.** [`TimeSeries::diff`], `rate`, `pct_change`, `shift`,
+//!   `cumulative`, `fill`; [`TimeSeries::smooth`] (EMA, moving average,
+//!   loess), [`TimeSeries::baseline`] and `outliers`, a fold of your own
+//!   with [`TimeSeries::scan`].
+//! - **Picking rows.** [`TimeSeries::filter`], `slice`, `within`, `trim`,
+//!   `before`, `after`, `tail`, and lookups by key: [`TimeSeries::bisect`],
+//!   `at_or_before`, `nearest`, `find`.
+//! - **Reshaping.** [`TimeSeries::join`] / `join_many`, `concat`,
+//!   `pivot_by_group`, `collapse`, `dedupe`, `align`, `materialize`;
+//!   histograms with [`TimeSeries::by_column`]; rows keyed by a number
+//!   column instead of time with [`TimeSeries::by_value`] ([`ValueSeries`]).
+//! - **Per entity.** [`TimeSeries::partition_by`] runs any of the above per
+//!   group, on several cores.
+//! - **In and out.** Arrow IPC files and record batches
+//!   ([`TimeSeries::read_ipc`], [`TimeSeries::write_ipc`],
+//!   [`TimeSeries::to_arrow`]); pond's JSON formats (rows, columns,
+//!   chart points); times written as text with [`parse_time`] /
+//!   [`parse_time_in`].
+//! - **Finance.** [`financial`]: 109 studies (moving averages, bands,
+//!   momentum, trend, volatility, volume, statistics, price, per session),
+//!   each checked against a pandas / TA-Lib oracle, trading calendars, and a
+//!   [`catalog`](financial::catalog) describing every study for menus and
+//!   agents.
+//! - **Live.** [`live`]: a [`LiveSeries`](live::LiveSeries) takes events as
+//!   they arrive and keeps filters, rolling windows, bucket aggregations and
+//!   per-entity partitions up to date, returning what each push caused.
+//!
+//! Every call returns [`Result`]; a [`PondError`] names the call and the
+//! column, so the input can be fixed without reading pond-rs source.
+//!
+//! ## Cargo features
+//!
+//! | Feature | Default | What it does |
+//! |---|---|---|
+//! | `parallel` | on | Independent output columns, partitions and loess rows run on several cores (rayon). Results are the same bits either way. Does nothing on wasm32. |
+//! | `live` | on | The [`live`] module. |
+//!
+//! With `default-features = false` you get the batch core and
+//! [`financial`], on one thread.
+//!
+//! ## Threads and memory
 //!
 //! **Threads.** With the `parallel` feature (on by default; not on wasm32),
 //! the output columns of one `rolling` or `aggregate` call are computed on
@@ -68,8 +92,11 @@
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
 //! gap-free `Float64` field, a `Utf8` / `Dictionary<Int32, Utf8>` field or a
 //! `Boolean` field from a one-batch Arrow file uses the file's memory
-//! (or a `Decimal128` field) without copying (which keeps the file's bytes in memory while the
-//! column lives), and writing hands each column's buffer to Arrow.
+//! (or a `Decimal128` field) uses the file's memory without copying (the
+//! file's bytes stay in memory while the column lives), and writing hands
+//! each column's buffer to Arrow.
+//!
+//! ## Example
 //!
 //! ```
 //! use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
@@ -97,7 +124,9 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 //!
-//! **Latest state per entity, and results that are not a series.** A
+//! ## Results that are not a series
+//!
+//! **Latest state per entity.** A
 //! ranked table (one row per symbol, sorted by score) is not a
 //! [`TimeSeries`], which is always in time order with its key first. Reduce
 //! each partition's last window with [`TimeSeries::tail`] and
@@ -140,6 +169,9 @@
 //! // Write it with arrow_ipc::writer::FileWriter, as TimeSeries::write_ipc does.
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
+
+#![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod aggregate;
 mod array;

@@ -1291,10 +1291,11 @@ fn baseline_and_outliers_follow_rolling() {
                 _ => None,
             };
             assert_eq!(upper[row].zip(lower[row]), band, "{what} row {row}");
-            if let (Some(v), Some(a), Some(d)) = (values[row], avg[row], sd[row]) {
-                if d > 0.0 && (v - a).abs() > sigma * d {
-                    flagged.push(times[row]);
-                }
+            if let (Some(v), Some(a), Some(d)) = (values[row], avg[row], sd[row])
+                && d > 0.0
+                && (v - a).abs() > sigma * d
+            {
+                flagged.push(times[row]);
             }
         }
         let out = s.outliers("v", &window, sigma, case.options).unwrap();

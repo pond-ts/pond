@@ -7,32 +7,61 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PondError {
     /// A duration string that is not `<digits><ms|s|m|h|d>`.
-    InvalidDuration { input: String, reason: &'static str },
+    InvalidDuration {
+        /// The text given.
+        input: String,
+        /// What is wrong with it.
+        reason: &'static str,
+    },
     /// A reducer name pond does not have (`"bogus"`).
-    UnknownReducer { name: String },
+    UnknownReducer {
+        /// The name given.
+        name: String,
+    },
     /// A mapping or lookup names a column the series does not have.
     UnknownColumn {
+        /// The call that failed (`"rolling"`, `"aggregate"`, …).
         call: &'static str,
+        /// The column asked for.
         column: String,
+        /// The columns the series has.
         available: Vec<String>,
     },
     /// Two mapping entries write the same output column.
-    DuplicateOutput { call: &'static str, column: String },
+    DuplicateOutput {
+        /// The call that failed (`"rolling"`, `"aggregate"`, …).
+        call: &'static str,
+        /// The output column written twice.
+        column: String,
+    },
     /// Input data that breaks a series rule (unsorted keys, a gap in a
     /// required column, mismatched lengths, …).
-    InvalidData { call: &'static str, message: String },
+    InvalidData {
+        /// The call that failed (`"rolling"`, `"aggregate"`, …).
+        call: &'static str,
+        /// What is wrong with the data.
+        message: String,
+    },
     /// A column of the wrong kind for the call: text where numbers are
     /// needed, say.
     WrongKind {
+        /// The call that failed (`"rolling"`, `"aggregate"`, …).
         call: &'static str,
+        /// The column of the wrong kind.
         column: String,
         /// The column's kind: `"number"`, `"decimal"`, `"string"`,
         /// `"boolean"` or `"array"`.
         kind: &'static str,
+        /// What the call needed instead.
         reason: String,
     },
     /// A value pond-rs cannot handle yet, rather than answer wrongly.
-    Unsupported { call: &'static str, message: String },
+    Unsupported {
+        /// The call that failed (`"rolling"`, `"aggregate"`, …).
+        call: &'static str,
+        /// What is not supported.
+        message: String,
+    },
 }
 
 impl PondError {
