@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::column::Value;
 use crate::error::Result;
 use crate::query::EventKey;
 use crate::series::{ColumnDef, TimeSeries};
@@ -12,8 +13,18 @@ use super::buffer::EventBuffer;
 use super::event::{LiveEvent, LiveSchema};
 use super::reduce::Place;
 
-/// What a view does with each source event: the event it keeps, if any.
-pub(crate) type Step = Box<dyn FnMut(&LiveEvent) -> Option<LiveEvent> + Send>;
+/// What a view does with each source event: what it keeps, if anything.
+pub(crate) type Step = Box<dyn FnMut(&LiveEvent) -> Option<Kept> + Send>;
+
+/// What a step keeps of a source event: the event itself (a pass-through
+/// view: `filter`, `sample`, `window`, a `fill` with nothing to fill), or
+/// fresh cells under the source's key. Fresh cells go straight into the
+/// view's storage unless something takes this view's events, when an
+/// event is built from them.
+pub(crate) enum Kept {
+    Pass(LiveEvent),
+    New(Vec<Option<Value>>),
+}
 
 /// How a `window` view trims itself after each event it takes.
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +45,8 @@ pub(crate) enum Window {
 /// view also trims itself after each event, silently (as pond-ts: no
 /// `Evict` output, and views built on it keep what it trimmed). So a late
 /// event older than a window's cutoff is trimmed at once but still handed
-/// to views built on the window, which keep it.
+/// to views built on the window, which keep it. A reduce built on the
+/// window does hear of each trim and removes what it dropped.
 ///
 /// A late event (one a [`Reorder`](super::OrderingMode::Reorder) source
 /// accepts before its newest) goes into the view at its key's position.
@@ -82,9 +94,11 @@ impl LiveView {
             window_ms,
         };
         for event in history {
-            if let Some(kept) = (view.step)(&event) {
-                view.buffer.insert_owned(kept);
-            }
+            match (view.step)(&event) {
+                Some(Kept::Pass(kept)) => view.buffer.insert_owned(kept),
+                Some(Kept::New(values)) => view.buffer.insert_cells(event.key().clone(), values),
+                None => continue,
+            };
         }
         view.trim();
         view
@@ -93,57 +107,74 @@ impl LiveView {
     /// Run the step on one source event and hold what it keeps: `None`
     /// when it keeps nothing. Otherwise where the kept event went, and the
     /// event itself when `hand_on` is set (something takes this view's
-    /// events): handed on even if a window trims it straight away. Without
-    /// `hand_on` the cells are moved into storage.
+    /// events). Without `hand_on` the cells are moved into storage. A
+    /// window is not applied here: the owner hands the event on first,
+    /// then trims with [`LiveView::excess`], so a reduce built on the
+    /// window removes what it trims (even the event just taken, when a
+    /// late event lands before the cutoff).
     pub(crate) fn take(
         &mut self,
         event: &LiveEvent,
         hand_on: bool,
     ) -> Option<(Option<LiveEvent>, Place)> {
-        let kept = (self.step)(event)?;
-        let (out, at) = if hand_on {
-            let at = self.buffer.insert(&kept);
-            (Some(kept), at)
-        } else {
-            (None, self.buffer.insert_owned(kept))
+        let kept = match (self.step)(event)? {
+            Kept::Pass(kept) => kept,
+            Kept::New(values) if hand_on => {
+                LiveEvent::new(Arc::clone(&self.schema), event.key().clone(), values)
+            }
+            Kept::New(values) => {
+                let at = self.buffer.insert_cells(event.key().clone(), values);
+                return Some((None, Place { at }));
+            }
         };
-        let trimmed = self.trim();
-        Some((out, Place { at, trimmed }))
+        if hand_on {
+            let at = self.buffer.insert(&kept);
+            Some((Some(kept), Place { at }))
+        } else {
+            Some((
+                None,
+                Place {
+                    at: self.buffer.insert_owned(kept),
+                },
+            ))
+        }
     }
 
-    /// Apply the window, if any: drop the oldest events past it. Returns
-    /// how many it dropped.
-    fn trim(&mut self) -> usize {
-        let n = match self.window {
-            None => return 0,
+    /// Apply the window, if any: drop the oldest events past it.
+    fn trim(&mut self) {
+        let n = self.excess();
+        if n > 0 {
+            self.buffer.evict(n, false);
+        }
+    }
+
+    /// How many of the oldest events the window would drop now (0 without
+    /// a window).
+    pub(crate) fn excess(&self) -> usize {
+        match self.window {
+            None => 0,
             Some(Window::Rows(keep)) => self.buffer.len().saturating_sub(keep),
             Some(Window::Span(ms)) => match self.buffer.back_begin() {
                 None => 0,
                 Some(last) => self.buffer.count_before(last.saturating_sub(ms)),
             },
-        };
-        if n > 0 {
-            self.buffer.evict(n, false);
         }
-        n
     }
 
-    /// Mirror a source eviction whose last evicted event started at
-    /// `cutoff`: drop held events starting at or before it. Returns the
-    /// start of the last one dropped (`None` when none was), and the events
-    /// themselves when `keep` is set (something watches this view's
+    /// Drop the oldest `n` events (a window trim the owner has told the
+    /// reduces built on this view about).
+    pub(crate) fn drop_front(&mut self, n: usize) {
+        self.buffer.evict(n, false);
+    }
+
+    /// Mirror a source eviction: drop the oldest `n` held events (n > 0,
+    /// those starting at or before the source's last evicted one, counted
+    /// by the owner). Returns the start of the last one dropped, and the
+    /// events themselves when `keep` is set (something watches this view's
     /// evictions).
-    pub(crate) fn mirror_evict(
-        &mut self,
-        cutoff: i64,
-        keep: bool,
-    ) -> (Option<i64>, Vec<LiveEvent>) {
-        let n = self.buffer.count_through(cutoff);
-        if n == 0 {
-            return (None, Vec::new());
-        }
+    pub(crate) fn mirror_evict(&mut self, n: usize, keep: bool) -> (i64, Vec<LiveEvent>) {
         let last = self.buffer.begin_at(n - 1);
-        (Some(last), self.buffer.evict(n, keep))
+        (last, self.buffer.evict(n, keep))
     }
 
     /// The source's name.

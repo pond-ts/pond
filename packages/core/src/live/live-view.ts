@@ -146,6 +146,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly #windowMs: number | undefined;
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
+  /**
+   * [PND-REDUCETRIM] Internal: what a `window` trims, for a `LiveReduce`
+   * built on this view (a trim is otherwise silent — no `'evict'`).
+   */
+  readonly #onTrim: ListenerSet<EvictListener<S>>;
   readonly #unsubscribe: () => void;
   /** The source this view subscribes to — kept for chain-aware dispose. */
   readonly #source: LiveSource<any>;
@@ -165,6 +170,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#windowMs = options?.windowMs;
     this.#onEvent = new ListenerSet();
     this.#onEvict = new ListenerSet();
+    this.#onTrim = new ListenerSet();
 
     for (let i = 0; i < source.length; i++) {
       const result = this.#process(source.at(i)!);
@@ -176,8 +182,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       const result = this.#process(event);
       if (result !== undefined) {
         this.#appendChecked(result);
-        this.#applyEviction();
+        const trimmed = this.#applyEviction();
         dispatchIsolated(this.#onEvent, result);
+        // After the event, so a reduce removes even the event just taken
+        // (a late one before the window's cutoff) under the index it added.
+        if (trimmed !== undefined) dispatchIsolated(this.#onTrim, trimmed);
       }
     });
 
@@ -702,6 +711,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#unsubscribe();
     this.#onEvent.clear();
     this.#onEvict.clear();
+    this.#onTrim.clear();
     const source = this.#source;
     if (source instanceof LiveView && source._listenerCount === 0) {
       source.dispose();
@@ -713,13 +723,45 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#onEvent.size + this.#onEvict.size;
   }
 
-  #applyEviction(): void {
-    if (!this.#evict) return;
+  /**
+   * Apply the window, if any. Returns what it dropped when a `LiveReduce`
+   * listens for trims ([PND-REDUCETRIM]), `undefined` otherwise.
+   */
+  #applyEviction(): readonly EventForSchema<S>[] | undefined {
+    if (!this.#evict) return undefined;
     const count = this.#evict(this.#events);
-    if (count > 0) {
+    if (count <= 0) return undefined;
+    this.#version += 1;
+    if (this.#onTrim.size === 0) {
       dropFront(this.#events, count);
-      this.#version += 1;
+      return undefined;
     }
+    return removeFront(this.#events, count);
+  }
+
+  /**
+   * @internal [PND-REDUCETRIM] Listen for what a `window` view trims (it
+   * says nothing on `'evict'`), so a `LiveReduce` built on it removes
+   * those events too. Called after the `'event'` that caused the trim.
+   */
+  _onTrim(fn: EvictListener<S>): () => void {
+    this.#onTrim.add(fn);
+    return () => {
+      this.#onTrim.delete(fn);
+    };
+  }
+
+  /**
+   * @internal [PND-REDUCETRIM] The order this view drops events relative to
+   * arrival, for `LiveReduce`'s choice of reducer states: its source's.
+   * A view keeps the late events of a `reorder` source, so its evictions
+   * and window trims can take a recent arrival too.
+   */
+  get _evictionOrder(): 'arrival' | 'sorted' {
+    return (
+      (this.#source as { _evictionOrder?: 'arrival' | 'sorted' })
+        ._evictionOrder ?? 'arrival'
+    );
   }
 
   /**

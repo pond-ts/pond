@@ -2,6 +2,9 @@
 sidebar_position: 10
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Transformations
 
 The simplest shape: events in, events out. One event per source
@@ -38,6 +41,9 @@ narrow) and a function that takes a source event and returns the new
 one. The schema argument is mandatory even when the shape doesn't
 change — pond-ts always wants the next schema explicit.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Same schema; just transform the cpu value.
 const scaled = cpu.map(cpu.schema, (e) => {
@@ -55,6 +61,42 @@ const flagged = cpu.map(flaggedSchema, (e) =>
 );
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::optional(
+            "cpu",
+            vec![Some(0.5), None, Some(0.95), Some(0.4)],
+        )],
+    )?;
+
+    // Same columns; transform the cpu values. Gaps are not passed in.
+    let scaled = cpu.map_numbers("cpu", |v| v * 100.0)?;
+    let got: Vec<_> = scaled.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(50.0), None, Some(95.0), Some(40.0)]);
+
+    // A new "flagged" column, worked out from cpu.
+    let values = cpu.column("cpu")?.numbers()?;
+    let flags: Vec<bool> = values.iter().map(|v| v.unwrap_or(0.0) > 0.9).collect();
+    let flagged = cpu.with_column(Column::required("flagged", flags))?;
+    let got: Vec<_> = flagged.column("flagged")?.booleans()?.iter().collect();
+    assert_eq!(got, [Some(false), Some(false), Some(true), Some(false)]);
+    Ok(())
+}
+```
+
+pond-rs has no general `map` over whole events. Change one column's values with `map_numbers` (or `map_strings`, `map_booleans`, `map_decimals`), and add a column with `with_column`.
+
+</TabItem>
+</Tabs>
+
 `Event` instances are immutable; `set` returns a new `Event` with the
 field updated. `merge(patch)` works the same way for multi-field
 updates and can introduce new columns.
@@ -63,10 +105,43 @@ updates and can introduce new columns.
 
 Predicate gets an event and an index, returns true to keep:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const active = cpu.filter((e) => e.get('cpu') !== undefined);
 const apiOnly = events.filter((e) => e.get('host')?.startsWith('api'));
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let events = TimeSeries::new(
+        "requests",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::optional("cpu", vec![Some(0.5), None, Some(0.95), Some(0.4)]),
+            Column::required("host", vec!["api-1", "db-1", "api-2", "api-1"]),
+        ],
+    )?;
+
+    let active = events.filter(|e| Ok(e.number("cpu")?.is_some()))?;
+    let api_only =
+        events.filter(|e| Ok(e.string("host")?.is_some_and(|h| h.starts_with("api"))))?;
+    assert_eq!(active.len(), 3);
+    assert_eq!(api_only.key().begin(), &[0, 2_000, 3_000]);
+    Ok(())
+}
+```
+
+The closure gets a `Row` and returns a `Result`, so lookups inside it can use `?`.
+
+</TabItem>
+</Tabs>
 
 Same schema in, same schema out; just fewer rows. See
 [Cleaning data](./cleaning) for filter as a "remove bad rows"
@@ -76,11 +151,46 @@ pattern.
 
 Schema-narrowing — type-level too:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const just = full.select('cpu', 'host');
 // just.schema === [time, cpu, host]; the other columns are gone.
 just.at(0)?.get('cpu'); // still narrows to number | undefined
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let full = TimeSeries::new(
+        "metrics",
+        vec![0, 1_000],
+        vec![
+            Column::required("cpu", vec![0.5, 0.7]),
+            Column::required("requests", vec![10.0, 20.0]),
+            Column::required("host", vec!["api-1", "api-2"]),
+        ],
+    )?;
+
+    let just = full.select(&["host", "cpu"])?;
+    let names: Vec<&str> = just.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "host"]); // schema order, not the order asked
+    assert_eq!(just.column("cpu")?.numbers()?.get(0), Some(0.5));
+
+    assert!(full.select(&["ghost"]).is_err()); // not a column
+    Ok(())
+}
+```
+
+`select` takes a slice of names. An unknown name is an error.
+
+</TabItem>
+</Tabs>
 
 Pass the names as separate arguments. A name that isn't a payload
 column throws a `RangeError` listing the valid columns, and an array
@@ -90,11 +200,43 @@ selects its column once.
 
 ### `rename(mapping)` — rename payload columns \{#rename\}
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const renamed = cpu.rename({ cpu: 'usage' });
 renamed.at(0)?.get('usage'); // number | undefined
 // renamed.schema has 'usage' where 'cpu' was.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000],
+        vec![
+            Column::required("cpu", vec![0.5, 0.7]),
+            Column::required("host", vec!["a", "b"]),
+        ],
+    )?;
+
+    let renamed = cpu.rename(&[("cpu", "usage")])?;
+    let names: Vec<&str> = renamed.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["usage", "host"]); // 'usage' where 'cpu' was
+    assert_eq!(renamed.column("usage")?.numbers()?.get(0), Some(0.5));
+    Ok(())
+}
+```
+
+`rename` takes `(from, to)` pairs.
+
+</TabItem>
+</Tabs>
 
 The temporal key column can't be renamed.
 
@@ -102,6 +244,9 @@ The temporal key column can't be renamed.
 
 Reducer receives a typed record of just the named columns, returns a
 single value:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // Average of cpu and requests into a "load" column.
@@ -112,6 +257,47 @@ const summary = metrics.collapse(
 );
 // schema: [time, load, ...other source columns]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let metrics = TimeSeries::new(
+        "metrics",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::optional("cpu", vec![Some(0.5), None, Some(0.95)]),
+            Column::required("requests", vec![10.0, 20.0, 40.0]),
+            Column::required("host", vec!["api-1", "db-1", "api-2"]),
+        ],
+    )?;
+
+    // Average of cpu and requests into a "load" column.
+    let load = |r: &pond_rs::Row| {
+        let cpu = r.number("cpu")?.unwrap_or(0.0);
+        let requests = r.number("requests")?.unwrap_or(0.0);
+        Ok(Some(Scalar::Number((cpu + requests) / 2.0)))
+    };
+    let summary = metrics.collapse(&["cpu", "requests"], "load", load)?;
+    let names: Vec<&str> = summary.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["host", "load"]);
+    let got: Vec<_> = summary.column("load")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(5.25), Some(10.0), Some(20.475)]);
+
+    // collapse_keep is pond-ts's { append: true }.
+    let kept = metrics.collapse_keep(&["cpu", "requests"], "load", load)?;
+    assert_eq!(kept.columns().len(), 4);
+    Ok(())
+}
+```
+
+The closure gets the whole row and returns `Ok(Some(Scalar))`, or `Ok(None)` for a gap. The output column comes after the columns that are kept.
+
+</TabItem>
+</Tabs>
 
 The named columns are removed by default; `{ append: true }` keeps
 them and adds the new one alongside.
@@ -133,6 +319,9 @@ events.map((e) =>
 
 `set` returns the same key; `merge` does too. Both are immutable.
 
+pond-rs has no `Event` objects to `set` or `merge`: a `Row` is a read-only
+view. Use `map_numbers`, `with_column` or `collapse` instead.
+
 ## Per-event-with-tiny-state
 
 These look at one event plus the previous (or an accumulator) to
@@ -142,12 +331,61 @@ first event with `{ drop: true }`).
 
 ### `diff(cols)` — per-event delta
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const deltas = series.diff('requests');
 // requests = curr - prev. First event: undefined.
 const both = series.diff(['cpu', 'mem']);
 const dropped = series.diff('requests', { drop: true });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Change, Column, FirstRow, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "web",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("requests", vec![10.0, 20.0, 40.0, 30.0]),
+            Column::required("cpu", vec![0.5, 0.6, 0.95, 0.4]),
+            Column::required("mem", vec![1.0, 1.5, 1.5, 2.0]),
+        ],
+    )?;
+
+    let deltas = series.diff(&["requests"])?;
+    let got: Vec<_> = deltas.column("requests")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(10.0), Some(20.0), Some(-10.0)]); // first row: a gap
+
+    let both = series.diff(&["cpu", "mem"])?;
+    assert_eq!(both.column("mem")?.numbers()?.get(1), Some(0.5));
+
+    let dropped = series.diff_with(&["requests"], Change::default().first(FirstRow::Drop))?;
+    assert_eq!(dropped.len(), 3);
+
+    // Keep the source and add the change beside it.
+    let with_change = series.diff_with(&["requests"], Change::default().output("requestsDelta"))?;
+    assert_eq!(
+        with_change.column("requests")?.numbers()?.get(1),
+        Some(20.0)
+    );
+    assert_eq!(
+        with_change.column("requestsDelta")?.numbers()?.get(1),
+        Some(10.0)
+    );
+    Ok(())
+}
+```
+
+`diff_with` takes a `Change`: `.first(FirstRow::Drop)` is `{ drop: true }` and `.output(name)` is `{ output }`. This covers the `output` example below too.
+
+</TabItem>
+</Tabs>
 
 `diff`, `rate` and `pctChange` replace each named column with its change.
 To keep the source and add the change beside it, name an `output` (one
@@ -165,26 +403,127 @@ events share a timestamp (`dt = 0`), `rate` returns `undefined`
 rather than dividing by zero — filter per-producer first if you have
 concurrent emissions.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const rps = series.rate('requests');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A request counter read at 0 s, 1 s, 3 s, and twice at 3 s.
+    let series = TimeSeries::new(
+        "web",
+        vec![0, 1_000, 3_000, 3_000],
+        vec![Column::required(
+            "requests",
+            vec![100.0, 110.0, 150.0, 160.0],
+        )],
+    )?;
+
+    let rps = series.rate(&["requests"])?;
+    let got: Vec<_> = rps.column("requests")?.numbers()?.iter().collect();
+    // 10 in 1 s, 40 in 2 s, then no time between the last two rows.
+    assert_eq!(got, [None, Some(10.0), Some(20.0), None]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### `pctChange(cols)` — relative change
 
 `(curr - prev) / prev`. Time-gap-independent. Returns `undefined`
 when the previous value is 0.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const rets = prices.pctChange('price');
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let prices = TimeSeries::new(
+        "prices",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::required("price", vec![10.0, 20.0, 0.0, 5.0])],
+    )?;
+
+    let rets = prices.pct_change(&["price"])?;
+    let got: Vec<_> = rets.column("price")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(1.0), Some(-1.0), None]); // previous 0: a gap
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### `cumulative(spec)` — running total / max / min / count
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const running = series.cumulative({ requests: 'sum', cpu: 'max' });
 const errors = series.cumulative({ errors: 'count' });
 const product = series.cumulative({ factor: (acc, v) => acc * v });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "web",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("requests", vec![10.0, 20.0, 40.0, 30.0]),
+            Column::optional("cpu", vec![Some(0.5), None, Some(0.95), Some(0.4)]),
+        ],
+    )?;
+
+    let running = series.cumulative(&[("requests", Reducer::Sum), ("cpu", Reducer::Max)])?;
+    let sums: Vec<_> = running.column("requests")?.numbers()?.iter().collect();
+    let peaks: Vec<_> = running.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(sums, [Some(10.0), Some(30.0), Some(70.0), Some(100.0)]);
+    assert_eq!(peaks, [Some(0.5), Some(0.5), Some(0.95), Some(0.95)]); // the gap carries
+
+    let counts = series.cumulative(&[("cpu", Reducer::Count)])?;
+    let got: Vec<_> = counts.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(1.0), Some(1.0), Some(2.0), Some(3.0)]);
+
+    // A running fold of your own.
+    let product = series.cumulative_with("requests", |acc, v| acc * v)?;
+    assert_eq!(
+        product.column("requests")?.numbers()?.get(3),
+        Some(240_000.0)
+    );
+    Ok(())
+}
+```
+
+A fold of your own is `cumulative_with`, one column at a time.
+
+</TabItem>
+</Tabs>
 
 When a source value is `undefined`, the accumulator carries forward
 its previous value — no NaN propagation.
@@ -196,6 +535,9 @@ its previous value — no NaN propagation.
 output **is** a `number`, written in place); `scan` decouples them:
 the accumulator `A` can be any value, the numeric `output` is separate,
 and you choose whether to replace the source or append a new column.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // running sum — the cumulative special case, replacing in place:
@@ -219,6 +561,61 @@ const withGain = track.scan<'cumGain', { ref: number | null; gain: number }>(
 );
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let track = TimeSeries::new(
+        "track",
+        (0..8).map(|i| i * 1_000).collect(),
+        vec![Column::optional(
+            "ele",
+            vec![
+                Some(100.0),
+                Some(101.0),
+                Some(104.0),
+                None,
+                Some(102.0),
+                Some(99.0),
+                Some(103.0),
+                Some(108.0),
+            ],
+        )],
+    )?;
+
+    // Running sum, replacing the column: the same as cumulative's Sum.
+    let sum = track.scan("ele", 0.0, |acc, v, _row| (acc + v, acc + v))?;
+    assert_eq!(sum.column("ele")?.numbers()?.get(7), Some(717.0));
+
+    // Hysteresis elevation gain into a new column. The state carries
+    // (ref, gain) but each row gets only the gain.
+    const T: f64 = 3.0; // ±3 m deadband
+    let with_gain = track.scan_to(
+        "ele",
+        "cumGain",
+        (None::<f64>, 0.0),
+        |(reference, gain), ele, _row| match reference {
+            None => ((Some(ele), 0.0), 0.0),
+            Some(r) if ele - r >= T => ((Some(ele), gain + ele - r), gain + ele - r),
+            Some(r) if ele - r <= -T => ((Some(ele), gain), gain),
+            Some(r) => ((Some(r), gain), gain), // within deadband: carry
+        },
+    )?;
+    let got: Vec<_> = with_gain.column("cumGain")?.numbers()?.iter().collect();
+    let want = [0.0, 0.0, 4.0, 4.0, 4.0, 4.0, 8.0, 13.0];
+    assert_eq!(got, want.map(Some)); // the gap at row 3 repeats the last output
+    Ok(())
+}
+```
+
+`scan(column, init, step)` takes the start value before the step, and `scan_to(column, output, init, step)` writes a new column and keeps the source. The state's type comes from `init`. The step also gets the row number.
+
+</TabItem>
+</Tabs>
+
 `step(acc, value, i)` returns `[nextAcc, output]`. The accumulator `A`
 is inferred from `init`. With no `options.output` the source column is
 **replaced** (widened to optional `number`, as `cumulative` does); with
@@ -234,6 +631,9 @@ accumulator interleaves across entities; scope it per entity with
 `partitionBy`, run `scan` inside each partition, and fan back in with
 `collect`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // One running total per host, not a single interleaved accumulator.
 const perHost = series
@@ -241,6 +641,39 @@ const perHost = series
   .scan('requests', (acc, v) => [acc + v, acc + v], 0)
   .collect();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "web",
+        vec![0, 0, 1_000, 1_000, 2_000, 2_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b", "a", "b"]),
+            Column::required("requests", vec![1.0, 10.0, 2.0, 20.0, 3.0, 30.0]),
+        ],
+    )?;
+
+    // One running total per host, not a single interleaved one.
+    let per_host = series
+        .partition_by(&["host"])?
+        .scan("requests", 0.0, |acc, v, _row| (acc + v, acc + v))?
+        .collect()?;
+    let got: Vec<_> = per_host.column("requests")?.numbers()?.iter().collect();
+    let want = [1.0, 10.0, 3.0, 30.0, 6.0, 60.0];
+    assert_eq!(got, want.map(Some));
+    Ok(())
+}
+```
+
+Each partition starts from its own copy of the start value.
+
+</TabItem>
+</Tabs>
 
 **`split = scan + byColumn`.** The reason `scan` exists: it isolates the
 order-dependent state into a column so value-axis aggregation
@@ -258,10 +691,38 @@ op, but it's tiny and lives next to these in practice — keep events
 whose `begin()` is greater than `lastEvent.begin() - duration`. Same
 schema, fewer rows.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const recent = series.tail('30s');
 const all = series.tail(); // identity (whole series) when no duration
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::required("cpu", vec![0.5, 0.6, 0.95, 0.4])],
+    )?;
+
+    // Rows that start after 3 s - 2 s = 1 s.
+    let recent = series.tail("2s")?;
+    assert_eq!(recent.key().begin(), &[2_000, 3_000]);
+    Ok(())
+}
+```
+
+`tail` needs a duration; there is no form with no argument.
+
+</TabItem>
+</Tabs>
 
 Often paired with `reduce` for "current state" readouts — see
 [Rolling windows → tail](./rolling#tail) for the composition.
@@ -272,11 +733,48 @@ Move column values forward (positive `n` = lag) or backward
 (negative `n` = lead). Vacated slots become `undefined`. Keys are
 unchanged.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const lagged = series.shift('value', 1);
 const lead = series.shift('value', -1);
 const multi = series.shift(['cpu', 'mem'], 2);
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "s",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("value", vec![10.0, 20.0, 40.0, 30.0]),
+            Column::required("cpu", vec![0.5, 0.6, 0.95, 0.4]),
+            Column::required("mem", vec![1.0, 1.5, 1.5, 2.0]),
+        ],
+    )?;
+
+    let lagged = series.shift(&["value"], 1)?;
+    let lead = series.shift(&["value"], -1)?;
+    let multi = series.shift(&["cpu", "mem"], 2)?;
+    let got: Vec<_> = lagged.column("value")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(10.0), Some(20.0), Some(40.0)]);
+    let got: Vec<_> = lead.column("value")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(20.0), Some(40.0), Some(30.0), None]);
+    assert_eq!(multi.column("cpu")?.numbers()?.get(2), Some(0.5));
+    Ok(())
+}
+```
+
+pond-rs's `shift` works on every column kind, not only numbers.
+
+</TabItem>
+</Tabs>
 
 For time-based shifts on irregular data, align to a regular grid
 first ([Alignment](./alignment)), then shift by the corresponding
@@ -291,11 +789,43 @@ off. Values stay on their rows; a `timeRange` /
 `interval` key moves both edges and keeps its labels. Value columns
 are shared, not copied, so this costs one pass over the key.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Overlay yesterday on today: yesterday's rows, keyed a day later.
 const yesterdayOnToday = yesterday.offsetTime('1d');
 const skewFixed = sensor.offsetTime(-250); // clock ran 250 ms fast
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let day = 86_400_000;
+    let yesterday = TimeSeries::new(
+        "load",
+        vec![0, 3_600_000],
+        vec![Column::required("v", vec![1.0, 2.0])],
+    )?;
+
+    // Overlay yesterday on today: yesterday's rows, keyed a day later.
+    let yesterday_on_today = yesterday.offset_time("1d")?;
+    assert_eq!(yesterday_on_today.key().begin(), &[day, day + 3_600_000]);
+
+    let skew_fixed = yesterday.offset_time_ms(-250)?; // clock ran 250 ms fast
+    assert_eq!(skew_fixed.key().begin(), &[-250, 3_599_750]);
+    Ok(())
+}
+```
+
+`offset_time` takes a duration and `offset_time_ms` takes milliseconds.
+
+</TabItem>
+</Tabs>
 
 `shift` moves _values_ by rows and leaves keys alone; `offsetTime`
 moves _keys_ by time and leaves values alone. If you only want a

@@ -133,6 +133,9 @@ struct Case {
     #[serde(default)]
     #[cfg_attr(not(feature = "live"), allow(dead_code))]
     options: Option<Map<String, Value>>,
+    /// `false`: pond-ts attached no listeners to the root.
+    #[serde(default)]
+    watch: Option<bool>,
     /// The root could not be built (then `steps` is empty).
     #[serde(default)]
     error: Option<ErrorJson>,
@@ -402,6 +405,9 @@ fn fixture_is_well_formed() {
         let finals = case.r#final.as_ref().expect("final");
         let mut live: BTreeSet<&str> = BTreeSet::from(["root"]);
         let mut unwatched: BTreeSet<&str> = BTreeSet::new();
+        if case.watch == Some(false) {
+            unwatched.insert("root");
+        }
         for step in &case.steps {
             actions.insert(step.action());
             if let Some(node) = &step.node {
@@ -526,6 +532,10 @@ fn fixture_is_well_formed() {
             .flat_map(|c| &c.steps)
             .any(|s| s.node.as_ref().is_some_and(|n| n.watch == Some(false))),
         "an unwatched node"
+    );
+    assert!(
+        fixture.cases.iter().any(|c| c.watch == Some(false)),
+        "an unwatched root"
     );
 }
 
@@ -1382,7 +1392,9 @@ mod runner {
         let mut columns: HashMap<NodeId, Vec<String>> = HashMap::new();
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let root = live.root();
-        watch(&mut live, root, &class("root"))?;
+        if case.watch != Some(false) {
+            watch(&mut live, root, &class("root"))?;
+        }
         let id_of = |h: Handle, live: &LiveSeries| match h {
             Handle::Root => live.root(),
             Handle::View(n) => n.id(),

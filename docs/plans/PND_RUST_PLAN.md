@@ -599,8 +599,28 @@ Done in the publish-prep PR:
   for a crate that already exists); after it, set up trusted publishing on
   crates.io and delete the secret.
 
-Open: the version scheme (own numbering from 0.1.0, or lock-step with
-pond-ts) is Peter's call; [PND-RUSTRFC] tracked the same question.
+Version: Peter chose 0.1.0 with its own numbering, not lock-step with
+pond-ts (2026-10-29); this settles [PND-RUSTRFC]'s versioning question.
+
+## Codex review of the whole crate (2026-10-29)
+
+pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
+findings (2 P1, 10 P2, 2 P3), checked one by one against main after #852
+and fixed in small PRs, each with a test that fails before the fix. Where
+pond-ts shares the defect it is fixed there too, under its own tag.
+
+| #   | Finding                                                    | Status                                         |
+| --- | ---------------------------------------------------------- | ---------------------------------------------- |
+| R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
+| R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
+
+Codex also listed four existing limitations, not on the fix list:
+duplicate-timestamp retention removing still-held view rows (mirrors
+pond-ts, belongs to [PND-CHANGE]), schema-only Arrow IPC files unreadable,
+composition tests (view→reduce, window→reduce, building over history,
+schema after transforms) and ARCHITECTURE.md describing only the
+TypeScript classes.
 
 ## Next
 
@@ -3925,6 +3945,45 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          a one-row chunk per push ([PND-LIVEONEPUSH]): in-order rows into a
          `Reorder` series take pond-ts 0.76-0.8 s, so pond-rs is ~2x there. Table in
          `website/docs/pond-rs/live.mdx` (Speed).
+       - Speed review, 2026-10-29 (thread "Review live series speed top
+         to bottom", Peter's ask: top to bottom, including the batches
+         slower than node). Method: `examples/prof_live.rs` (perf_live
+         twin, one case per run inside `timed`) under callgrind, so the
+         record is instructions per event, not this VM's ±30% timings; a
+         `git worktree` of the base commit gives the before numbers.
+         Findings at 200k rows: a bare batch push cost 1,877 instructions
+         per row, ~45% of it allocation: an `Arc<EventData>` per row even
+         when nobody reads events (~700), freeing the caller's `Vec` per
+         row (~190), the row check (~220). `reduce` rebuilt a `LiveEvent`
+         per evicted event (34% of its case). Partition routing made a
+         fresh `HashMap` + `Vec` per partition per push (~14% of the
+         1,000-host case) and partition rolling cloned and hashed the key
+         twice per event. Rolling, reduce and partition-rolling outputs
+         went through a throwaway `Vec`; leaf `map`/`select`/`diff` views
+         built an `Arc` + `Vec` per event only to copy the cells out.
+         Fixes (all internal, parity 65/65, no API change): a series with
+         no subscribers, routers or partitions (`bare_root`) stores cells
+         straight from the checked rows; `compare_keys` returns as soon as
+         the starts differ and the order check borrows keys; eviction
+         reads the cells a `reduce` must remove before they go
+         (`EventBuffer::cell`); each partition keeps a `share_at` table
+         across pushes and partition rolling maps slot → feed index with
+         the window made lazily on the first event (making it at spawn
+         changed pond-ts's emit order and broke parity); `append_values`
+         writes output rows from an iterator; a view step returns
+         `Kept::Pass(event)` or `Kept::New(cells)` so a leaf view stores
+         cells without an event. Result: 7–42% fewer instructions per
+         event on every case (push −41%, batches −37%, `Reorder` −42%,
+         `reduce` −31%, 1,000-host sync −27%, views 7–15%). Wall clock
+         moved where the cut was big (push 372 → 234 ms, batches 296 →
+         255, reduce 826 → 398, 1,000-host sync 2,954 → 2,475) and sat in
+         the noise elsewhere. The batch gap vs node: with the library's
+         share now ~50 ms per 1M rows, 70–130 ms is freeing the caller's
+         per-row `Vec`s and the host `String`s (measured by timing the
+         pushes, then the drop, then the bench's own batching alone);
+         node does that in its garbage collector, off the clock. Only a
+         column-shaped push removes it ([PND-RUSTLIVEBATCH]). Not done:
+         a threads-in-library trial (already parked), any API change.
        - Agent trial (`bench/agent-trial/r3/README.md`): per-host minute
          buckets over late events with a 5 s grace, against plain Rust
          (std only; polars has no push-one-event API). 10/10 right on both

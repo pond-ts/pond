@@ -81,3 +81,7 @@ required-features = ["live"]
 [[example]]
 name = "live_stream"
 required-features = ["live"]
+
+[[example]]
+name = "prof_live"
+required-features = ["live"]

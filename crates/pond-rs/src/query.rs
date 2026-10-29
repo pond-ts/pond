@@ -180,12 +180,21 @@ fn check_order(call: &'static str, begin: i64, end: i64) -> Result<()> {
 /// then (two intervals) label: numbers before text, text by the root
 /// collator as JavaScript's `localeCompare`.
 #[cfg(feature = "live")]
+#[inline]
 pub(crate) fn compare_keys(a: &EventKey, b: &EventKey) -> Ordering {
-    let c = a
-        .begin
-        .cmp(&b.begin)
-        .then(a.end.cmp(&b.end))
-        .then(a.kind.cmp(&b.kind));
+    // Starts differ for almost every pair a live series compares.
+    if a.begin != b.begin {
+        return a.begin.cmp(&b.begin);
+    }
+    compare_same_begin(a, b)
+}
+
+/// [`compare_keys`] for two keys with the same start: the rare case, kept
+/// out of line.
+#[cfg(feature = "live")]
+#[inline(never)]
+fn compare_same_begin(a: &EventKey, b: &EventKey) -> Ordering {
+    let c = a.end.cmp(&b.end).then(a.kind.cmp(&b.kind));
     if c != Ordering::Equal {
         return c;
     }

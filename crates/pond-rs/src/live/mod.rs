@@ -159,7 +159,7 @@ use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
 use event::LiveSchema;
 use reduce::Place;
 use rolling::{After, Span};
-use view::Step;
+use view::{Kept, Step};
 
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -728,7 +728,22 @@ impl LiveSeries {
         key: impl Into<EventKey>,
         values: impl Into<Vec<Option<Value>>>,
     ) -> Result<Vec<Output>> {
-        self.push_many([(key, values)])
+        let row = self.check_row(0, key.into(), values.into())?;
+        let mut out = Vec::new();
+        if self.bare_root() {
+            self.check_order(std::iter::once(&row.0))?;
+            self.ingest_bare(std::iter::once(row), &mut out);
+            return Ok(out);
+        }
+        let (key, values) = row;
+        let event = LiveEvent::new(Arc::clone(&self.core().schema), key, values);
+        self.check_order(std::iter::once(event.key()))?;
+        if !self.partitions.is_empty() {
+            self.check_partitions(std::slice::from_ref(&event))?;
+        }
+        self.ingest_series(0, [event], &mut out);
+        self.take_failure()?;
+        Ok(out)
     }
 
     /// Push a batch of events, in the order given. All or nothing: a bad
@@ -739,22 +754,47 @@ impl LiveSeries {
         K: Into<EventKey>,
         V: Into<Vec<Option<Value>>>,
     {
+        let mut out = Vec::new();
+        if self.bare_root() {
+            // Nothing takes the root's events: store the cells straight
+            // away, without building an event per row.
+            let checked = rows
+                .into_iter()
+                .enumerate()
+                .map(|(i, (key, values))| self.check_row(i, key.into(), values.into()))
+                .collect::<Result<Vec<_>>>()?;
+            if checked.is_empty() {
+                return Ok(out);
+            }
+            self.check_order(checked.iter().map(|(key, _)| key))?;
+            self.ingest_bare(checked, &mut out);
+            return Ok(out);
+        }
+        let schema = Arc::clone(&self.core().schema);
         let events = rows
             .into_iter()
             .enumerate()
-            .map(|(i, (key, values))| self.check_row(i, key.into(), values.into()))
+            .map(|(i, (key, values))| {
+                let (key, values) = self.check_row(i, key.into(), values.into())?;
+                Ok(LiveEvent::new(Arc::clone(&schema), key, values))
+            })
             .collect::<Result<Vec<_>>>()?;
         if events.is_empty() {
-            return Ok(Vec::new());
+            return Ok(out);
         }
-        self.check_order(&events)?;
+        self.check_order(events.iter().map(LiveEvent::key))?;
         if !self.partitions.is_empty() {
             self.check_partitions(&events)?;
         }
-        let mut out = Vec::new();
         self.ingest_series(0, events, &mut out);
         self.take_failure()?;
         Ok(out)
+    }
+
+    /// Whether nothing takes the root's events: no node built on it (and
+    /// so no partition), nothing watched on it.
+    fn bare_root(&self) -> bool {
+        !self.slots[0].has_subs() && self.routers.is_empty() && self.partitions.is_empty()
     }
 
     /// Push rows written as pond-ts JSON: a JSON array of rows, each an
@@ -800,7 +840,7 @@ impl LiveSeries {
         row: usize,
         key: EventKey,
         values: Vec<Option<Value>>,
-    ) -> Result<LiveEvent> {
+    ) -> Result<(EventKey, Vec<Option<Value>>)> {
         const CALL: &str = "LiveSeries::push";
         let bad = |message: String| PondError::InvalidData {
             call: CALL,
@@ -870,22 +910,18 @@ impl LiveSeries {
                 return Err(bad(format!("'{}': expected {want}, got {v:?}", def.name)));
             }
         }
-        Ok(LiveEvent::new(Arc::clone(schema), key, values))
+        Ok((key, values))
     }
 
     /// The ordering check over a whole batch, as the inserts would run it,
     /// before any of it is stored ([PND-BATCHATOM]).
-    fn check_order(&self, events: &[LiveEvent]) -> Result<()> {
+    fn check_order<'k>(&self, keys: impl Iterator<Item = &'k EventKey>) -> Result<()> {
         const CALL: &str = "LiveSeries::push";
         let core = self.core();
-        let mut last = core.buffer.last_key().cloned();
-        for (i, event) in events.iter().enumerate() {
-            let key = event.key();
-            let Some(latest) = last
-                .as_ref()
-                .filter(|l| compare_keys(l, key) == Ordering::Greater)
-            else {
-                last = Some(key.clone());
+        let mut last = core.buffer.last_key();
+        for (i, key) in keys.enumerate() {
+            let Some(latest) = last.filter(|l| compare_keys(l, key) == Ordering::Greater) else {
+                last = Some(key);
                 continue;
             };
             match core.ordering {
@@ -919,20 +955,69 @@ impl LiveSeries {
         Ok(())
     }
 
+    /// The root takes checked rows with nothing built on it or watching it
+    /// ([`LiveSeries::bare_root`]): the same as [`LiveSeries::ingest_series`]
+    /// with nothing to hand the events to, so the cells go straight into
+    /// storage.
+    fn ingest_bare(
+        &mut self,
+        rows: impl IntoIterator<Item = (EventKey, Vec<Option<Value>>)>,
+        out: &mut Vec<Output>,
+    ) {
+        let series = self.series_mut(0);
+        let mut any = false;
+        for (key, values) in rows {
+            let late = series
+                .buffer
+                .last_key()
+                .is_some_and(|l| compare_keys(l, &key) == Ordering::Greater);
+            if late && series.ordering == OrderingMode::Drop {
+                series.rejected += 1;
+                continue;
+            }
+            series.ingested += 1;
+            any = true;
+            series.buffer.insert_cells(key, values);
+        }
+        if !any {
+            return;
+        }
+        let n = series.retention_count();
+        if n > 0 {
+            self.evict_series(0, n, out);
+        }
+        self.settle(0, out);
+    }
+
     /// Series `i` takes `events` (checked already): each is handed down
     /// the tree and stored, then retention, `Batch`, `Evict` and the
     /// settle of what hangs below it (pond-ts `pushMany` /
     /// `_pushTrustedEvents`).
-    fn ingest_series(&mut self, i: usize, events: Vec<LiveEvent>, out: &mut Vec<Output>) {
+    fn ingest_series<E>(&mut self, i: usize, events: E, out: &mut Vec<Output>)
+    where
+        E: AsRef<[LiveEvent]> + IntoIterator<Item = LiveEvent>,
+    {
         if i == 0 {
             // Partitions of a chunked root take the push first.
             for k in 0..self.routers.len() {
                 let p = self.routers[k];
-                if let Err(e) = self.route_push(p, &events, out) {
+                if let Err(e) = self.route_push(p, events.as_ref(), out) {
                     self.fail(e);
                 }
             }
         }
+        self.ingest_events(i, events, out);
+    }
+
+    /// [`LiveSeries::ingest_series`] after the routing: for a series below
+    /// the root (a partition, a gathered series), which takes one event at
+    /// a time.
+    fn ingest_events(
+        &mut self,
+        i: usize,
+        events: impl IntoIterator<Item = LiveEvent>,
+        out: &mut Vec<Output>,
+    ) {
         let want_batch = !self.slots[i].subs[OutputKind::Batch.slot()].is_empty();
         let mut added = Vec::new();
         let mut any = false;
@@ -953,7 +1038,6 @@ impl LiveSeries {
             // when no output kept the event.
             let place = Place {
                 at: series.buffer.position(event.key()),
-                trimmed: 0,
             };
             self.emit_event(i, &event, Some(place), out);
             if want_batch {
@@ -1001,7 +1085,8 @@ impl LiveSeries {
 
     /// Drop series `i`'s oldest `n` events (n > 0) and tell what follows.
     fn evict_series(&mut self, i: usize, n: usize, out: &mut Vec<Output>) {
-        let keep = self.wants_evicted(i);
+        self.remove_from_reduces(i, n);
+        let keep = self.watches_evicted(i);
         let series = self.series_mut(i);
         series.evicted += n as u64;
         let cutoff = series.buffer.begin_at(n - 1);
@@ -1009,15 +1094,51 @@ impl LiveSeries {
         self.emit_evict(i, cutoff, &evicted, out);
     }
 
-    /// Whether something needs the events `node` evicts: a watcher, or a
-    /// reduce removing them (a view only needs where they end).
-    fn wants_evicted(&self, node: usize) -> bool {
-        self.slots[node].subs[OutputKind::Evict.slot()]
-            .iter()
-            .any(|sub| match sub {
-                Sub::Watch => true,
-                Sub::Child(c) => matches!(self.slots[*c].state, State::Reduce(_)),
-            })
+    /// Apply view `c`'s window, if any, after the event it took went on:
+    /// the reduces built on it remove what it drops first. Silent
+    /// otherwise, as pond-ts (no `Evict` output; views built on it keep
+    /// what it trimmed).
+    fn trim_view(&mut self, c: usize) {
+        let State::View(view) = &self.slots[c].state else {
+            unreachable!("a view")
+        };
+        let n = view.excess();
+        if n == 0 {
+            return;
+        }
+        self.remove_from_reduces(c, n);
+        let State::View(view) = &mut self.slots[c].state else {
+            unreachable!("a view")
+        };
+        view.drop_front(n);
+    }
+
+    /// Whether a watcher needs the events `node` evicts (a view only needs
+    /// where they end; a reduce reads the cells before they go).
+    fn watches_evicted(&self, node: usize) -> bool {
+        self.slots[node].subs[OutputKind::Evict.slot()].contains(&Sub::Watch)
+    }
+
+    /// Before `node` (a series or a view) drops its oldest `n` events: each
+    /// reduce following its evictions removes them, read straight from the
+    /// stored cells rather than rebuilt as events.
+    fn remove_from_reduces(&mut self, node: usize, n: usize) {
+        let kind = OutputKind::Evict.slot();
+        let mut k = 0;
+        while k < self.slots[node].subs[kind].len() {
+            if let Sub::Child(c) = self.slots[node].subs[kind][k]
+                && let Some((source, child)) = two_slots(&mut self.slots, node, c)
+                && let State::Reduce(reduce) = &mut child.state
+            {
+                let buffer = match &source.state {
+                    State::Series(s) => &s.buffer,
+                    State::View(v) => &v.buffer,
+                    _ => unreachable!("only series and views evict"),
+                };
+                reduce.evict_cells(buffer, n);
+            }
+            k += 1;
+        }
     }
 
     // ── Fan-out ─────────────────────────────────────────────────────
@@ -1079,19 +1200,23 @@ impl LiveSeries {
                     node: self.id_of(node),
                     events: evicted.to_vec(),
                 }),
-                Sub::Child(c) => {
-                    let keep = self.wants_evicted(c);
-                    match &mut self.slots[c].state {
-                        State::View(view) => {
-                            let (last, removed) = view.mirror_evict(cutoff, keep);
-                            if let Some(last) = last {
-                                self.emit_evict(c, last, &removed, out);
-                            }
+                Sub::Child(c) => match &self.slots[c].state {
+                    State::View(view) => {
+                        let n = view.buffer.count_through(cutoff);
+                        if n > 0 {
+                            self.remove_from_reduces(c, n);
+                            let keep = self.watches_evicted(c);
+                            let State::View(view) = &mut self.slots[c].state else {
+                                unreachable!("checked")
+                            };
+                            let (last, removed) = view.mirror_evict(n, keep);
+                            self.emit_evict(c, last, &removed, out);
                         }
-                        State::Reduce(reduce) => reduce.evict(evicted),
-                        _ => unreachable!("only views and reduces follow evictions"),
                     }
-                }
+                    // Removed from the reduce before the eviction.
+                    State::Reduce(_) => {}
+                    _ => unreachable!("only views and reduces follow evictions"),
+                },
             }
             k += 1;
         }
@@ -1111,8 +1236,11 @@ impl LiveSeries {
         let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
         match &mut self.slots[c].state {
             State::View(view) => {
-                if let Some((Some(kept), place)) = view.take(event, hand_on) {
-                    self.emit_event(c, &kept, Some(place), out);
+                if let Some((kept, place)) = view.take(event, hand_on) {
+                    if let Some(kept) = kept {
+                        self.emit_event(c, &kept, Some(place), out);
+                    }
+                    self.trim_view(c);
                 }
             }
             State::Rolling(rolling) => {
@@ -1172,8 +1300,8 @@ impl LiveSeries {
     ) {
         match &mut self.slots[c].state {
             State::PartitionRolling(rolling) => {
-                let key = rolling.feeds[&from].clone();
-                for row in rolling.ingest(&key, event, hand_on) {
+                let feed = rolling.feeds[&from];
+                for row in rolling.ingest(feed, event, hand_on) {
                     self.emit_event(c, &row, None, out);
                 }
             }
@@ -1214,7 +1342,7 @@ impl LiveSeries {
                     });
                     return;
                 }
-                self.ingest_series(c, vec![event.clone()], out);
+                self.ingest_events(c, std::iter::once(event.clone()), out);
             }
             _ => unreachable!("not a partition-layer node"),
         }
@@ -1349,7 +1477,7 @@ impl LiveSeries {
     {
         let source = self.source_of("LiveSeries::filter", from.into())?;
         let schema = self.schema_of(source);
-        let step: Step = Box::new(move |e: &LiveEvent| keep(e).then(|| e.clone()));
+        let step: Step = Box::new(move |e: &LiveEvent| keep(e).then(|| Kept::Pass(e.clone())));
         Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
     }
 
@@ -1540,10 +1668,7 @@ impl LiveSeries {
             });
         }
         let schema = self.schema_of(source);
-        let sorted = matches!(
-            &self.slots[source].state,
-            State::Series(s) if s.ordering == OrderingMode::Reorder
-        );
+        let sorted = self.reorders(source);
         let reduce = LiveReduce::new(
             self.name_of(source),
             &schema.columns,
@@ -1553,6 +1678,26 @@ impl LiveSeries {
             self.held(source),
         )?;
         Ok(self.add_node(source, State::Reduce(reduce)))
+    }
+
+    /// Whether `node` can drop events in another order than they reached
+    /// it: the nearest series at or above it is [`OrderingMode::Reorder`],
+    /// so a late event can sit before ones that arrived earlier, and
+    /// evictions and window trims take the oldest by key. A view keeps its
+    /// source's late events, so this walks up through views, not just the
+    /// node itself; a series below decides for itself what it accepts.
+    fn reorders(&self, node: usize) -> bool {
+        let mut at = Some(node);
+        while let Some(i) = at {
+            match &self.slots[i].state {
+                State::Series(s) => return s.ordering == OrderingMode::Reorder,
+                // Closed buckets come out in order (late rows for a closed
+                // bucket are dropped), as pond-ts.
+                State::Aggregation(_) => return false,
+                _ => at = self.slots[i].source,
+            }
+        }
+        false
     }
 
     /// The node behind `node`; an error when it was removed or is another
@@ -1813,6 +1958,21 @@ impl<T: NodeType> std::ops::Index<Node<T>> for LiveSeries {
         match self.get(node) {
             Ok(t) => t,
             Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+/// Mutable access to two different slots at once (`None` when `a == b`).
+fn two_slots(slots: &mut [Slot], a: usize, b: usize) -> Option<(&mut Slot, &mut Slot)> {
+    match a.cmp(&b) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Less => {
+            let (lo, hi) = slots.split_at_mut(b);
+            Some((&mut lo[a], &mut hi[0]))
+        }
+        std::cmp::Ordering::Greater => {
+            let (lo, hi) = slots.split_at_mut(a);
+            Some((&mut hi[0], &mut lo[b]))
         }
     }
 }

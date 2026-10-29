@@ -263,6 +263,39 @@ one `pushMany` still emits floor(K / n) copies of the post-push value
 changed: `LiveFusedRolling` and partitioned sources don't forward the hook,
 since neither is a `reduce` source today. Tests: `test/live/reducetick.test.ts`.
 
+### [PND-REDUCETRIM] — `live.reduce` over a view drifted from what the view holds — **fixed 2026-10-29**
+
+Found by a Codex review of pond-rs (2026-10-29, findings R01 and R02);
+both were pond-ts behaviour that pond-rs had copied, and the live replay
+fixture pinned them (`reduce-and-rolling-reorder`: "one on a window view
+never hears of what the window trims").
+
+- **Window trims (R01).** A `window` view trims itself silently (no
+  `'evict'`), so a reduce on it never removed what it trimmed:
+  `window(2).reduce({ s: sum, n: count })` after pushing 1, 2, 3 gave
+  6 / 3, not 5 / 2, and `bufferSize` grew without bound.
+- **Reorder through a view (R02).** `LiveReduce` picks "remove any event"
+  reducer states only when its own source reports `_evictionOrder:
+'sorted'`, which only `LiveSeries` did. A view of a `reorder` series
+  evicts the key-order prefix too (it mirrors the root), so a reduce on it
+  corrupted `min` / `max` / `first` / `last`: reorder root with
+  `maxEvents: 2`, `filter`, `reduce(max, last)`, push (1000, 10),
+  (2000, 20), (500, 100) gave max `undefined`, last 100, not 20 / 20.
+
+**Outcome.** `LiveView` has an internal `_onTrim` channel: when a reduce
+listens, a window trim hands over what it dropped, after the `'event'` that
+caused it (so a late event trimmed on arrival is added, then removed, under
+the same index). Views built on the window still keep what it trimmed and
+see no `'evict'`, as before. `LiveView` and `LiveRollingAggregation`
+forward their source's `_evictionOrder`. pond-rs mirrors both: the owner
+hands a view's event on, then trims it (`trim_view`, the reduces built on
+it removing the cells first), and `reduce` walks up through views to the
+nearest series for its ordering. Known gap left: a pond-ts `map` that
+re-keys events out of order still reports its source's order (pond-rs has
+no re-keying map). Tests: `test/live/reducetrim.test.ts`, three pond-rs
+unit tests in `live/tests.rs`, live replay case `reduce-on-window`, and the
+`reduce-and-rolling-reorder` case regenerated.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)
