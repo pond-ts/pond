@@ -1332,3 +1332,22 @@ fn declared_groups_check_the_history() {
         assert_eq!(live[p].keys(), ["a", "b"]);
     }
 }
+
+#[test]
+fn a_huge_max_age_does_not_overflow() {
+    // Codex review R14: the cutoff `latest - age` overflowed (a panic in
+    // debug; in release it wrapped and could evict fresh data).
+    let age = "9223372036854775807ms";
+    let mut live = series(LiveOptions::new().max_age(age));
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new().max_age(age))
+        .unwrap();
+    for t in [-2, -1, 5] {
+        live.push(t, row("a", 1.0)).unwrap();
+    }
+    assert_eq!(live.len(), 3);
+    assert_eq!(live[p].keys(), ["a"]);
+    let part = live[p].partition("a").unwrap();
+    assert_eq!(live[part].len(), 3);
+}

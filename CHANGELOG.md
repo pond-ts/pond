@@ -181,6 +181,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **pond-rs: four panics are now errors or gaps** (Codex review).
+  `PartitionedSeries::map` returns an error, not a panic, when one
+  partition's result drops a partition column (and refuses results with
+  different columns, which used to come back as mismatched partitions);
+  reading an Arrow time value of `i64::MIN` is refused instead of panicking;
+  a `max_age` near `i64::MAX` no longer overflows its cutoff; and
+  `linear_regression` / `time_series_forecast` /
+  `chande_forecast_oscillator` / `aroon` with a period no window can fill
+  give gaps instead of panicking for periods past `isize::MAX`.
+  `Ichimoku::offsets` refuses a displacement past `i64::MAX` (it flipped
+  the offsets' signs).
 - **Live interval-keyed series keep one label type** ([PND-LIVELABEL]).
   A `pushMany` mixing number and text interval labels is refused whole
   (pond-ts never checked live labels; pond-rs only checked each row

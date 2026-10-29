@@ -495,6 +495,11 @@ fn aroon_values<const MAX: bool>(values: &[f64], period: usize) -> Vec<f64> {
     let p = period as f64;
     let n = values.len();
     let mut out = vec![f64::NAN; n];
+    if period >= n {
+        // The `period + 1`-bar window never fills (and `period + 1`
+        // overflowed at usize::MAX: Codex review R13).
+        return out;
+    }
     let mut queue = std::collections::VecDeque::new();
     let mut missing = 0usize;
     for i in 0..n {
@@ -722,7 +727,15 @@ impl Ichimoku {
             "ichimokuOffsets displacement",
             self.displacement,
         )?;
-        let d = self.displacement as i64;
+        // Past i64::MAX the cast flipped the offsets' signs (Codex review
+        // R13).
+        let d = i64::try_from(self.displacement).map_err(|_| PondError::InvalidData {
+            call: "Ichimoku::offsets",
+            message: format!(
+                "ichimokuOffsets displacement {} is too large to report as an offset",
+                self.displacement
+            ),
+        })?;
         let [tenkan, kijun, a, b, chikou] = suffixed(self.name(), ICHIMOKU_SUFFIXES);
         Ok([(tenkan, 0), (kijun, 0), (a, d), (b, d), (chikou, -d)])
     }

@@ -962,7 +962,10 @@ impl LiveSeries {
         let age = pt.max_age_ms.expect("a sweep needs max_age");
         let parts: Vec<usize> = pt.parts.iter().map(|id| id.index as usize).collect();
         for part in parts {
-            let n = self.series(part).buffer.count_before(wm - age);
+            let n = self
+                .series(part)
+                .buffer
+                .count_before(wm.saturating_sub(age));
             if n == 0 {
                 continue;
             }

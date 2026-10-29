@@ -180,10 +180,38 @@ impl PartitionedSeries {
         // A step may turn a partition column into an array, which cannot
         // be a key (see `partition_by`).
         refuse_array_keys("PartitionedSeries", &empty, &by_index)?;
-        // With no partitions, any rows `f` made on the empty series have no
-        // key yet, so they are always split.
-        let unchanged =
-            !self.parts.is_empty() && parts.iter().all(|(key, s)| keeps_key(s, &by_index, key));
+        // Every result must give the same columns, and keep the partition
+        // columns (Codex review R06: positions found in the first result
+        // were used unchecked on the rest, and a result missing one
+        // panicked). The kept-key path below skips the merge, so check here.
+        let full: Vec<&TimeSeries> = parts
+            .iter()
+            .map(|p| &p.1)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if full.len() > 1
+            && let Some(why) = mismatch(&full)
+        {
+            return Err(PondError::InvalidData {
+                call: "PartitionedSeries::map",
+                message: format!(
+                    "partitions came back with different columns ({why}); every partition must give the same columns"
+                ),
+            });
+        }
+        let mut unchanged = !self.parts.is_empty();
+        for (key, s) in &parts {
+            let at: Vec<usize> = self
+                .by
+                .iter()
+                .map(|c| s.column_index("PartitionedSeries::map", c))
+                .collect::<Result<_>>()?;
+            // With no partitions, any rows `f` made on the empty series
+            // have no key yet, so they are always split.
+            if unchanged && (at != by_index || !keeps_key(s, &at, key)) {
+                unchanged = false;
+            }
+        }
         if !unchanged {
             // The values moved: split the merged rows again, as pond-ts
             // does, and collect gives those merged rows.
@@ -922,6 +950,23 @@ mod tests {
         );
         // No operation yet: collect gives the input back as it was.
         assert_eq!(p.collect().unwrap(), hosts());
+    }
+
+    #[test]
+    fn map_with_a_missing_partition_column_is_an_error() {
+        // Codex review R06: column positions came from the first result
+        // and were used unchecked on the rest, which panicked.
+        let p = hosts().partition_by(&["host"]).unwrap();
+        let first_keeps = |g: &TimeSeries| {
+            if g.column("host").unwrap().strings().unwrap().get(0) == Some("b") {
+                g.select(&["v", "host"])
+            } else {
+                g.select(&["v"])
+            }
+        };
+        assert!(p.map(first_keeps).is_err());
+        // Dropping the partition column everywhere is refused as before.
+        assert!(p.map(|g| g.select(&["v"])).is_err());
     }
 
     #[test]

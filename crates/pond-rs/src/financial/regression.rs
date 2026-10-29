@@ -24,6 +24,16 @@ const RELATIVE_SPREAD_FLOOR: f64 = 1e-3;
 /// each stretch starts at a rebuild row, so the same bits.
 pub(crate) fn linear_regression_values(values: &[f64], period: usize) -> Regression {
     let n = values.len();
+    if period > n {
+        // No window ever fills: all gaps. Short-circuited because the sweep
+        // does signed arithmetic on `period`, which overflowed for periods
+        // past isize::MAX (Codex review R13).
+        return Regression {
+            slope: vec![f64::NAN; n],
+            intercept: vec![f64::NAN; n],
+            r2: vec![f64::NAN; n],
+        };
+    }
     let mut slope = vec![0.0; n];
     let mut intercept = vec![0.0; n];
     let mut r2 = vec![0.0; n];
