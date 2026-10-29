@@ -1004,7 +1004,7 @@ per row.
 ### Threads and memory allocators
 
 A `LiveSeries` and everything built on it runs on the thread that pushes.
-One thread handled 50 hosts at about 1.0–1.4 million rows a second
+On a 4-core Linux machine, one thread handled 50 hosts at about 1.0–1.4 million rows a second
 (pushes of 1,000 to 100,000 rows, a 1 s rolling average per host, with
 `collect` or `partition_rolling`; about 1 µs per row in all). Splitting
 partitions over threads inside one series was tried and was slower, not
