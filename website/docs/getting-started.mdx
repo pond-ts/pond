@@ -5,6 +5,8 @@ sidebar_position: 2
 import ChartExample from '@site/src/components/ChartExample';
 import GettingStartedRide from '@site/src/examples/getting-started-ride';
 import GettingStartedZones from '@site/src/examples/getting-started-zones';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Getting started
 
@@ -56,11 +58,31 @@ calls in the whole example:
 
 Everything below builds up to that, one step at a time.
 
+The core steps (the series, smoothing, bucketing by value) come in
+**TypeScript or Rust**; pick a tab and every tabbed example on the site follows.
+The fitness library and the charts are TypeScript only, so those steps have
+no Rust tab.
+
 ## Install
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```sh
 npm install pond-ts
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```toml
+# Cargo.toml (not on crates.io yet, so from GitHub)
+[dependencies]
+pond-rs = { git = "https://github.com/pond-ts/pond" }
+```
+
+</TabItem>
+</Tabs>
 
 That's the core. We'll add the other two pieces when we need them. pond is
 pre-1.0, so a minor release may break — see [Versioning](./reference/versioning).
@@ -69,6 +91,9 @@ pre-1.0, so a minor release may break — see [Versioning](./reference/versionin
 
 Start with the smallest honest version: a few seconds of the ride, typed out. A
 **schema** declares the columns, the first of which is the temporal key:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -91,6 +116,43 @@ const ride = TimeSeries.fromJSON({
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::from_json(
+        r#"{
+          "name": "ride",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "watts", "kind": "number"}
+          ],
+          "rows": [
+            ["2016-07-20T14:27:50Z", 110],
+            ["2016-07-20T14:27:51Z", 96],
+            ["2016-07-20T14:27:52Z", 101],
+            ["2016-07-20T14:27:53Z", 101],
+            ["2016-07-20T14:27:54Z", 79]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+
+    assert_eq!(ride.len(), 5);
+    Ok(())
+}
+```
+
+pond-rs reads the same JSON, schema and all. `TimeSeries::new(name, times,
+columns)` builds a series straight from Rust vectors instead; see
+[pond-rs getting started](./pond-rs/getting-started).
+
+</TabItem>
+</Tabs>
+
 Two columns is all this example needs. The device also recorded cadence,
 altitude, speed and GPS — you declare the columns you're going to use, and the
 rest never enters the series.
@@ -101,6 +163,9 @@ known to be numeric and `ride.column('wats')` doesn't compile.
 
 A series is an **ordered, immutable collection of events**. Read one:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const event = ride.at(3);
 
@@ -108,6 +173,48 @@ event.key().toDate().toISOString(); // '2016-07-20T14:27:53.000Z'
 event.get('watts'); // 101
 event.data(); // { watts: 101 }
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::from_json(
+        r#"{
+          "name": "ride",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "watts", "kind": "number"}
+          ],
+          "rows": [
+            ["2016-07-20T14:27:50Z", 110],
+            ["2016-07-20T14:27:51Z", 96],
+            ["2016-07-20T14:27:52Z", 101],
+            ["2016-07-20T14:27:53Z", 101],
+            ["2016-07-20T14:27:54Z", 79]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+
+    // Read one row back. Columns are checked when the code runs:
+    // `column("wats")` is an error that lists the columns there are.
+    let row = ride.at(3).unwrap();
+    assert_eq!(row.begin(), 1_469_024_873_000); // 2016-07-20T14:27:53Z
+    assert_eq!(row.number("watts")?, Some(101.0));
+    assert_eq!(ride.column("watts")?.numbers()?.get(3), Some(101.0));
+    assert!(ride.column("wats").is_err());
+    Ok(())
+}
+```
+
+Rust has no `as const`: a column's name and kind are checked when the code
+runs, and a wrong one is an error that says what is there.
+
+</TabItem>
+</Tabs>
 
 Nothing is mutable, so every operator below returns a _new_ series and the
 original stays intact.
@@ -124,12 +231,51 @@ entirely. See [Creating series → Columnar ingest](pond-ts/creating#columnar).
 Real power data is spiky — you can't read a rider's effort off the raw trace.
 The fix is a moving average, and it's one call:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const smoothed = ride.smooth('watts', 'movingAverage', {
   window: '2m',
   output: 'trend',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::from_json(
+        r#"{
+          "name": "ride",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "watts", "kind": "number"}
+          ],
+          "rows": [
+            ["2016-07-20T14:27:50Z", 110],
+            ["2016-07-20T14:27:51Z", 96],
+            ["2016-07-20T14:27:52Z", 101],
+            ["2016-07-20T14:27:53Z", 101],
+            ["2016-07-20T14:27:54Z", 79]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+
+    // Adds a `trend` column; `watts` stays, so you can draw both.
+    let smoothed = ride.smooth("watts", &Smooth::moving_average("2m").output("trend"))?;
+    let trend: Vec<_> = smoothed.column("trend")?.numbers()?.iter().collect();
+    assert_eq!(trend[1], Some(103.0)); // (110 + 96) / 2
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 That **adds a column** rather than replacing one; the smoothed series still
 carries `watts`, so you can draw both — which is exactly what the top chart
@@ -152,6 +298,9 @@ clock time.
 
 `byColumn` buckets rows by a numeric column's value instead of by time:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const bins = ride.byColumn(
   'watts',
@@ -160,6 +309,50 @@ const bins = ride.byColumn(
 );
 // → [{ start: 0, end: 25, secs: 1864 }, { start: 25, end: 50, secs: 82 }, …]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Bins, JsonOptions, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::from_json(
+        r#"{
+          "name": "ride",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "watts", "kind": "number"}
+          ],
+          "rows": [
+            ["2016-07-20T14:27:50Z", 110],
+            ["2016-07-20T14:27:51Z", 96],
+            ["2016-07-20T14:27:52Z", 101],
+            ["2016-07-20T14:27:53Z", 101],
+            ["2016-07-20T14:27:54Z", 79]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+
+    let bins = ride.by_column(
+        "watts",
+        &Bins::width(25.0), // 25-watt-wide buckets
+        &[Agg::new("secs", "watts", Reducer::Count)],
+    )?;
+    // A table with `start`, `end` and `secs` columns, one row per bucket.
+    assert_eq!(bins.column("start")?.numbers()?.values(), &[75.0, 100.0]);
+    assert_eq!(bins.column("secs")?.numbers()?.values(), &[2.0, 3.0]);
+    Ok(())
+}
+```
+
+This runs on the five rows typed out above, so its buckets are small. In
+Rust the result is a table with `start`, `end` and one column per reducer,
+rather than an array of records.
+
+</TabItem>
+</Tabs>
 
 The samples are one second apart, so **counting rows in a watt band is
 literally counting seconds in it** — no extra bookkeeping. That array of
@@ -171,7 +364,7 @@ ride, those cells are **missing rather than zero**, and `byColumn` leaves them
 out of the count instead of filing them under 0 W. Missing and zero mean very
 different things on a bike.
 
-Note what came back: **plain records, not a series**. A power bucket isn't keyed
+Note what came back: **plain records, not a series** (in Rust, a table). A power bucket isn't keyed
 by anything you'd keep chaining, so pond hands the bins straight back. (When you
 _do_ want to keep the full-resolution channel but read it against a value —
 distance, say — that's [`byValue`](pond-ts/concepts/value-axis), which returns a
@@ -182,7 +375,9 @@ distance, say — that's [`byValue`](pond-ts/concepts/value-axis), which returns
 Everything so far was generic time-series work — pond core knows nothing about
 cycling. **Normalized power**, intensity factor, training load, and Coggan zones
 are real domain knowledge, and that's what
-[`@pond-ts/fit`](/docs/fit) is for:
+[`@pond-ts/fit`](/docs/fit) is for. It is TypeScript only; in Rust you
+would compute these from the series yourself (normalized power is a
+30-second rolling mean, see the note below).
 
 ```sh
 npm install @pond-ts/fit
