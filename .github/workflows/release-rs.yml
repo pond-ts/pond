@@ -40,6 +40,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check a manual run is on main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "Run this workflow on main (got ${GITHUB_REF}); crates.io versions cannot be replaced."
+          exit 1
+
       - name: Read the crate version
         id: version
         run: |
@@ -67,7 +73,9 @@ jobs:
           fi
 
       - name: Test
-        run: cargo test -p pond-rs
+        run: |
+          cargo test -p pond-rs
+          cargo test -p pond-rs --no-default-features
 
       - name: Package (builds the crate from the packaged files)
         run: cargo package -p pond-rs

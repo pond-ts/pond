@@ -236,6 +236,11 @@ pub use smooth::{Sample, Smooth};
 pub use time_parse::{parse_time, parse_time_in};
 pub use value_series::ValueSeries;
 
+// The README's example, run as a doctest so it cannot drift.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
