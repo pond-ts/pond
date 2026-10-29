@@ -7,6 +7,8 @@ import CoreAggregate from '@site/src/examples/core-aggregate';
 import CoreAggregatePonds from '@site/src/examples/core-aggregate-ponds';
 import CoreReduce from '@site/src/examples/core-reduce';
 import CoreByColumn from '@site/src/examples/core-bycolumn';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Aggregation
 
@@ -81,6 +83,9 @@ shape-changing ops, not value collapses.
   <CoreAggregatePonds />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { Sequence, TimeSeries } from 'pond-ts';
 
@@ -92,6 +97,49 @@ const fiveMin = cpu.aggregate(Sequence.every('5m'), {
 // fiveMin.schema[0].kind === 'interval'
 // fiveMin.at(0)?.get('cpu') -> number | undefined
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 2 * min, 4 * min, 6 * min, 9 * min],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.9, 0.5]),
+            Column::required("requests", vec![10.0, 20.0, 30.0, 5.0, 15.0]),
+            Column::required("host", vec!["a", "b", "a", "b", "a"]),
+        ],
+    )?;
+
+    let five_min = cpu.aggregate(
+        &Sequence::every("5m")?,
+        &[
+            Agg::of("cpu", Reducer::Avg),
+            Agg::of("requests", Reducer::Sum),
+            Agg::of("host", Reducer::Last),
+        ],
+    )?;
+    assert_eq!(five_min.key_name(), "interval");
+    assert_eq!(five_min.key().begin(), &[0, 5 * min]);
+    let avg: Vec<_> = five_min.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(avg, [Some(0.4000000000000001), Some(0.7)]);
+    let sum: Vec<_> = five_min.column("requests")?.numbers()?.iter().collect();
+    assert_eq!(sum, [Some(60.0), Some(20.0)]);
+    let host: Vec<_> = five_min.column("host")?.strings()?.iter().collect();
+    assert_eq!(host, [Some("a"), Some("a")]);
+    Ok(())
+}
+```
+
+`Agg::of(column, reducer)` is the shorthand `{ cpu: 'avg' }`. The result is keyed by interval here too; `as_time(At::Begin)` rekeys it.
+
+</TabItem>
+</Tabs>
 
 The output is **interval-keyed**. To feed it into a transform that
 requires a time-keyed series (e.g. `pivotByGroup`, which throws at
@@ -107,6 +155,9 @@ roll-ups (e.g. OHLC bars) — pass a
 to the same `aggregate` call, and give the chart the same zone
 (`<ChartContainer timeZone>`) so its ticks sit on the bucket edges:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // daily → weekly bars, Monday-started, New York calendar
 const weekly = daily.aggregate(
@@ -115,11 +166,75 @@ const weekly = daily.aggregate(
 );
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ny = "America/New_York";
+    let days = [
+        "2026-01-07",
+        "2026-01-08",
+        "2026-01-09", // Wed to Fri
+        "2026-01-12",
+        "2026-01-13",
+        "2026-01-14",
+        "2026-01-15",
+        "2026-01-16",
+    ];
+    let times = days
+        .iter()
+        .map(|d| parse_time_in(d, ny))
+        .collect::<Result<Vec<_>, _>>()?;
+    let close = vec![10.0, 11.0, 12.0, 13.0, 12.0, 14.0, 15.0, 16.0];
+    let high: Vec<f64> = close.iter().map(|c| c + 1.0).collect();
+    let low: Vec<f64> = close.iter().map(|c| c - 1.0).collect();
+    let open: Vec<f64> = close.iter().map(|c| c - 0.5).collect();
+    let daily = TimeSeries::new(
+        "daily",
+        times,
+        vec![
+            Column::required("open", open),
+            Column::required("high", high),
+            Column::required("low", low),
+            Column::required("close", close),
+        ],
+    )?;
+
+    // daily → weekly bars; weeks start on Monday unless you say otherwise.
+    let weekly = daily.aggregate(
+        &Sequence::calendar("week", ny)?,
+        &[
+            Agg::of("close", Reducer::Last),
+            Agg::of("high", Reducer::Max),
+            Agg::of("low", Reducer::Min),
+            Agg::of("open", Reducer::First),
+        ],
+    )?;
+    assert_eq!(weekly.key().begin()[0], parse_time_in("2026-01-05", ny)?); // a Monday
+    let close: Vec<_> = weekly.column("close")?.numbers()?.iter().collect();
+    assert_eq!(close, [Some(12.0), Some(16.0)]);
+    let open: Vec<_> = weekly.column("open")?.numbers()?.iter().collect();
+    assert_eq!(open, [Some(9.5), Some(12.5)]);
+    Ok(())
+}
+```
+
+`Sequence::calendar(unit, time_zone)` starts weeks on Monday; `.with_week_start(7)` starts them on Sunday.
+
+</TabItem>
+</Tabs>
+
 :::
 
 ### Mapping shapes
 
 Two forms; mix them in one call:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 cpu.aggregate(Sequence.every('5s'), {
@@ -134,6 +249,57 @@ cpu.aggregate(Sequence.every('5s'), {
   requests_peak: { from: 'requests', using: 'max' },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 2 * min, 4 * min, 6 * min, 9 * min],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.9, 0.5]),
+            Column::required("requests", vec![10.0, 20.0, 30.0, 5.0, 15.0]),
+        ],
+    )?;
+
+    let out = cpu.aggregate(
+        &Sequence::every("5m")?,
+        &[
+            // Agg::of: avg of cpu, output column with the same name
+            Agg::of("cpu", Reducer::Avg),
+            // Agg::new: name the output column
+            Agg::new("cpu_p95", "cpu", Reducer::Percentile(95.0)),
+            // several reducers over the same source column
+            Agg::new("requests_total", "requests", Reducer::Sum),
+            Agg::new("requests_peak", "requests", Reducer::Max),
+        ],
+    )?;
+    let names: Vec<&str> = out.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "cpu_p95", "requests_total", "requests_peak"]);
+    let p95: Vec<_> = out.column("cpu_p95")?.numbers()?.iter().collect();
+    assert_eq!(p95, [Some(0.58), Some(0.88)]);
+    let peak: Vec<_> = out.column("requests_peak")?.numbers()?.iter().collect();
+    assert_eq!(peak, [Some(30.0), Some(15.0)]);
+
+    // A reducer that does not fit the column is an error when the code runs.
+    let host = TimeSeries::new("h", vec![0], vec![Column::required("host", vec!["a"])])?;
+    assert!(
+        host.aggregate(&Sequence::every("5m")?, &[Agg::of("host", Reducer::Avg)])
+            .is_err()
+    );
+    Ok(())
+}
+```
+
+`Agg::new(output, source, reducer)` is the `{ from, using }` form. Rust checks that a reducer fits its column when the code runs, not when it compiles.
+
+</TabItem>
+</Tabs>
 
 Use the explicit form when you want to rename, run multiple reducers
 over one source column, or use a custom reducer whose output kind
@@ -187,12 +353,19 @@ cpu.aggregate(Sequence.every('5s'), {
 });
 ```
 
+pond-rs has no custom reducer functions yet. Use a built-in reducer, or
+`Reducer::Samples` to get each bucket's values as a list and work on them
+yourself.
+
 ### Bucket membership
 
 Buckets are half-open: `[begin, end)`. An event at exactly the
 boundary lands in the **later** bucket. For `TimeRange`- or
 `Interval`-keyed source events, the event contributes to every bucket
 it overlaps under half-open overlap rules.
+
+pond-rs's `aggregate` takes only time-keyed series; one keyed by time
+ranges or intervals is an error.
 
 ### `range`
 
@@ -211,6 +384,9 @@ cpu.aggregate(
 Empty buckets in the padded range emit `0` for `count` and `sum`,
 `undefined` for everything else. See
 [Reducer reference → Empty-bucket behavior](./reducer-reference#empty-bucket-behavior).
+
+pond-rs's `aggregate` has no `range` option yet; its buckets always run
+from the first row's bucket to the last row's.
 
 ## `reduce` \{#reduce\}
 
@@ -231,10 +407,45 @@ Whole-series → scalar or record. Same reducer vocabulary as
   <CoreReduce />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Single-column form — wide return type.
 const avgRaw = series.reduce('cpu', 'avg'); // ColumnValue | undefined
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "s",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.9, 0.5]),
+            Column::required("host", vec!["b", "a", "b", "c", "a"]),
+        ],
+    )?;
+
+    // A number column: an Option<f64>, or an error if it is not numbers.
+    let avg = series.reduce_number("cpu", Reducer::Avg)?;
+    assert_eq!(avg, Some(0.52));
+
+    // Any kind: an Option<Value>.
+    let last = series.reduce_value("host", Reducer::Last)?;
+    assert_eq!(last, Some(Value::String("a".into())));
+    Ok(())
+}
+```
+
+`reduce_number` and `reduce_value` are the one-column form.
+
+</TabItem>
+</Tabs>
 
 :::tip[Type narrowing]
 The single-column form returns the wide `ColumnValue | undefined` —
@@ -244,6 +455,9 @@ the type system can't see through a string reducer name. Use the
 
 Mapping form returns a record with per-field narrowing:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const summary = series.reduce({
   cpu: 'avg', // number | undefined
@@ -251,6 +465,52 @@ const summary = series.reduce({
   host: 'unique', // ReadonlyArray<string> | undefined
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "s",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.9, 0.5]),
+            Column::required("requests", vec![10.0, 20.0, 30.0, 5.0, 15.0]),
+            Column::required("host", vec!["b", "a", "b", "c", "a"]),
+            Column::required("latency", vec![120.0, 80.0, 200.0, 90.0, 60.0]),
+        ],
+    )?;
+
+    let summary = series.reduce(&[
+        Agg::of("cpu", Reducer::Avg),
+        Agg::of("requests", Reducer::Sum),
+        Agg::of("host", Reducer::Unique),
+    ])?;
+    assert_eq!(summary.number("cpu")?, Some(0.52));
+    assert_eq!(summary.number("requests")?, Some(80.0));
+    let hosts = summary.array("host")?.unwrap();
+    assert_eq!(hosts, &[Scalar::from("a"), "b".into(), "c".into()]);
+
+    // Named outputs.
+    let quantiles = series.reduce(&[
+        Agg::new("p50", "latency", Reducer::Percentile(50.0)),
+        Agg::new("p95", "latency", Reducer::Percentile(95.0)),
+        Agg::new("p99", "latency", Reducer::Percentile(99.0)),
+    ])?;
+    assert_eq!(quantiles.number("p50")?, Some(90.0));
+    assert_eq!(quantiles.number("p95")?, Some(184.0));
+    assert_eq!(quantiles.number("p99")?, Some(196.8));
+    Ok(())
+}
+```
+
+`reduce` returns a `Reduced`, read by output name with `number`, `string`, `array` and so on; each checks the kind when the code runs. This covers the named outputs below too.
+
+</TabItem>
+</Tabs>
 
 Named outputs work too:
 
@@ -289,6 +549,9 @@ histogram, time-in-zone over heart-rate edges.
   <CoreByColumn />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Per-kilometre elevation gain and average speed over a ride.
 const splits = ride.byColumn(
@@ -303,6 +566,58 @@ const splits = ride.byColumn(
 //    { start: 1000, end: 2000, gain: 8.0, speed: 6.4 }, ...]
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Bins, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        (0..6).map(|i| i * 1_000).collect(),
+        vec![
+            Column::required(
+                "cumDist",
+                vec![0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0],
+            ),
+            Column::required("ele", vec![1.0, 2.0, 1.5, 0.5, 3.0, 1.0]),
+            Column::required("speed", vec![7.0, 7.5, 6.5, 6.0, 8.0, 7.0]),
+        ],
+    )?;
+
+    // Per-kilometre elevation gain and average speed.
+    let splits = ride.by_column(
+        "cumDist",
+        &Bins::width(1_000.0),
+        &[
+            Agg::new("gain", "ele", Reducer::Sum),
+            Agg::new("speed", "speed", Reducer::Avg),
+        ],
+    )?;
+    assert_eq!(splits.len(), 3);
+    assert_eq!(
+        splits.column("start")?.numbers()?.values(),
+        &[0.0, 1_000.0, 2_000.0]
+    );
+    assert_eq!(
+        splits.column("end")?.numbers()?.values(),
+        &[1_000.0, 2_000.0, 3_000.0]
+    );
+    assert_eq!(splits.column("gain")?.numbers()?.values(), &[4.5, 0.5, 4.0]);
+    assert_eq!(
+        splits.column("speed")?.numbers()?.values(),
+        &[7.0, 6.0, 7.5]
+    );
+    Ok(())
+}
+```
+
+pond-rs returns a `Table` rather than an array of records: one column per field (`start`, `end`, then one per `Agg`), read with `column(name)`.
+
+</TabItem>
+</Tabs>
+
 The result is a plain **array of bin records**, each
 `{ start, end, ...aggregates }` — **not** a `TimeSeries`. Value-bins
 (distance, power) aren't time-indexed, so there's no key to build one
@@ -315,6 +630,9 @@ Fixed-`width` bins (shifted by `origin`, default `0`), emitted
 **contiguously** from the lowest to the highest occupied bin — interior
 empty bins included, so a histogram or profile has no gaps:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Power distribution: seconds spent in each 25 W band.
 ride.byColumn(
@@ -326,6 +644,48 @@ ride.byColumn(
 );
 // → [{ start: 0, end: 25, secs: 3 }, { start: 25, end: 50, secs: 0 }, ...]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Bins, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        (0..6).map(|i| i * 1_000).collect(),
+        vec![Column::required(
+            "watts",
+            vec![90.0, 110.0, 140.0, 30.0, 260.0, 180.0],
+        )],
+    )?;
+    let secs = [Agg::new("secs", "watts", Reducer::Count)];
+
+    // Seconds in each 25 W band, empty bands in between included.
+    let bands = ride.by_column("watts", &Bins::width(25.0), &secs)?;
+    assert_eq!(bands.column("start")?.numbers()?.get(0), Some(25.0));
+    assert_eq!(bands.len(), 10); // 25 W up to 275 W
+    assert_eq!(bands.column("secs")?.numbers()?.get(1), Some(0.0)); // 50 to 75 W
+
+    // Time in each power zone.
+    let zones = ride.by_column(
+        "watts",
+        &Bins::edges([0.0, 150.0, 250.0, 350.0, 500.0]),
+        &secs,
+    )?;
+    assert_eq!(
+        zones.column("secs")?.numbers()?.values(),
+        &[4.0, 1.0, 1.0, 0.0]
+    );
+    Ok(())
+}
+```
+
+This covers the explicit edges below too. `Bins::width_from(w, origin)` shifts the bins, and `Bins::edges_upper_inclusive` puts a value that sits on an edge in the bin below.
+
+</TabItem>
+</Tabs>
 
 A **monotonic** source (cumulative distance, work) yields contiguous
 ranges — splits, an elevation-vs-distance profile. A **non-monotonic**
@@ -382,6 +742,9 @@ value axis without aggregating, returning a `ValueSeries` — the
 value-keyed counterpart of `TimeSeries`, whose key is a monotonic
 non-time axis (distance, cumulative work, …) instead of time.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Re-key a ride onto cumulative distance. cumDist becomes the axis;
 // it's dropped from the value columns (it's now the key).
@@ -393,6 +756,46 @@ byDistance.column('hr'); // a value column, read with .read(i) / .values()
 byDistance.nearestIndex(5000); // row nearest 5 km (binary search — the cursor)
 byDistance.sliceByValue(5000, 10000); // the 5–10 km sub-series (zero-copy cull)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        (0..6).map(|i| i * 1_000).collect(),
+        vec![
+            Column::required(
+                "cumDist",
+                vec![0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0],
+            ),
+            Column::required("watts", vec![90.0, 110.0, 140.0, 30.0, 260.0, 180.0]),
+        ],
+    )?;
+
+    // Re-key the ride onto cumulative distance.
+    let by_distance = ride.by_value("cumDist")?;
+    assert_eq!(by_distance.axis_name(), "cumDist");
+    assert_eq!(
+        by_distance.axis(),
+        &[0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0]
+    );
+    assert!(by_distance.column("cumDist").is_err()); // it is the key now
+
+    let i = by_distance.nearest_index(1_000.0).unwrap(); // row nearest 1 km
+    assert_eq!(by_distance.column("watts")?.numbers()?.get(i), Some(140.0));
+    assert_eq!(by_distance.slice_by_value(1_000.0, 3_000.0).len(), 3); // 1–3 km
+    Ok(())
+}
+```
+
+`axis()` gives the axis values as a `&[f64]`.
+
+</TabItem>
+</Tabs>
 
 The axis must be **defined, finite, and non-decreasing at every
 row** — it becomes the index, so (unlike a value column) it can't
@@ -418,6 +821,9 @@ projection, `byColumn` as the record-returning projection out — see
 Reduce one array cell per event — feeds each event's array to a
 reducer as if it were a bucket. Per-event in / per-event out.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // "Number of tags per event" — replace the array column with a count.
 events.arrayAggregate('tags', 'count');
@@ -430,6 +836,52 @@ events.arrayAggregate('tags', 'count', { as: 'tagCount' });
 events.arrayAggregate('tags', 'unique');
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{ArrayOptions, Column, Reducer, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let events = TimeSeries::new(
+        "events",
+        vec![0, 1_000, 2_000],
+        vec![Column::required(
+            "tags",
+            vec![
+                vec![Scalar::from("web"), "eu".into(), "web".into()],
+                vec!["db".into()],
+                vec![],
+            ],
+        )],
+    )?;
+
+    // Number of tags per event, replacing the list column.
+    let counts = events.array_aggregate("tags", Reducer::Count, &ArrayOptions::default())?;
+    assert_eq!(counts.column("tags")?.numbers()?.values(), &[3.0, 1.0, 0.0]);
+
+    // The same, as a new `tagCount` column beside the list.
+    let options = ArrayOptions {
+        output: Some("tagCount".into()),
+        ..ArrayOptions::default()
+    };
+    let kept = events.array_aggregate("tags", Reducer::Count, &options)?;
+    let names: Vec<&str> = kept.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["tags", "tagCount"]);
+
+    // Distinct values per event.
+    let distinct = events.array_aggregate("tags", Reducer::Unique, &ArrayOptions::default())?;
+    let first = distinct.column("tags")?.arrays()?.get(0).unwrap();
+    assert_eq!(first, &[Scalar::from("eu"), "web".into()]);
+    Ok(())
+}
+```
+
+`ArrayOptions { output: Some(name), .. }` is pond-ts's `{ as: name }`.
+
+</TabItem>
+</Tabs>
+
 Full treatment, including custom reducers and the flatten-one-level
 semantics on array-kind sources, lives on
 [Array columns](../advanced/arrays).
@@ -438,6 +890,9 @@ semantics on array-kind sources, lives on
 
 The live counterpart to `aggregate`. Buckets close incrementally as
 the watermark advances:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { LiveSeries, Sequence } from 'pond-ts';
@@ -462,6 +917,57 @@ agg.on('bucket', (event) => updateLiveTile(event));
 // Snapshot at any time — includes the open bucket as the last row.
 const snap = agg.snapshot();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_age("1h"),
+    )?;
+
+    let agg = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg), Agg::of("host", Reducer::Last)],
+    )?;
+    // Closed buckets, and the open bucket after each event joins it.
+    live.watch(agg, OutputKind::Event)?;
+    live.watch(agg, OutputKind::Bucket)?;
+
+    live.push(0, [Some(1.0.into()), Some("a".into())])?;
+    live.push(30_000, [Some(3.0.into()), Some("b".into())])?;
+    // An event in the next minute closes the first.
+    let out = live.push(61_000, [Some(5.0.into()), Some("a".into())])?;
+    let Output::Event { event, .. } = &out[1] else {
+        panic!()
+    };
+    assert_eq!(event.begin(), 0);
+    assert_eq!(event.number("cpu")?, Some(2.0));
+    assert_eq!(event.string("host")?, Some("b"));
+
+    // Snapshot at any time: the open bucket is the last row.
+    let snap = live[agg].snapshot()?;
+    assert_eq!(snap.key().begin(), &[0, 60_000]);
+    assert_eq!(snap.column("cpu")?.numbers()?.get(1), Some(5.0));
+    Ok(())
+}
+```
+
+pond-rs calls none of your code during a push. You `watch` a node, and each `push` returns what it caused: `OutputKind::Event` for a closed bucket, `OutputKind::Bucket` for the open one. See [Live series](../../pond-rs/live).
+
+</TabItem>
+</Tabs>
 
 `LiveAggregation` inherits the source's `graceWindow` for late-event
 tolerance at bucket closure. See [Live transforms →
@@ -492,6 +998,9 @@ Same parameter shape (sequence + range), same output key shape
 | "What's the rollup of every event in this bucket?" | `aggregate(seq, mapping)`        |
 | "What was the value at this grid point?"           | `align(seq, { method, sample })` |
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // aggregate — one row per minute, value reduced from sources inside.
 cpu.aggregate(Sequence.every('1m'), { cpu: 'avg' });
@@ -499,6 +1008,36 @@ cpu.aggregate(Sequence.every('1m'), { cpu: 'avg' });
 // align — one row per minute, value sampled from the source.
 cpu.align(Sequence.every('1m'), { method: 'hold' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Align, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 30_000, 90_000],
+        vec![Column::required("cpu", vec![0.2, 0.4, 0.6])],
+    )?;
+    let minute = Sequence::every("1m")?;
+
+    // aggregate: one row per minute, value reduced from the rows inside.
+    let avg = cpu.aggregate(&minute, &[Agg::of("cpu", Reducer::Avg)])?;
+    let got: Vec<_> = avg.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.30000000000000004), Some(0.6)]);
+
+    // align: one row per minute, value sampled at each minute's start.
+    let held = cpu.align(&minute, Align::default())?;
+    let got: Vec<_> = held.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.2), Some(0.4)]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 For "average CPU per minute," `aggregate` is right. For a chart at
 one-minute resolution where every grid point should have a value,

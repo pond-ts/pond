@@ -5,6 +5,8 @@ sidebar_position: 16
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreSampling from '@site/src/examples/core-sampling';
 import CoreSamplingLive from '@site/src/examples/core-sampling-live';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Sampling
 
@@ -65,11 +67,43 @@ reducer, reach for reservoir.
 
 ## Stride: deterministic 1-in-N \{#stride\}
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const sampled = series.sample({ stride: 10 });
 // length === Math.floor(series.length / 10)
 // keeps the 10th, 20th, 30th, ... events (1-indexed)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Sample, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        (0..95).map(|i| i * 1_000).collect(),
+        vec![Column::required(
+            "cpu",
+            (0..95).map(f64::from).collect::<Vec<_>>(),
+        )],
+    )?;
+
+    let sampled = series.sample(Sample::Stride(10))?;
+    // 95 / 10 rounded down; keeps the 10th, 20th, 30th, ... rows.
+    assert_eq!(sampled.len(), 9);
+    assert_eq!(&sampled.key().begin()[..3], &[9_000, 19_000, 29_000]);
+
+    assert!(series.sample(Sample::Stride(0)).is_err());
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Cheap (`O(N)` time, single pass, no RNG). Uniform-over-time, so any
 windowed statistic computed downstream is also uniform-over-time —
@@ -87,11 +121,51 @@ throw at construction.
 
 ## Reservoir: random K-of-N \{#reservoir\}
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const sampled = series.sample({ reservoir: { size: 500 } });
 // length === Math.min(500, series.length)
 // each event has probability ~K/N of being included, drawn uniformly
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Sample, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        (0..95).map(|i| i * 1_000).collect(),
+        vec![Column::required(
+            "cpu",
+            (0..95).map(f64::from).collect::<Vec<_>>(),
+        )],
+    )?;
+
+    let sampled = series.sample(Sample::Reservoir { size: 20, seed: 42 })?;
+    assert_eq!(sampled.len(), 20);
+    // The same seed picks the same rows.
+    let again = series.sample(Sample::Reservoir { size: 20, seed: 42 })?;
+    assert_eq!(sampled.key().begin(), again.key().begin());
+
+    // Asking for more rows than there are keeps the whole series.
+    let all = series.sample(Sample::Reservoir {
+        size: 500,
+        seed: 42,
+    })?;
+    assert_eq!(all.len(), 95);
+    Ok(())
+}
+```
+
+pond-rs's reservoir takes a `seed`, so a run can be repeated; pond-ts's has none. The kept rows stay in their order in the series, where pond-ts sorts them by key, so rows that share a time can come out in a different order.
+
+</TabItem>
+</Tabs>
 
 Single-pass [Vitter's Algorithm R](https://en.wikipedia.org/wiki/Reservoir_sampling#Simple:_Algorithm_R):
 fill the reservoir with the first K events, then for each subsequent
@@ -157,12 +231,67 @@ round-robin host order), it silently keeps the same subset of entities
 and drops the rest. The fix is the same as with every other multi-entity
 operator: **partition first, then sample**.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { Sequence, TimeSeries } from 'pond-ts';
 
 const sampled = metrics.partitionBy('host').sample({ stride: 10 }).collect();
 // Each host's events are thinned independently.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Sample, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Three hosts reporting in turn, 20 readings each.
+    let metrics = TimeSeries::new(
+        "metrics",
+        (0..60).map(|i| (i / 3) * 1_000).collect(),
+        vec![
+            Column::required(
+                "host",
+                (0..60).map(|i| ["a", "b", "c"][i % 3]).collect::<Vec<_>>(),
+            ),
+            Column::required("cpu", (0..60).map(f64::from).collect::<Vec<_>>()),
+        ],
+    )?;
+
+    // Bare stride on round-robin rows keeps one host and drops the others.
+    let bare = metrics.sample(Sample::Stride(3))?;
+    let hosts = bare.column("host")?.strings()?;
+    assert!(hosts.iter().all(|h| h == Some("c")));
+
+    // Partition first: each host's rows are thinned on their own.
+    let sampled = metrics
+        .partition_by(&["host"])?
+        .sample(Sample::Stride(10))?
+        .collect()?;
+    assert_eq!(sampled.len(), 6); // 2 per host
+    let hosts: Vec<_> = sampled.column("host")?.strings()?.iter().collect();
+    assert_eq!(
+        hosts,
+        [
+            Some("a"),
+            Some("b"),
+            Some("c"),
+            Some("a"),
+            Some("b"),
+            Some("c")
+        ]
+    );
+    Ok(())
+}
+```
+
+On a partitioned series, `Sample::Reservoir` seeds each partition from your seed, so those picks repeat too.
+
+</TabItem>
+</Tabs>
 
 Each partition gets its own stride counter (or its own K-event reservoir
 for `{ reservoir: { size: K } }`) — bounded, predictable per-partition
@@ -197,6 +326,9 @@ lands.
   <CoreSamplingLive />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Live: per-host stride feeding per-host rolling
 live.partitionBy('host').sample({ stride: 10 }).rolling('5m', mapping);
@@ -204,6 +336,68 @@ live.partitionBy('host').sample({ stride: 10 }).rolling('5m', mapping);
 // Snapshot: reservoir for visualization
 series.sample({ reservoir: { size: 500 } }).toRows();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{CollectOptions, LiveSeries, PartitionOptions};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sample};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("host", ColumnKind::String),
+            ColumnDef::required("cpu", ColumnKind::Number),
+        ],
+    )?;
+
+    // Per-host stride feeding per-host rolling.
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    let per_host = live.per_partition(hosts, |live, host| {
+        let thinned = live.sample(host, Sample::Stride(2))?;
+        Ok(live
+            .rolling(thinned, "5s", &[Agg::of("cpu", Reducer::Avg)])?
+            .id())
+    })?;
+    let out = live.collect(per_host, &CollectOptions::new())?;
+
+    // Hosts a and b in turn; cpu is the push number.
+    for i in 0..12_i64 {
+        let host = if i % 2 == 0 { "a" } else { "b" };
+        live.push(
+            (i / 2) * 1_000,
+            [Some(host.into()), Some((i as f64).into())],
+        )?;
+    }
+
+    // Host a keeps its 2nd, 4th and 6th events (cpu 2, 6, 10), host b
+    // its 3, 7 and 11.
+    let got: Vec<_> = live[out]
+        .events()
+        .map(|e| (e.begin(), e.number("cpu").unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (1_000, Some(2.0)),
+            (1_000, Some(3.0)),
+            (3_000, Some(4.0)),
+            (3_000, Some(5.0)),
+            (5_000, Some(6.0)),
+            (5_000, Some(7.0)),
+        ]
+    );
+    Ok(())
+}
+```
+
+As in pond-ts, a live `sample` takes a stride only (`Sample::Stride`); a reservoir is an error.
+
+</TabItem>
+</Tabs>
 
 For the live story (firehose framing, the multi-entity bias trap, the
 `LiveView` chainable surface), see

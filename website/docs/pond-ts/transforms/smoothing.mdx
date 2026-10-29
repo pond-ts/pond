@@ -4,6 +4,8 @@ sidebar_position: 17
 
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreSmoothing from '@site/src/examples/core-smoothing';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Smoothing
 
@@ -11,10 +13,48 @@ import CoreSmoothing from '@site/src/examples/core-smoothing';
 pond-ts ships three algorithms; this page is the place to figure out
 **which one to pick**.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const trend = cpu.smooth('cpu', 'ema', { alpha: 0.3, output: 'cpuTrend' });
 // trend.schema gains { cpuTrend, number? } — source 'cpu' passes through.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a minute for twelve minutes.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..12).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![
+                0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58,
+            ],
+        )],
+    )?;
+
+    let trend = cpu.smooth("cpu", &Smooth::ema(0.3).output("cpuTrend"))?;
+    // trend gains an optional cpuTrend column; the source cpu passes through.
+    let names: Vec<&str> = trend.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "cpuTrend"]);
+    assert!(!trend.column("cpuTrend")?.is_required());
+    // 0.3 * 0.52 + 0.7 * 0.30
+    assert_eq!(trend.column("cpuTrend")?.numbers()?.get(1), Some(0.366));
+    Ok(())
+}
+```
+
+In Rust the method and its options are one value: `Smooth::ema(alpha)`, then `.output(name)` and the rest. `Smooth::ema_span(20.0)` gives the finance-style "20-bar EMA" (`alpha = 2 / (span + 1)`).
+
+</TabItem>
+</Tabs>
 
 <ConceptViz
   height={240}
@@ -64,12 +104,49 @@ the closure inside `live.map`; see
 The first ~`1/alpha` rows are noisy as the smoother seeds on the
 first raw value and converges. Use `warmup: N` to drop those:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 cpu.smooth('cpu', 'ema', { alpha: 0.3, warmup: 4 });
 // length === source.length - 4
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a minute for twelve minutes.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..12).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![
+                0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58,
+            ],
+        )],
+    )?;
+
+    let trend = cpu.smooth("cpu", &Smooth::ema(0.3).warmup(4))?;
+    // The first 4 rows are dropped.
+    assert_eq!(trend.len(), cpu.len() - 4);
+    assert_eq!(trend.key().begin()[0], 240_000);
+    assert_eq!(trend.column("cpu")?.numbers()?.get(0), Some(0.556608));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### Moving average — windowed arithmetic mean
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 cpu.smooth('cpu', 'movingAverage', {
@@ -78,6 +155,43 @@ cpu.smooth('cpu', 'movingAverage', {
   output: 'cpuAvg',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Alignment, Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a minute for twelve minutes.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..12).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![
+                0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58,
+            ],
+        )],
+    )?;
+
+    let avg = cpu.smooth(
+        "cpu",
+        &Smooth::moving_average("5m")
+            .alignment(Alignment::Centered) // Trailing | Leading | Centered
+            .output("cpuAvg"),
+    )?;
+    // At minute 5 the window [2.5m, 7.5m) holds minutes 3 to 7.
+    assert_eq!(
+        avg.column("cpuAvg")?.numbers()?.get(5),
+        Some(0.6519999999999999)
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 What it actually does: at each event, average every value inside the
 window. Predictable lag (centered alignment removes phase shift;
@@ -88,12 +202,54 @@ trends.
 
 ### LOESS — locally weighted regression
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 cpu.smooth('cpu', 'loess', {
   span: 0.25, // fraction of series — smaller = more local
   output: 'cpuLoess',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 40 noisy readings with an upward drift.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..40).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            (0..40)
+                .map(|i| ((i * 7) % 11) as f64 / 10.0 + i as f64 * 0.02)
+                .collect::<Vec<_>>(),
+        )],
+    )?;
+
+    // span: the fraction of the series each fit uses; smaller is more local.
+    let fit = cpu.smooth("cpu", &Smooth::loess(0.25).output("cpuLoess"))?;
+    let raw = cpu.column("cpu")?.numbers()?;
+    let smooth = fit.column("cpuLoess")?.numbers()?;
+    // A jump from 0.48 to 1.2 in the raw values; the fit barely moves.
+    assert_eq!(
+        (raw.get(19), raw.get(20)),
+        (Some(0.48), Some(1.2000000000000002))
+    );
+    assert_eq!(smooth.get(19), Some(0.8434140976273988));
+    assert_eq!(smooth.get(20), Some(0.8365859023726016));
+    Ok(())
+}
+```
+
+Giving a method an option it does not take (`warmup` on a loess, say) is an error when the code runs; pond-ts's types catch it before.
+
+</TabItem>
+</Tabs>
 
 What it actually does: fits a low-degree polynomial through the
 neighborhood of each point, weighted by distance. **High shape
