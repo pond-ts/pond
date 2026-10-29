@@ -936,44 +936,50 @@ runs, pond-ts one run with each case in its own process; repeat runs
 differ by up to a third). Cases marked 10k keep only the last 10,000
 events (`max_events`).
 
-| Case                                                      | pond-rs | pond-ts | Faster              |
-| --------------------------------------------------------- | ------- | ------- | ------------------- |
-| Push only                                                 | 331     | 3,944   | 12×                 |
-| Push only, 10k                                            | 273     | 2,846   | 10×                 |
-| `Reorder`, 5% of events up to 1 s late                    | 348     | 730     | 2.1×                |
-| Batches of 1,000                                          | 322     | 131     | pond-ts 2.5× faster |
-| A filter and a 1-minute aggregate                         | 459     | 4,783   | 10×                 |
-| The same, every output watched                            | 863     | 5,522   | 6.4×                |
-| The same, 10k                                             | 573     | 4,770   | 8.3×                |
-| `diff` + `rate` + `pct_change`, 10k                       | 1,227   | 7,269   | 5.9×                |
-| `fill` (hold) + `cumulative`, 10k                         | 735     | 5,949   | 8.1×                |
-| `map` + `select` + `sample`, 10k                          | 873     | 6,152   | 7.0×                |
-| Two `window`s                                             | 529     | 4,895   | 9.2×                |
-| `Reorder` (5% late), `diff` + `fill` + `window`, 10k      | 1,519   | 1,894   | 1.2×                |
-| `rolling` 30 s: avg + max + stdev, 10k                    | 550     | 5,410   | 9.8×                |
-| `rolling_rows` 100: avg, history off                      | 488     | 5,165   | 11×                 |
-| `rolling_windows` 1 m + 5 m + 15 m: avg, 10k              | 497     | 5,970   | 12×                 |
-| `reduce`: avg + max + count, 10k                          | 634     | 11,090  | 17×                 |
-| `aggregate` by New York day, 10k                          | 327     | 4,683   | 14×                 |
-| 4 hosts, `collect`, 10k                                   | 852     | 8,532   | 10×                 |
-| 4 hosts, `diff` + `fill` on each, `collect`               | 2,029   | 10,411  | 5.1×                |
-| 4 hosts, `partition_rolling_windows` 1 m + 5 m, every 1 m | 895     | 7,274   | 8.1×                |
-| 1,000 hosts in batches of 1,000, `rolling` on each        | 1,250   | 3,238   | 2.6×                |
-| 1,000 hosts in batches of 1,000, `partition_rolling`      | 2,776   | 7,450   | 2.7×                |
+| Case                                                           | pond-rs | pond-ts | Faster              |
+| -------------------------------------------------------------- | ------- | ------- | ------------------- |
+| Push only                                                      | 331     | 3,944   | 12×                 |
+| Push only, 10k                                                 | 273     | 2,846   | 10×                 |
+| `Reorder`, 5% of events up to 1 s late                         | 348     | 730     | 2.1×                |
+| Batches of 1,000                                               | 322     | 131     | pond-ts 2.5× faster |
+| A filter and a 1-minute aggregate                              | 459     | 4,783   | 10×                 |
+| The same, every output watched                                 | 863     | 5,522   | 6.4×                |
+| The same, 10k                                                  | 573     | 4,770   | 8.3×                |
+| `diff` + `rate` + `pct_change`, 10k                            | 1,227   | 7,269   | 5.9×                |
+| `fill` (hold) + `cumulative`, 10k                              | 735     | 5,949   | 8.1×                |
+| `map` + `select` + `sample`, 10k                               | 873     | 6,152   | 7.0×                |
+| Two `window`s, 10k                                             | 529     | 4,895   | 9.2×                |
+| `Reorder` (5% late), `diff` + `fill` + `window`, 10k           | 1,519   | 1,894   | 1.2×                |
+| `rolling` 30 s: avg + max + stdev, 10k                         | 550     | 5,410   | 9.8×                |
+| `rolling_rows` 100: avg, history off, 10k                      | 488     | 5,165   | 11×                 |
+| `rolling_windows` 1 m + 5 m + 15 m: avg, 10k                   | 497     | 5,970   | 12×                 |
+| `reduce`: avg + max + count, 10k                               | 634     | 11,090  | 17×                 |
+| `aggregate` by New York day, 10k                               | 327     | 4,683   | 14×                 |
+| 4 hosts, `collect`, 10k                                        | 852     | 8,532   | 10×                 |
+| 4 hosts, `diff` + `fill` on each, `collect`, 10k               | 2,029   | 10,411  | 5.1×                |
+| 4 hosts, `partition_rolling_windows` 1 m + 5 m, every 1 m, 10k | 895     | 7,274   | 8.1×                |
+| 1,000 hosts in batches of 1,000, `rolling` on each, 10k        | 1,250   | 3,238   | 2.6×                |
+| 1,000 hosts in batches of 1,000, `partition_rolling`, 10k      | 2,776   | 7,450   | 2.7×                |
 
 So one series takes about 3 million events a second in pond-rs, against
 about 250,000 in pond-ts, and each view or rolling window costs pond-rs
-a few tenths of a microsecond per event. Read the big ratios with two
+a few tenths of a microsecond per event. Read the big ratios with three
 things in mind:
 
-- **pond-ts's one-event push is slow in the default mode.** A series in the default (in order) mode stores events in
-  column chunks built for batches, and a one-event push builds a whole
-  one-row chunk (about 60% of the time goes to the garbage collector). The same
-  events pushed into a `Reorder` series take pond-ts 730 ms rather than
-  3,944, so against that path pond-rs is about 2× faster, not 12×.
+- **pond-ts's one-event push is slow in the default mode.** A series in
+  the default (in order) mode stores events in column chunks built for
+  batches, and a one-event push builds a whole one-row chunk (about 60% of
+  the time goes to the garbage collector). In a separate check, one
+  million in-order events pushed one at a time into a `Reorder` series
+  took pond-ts 0.76–0.8 s rather than 3.9–4.4 s, and the late-events case
+  above takes it 730 ms. Against that path pond-rs is about 2× faster,
+  not 12×.
 - **pond-ts is faster on batches.** In batches of 1,000 pond-ts appends
   whole column chunks, while pond-rs still makes one short-lived event per
-  row. The same holds for `Reorder` with views on it (1.2×).
+  row.
+- **`Reorder` with views is close** (1.2× here, 1.2–1.7× across the three
+  pond-rs runs, the noisiest case). pond-ts's `Reorder` path skips the
+  one-row chunk above, so its `Reorder` cases are its fastest.
 
 These timings found several pond-ts slowdowns along the way, fixed in
 pond-ts at the same time: dropping old events copied the whole buffer on

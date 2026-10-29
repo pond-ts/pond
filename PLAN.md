@@ -623,7 +623,6 @@ the study oracle) is done.
 - **[PND-RUSTLIVEBATCH]** — pond-rs live pushes in batches of 1,000 are
   2.5× slower than pond-ts (322 vs 131 ms per 1M rows, 2026-10-29): pond-rs
   makes one short-lived event per row, pond-ts appends whole column chunks.
-  Same cause behind `Reorder` with views being only 1.2× faster.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
@@ -905,10 +904,10 @@ Robustness debt plus the queued composition workstreams. Plan:
 - **[PND-LIVEONEPUSH]** — A one-event `push` on a default (strict,
   in-order) `LiveSeries` builds a whole one-row column chunk
   (`validateAndNormalizeColumnar` + `ColumnarStore.fromTrustedStore`), so
-  1M one-at-a-time pushes take 3.9 s against 0.73-0.8 s for the same rows
-  into a `Reorder` series; ~60% of the time is garbage collection.
+  1M one-at-a-time in-order pushes take 3.9-4.4 s against 0.76-0.8 s for
+  the same rows into a `Reorder` series (2 s grace); ~60% of the time is garbage collection.
   Measured 2026-10-29 in pond-rs R3 step 7. Fix idea: route small pushes
-  into the chunked backing's coalescing tier (as `_stageRows` does)
+  into the chunked backing's coalescing tier (as partition routing's `_stageRowsOpen` does)
   instead of building a store per push.
 - **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
   take the batch `{ append: true }` / `{ output }` options added in

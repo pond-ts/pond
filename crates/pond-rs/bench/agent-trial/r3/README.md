@@ -83,7 +83,9 @@ times, the rest once. Every extra run added a check or a print, not a fix.
   pond-rs programs are longer, and the agents took longer and used more
   tokens, mostly for that check and for reading `live/mod.rs`,
   `aggregation.rs` and `partition.rs` to confirm the library's close rule
-  matches the task. Plain agents had nothing to confirm.
+  matches the task. Plain agents had nothing to confirm. It also means most pond-rs agents
+  knew their answer was right from their own hand-written check, not from
+  the library alone.
 - **Both sides add avg in arrival order,** which is also what pond-ts
   does, so all 20 match pond-ts to the bit. A different adding order would
   differ in the last digit and still pass the grader.

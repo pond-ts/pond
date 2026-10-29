@@ -3887,11 +3887,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          process for all cases grew slower as its heap filled and ran out
          of memory on the last case). One series: ~3M events/s pond-rs,
          ~250k pond-ts (331 vs 3,944 ms per 1M); views, rolling, reduce
-         and partitions 5-17x. Weak spots: batches of 1,000 (pond-ts 2.5x
+         and 4-host partitions 5-17x, 1,000-host partitions 2.6-2.7x. Weak spots: batches of 1,000 (pond-ts 2.5x
          faster, [PND-RUSTLIVEBATCH]) and `Reorder` with views (1.2x).
          Much of pond-ts's one-at-a-time cost is its strict path building
-         a one-row chunk per push ([PND-LIVEONEPUSH]): into a `Reorder`
-         series pond-ts takes 730 ms, so pond-rs is ~2x there. Table in
+         a one-row chunk per push ([PND-LIVEONEPUSH]): in-order rows into a
+         `Reorder` series take pond-ts 0.76-0.8 s, so pond-rs is ~2x there. Table in
          `website/docs/pond-rs/live.mdx` (Speed).
        - Agent trial (`bench/agent-trial/r3/README.md`): per-host minute
          buckets over late events with a 5 s grace, against plain Rust
