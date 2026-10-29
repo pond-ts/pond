@@ -172,9 +172,10 @@ long.pivotByGroup('host', 'cpu', { aggregate: 'avg' });
 ```
 
 The aggregator's output kind must match the value column's kind —
-e.g. `count`, `unique`, `topN` produce kind-changing reductions
-and are rejected upfront with a clear error. Use `aggregate()`
-first if you need a kind-changing reduction.
+e.g. `unique` and `topN` produce arrays, so on a number column they
+are rejected upfront with a clear error. (`count` gives a number, so it
+is fine on a number column.) Use `aggregate()` first if you need a
+kind-changing reduction.
 
 Composes with every other transform — every wide column is a
 regular numeric column:
@@ -541,7 +542,7 @@ materialize back to a regular `TimeSeries`:
 ```ts
 const cleaned = ts
   .partitionBy('host')
-  .dedupe({ keep: 'last' }) // (when shipped — per-host)
+  .dedupe({ keep: 'last' }) // per-host
   .fill({ cpu: 'linear' }) // per-host
   .rolling('5m', { cpu: 'avg', host: 'last' }) // per-host
   .collect(); // back to TimeSeries<S>
@@ -705,12 +706,12 @@ per-group and reassembles back to one `TimeSeries<S>`. Reach for
 `groupBy` when you want N outputs; for `partitionBy` when you want
 one output with per-partition computation correctly scoped.
 
-:::tip[Live-side hazard is the same — primitive is queued]
+:::tip[Live-side hazard is the same — and so is the fix]
 The same cross-entity hazard applies to live transforms
 (`LiveRollingAggregation`, `LiveAggregation`, `LiveView.window()`,
-live `diff`/`rate`/`fill`/`cumulative`). Per-partition support on
-the live side is queued — see PLAN.md "Queued: live partitioning".
-For now, snapshot to a `TimeSeries` and use batch `partitionBy`.
+live `diff`/`rate`/`fill`/`cumulative`). `LiveSeries` has its own
+`partitionBy`, which runs them per partition; see
+[Live transforms](../live/live-transforms).
 :::
 
 ## `concat` \{#concat\}
@@ -829,8 +830,8 @@ right one based on whether you want more rows (concat) or wider rows
 
 **When events share a key.** Events with the same key from
 different inputs are both kept; this is row-append, not
-key-deduplication. If you need same-key collapse, see the queued
-`dedupe` work in PLAN.md or do it yourself before / after `concat`.
+key-deduplication. If you need same-key collapse, call
+[`dedupe`](./cleaning#deduplicate) after `concat`.
 
 :::note[Not the same as `Event.merge`]
 `Event.merge(patch)` is a **per-event** payload merge (column-wise:

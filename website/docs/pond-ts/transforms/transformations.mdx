@@ -255,7 +255,7 @@ const summary = metrics.collapse(
   'load',
   ({ cpu, requests }) => ((cpu ?? 0) + (requests ?? 0)) / 2,
 );
-// schema: [time, load, ...other source columns]
+// schema: [time, ...other source columns, load]
 ```
 
 </TabItem>

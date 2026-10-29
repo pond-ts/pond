@@ -786,8 +786,10 @@ const live = new LiveSeries({
 // Grace defaults from the source's graceWindow — no need to repeat it
 const agg = live.aggregate(Sequence.every('1m'), { cpu: 'avg' });
 
-// Or override with an explicit value
-const agg2 = live.aggregate(
+// Or override with an explicit value. `live.aggregate` takes no options,
+// so build the aggregation directly to pass one.
+const agg2 = new LiveAggregation(
+  live,
   Sequence.every('1m'),
   { cpu: 'avg' },
   { grace: '5s' },
@@ -853,7 +855,7 @@ With a grace period active, a bucket doesn't finalize until the data's watermark
 - The `bucket` event fires with each update, reflecting the revised state
 - `snapshot()` includes all pending buckets as provisional results
 
-Once the grace window expires, the bucket closes normally and fires the `close`
+Once the grace window expires, the bucket closes normally and fires the `event`
 event with the final value. Events arriving after their bucket's grace window
 has expired are silently dropped.
 

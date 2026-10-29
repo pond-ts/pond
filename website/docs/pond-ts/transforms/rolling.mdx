@@ -134,9 +134,10 @@ fn main() -> Result<(), pond_rs::PondError> {
 </TabItem>
 </Tabs>
 
-Opening events — where the window would extend beyond the series'
-ends — emit `undefined` under trailing and centered; under leading,
-trailing events emit `undefined` instead.
+Near the series' ends the window holds fewer events (the first ones under
+trailing, both ends under centered, the last ones under leading), but every
+row still gets a value from the events it does hold. To leave those rows
+`undefined` until the window is full enough, set `minSamples` (below).
 
 ## Warm-up gate (`minSamples`)
 

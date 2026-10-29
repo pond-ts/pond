@@ -235,8 +235,6 @@ operator: **partition first, then sample**.
 <TabItem value="ts" label="TypeScript" default>
 
 ```ts
-import { Sequence, TimeSeries } from 'pond-ts';
-
 const sampled = metrics.partitionBy('host').sample({ stride: 10 }).collect();
 // Each host's events are thinned independently.
 ```
@@ -305,8 +303,10 @@ for the broader pattern.
 ## Live counterpart \{#live\}
 
 `LiveSeries.sample`, `LiveView.sample`, `LivePartitionedSeries.sample`,
-and `LivePartitionedView.sample` accept `{ stride: N }` and return a
-`LiveView<S>` with a per-instance closure-captured counter. v0.17.0
+and `LivePartitionedView.sample` accept `{ stride: N }`. On a series or
+view they return a `LiveView<S>` with its own stride counter; on a
+partitioned series or view they return a `LivePartitionedView`, one
+counter per partition, so call `.collect()` before listening to it. v0.17.0
 ships **stride only** on the live side; reservoir is queued for a
 later release once the streaming RFC's exact-removal eviction channel
 lands.
