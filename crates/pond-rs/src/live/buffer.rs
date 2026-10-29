@@ -192,6 +192,12 @@ impl EventBuffer {
         self.begin[i]
     }
 
+    /// The cell of value column `column` in the event at `i` (a copy; a
+    /// number copies nothing else).
+    pub(crate) fn cell(&self, column: usize, i: usize) -> Option<Value> {
+        self.cells[column].get(i)
+    }
+
     fn key_at(&self, i: usize) -> EventKey {
         let begin = self.begin[i];
         match (&self.end, &self.labels) {
@@ -231,6 +237,11 @@ impl EventBuffer {
             return self.insert(&event);
         }
         let (key, values) = event.into_parts();
+        self.insert_cells(key, values)
+    }
+
+    /// [`EventBuffer::insert`] of a key and its cells, moved in.
+    pub(crate) fn insert_cells(&mut self, key: EventKey, values: Vec<Option<Value>>) -> usize {
         let at = self.place(&key);
         for (cells, cell) in self.cells.iter_mut().zip(values) {
             cells.insert(at, cell);
@@ -251,18 +262,25 @@ impl EventBuffer {
         }
     }
 
-    /// Add an event at the end whatever its key: for outputs kept in the
-    /// order they were made (rolling and reduce), never searched by key.
-    pub(crate) fn append(&mut self, key: EventKey, values: Vec<Option<Value>>) {
+    /// Add an event at the end whatever its key, its cells as `values`
+    /// yields them (one per value column, in schema order): for outputs
+    /// kept in the order they were made (rolling and reduce), never
+    /// searched by key.
+    pub(crate) fn append_values(
+        &mut self,
+        key: EventKey,
+        values: impl Iterator<Item = Option<Value>>,
+    ) {
         let at = self.len();
         self.push_key(&key);
         for (cells, cell) in self.cells.iter_mut().zip(values) {
             cells.insert(at, cell);
         }
+        debug_assert!(self.cells.iter().all(|c| c.len() == at + 1));
         self.tail = Some(key);
     }
 
-    /// [`EventBuffer::append`], copying the cells.
+    /// [`EventBuffer::append_values`], copying an event's cells.
     pub(crate) fn append_ref(&mut self, event: &LiveEvent) {
         self.push_key(event.key());
         for (cells, cell) in self.cells.iter_mut().zip(event.values()) {

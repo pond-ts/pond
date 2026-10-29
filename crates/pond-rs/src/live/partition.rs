@@ -191,7 +191,12 @@ pub struct LivePartitioned {
     /// events up to it that the root no longer holds, so a push's order
     /// against the root no longer implies its order in each partition.
     pub(crate) cleared_at: Option<EventKey>,
+    /// Per partition, the share it has in the push being routed
+    /// (`route_push`'s scratch, `NO_SHARE` between pushes).
+    share_at: Vec<u32>,
 }
+
+const NO_SHARE: u32 = u32::MAX;
 
 impl std::fmt::Debug for LivePartitioned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -286,9 +291,14 @@ impl LivePartitioned {
     /// The partition slot for `event`, when built, without writing its
     /// key for a text value.
     fn slot_for(&self, event: &LiveEvent) -> Option<usize> {
+        self.part_for(event).map(|i| self.parts[i].index as usize)
+    }
+
+    /// The position in `parts` of `event`'s partition, when built.
+    fn part_for(&self, event: &LiveEvent) -> Option<usize> {
         match &event.values()[self.by] {
-            Some(Value::String(s)) => self.slot_of(s),
-            _ => self.slot_of(&self.key_of(event)),
+            Some(Value::String(s)) => self.index.get(s.as_str()).copied(),
+            _ => self.index.get(&self.key_of(event)).copied(),
         }
     }
 
@@ -324,7 +334,11 @@ impl PartitionedView {
 /// One partition's share of a push routed a push at a time.
 struct Share {
     slot: usize,
-    rows: Vec<usize>,
+    /// Its position in `parts`.
+    part: usize,
+    /// Its rows' positions in the push: the last, and how many.
+    last: usize,
+    count: usize,
 }
 
 impl LiveSeries {
@@ -413,6 +427,7 @@ impl LiveSeries {
             watermark: None,
             last_sweep: None,
             cleared_at: None,
+            share_at: Vec::new(),
         };
         // Declared partitions, then the root's history.
         let p = self.slots.len();
@@ -775,10 +790,15 @@ impl LiveSeries {
         event: &LiveEvent,
         out: &mut Vec<Output>,
     ) -> Result<()> {
-        let key = self.partitioned(p).key_of(event);
-        let part = self.ensure_partition(p, &key)?;
+        let part = match self.partitioned(p).slot_for(event) {
+            Some(part) => part,
+            None => {
+                let key = self.partitioned(p).key_of(event);
+                self.ensure_partition(p, &key)?
+            }
+        };
         self.partitioned_mut(p).routed += 1;
-        self.ingest_series(part, vec![event.clone()], out);
+        self.ingest_events(part, std::iter::once(event.clone()), out);
         self.advance_watermark(p, event.begin(), out);
         Ok(())
     }
@@ -792,49 +812,69 @@ impl LiveSeries {
         out: &mut Vec<Output>,
     ) -> Result<()> {
         // 1. Each partition's rows, partitions in order of first row
-        //    (built here when new).
+        //    (built here when new). `share_at` is indexed by partition,
+        //    kept across pushes and reset at the end.
         let mut shares: Vec<Share> = Vec::new();
-        let mut share_at: HashMap<usize, usize> = HashMap::new();
-        let mut share_of: Vec<Option<usize>> = Vec::with_capacity(events.len());
+        let mut share_of: Vec<u32> = Vec::with_capacity(events.len());
         for (r, event) in events.iter().enumerate() {
-            let slot = match self.partitioned(p).slot_for(event) {
-                Some(slot) => slot,
+            let part = match self.partitioned(p).part_for(event) {
+                Some(part) => part,
                 None => {
                     let key = self.partitioned(p).key_of(event);
-                    match self.ensure_partition(p, &key) {
-                        Ok(slot) => slot,
+                    match self.spawn(p, key) {
+                        Ok(_) => self.partitioned(p).parts.len() - 1,
                         Err(e) => {
                             // A hook failed building the partition: this row
                             // is dropped, the rest routed, the push fails
                             // after (pond-ts `#routeChunk`). The partition
                             // stays, so its later rows reach it.
                             self.fail(e);
-                            share_of.push(None);
+                            share_of.push(NO_SHARE);
                             continue;
                         }
                     }
                 }
             };
-            let s = *share_at.entry(slot).or_insert_with(|| {
-                shares.push(Share {
-                    slot,
-                    rows: Vec::new(),
-                });
-                shares.len() - 1
-            });
-            shares[s].rows.push(r);
-            share_of.push(Some(s));
+            let pt = self.partitioned_mut(p);
+            if pt.share_at.len() < pt.parts.len() {
+                pt.share_at.resize(pt.parts.len(), NO_SHARE);
+            }
+            let s = match pt.share_at[part] {
+                NO_SHARE => {
+                    let s = shares.len() as u32;
+                    pt.share_at[part] = s;
+                    shares.push(Share {
+                        slot: pt.parts[part].index as usize,
+                        part,
+                        last: r,
+                        count: 0,
+                    });
+                    s
+                }
+                s => s,
+            };
+            let share = &mut shares[s as usize];
+            share.last = r;
+            share.count += 1;
+            share_of.push(s);
+        }
+        {
+            let pt = self.partitioned_mut(p);
+            for share in &shares {
+                pt.routed += share.count as u64;
+                pt.share_at[share.part] = NO_SHARE;
+            }
         }
         for share in &shares {
-            self.partitioned_mut(p).routed += share.rows.len() as u64;
-            self.series_mut(share.slot).ingested += share.rows.len() as u64;
+            self.series_mut(share.slot).ingested += share.count as u64;
         }
         // 2. Every row's `Event`, in the push's order.
         for (r, event) in events.iter().enumerate() {
-            let Some(s) = share_of[r] else {
+            let s = share_of[r];
+            if s == NO_SHARE {
                 continue;
-            };
-            let part = shares[s].slot;
+            }
+            let part = shares[s as usize].slot;
             let place = super::reduce::Place {
                 at: self.series(part).buffer.position(event.key()),
                 trimmed: 0,
@@ -842,15 +882,29 @@ impl LiveSeries {
             self.emit_event(part, event, Some(place), out);
             self.series_mut(part).buffer.insert(event);
         }
-        // 3. Each partition finishes, in order of its last row.
-        let mut close: Vec<usize> = (0..shares.len()).collect();
-        close.sort_unstable_by_key(|&s| shares[s].rows.last());
+        // 3. Each partition finishes, in order of its last row. A
+        //    partition with `Batch` watchers gets its rows of the push,
+        //    gathered in one pass over the push.
+        let wants_batch: Vec<bool> = shares
+            .iter()
+            .map(|share| !self.slots[share.slot].subs[OutputKind::Batch.slot()].is_empty())
+            .collect();
+        let mut added: Vec<Vec<LiveEvent>> = vec![Vec::new(); shares.len()];
+        if wants_batch.iter().any(|&w| w) {
+            for (event, &s) in events.iter().zip(&share_of) {
+                if s != NO_SHARE && wants_batch[s as usize] {
+                    added[s as usize].push(event.clone());
+                }
+            }
+        }
+        let mut close: Vec<u32> = (0..shares.len() as u32).collect();
+        close.sort_unstable_by_key(|&s| shares[s as usize].last);
         for &s in &close {
-            let share = &shares[s];
+            let share = &shares[s as usize];
             let part = share.slot;
             let n = self.series(part).retention_count();
-            if !self.slots[part].subs[OutputKind::Batch.slot()].is_empty() {
-                let added: Vec<LiveEvent> = share.rows.iter().map(|&r| events[r].clone()).collect();
+            if wants_batch[s as usize] {
+                let added = std::mem::take(&mut added[s as usize]);
                 self.emit(part, OutputKind::Batch, out, |node| Output::Batch {
                     node,
                     events: added.clone(),

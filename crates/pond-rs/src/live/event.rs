@@ -98,11 +98,6 @@ impl LiveEvent {
         &self.data.values
     }
 
-    /// The shared schema handle (cheap to clone).
-    pub(crate) fn schema_arc(&self) -> &Arc<LiveSchema> {
-        &self.schema
-    }
-
     /// The node's schema, key column first.
     pub fn schema(&self) -> &[ColumnDef] {
         &self.schema.columns

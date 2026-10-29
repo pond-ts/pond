@@ -213,6 +213,23 @@ pub(crate) enum Span {
     Rows(usize),
 }
 
+/// [`LiveRolling::snapshots`] over the fields it reads (`held`: source
+/// events held now).
+fn snapshots(
+    windows: &mut [Window],
+    fused: bool,
+    next: usize,
+    held: usize,
+) -> impl Iterator<Item = Option<Value>> + '_ {
+    windows.iter_mut().flat_map(move |w| {
+        let size = if fused { next - w.head } else { held };
+        let warm = size < w.min_samples;
+        w.columns
+            .iter_mut()
+            .map(move |c| if warm { None } else { c.state.snapshot() })
+    })
+}
+
 /// One output column: where its source values are kept, and its state.
 struct Column {
     store: usize,
@@ -686,28 +703,32 @@ impl LiveRolling {
     /// Every column as it now stands (pond-ts reads, which a stdev may
     /// act on), gaps while warming up.
     fn record(&mut self, mutate: bool) -> Vec<Option<Value>> {
+        if mutate {
+            return self.snapshots().collect();
+        }
         let mut out = Vec::with_capacity(self.schema.columns.len() - 1);
         for wi in 0..self.windows.len() {
             let warm = self.warming(&self.windows[wi]);
             for c in &mut self.windows[wi].columns {
-                out.push(if warm {
-                    None
-                } else if mutate {
-                    c.state.snapshot()
-                } else {
-                    c.state.peek()
-                });
+                out.push(if warm { None } else { c.state.peek() });
             }
         }
         out
+    }
+
+    /// Every column as a pond-ts read takes it (a stdev read may move its
+    /// reference point), gaps while warming up: in schema order, window by
+    /// window.
+    pub(crate) fn snapshots(&mut self) -> impl Iterator<Item = Option<Value>> + '_ {
+        snapshots(&mut self.windows, self.fused, self.next, self.starts.len())
     }
 
     /// Emit one event at `key`: keep it (per `history`), and return it when
     /// something takes it.
     fn emit(&mut self, key: EventKey, hand_on: bool) -> Option<LiveEvent> {
         self.emissions += 1;
-        let values = self.record(true);
         let event = if hand_on {
+            let values = self.record(true);
             let event = LiveEvent::new(Arc::clone(&self.schema), key, values);
             if self.keep.on {
                 self.out.append_ref(&event);
@@ -715,7 +736,14 @@ impl LiveRolling {
             Some(event)
         } else {
             if self.keep.on {
-                self.out.append(key, values);
+                // Straight into storage, no event built.
+                let held = self.starts.len();
+                self.out.append_values(
+                    key,
+                    snapshots(&mut self.windows, self.fused, self.next, held),
+                );
+            } else {
+                self.snapshots().for_each(drop);
             }
             None
         };

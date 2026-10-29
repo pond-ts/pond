@@ -146,6 +146,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **pond-rs: live layer does less work per event.** A top-to-bottom
+  instruction-count review (callgrind, 23 `perf_live` cases) found that a
+  bare push spent about 45% of its instructions in malloc/free, that a
+  `reduce` rebuilt every evicted event just to subtract its cells, that
+  chunked partition routing built a hash map and a row list per partition
+  on every push, and that rolling, reduce and partition-rolling rows went
+  through a throwaway `Vec` before storage. Now a push into a series with
+  nothing built on it stores cells without building an event; a `reduce`
+  reads the cells it must remove before the source drops them; routing
+  keeps one small table per partitioned node across pushes; output rows are
+  written straight into storage; and a `diff` / `map` / `select` /
+  `cumulative` / `fill` view with nothing built on it stores its cells
+  directly. Every case runs fewer instructions per event, from 7% to 42%
+  (push alone −41%, `reduce` −31%, 1,000-host synchronised rolling −27%).
+  Results are unchanged (all 69 live replay cases match pond-ts; four new cases push into a series nothing listens to, the path the batch fix takes, under strict retention, drop, reorder and a view added later).
 - **pond-rs: live series and views store events by column**, not as one
   shared object per event: 5 to 7 times less memory for number columns,
   about 5 times with a text column (1M events with three number columns:

@@ -1061,8 +1061,11 @@ things in mind:
   above takes it 730 ms. Against that path pond-rs is about 2× faster,
   not 12×.
 - **pond-ts is faster on batches.** In batches of 1,000 pond-ts appends
-  whole column chunks, while pond-rs still makes one short-lived event per
-  row.
+  whole column chunks. pond-rs now stores a batch's cells straight from the
+  rows when nothing reads the series (about 255 ms per million rows after
+  the 2026-10-29 speed review, from 322), and most of what is left is
+  freeing the caller's one `Vec` per row and the host text, which node does
+  in its garbage collector, off the clock.
 - **`Reorder` with views is close** (1.2× here, 1.2–1.7× across the three
   pond-rs runs, the noisiest case). pond-ts's `Reorder` path skips the
   one-row chunk above, so its `Reorder` cases are its fastest.

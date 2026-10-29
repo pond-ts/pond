@@ -138,16 +138,17 @@ impl LiveReduce {
         self.pending = Some(event.key().clone());
     }
 
-    /// The source dropped `events`, its oldest, in its order.
-    pub(crate) fn evict(&mut self, events: &[LiveEvent]) {
-        for event in events {
+    /// The source is about to drop its oldest `n` events, still in
+    /// `buffer`: remove them, oldest first.
+    pub(crate) fn evict_cells(&mut self, buffer: &EventBuffer, n: usize) {
+        for i in 0..n.min(buffer.len()) {
             let Some(index) = self.held.pop_front() else {
                 return;
             };
             self.evictions += 1;
             for (src, state) in &mut self.columns {
-                if let Some(v) = &event.values()[*src] {
-                    state.remove(index, v);
+                if let Some(v) = buffer.cell(*src, i) {
+                    state.remove(index, &v);
                 }
             }
         }
@@ -180,13 +181,16 @@ impl LiveReduce {
 
     fn emit(&mut self, key: EventKey, hand_on: bool) -> Option<LiveEvent> {
         self.emissions += 1;
-        let values: Vec<Option<Value>> = self.columns.iter_mut().map(|c| c.1.snapshot()).collect();
         if hand_on {
+            let values: Vec<Option<Value>> =
+                self.columns.iter_mut().map(|c| c.1.snapshot()).collect();
             let event = LiveEvent::new(Arc::clone(&self.schema), key, values);
             self.out.append_ref(&event);
             Some(event)
         } else {
-            self.out.append(key, values);
+            // Straight into storage, no event built.
+            self.out
+                .append_values(key, self.columns.iter_mut().map(|c| c.1.snapshot()));
             None
         }
     }
