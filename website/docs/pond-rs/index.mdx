@@ -75,7 +75,7 @@ trading calendars and the session studies (session VWAP, pivot points,
 anchored VWAP) are built, all 109 pond-ts studies; see
 [Finance studies](./finance-studies).
 
-**Started:** the live layer: series that take events as they arrive, with
+**Also built:** the live layer: series that take events as they arrive, with
 live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
 …), `aggregate` by minute or by calendar day in a time zone, rolling
 windows, `reduce`, and partitions (one series per host, with views and
@@ -114,7 +114,7 @@ for the reasoning, `PLAN.md` for the current steps). In order:
    itself; R1b added the rest of pond-ts's batch operations, step by step.
 2. **Financial studies** (done), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
-3. **Live layer** (in progress): series that update as data arrives.
+3. **Live layer** (done): series that update as data arrives.
 4. **WASM bridge**: the same Rust code running inside pond-ts where it
    measurably helps.
 
