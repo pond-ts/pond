@@ -455,6 +455,7 @@ pub enum Alignment {
 /// default: a trailing window, every row given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rolling {
+    /// Where the window sits around each row (default: trailing).
     pub alignment: Alignment,
     /// A row whose window holds fewer rows than this gets a gap in every
     /// output column (pond-ts `minSamples`). Rows are counted whether or
@@ -473,6 +474,7 @@ pub struct Rolling {
 /// over the series' own time range, every bucket given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RollingOver {
+    /// Where the window sits around each bucket's point (default: trailing).
     pub alignment: Alignment,
     /// As [`Rolling::min_samples`], per bucket.
     pub min_samples: usize,

@@ -889,7 +889,8 @@ pub(crate) fn read_time(
                 ),
             ))
         }
-        Json::String(text) if let Some(zone) = zone => {
+        Json::String(text) if zone.is_some() => {
+            let zone = zone.unwrap_or_default();
             crate::parse_time_in(text, zone).map_err(|e| invalid(call, format!("row {row}: {e}")))
         }
         other if zone.is_some() => Err(invalid(

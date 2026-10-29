@@ -80,6 +80,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **pond-rs: ready for crates.io.** The crate has package metadata, a
+  README, three runnable examples (`quickstart`, `rsi`, `live_stream`) and
+  API docs for every public item, with a docs.rs front page and the `live`
+  feature marked. Minimum Rust is now stated correctly as 1.88 (1.85 never
+  built). A `Publish pond-rs` workflow publishes it on its own, apart from
+  the npm release.
 - **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
   on by default). `LiveSeries` takes events one at a time or in batches
   (`push` / `push_many` / `push_json`), with pond-ts's ordering modes

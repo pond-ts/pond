@@ -121,6 +121,7 @@ impl PartitionedSeries {
         self.parts.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }
@@ -712,14 +713,14 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                 head.key().kind()
             ));
         }
-        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key()) {
-            if std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label) {
-                return Some(format!(
-                    "series {i} has {} interval labels, series 0 {}",
-                    label_kind(&b.label),
-                    label_kind(&a.label)
-                ));
-            }
+        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key())
+            && std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label)
+        {
+            return Some(format!(
+                "series {i} has {} interval labels, series 0 {}",
+                label_kind(&b.label),
+                label_kind(&a.label)
+            ));
         }
         if s.columns().len() != head.columns().len() {
             return Some(format!(
@@ -738,15 +739,15 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                     a.kind()
                 ));
             }
-            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data()) {
-                if x.scale() != y.scale() {
-                    return Some(format!(
-                        "decimal column '{}' has scale {} in series {i} but {} in series 0",
-                        a.name(),
-                        y.scale(),
-                        x.scale()
-                    ));
-                }
+            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data())
+                && x.scale() != y.scale()
+            {
+                return Some(format!(
+                    "decimal column '{}' has scale {} in series {i} but {} in series 0",
+                    a.name(),
+                    y.scale(),
+                    x.scale()
+                ));
             }
         }
     }
@@ -1209,7 +1210,7 @@ mod tests {
         // partition uses `seed` itself, and the second picks other
         // positions (its own seed). The same seed gives the same rows.
         assert!(rows.iter().all(|r| r.len() == 5));
-        assert!(rows[0].iter().all(|v| *v as usize % 2 == 0));
+        assert!(rows[0].iter().all(|v| (*v as usize).is_multiple_of(2)));
         assert!(rows[1].iter().all(|v| *v as usize % 2 == 1));
         let positions = |r: &[f64]| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
         let alone = v_of(&p.get(&key("a")).unwrap().sample(how).unwrap());

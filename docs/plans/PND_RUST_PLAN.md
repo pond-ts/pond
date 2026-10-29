@@ -570,6 +570,38 @@ Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
 partitioned variants); a mutation run (dropping one appended column, renaming
 the output) failed all 10.
 
+## [PND-RUSTPUB] — publish pond-rs on crates.io (2026-10-29)
+
+Peter asked (2026-10-29) for pond-rs to be published with API docs so Rust
+users can find it. Crate name `pond-rs` was free on crates.io (checked
+2026-10-29; `pond` is an unrelated 2017 thread-pool crate).
+
+Done in the publish-prep PR:
+
+- **Metadata.** description, homepage (pond-ts.org), documentation
+  (docs.rs), keywords, categories, `readme`, a copy of the MIT `LICENSE`.
+  `include` packs only `src/`, three user examples (`quickstart`, `rsi`,
+  `live_stream`), README and licence (~385 KB). Tests, benches and the perf
+  examples read fixtures elsewhere in the monorepo, so they stay out.
+- **Minimum Rust is 1.88, not 1.85.** The `icu_*` crates need 1.88, and two
+  `if let` match guards (stable only in newer Rust) were rewritten. Raising
+  `rust-version` turned on two clippy lints (`is_multiple_of`, collapsed
+  `if let` chains), applied with `clippy --fix`. CI now has a `rust-msrv`
+  job on 1.88.
+- **Docs.** Every public item documented; `#![warn(missing_docs)]` plus
+  `RUSTDOCFLAGS=-D warnings` in CI keep it so. The crate front page was
+  rewritten as a landing page (what it is, where to start, feature table).
+  docs.rs builds with all features and `--cfg docsrs`, which marks
+  `live`-only items.
+- **Release workflow** `.github/workflows/release-rs.yml`: dispatch on main
+  (dry run by default) or tag `pond-rs-v<version>`. The first publish needs
+  a `CARGO_REGISTRY_TOKEN` secret (crates.io only offers trusted publishing
+  for a crate that already exists); after it, set up trusted publishing on
+  crates.io and delete the secret.
+
+Version: Peter chose 0.1.0 with its own numbering, not lock-step with
+pond-ts (2026-10-29); this settles [PND-RUSTRFC]'s versioning question.
+
 ## Codex review of the whole crate (2026-10-29)
 
 pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14

@@ -26,6 +26,7 @@ pub enum AlignMethod {
 /// time range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Align {
+    /// How each bucket's value is found (default: hold).
     pub method: AlignMethod,
     /// Which point of each bucket is sampled: its start, middle or end.
     pub sample: At,
@@ -53,6 +54,7 @@ pub enum Pick {
 /// row's time, over the series' own time range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Materialize {
+    /// Which row a bucket with several keeps (default: the last).
     pub pick: Pick,
     /// The row's time: each bucket's start, middle or end.
     pub sample: At,

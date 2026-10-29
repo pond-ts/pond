@@ -220,7 +220,7 @@ impl LiveSeries {
         let mut seen = 0usize;
         let step: Step = Box::new(move |e: &LiveEvent| {
             seen += 1;
-            (seen % stride == 0).then(|| Kept::Pass(e.clone()))
+            seen.is_multiple_of(stride).then(|| Kept::Pass(e.clone()))
         });
         Ok(self.add_view(source, schema, step, None, None))
     }

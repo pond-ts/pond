@@ -50,6 +50,7 @@ pub struct PartitionOptions {
 }
 
 impl PartitionOptions {
+    /// Options taking everything from the root.
     pub fn new() -> Self {
         Self::default()
     }
@@ -62,11 +63,13 @@ impl PartitionOptions {
         self
     }
 
+    /// Each partition's ordering mode, instead of the root's.
     pub fn ordering(mut self, mode: OrderingMode) -> Self {
         self.ordering = Some(mode);
         self
     }
 
+    /// Each partition's grace window, instead of the root's.
     pub fn grace_window(mut self, duration: &str) -> Self {
         self.grace_window = Some(duration.into());
         self
@@ -100,30 +103,36 @@ pub struct CollectOptions {
 }
 
 impl CollectOptions {
+    /// Options taking ordering from the partitions and keeping everything.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The gathered series' name.
     pub fn name(mut self, name: &str) -> Self {
         self.name = Some(name.into());
         self
     }
 
+    /// The gathered series' ordering mode.
     pub fn ordering(mut self, mode: OrderingMode) -> Self {
         self.ordering = Some(mode);
         self
     }
 
+    /// The gathered series' grace window.
     pub fn grace_window(mut self, duration: &str) -> Self {
         self.grace_window = Some(duration.into());
         self
     }
 
+    /// Keep at most `n` events in the gathered series.
     pub fn max_events(mut self, n: usize) -> Self {
         self.max_events = Some(n);
         self
     }
 
+    /// Keep only events no older than `duration` before the latest.
     pub fn max_age(mut self, duration: &str) -> Self {
         self.max_age = Some(duration.into());
         self
@@ -261,6 +270,7 @@ impl LivePartitioned {
         })
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> PartitionStats {
         PartitionStats {
             partitions: self.keys.len(),

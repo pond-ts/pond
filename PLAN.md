@@ -629,8 +629,12 @@ the study oracle) is done.
   the library's work ~50 ms. A column-shaped push (`push_columns`) would
   remove the per-row `Vec`s; an API addition, needs Peter's OK.
 
-- **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
-  independent).
+- **[PND-RUSTPUB]** — Publish pond-rs on crates.io with docs.rs API docs.
+  Prep (metadata, README, full rustdoc, MSRV 1.88, `release-rs.yml`) in the
+  publish-prep PR #851. Version 0.1.0, own numbering (Peter, 2026-10-29;
+  settles the old [PND-RUSTRFC] versioning question). First publish via
+  `release-rs.yml` with the `CARGO_REGISTRY_TOKEN` secret. Then switch to trusted
+  publishing. Details in `docs/plans/PND_RUST_PLAN.md`.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
   1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–7 (live series page). Keep them in step as each step lands. Every Rust example is a
