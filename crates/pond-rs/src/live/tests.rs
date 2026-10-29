@@ -1280,7 +1280,9 @@ fn reduce_on_windows_over_history_and_rolling() {
     let hi = held.iter().cloned().fold(f64::MIN, f64::max);
     let lo = held.iter().cloned().fold(f64::MAX, f64::min);
     assert_eq!(numbers(live[r].value()), [Some(hi), Some(lo), Some(2.0)]);
+}
 
+#[test]
 fn a_map_may_leave_gaps_in_required_columns() {
     // Codex review R04: the view kept `required`, so a gap (None or a
     // non-finite number, both allowed) made every snapshot fail.
