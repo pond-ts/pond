@@ -613,30 +613,22 @@ the study oracle) is done.
   0 failed runs vs polars' 12. **R2 is
   complete.** Detail in the breakout plan.
 
-- **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
-  2026-10-23 after R2, revised twice 2026-10-25 after two reviews; in
-  progress (step 1, the pond-ts replay fixture, landed 2026-10-27; step 2,
-  `LiveSeries` with `filter` and fixed-bucket `aggregate`, merged 2026-10-28
-  (#839); step 3, the other views, merged 2026-10-28 (#840); events stored
-  by column before step 4, about 5-7x less memory for the series (#842);
-  step 4, rolling windows and `reduce` with their triggers, merged
-  2026-10-28 (#843); step 5, calendar buckets for live `aggregate` in both
-  libraries plus its own grace option, merged 2026-10-28 (#844); step 6,
-  live partitions with synchronised rolling, built 2026-10-28). Port pond-ts's live layer (`LiveSeries`, views, live
-  aggregation / rolling / reduce, triggers, partitioned live) so each push
-  returns the same ordered list of outputs as pond-ts and every operator
-  ends in the same state, checked against a new pond-ts replay fixture.
-  Design (pjm17971 switched to it from channels on 2026-10-25): the root series owns every operator; callers
-  hold copyable handles to query them; `push` returns a `Vec<Output>`;
-  channels are a caller-side adapter. pond-ts `reduce` now emits at the end of each push ([PND-REDUCETICK], done).
-  Steps 1–7 in the breakout plan; React hooks, charts and
-  `@pond-ts/process` stay out of scope.
+- **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
+  `apply`, both libraries) don't say which partition they came from: a
+  per-host aggregate's closed bucket carries only its interval and reducer
+  columns. In the R3 step 7 agent trial all 10 pond-rs agents worked around
+  it (9 with a `first` / `keep` reducer on the key column). Options: write
+  the partition column into gathered outputs, or pass the key to the
+  `apply` recipe. An API change in both libraries; needs a decision.
+- **[PND-RUSTLIVEBATCH]** — pond-rs live pushes in batches of 1,000 are
+  2.5× slower than pond-ts (322 vs 131 ms per 1M rows, 2026-10-29): pond-rs
+  makes one short-lived event per row, pond-ts appends whole column chunks.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
-  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–6 (live series page). Keep them in step as each step lands. Every Rust example is a
+  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–7 (live series page). Keep them in step as each step lands. Every Rust example is a
   whole program checked by `website/scripts/check-rust-snippets.sh`; not yet
   run in CI. Open: run that script in CI, and publish `cargo doc` output as
   the pond-rs API reference.
@@ -909,6 +901,14 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-LIVEONEPUSH]** — A one-event `push` on a default (strict,
+  in-order) `LiveSeries` builds a whole one-row column chunk
+  (`validateAndNormalizeColumnar` + `ColumnarStore.fromTrustedStore`), so
+  1M one-at-a-time in-order pushes take 3.9-4.4 s against 0.76-0.8 s for
+  the same rows into a `Reorder` series (2 s grace); ~60% of the time is garbage collection.
+  Measured 2026-10-29 in pond-rs R3 step 7. Fix idea: route small pushes
+  into the chunked backing's coalescing tier (as partition routing's `_stageRowsOpen` does)
+  instead of building a store per push.
 - **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for

@@ -3474,7 +3474,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     differs from pond-ts's documented gap; the data never has that case.
 
 - **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; revised
-  twice on 2026-10-25 after two reviews of the plan; not started). RFC
+  twice on 2026-10-25 after two reviews of the plan; done 2026-10-29). RFC
   phase R3: pond-ts `packages/core/src/live/`, 9.7k lines (`LiveSeries`
   1.65k, partitioned 1.6k + 1.15k rolling, `LiveView` 1.2k, rolling / fused
   rolling 1.3k, aggregation 0.5k, reduce 0.5k, storage 1.4k, triggers
@@ -3881,6 +3881,33 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        a streaming task against polars-or-hand-written Rust; also the same
        task with a channel-style API vs owner-and-handles, to test rather
        than assume which agents get right.
+       **Done 2026-10-29.**
+       - Perf: every `examples/perf_live.rs` case re-run on one machine
+         (pond-rs middle of 3 runs; pond-ts one process per case, since one
+         process for all cases grew slower as its heap filled and ran out
+         of memory on the last case). One series: ~3M events/s pond-rs,
+         ~250k pond-ts (331 vs 3,944 ms per 1M); views, rolling, reduce
+         and 4-host partitions 5-17x, 1,000-host partitions 2.6-2.7x. Weak spots: batches of 1,000 (pond-ts 2.5x
+         faster, [PND-RUSTLIVEBATCH]) and `Reorder` with views (1.2x).
+         Much of pond-ts's one-at-a-time cost is its strict path building
+         a one-row chunk per push ([PND-LIVEONEPUSH]): in-order rows into a
+         `Reorder` series take pond-ts 0.76-0.8 s, so pond-rs is ~2x there. Table in
+         `website/docs/pond-rs/live.mdx` (Speed).
+       - Agent trial (`bench/agent-trial/r3/README.md`): per-host minute
+         buckets over late events with a 5 s grace, against plain Rust
+         (std only; polars has no push-one-event API). 10/10 right on both
+         sides, 0 failed runs on both. The task spells out its rules, so
+         plain Rust needs ~60 lines; it does not separate the sides. 9/10
+         pond-rs agents also wrote the rules by hand to cross-check the
+         library. Friction: 10/10 found gathered partition outputs carry
+         no partition key ([PND-LIVEKEY]); 5/10 had to read source to
+         tell the series grace window (refuses late events) from
+         `aggregate_with`'s bucket grace (doc comment on `aggregate` now
+         says so); 7/10 unsure whether the gathered series needs
+         `Reorder`.
+       - Channel-API arm not run: pond-rs has no channel API (owner and
+         handles chosen 2026-10-25), and no agent had trouble with handles
+         or `push` returning outputs.
   - Out of scope: React hooks, charts, live financial studies (none exist
     in pond-ts), and `@pond-ts/process` (RFC decision 4), including its
     `fromLive` binding. So R3 gives live series and studies, not the
