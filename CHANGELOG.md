@@ -166,6 +166,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **pond-rs: live partitions with declared groups are no longer slow per
+  row.** With `PartitionOptions::groups`, every row of a push was checked
+  against the declared values one by one, and a map of each partition's
+  latest event was built even when no ordering check needed it. 1,000
+  declared hosts, 1M rows in batches of 1,000 with a rolling window on
+  each: 2.8 s → 1.2 s, now the same as without groups.
 - **`live.reduce` no longer slows down a loop of pushes** ([PND-REDUCEMICRO]).
   Each push queued one more microtask when pushes ran in a loop without
   awaiting, and each held the reduce and everything it had emitted until

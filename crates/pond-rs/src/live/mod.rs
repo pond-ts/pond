@@ -1331,7 +1331,11 @@ impl LiveSeries {
     /// across a clock change is 23 or 25 hours). Built over what `from`
     /// holds now. Under [`OrderingMode::Reorder`] with a grace window, a
     /// bucket stays open until the latest event is a grace window past its
-    /// end. Evictions do not reach buckets.
+    /// end. Evictions do not reach buckets. The series' grace window also
+    /// refuses any event later than it (the whole push fails); to keep
+    /// every late event but still hold buckets open for a while, give the
+    /// series no grace window and pass the delay to
+    /// [`aggregate_with`](LiveSeries::aggregate_with).
     ///
     /// While a calendar aggregation exists, the series refuses times
     /// outside years -9997 to 9997 (UTC), the years its time-zone library

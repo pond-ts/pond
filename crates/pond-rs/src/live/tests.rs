@@ -755,6 +755,41 @@ fn a_push_the_partitions_refuse_is_refused_whole() {
 }
 
 #[test]
+fn declared_groups_alone_are_checked_on_every_row() {
+    // Groups and nothing else to check (strict root and partitions; a
+    // drop root): each row is tested against the groups, a late row a
+    // drop root skips is not.
+    for ordering in [OrderingMode::Strict, OrderingMode::Drop] {
+        let mut live = series(LiveOptions::new().ordering(ordering));
+        let root = live.root();
+        let p = live
+            .partition_by(
+                root,
+                "host",
+                &PartitionOptions::new()
+                    .groups(&["a", "b"])
+                    .ordering(OrderingMode::Strict),
+            )
+            .unwrap();
+        live.push_many([(0, row("a", 1.0)), (1000, row("b", 2.0))])
+            .unwrap();
+        let err = live
+            .push_many([(2000, row("b", 3.0)), (3000, row("z", 4.0))])
+            .unwrap_err();
+        assert!(err.to_string().contains("row 1"), "{err}");
+        assert_eq!(live.len(), 2);
+        if ordering == OrderingMode::Drop {
+            // Late, so skipped before its value is looked at.
+            live.push_many([(500, row("z", 5.0)), (4000, row("a", 6.0))])
+                .unwrap();
+            assert_eq!(live.len(), 3);
+            let a = live[p].partition("a").unwrap();
+            assert_eq!(live[a].len(), 2);
+        }
+    }
+}
+
+#[test]
 fn partition_by_is_checked() {
     let mut live = series(LiveOptions::new());
     let root = live.root();

@@ -17,7 +17,7 @@
 //! - Otherwise each root event is routed when it reaches the partitioned
 //!   node, as one push into its partition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -169,6 +169,8 @@ pub struct LivePartitioned {
     /// The column's index among the value columns.
     by: usize,
     groups: Option<Vec<String>>,
+    /// `groups` for lookups: the check before a push tests each row.
+    declared: HashSet<String>,
     pub(crate) ordering: OrderingMode,
     pub(crate) grace_ms: Option<i64>,
     max_events: Option<usize>,
@@ -396,6 +398,7 @@ impl LiveSeries {
             column: column.into(),
             by,
             groups: options.groups.clone(),
+            declared: options.groups.iter().flatten().cloned().collect(),
             ordering,
             grace_ms,
             max_events,
@@ -930,6 +933,8 @@ impl LiveSeries {
             if !order_check && !behind && pt.groups.is_none() {
                 continue;
             }
+            // Only the declared groups to check, not any partition's order.
+            let groups_only = !order_check && !behind;
             let mut part_last: HashMap<String, Option<EventKey>> = HashMap::new();
             for (i, event) in events.iter().enumerate() {
                 let key = event.key();
@@ -944,7 +949,7 @@ impl LiveSeries {
                 }
                 let value = pt.key_of(event);
                 if let Some(groups) = &pt.groups
-                    && !groups.contains(&value)
+                    && !pt.declared.contains(&value)
                 {
                     let shown = if value == " undefined" {
                         "no value".to_string()
@@ -958,6 +963,9 @@ impl LiveSeries {
                             pt.column, groups
                         ),
                     });
+                }
+                if groups_only {
+                    continue;
                 }
                 let last = part_last.entry(value.clone()).or_insert_with(|| {
                     pt.slot_of(&value).and_then(|s| match &self.slots[s].state {
