@@ -584,6 +584,8 @@ pond-ts shares the defect it is fixed there too, under its own tag.
 | R03 | a batch can mix interval label kinds                       | fixed, both libs, [PND-LIVELABEL]              |
 | R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
 | R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
+| R08 | numeric group names round ties up, JavaScript to even      | fixed: shares the JSON writer's digits         |
+| R09 | catalog refuses `100.0` / `1e2` session milliseconds       | fixed: whole-number floats read                |
 | R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
 | R07 | empty leading/centred time windows admit earlier rows      | fixed, both libs, [PND-ROLLEMPTY]              |
 | R06 | batch partition map panics on a missing partition column   | fixed: error; mismatched results refused too   |

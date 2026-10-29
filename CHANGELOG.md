@@ -181,6 +181,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **pond-rs: numeric group names match JavaScript exactly.** A number
+  halfway between two shortest spellings (`667962307169479.25`) named its
+  pivot column, live partition and array group key by rounding up, where
+  JavaScript rounds to even (`667962307169479.2`), so a declared group could
+  be refused. 78 of 300,000 sampled doubles differed; none now.
+- **pond-rs: the study catalog reads session times however JSON spells a
+  whole number.** `sessionVwap` / `pivotPoints` session opens, closes and
+  breaks accept `100.0` and `1e2` as well as `100` (fractions are still
+  refused).
 - **Empty leading / centred rolling windows count nothing**
   ([PND-ROLLEMPTY]). A time window that holds no rows (`'0ms'`, or a
   centred `'1ms'` window whose edges round to the same millisecond past
