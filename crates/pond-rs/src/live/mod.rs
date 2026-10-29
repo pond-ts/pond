@@ -739,6 +739,7 @@ impl LiveSeries {
                 return Ok(out);
             }
             self.check_order(checked.iter().map(|(key, _)| key))?;
+            self.check_labels(checked.iter().map(|(key, _)| key))?;
             self.ingest_bare(checked, &mut out);
             return Ok(out);
         }
@@ -755,6 +756,7 @@ impl LiveSeries {
             return Ok(out);
         }
         self.check_order(events.iter().map(LiveEvent::key))?;
+        self.check_labels(events.iter().map(LiveEvent::key))?;
         if !self.partitions.is_empty() {
             self.check_partitions(&events)?;
         }
@@ -805,6 +807,35 @@ impl LiveSeries {
             self.evict_series(0, n, &mut out);
         }
         out
+    }
+
+    /// Interval labels in a batch are all numbers or all text, like the
+    /// events held (each row was checked against those alone): Codex
+    /// review R03, a mixed batch was stored and then failed every snapshot.
+    fn check_labels<'a>(&self, keys: impl Iterator<Item = &'a EventKey>) -> Result<()> {
+        let mut numbers = self
+            .core()
+            .buffer
+            .front_label()
+            .map(|l| matches!(l, Label::Number(_)));
+        for (row, key) in keys.enumerate() {
+            let Some(label) = key.label() else { continue };
+            let is_number = matches!(label, Label::Number(_));
+            match numbers {
+                None => numbers = Some(is_number),
+                Some(n) if n != is_number => {
+                    return Err(PondError::InvalidData {
+                        call: "LiveSeries::push",
+                        message: format!(
+                            "row {row}: interval labels must all be numbers or all text, \
+                             like the rows before it"
+                        ),
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
     }
 
     fn check_row(

@@ -104,6 +104,15 @@ impl LiveSeries {
         Ok(out)
     }
 
+    /// `schema` with every value column optional.
+    fn all_optional(schema: &LiveSchema) -> Arc<LiveSchema> {
+        let mut columns = schema.columns.clone();
+        for c in &mut columns[1..] {
+            c.required = false;
+        }
+        LiveSchema::new(columns)
+    }
+
     /// `schema` with the value columns at `targets` made optional numbers.
     fn numbers_at(schema: &LiveSchema, targets: &[usize]) -> Arc<LiveSchema> {
         let mut columns = schema.columns.clone();
@@ -117,7 +126,9 @@ impl LiveSeries {
     /// gets the event and returns one cell per value column, in schema
     /// order, `None` for a gap. The key is kept: pond-rs has no re-keying
     /// map. A number that is not finite is stored as a gap, as pond-ts
-    /// does.
+    /// does. Since any cell can come back a gap, every value column of the
+    /// view is optional (Codex review R04: a required one made each
+    /// snapshot fail).
     ///
     /// # Panics
     ///
@@ -128,7 +139,7 @@ impl LiveSeries {
         F: FnMut(&LiveEvent) -> Vec<Option<Value>> + Send + 'static,
     {
         let source = self.source_of("LiveSeries::map", from.into())?;
-        let schema = self.schema_of(source);
+        let schema = Self::all_optional(&self.schema_of(source));
         let out = Arc::clone(&schema);
         let step: Step = Box::new(move |e: &LiveEvent| {
             let mut values = f(e);

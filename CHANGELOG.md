@@ -181,6 +181,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **Live interval-keyed series keep one label type** ([PND-LIVELABEL]).
+  A `pushMany` mixing number and text interval labels is refused whole
+  (pond-ts never checked live labels; pond-rs only checked each row
+  against the events held), instead of being stored and failing every
+  later `toTimeSeries()`.
+- **Live `map` views no longer claim required columns** ([PND-MAPGAP]).
+  A mapping may return a gap, and a non-finite number becomes one, so every
+  value column of a `map` view is now optional; a gap used to make each
+  snapshot throw. Both pond-ts and pond-rs.
+- **pond-rs: `partition_by` with declared groups checks rows already
+  held**, as pond-ts does, and refuses before building anything. Building
+  partitions over a long history with many groups is no longer quadratic
+  (64,000 rows each with its own host: 7.6 s → 0.19 s).
 - **`live.reduce` over a view now tracks what the view holds**
   ([PND-REDUCETRIM]). A reduce on a `window` view removes what the window
   trims (it used to keep every value the window had ever taken), and a

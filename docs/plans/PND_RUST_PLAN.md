@@ -581,6 +581,10 @@ pond-ts shares the defect it is fixed there too, under its own tag.
 | --- | ---------------------------------------------------------- | ---------------------------------------------- |
 | R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
 | R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R03 | a batch can mix interval label kinds                       | fixed, both libs, [PND-LIVELABEL]              |
+| R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
+| R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
+| R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
 | R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
 
 Codex also listed four existing limitations, not on the fix list:
