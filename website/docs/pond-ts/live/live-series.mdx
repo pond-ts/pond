@@ -2,6 +2,9 @@
 sidebar_position: 13
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # LiveSeries
 
 `LiveSeries` is a mutable, append-optimized buffer that shares the same
@@ -45,6 +48,9 @@ pond-ts in-process push target and retained live source.
 
 ## Creating a LiveSeries
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { LiveSeries } from 'pond-ts';
 
@@ -60,15 +66,85 @@ const live = new LiveSeries({
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let live = LiveSeries::new(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    assert_eq!(live.name(), "cpu-metrics");
+    assert!(live.is_empty());
+    Ok(())
+}
+```
+
+Each column is a `ColumnDef`: `required` or `optional` (gaps allowed).
+
+</TabItem>
+</Tabs>
+
 The schema is identical to what you'd pass to `TimeSeries`. All the same column
 kinds and `required: false` options work here.
 
 ## Pushing events
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 live.push([Date.now(), 0.42, 'api-1']);
 live.push([Date.now(), 0.51, 'api-1'], [Date.now(), 0.38, 'api-2']);
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    // One event: the time in epoch ms, then one cell per value column.
+    live.push(1_000, [Some(0.42.into()), Some("api-1".into())])?;
+    // Several at once.
+    live.push_many([
+        (2_000, [Some(0.51.into()), Some("api-1".into())]),
+        (3_000, [Some(0.38.into()), Some("api-2".into())]),
+    ])?;
+    assert_eq!(live.len(), 3);
+
+    // Text in a number column is refused, and nothing is stored.
+    assert!(
+        live.push(4_000, [Some("high".into()), Some("api-1".into())])
+            .is_err()
+    );
+    assert_eq!(live.len(), 3);
+    Ok(())
+}
+```
+
+`push` takes one event and `push_many` several. A refused batch stores none of its rows.
+
+</TabItem>
+</Tabs>
 
 `push()` accepts one or more rows. Each row is validated against the schema on
 arrival — invalid rows throw a `ValidationError`. Events must arrive in
@@ -76,6 +152,9 @@ timestamp order by default (see [ordering modes](#ordering-modes) to change
 this).
 
 ## Reading events
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 live.length; // number of events in the buffer
@@ -85,12 +164,49 @@ live.at(0); // event by index
 live.at(-1); // negative indices count from the end
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    live.push_many([
+        (1_000, [Some(0.42.into()), Some("api-1".into())]),
+        (2_000, [Some(0.51.into()), Some("api-1".into())]),
+        (3_000, [Some(0.38.into()), Some("api-2".into())]),
+    ])?;
+
+    assert_eq!(live.len(), 3);
+    assert_eq!(live.first().unwrap().number("cpu")?, Some(0.42));
+    assert_eq!(live.last().unwrap().string("host")?, Some("api-2"));
+    assert_eq!(live.at(0).unwrap().begin(), 1_000);
+    assert_eq!(live.at(-1).unwrap().number("cpu")?, Some(0.38));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Events are the same immutable `Event` objects used by `TimeSeries`.
 
 ## Snapshots
 
 Convert the current buffer contents into an immutable `TimeSeries` for batch
 analytics:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const ts = live.toTimeSeries();
@@ -100,6 +216,50 @@ const smoothed = ts.rolling('5m', { cpu: 'avg' });
 const groups = ts.groupBy('host');
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    live.push_many([
+        (1_000, [Some(0.42.into()), Some("api-1".into())]),
+        (2_000, [Some(0.51.into()), Some("api-1".into())]),
+        (3_000, [Some(0.38.into()), Some("api-2".into())]),
+    ])?;
+
+    let ts = live.to_time_series()?;
+
+    // Every batch operation works on the copy.
+    let smoothed = ts.rolling("5m", &[Agg::of("cpu", Reducer::Avg)])?;
+    let cpu = smoothed.column("cpu")?.numbers()?;
+    assert_eq!(cpu.get(1), Some(0.46499999999999997));
+    let groups = ts.group_by(&["host"])?;
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].1.len(), 2); // api-1
+
+    // Later pushes leave the copy alone.
+    live.push(4_000, [Some(0.9.into()), Some("api-1".into())])?;
+    assert_eq!(ts.len(), 3);
+    Ok(())
+}
+```
+
+`to_time_series` takes no name.
+
+</TabItem>
+</Tabs>
+
 The snapshot is independent — future pushes to the `LiveSeries` don't affect
 it. You can pass a custom name: `live.toTimeSeries('snapshot-12:05')`.
 
@@ -107,6 +267,9 @@ it. You can pass a custom name: `live.toTimeSeries('snapshot-12:05')`.
 
 Control how much data the buffer holds. Retention is checked after every
 `push()` — no background timers, no implicit scheduling.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const live = new LiveSeries({
@@ -118,6 +281,42 @@ const live = new LiveSeries({
   },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "bounded",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_events(3).max_age("30m"),
+    )?;
+    let minute = 60_000;
+    for t in [0, 1, 2, 3] {
+        live.push(t * minute, [Some(0.1.into()), Some("a".into())])?;
+    }
+    // At most 3 events: the oldest went.
+    let times: Vec<i64> = live.events().map(|e| e.begin()).collect();
+    assert_eq!(times, [minute, 2 * minute, 3 * minute]);
+
+    // 45 minutes: everything older than 30 minutes before it goes.
+    live.push(45 * minute, [Some(0.2.into()), Some("a".into())])?;
+    let times: Vec<i64> = live.events().map(|e| e.begin()).collect();
+    assert_eq!(times, [45 * minute]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Both policies can be combined. When both apply, the one that evicts the most
 events wins. Eviction always removes the oldest events first.
@@ -174,6 +373,9 @@ live.at(0)?.begin(); // 1000
 
 Add a `graceWindow` to bound how late an event can be:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const live = new LiveSeries({
   name: 'bounded-reorder',
@@ -186,12 +388,85 @@ live.push([8000, 0.4, 'a']); // ok, within 5s
 live.push([1000, 0.1, 'a']); // throws, outside grace window
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let schema = || {
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ]
+    };
+
+    // Strict (the default): a late event is an error.
+    let mut strict = LiveSeries::new("strict", schema())?;
+    strict.push(1_000, [Some(0.5.into()), Some("a".into())])?;
+    assert!(
+        strict
+            .push(500, [Some(0.3.into()), Some("a".into())])
+            .is_err()
+    );
+
+    // Drop: skipped quietly, and counted.
+    let mut drop = LiveSeries::with_options(
+        "drop-late",
+        schema(),
+        LiveOptions::new().ordering(OrderingMode::Drop),
+    )?;
+    drop.push(1_000, [Some(0.5.into()), Some("a".into())])?;
+    drop.push(500, [Some(0.3.into()), Some("a".into())])?;
+    assert_eq!((drop.len(), drop.stats().rejected), (1, 1));
+
+    // Reorder: put in its place in time.
+    let mut reorder = LiveSeries::with_options(
+        "reorder",
+        schema(),
+        LiveOptions::new().ordering(OrderingMode::Reorder),
+    )?;
+    reorder.push(2_000, [Some(0.6.into()), Some("a".into())])?;
+    reorder.push(1_000, [Some(0.5.into()), Some("a".into())])?;
+    assert_eq!(reorder.at(0).unwrap().begin(), 1_000);
+
+    // Reorder, but no more than 5 seconds late.
+    let mut bounded = LiveSeries::with_options(
+        "bounded-reorder",
+        schema(),
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("5s"),
+    )?;
+    bounded.push(10_000, [Some(0.5.into()), Some("a".into())])?;
+    bounded.push(8_000, [Some(0.4.into()), Some("a".into())])?; // within 5 s
+    assert!(
+        bounded
+            .push(1_000, [Some(0.1.into()), Some("a".into())])
+            .is_err()
+    );
+    assert_eq!(bounded.len(), 2);
+    Ok(())
+}
+```
+
+This one program covers all four cases above.
+
+</TabItem>
+</Tabs>
+
 Without `graceWindow`, reorder accepts any timestamp.
 
 ## Subscriptions
 
 Subscribe to lifecycle events. All callbacks fire synchronously, inline with
 `push()`.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // Per-event: fires once for each event added
@@ -209,6 +484,67 @@ live.on('evict', (events) => {
   console.log(`evicted ${events.length} old events`);
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, Output, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_events(2),
+    )?;
+    // Ask for what you want back from each push.
+    live.watch(live.root(), OutputKind::Event)?;
+    live.watch(live.root(), OutputKind::Batch)?;
+    live.watch(live.root(), OutputKind::Evict)?;
+
+    // A label for each output, to show the order.
+    let describe = |out: &[Output]| -> Vec<String> {
+        out.iter()
+            .map(|o| match o {
+                Output::Event { event, .. } => format!("event {}", event.begin()),
+                Output::Batch { events, .. } => format!("batch {}", events.len()),
+                Output::Evict { events, .. } => format!("evict {}", events.len()),
+                _ => unreachable!(),
+            })
+            .collect()
+    };
+
+    let out = live.push(0, [Some(0.4.into()), Some("a".into())])?;
+    assert_eq!(describe(&out), ["event 0", "batch 1"]);
+
+    // Two rows: an event for each, then retention keeps 2 (one evicted),
+    // then the batch, then the eviction.
+    let out = live.push_many([
+        (1_000, [Some(0.5.into()), Some("a".into())]),
+        (2_000, [Some(0.6.into()), Some("a".into())]),
+    ])?;
+    assert_eq!(
+        describe(&out),
+        ["event 1000", "event 2000", "batch 2", "evict 1"]
+    );
+
+    // Stop getting events back.
+    live.unwatch(live.root(), OutputKind::Event)?;
+    let out = live.push(3_000, [Some(0.7.into()), Some("a".into())])?;
+    assert_eq!(describe(&out), ["batch 1", "evict 1"]);
+    Ok(())
+}
+```
+
+pond-rs has no listeners. `watch` says which outputs you want, and each push returns them as a list, in the order pond-ts would call its listeners. `unwatch` stops them.
+
+</TabItem>
+</Tabs>
 
 Each `on()` call returns an unsubscribe function. Call it to stop receiving
 notifications:
@@ -232,9 +568,46 @@ Within a single `push()` call:
 
 ## Clearing
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 live.clear();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu-metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    live.watch(live.root(), OutputKind::Evict)?;
+    live.push(0, [Some(0.4.into()), Some("a".into())])?;
+    live.push(1_000, [Some(0.5.into()), Some("a".into())])?;
+
+    let out = live.clear();
+    let [Output::Evict { events, .. }] = &out[..] else {
+        panic!()
+    };
+    assert_eq!(events.len(), 2);
+    assert!(live.is_empty());
+    live.push(2_000, [Some(0.6.into()), Some("a".into())])?; // ready for more
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Removes all events and fires the `evict` subscription with the removed events.
 After clearing, the buffer is empty and ready for new pushes.
@@ -264,6 +637,9 @@ setInterval(() => {
 
 ### Monitoring with eviction alerts
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const live = new LiveSeries({
   name: 'monitor',
@@ -284,6 +660,55 @@ live.on('batch', (events) => {
   }
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, Output, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "monitor",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_events(2),
+    )?;
+    live.watch(live.root(), OutputKind::Batch)?;
+    live.watch(live.root(), OutputKind::Evict)?;
+
+    let mut evicted = 0;
+    let mut alerts = Vec::new();
+    let out = live.push_many([
+        (0, [Some(0.5.into()), Some("api-1".into())]),
+        (1_000, [Some(0.95.into()), Some("api-2".into())]),
+        (2_000, [Some(0.97.into()), Some("api-1".into())]),
+    ])?;
+    for output in out {
+        match output {
+            Output::Evict { events, .. } => evicted += events.len(),
+            Output::Batch { events, .. } => {
+                for e in events {
+                    if e.number("cpu")?.is_some_and(|cpu| cpu > 0.9) {
+                        alerts.push(format!("High CPU on {}", e.string("host")?.unwrap()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(evicted, 1);
+    assert_eq!(alerts, ["High CPU on api-2", "High CPU on api-1"]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### Tolerating out-of-order delivery
 

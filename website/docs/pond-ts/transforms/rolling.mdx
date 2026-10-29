@@ -5,17 +5,55 @@ sidebar_position: 16
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreRolling from '@site/src/examples/core-rolling';
 import CoreRollingLive from '@site/src/examples/core-rolling-live';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Rolling Windows
 
 Sliding-window computations over ordered events. For each event in
 the source, look at a window of nearby events and compute a reducer.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const rollingAvg = cpu.rolling('5m', { cpu: 'avg' });
 // rollingAvg.length === cpu.length; each output's cpu is the
 // trailing-5-minute average ending at that event.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a minute for ten minutes.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..10).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+        )],
+    )?;
+
+    let rolling_avg = cpu.rolling("5m", &[Agg::of("cpu", Reducer::Avg)])?;
+    // One row per source row; each cpu is the trailing-5-minute average
+    // ending at that row.
+    assert_eq!(rolling_avg.len(), cpu.len());
+    let avg = rolling_avg.column("cpu")?.numbers()?;
+    assert_eq!(avg.get(4), Some(0.54)); // (0.3 + 0.5 + 0.4 + 0.9 + 0.6) / 5
+    assert_eq!(avg.get(9), Some(0.52)); // minutes 5 to 9
+    Ok(())
+}
+```
+
+`Agg::of("cpu", Reducer::Avg)` is the shorthand `{ cpu: 'avg' }`: the output keeps the source's name.
+
+</TabItem>
+</Tabs>
 
 Same reducer vocabulary as [`aggregate`](./aggregation) — every
 built-in works, plus custom functions. The difference is per-event
@@ -51,9 +89,50 @@ question:
 - **`'centered'`** — "smoothed around now."
 - **`'leading'`** — "what's the average of what's coming next."
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 cpu.rolling('5m', { cpu: 'avg' }, { alignment: 'centered' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Alignment, Column, Reducer, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..10).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+        )],
+    )?;
+
+    let centered = cpu.rolling_with(
+        "5m",
+        &[Agg::of("cpu", Reducer::Avg)],
+        Rolling {
+            alignment: Alignment::Centered,
+            ..Rolling::default()
+        },
+    )?;
+    // At minute 4 the window [1.5m, 6.5m) holds minutes 2 to 6.
+    assert_eq!(
+        centered.column("cpu")?.numbers()?.get(4),
+        Some(0.5599999999999999)
+    );
+    Ok(())
+}
+```
+
+`rolling_with` takes the options as a `Rolling` struct; `Rolling::default()` gives what `rolling` does.
+
+</TabItem>
+</Tabs>
 
 Opening events — where the window would extend beyond the series'
 ends — emit `undefined` under trailing and centered; under leading,
@@ -69,6 +148,9 @@ can false-flag downstream consumers (anomaly bands collapsing
 around a tiny early sample). `minSamples` suppresses output until
 the window contains at least N source events:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Don't trust the rolling stats until at least 20 samples are in.
 cpu.rolling(
@@ -77,6 +159,53 @@ cpu.rolling(
   { minSamples: 20 },
 );
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a second for 30 seconds.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..30).map(|i| i * 1_000).collect(),
+        vec![Column::required(
+            "cpu",
+            (0..30)
+                .map(|i| 50.0 + ((i * 7) % 11) as f64)
+                .collect::<Vec<_>>(),
+        )],
+    )?;
+
+    // Don't trust the rolling stats until at least 20 samples are in.
+    let stats = cpu.rolling_with(
+        "1m",
+        &[
+            Agg::new("mean", "cpu", Reducer::Avg),
+            Agg::new("sd", "cpu", Reducer::Stdev),
+        ],
+        Rolling {
+            min_samples: 20,
+            ..Rolling::default()
+        },
+    )?;
+    let mean = stats.column("mean")?.numbers()?;
+    let sd = stats.column("sd")?.numbers()?;
+    // Rows 0 to 18 hold fewer than 20 samples: gaps in every column.
+    assert_eq!(mean.get(18), None);
+    assert_eq!(sd.get(18), None);
+    // Row 19 is the first with 20.
+    assert_eq!(mean.get(19), Some(54.9));
+    assert_eq!(sd.get(19), Some(3.2388269481403293));
+    assert_eq!(stats.len(), 30); // the length doesn't change
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Rows below the threshold emit `undefined` for every reducer column;
 the output schema and length don't change. Defaults to `0` (no
@@ -91,6 +220,9 @@ The per-event form returns the key and the reducer outputs only. Pass
 after them, so a chain can keep reading the source columns, the way the
 financial studies add a column:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import '@pond-ts/financial/fluent'; // adds .rsi() to TimeSeries
 
@@ -99,6 +231,61 @@ const out = bars
   .rolling('10m', { rsi10m: { from: 'rsi', using: 'avg' } }, { append: true });
 // out has time, close, rsi, rsi10m
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::financial::Study;
+use pond_rs::{Agg, Column, Reducer, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 30 one-minute bars of made-up prices.
+    let bars = TimeSeries::new(
+        "bars",
+        (0..30).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "close",
+            (0..30)
+                .map(|i| 100.0 + (i % 7) as f64 - (i % 3) as f64 * 1.5)
+                .collect::<Vec<_>>(),
+        )],
+    )?;
+
+    let out = bars.rsi(Study::period(14))?.rolling_with(
+        "10m",
+        &[Agg::new("rsi10m", "rsi", Reducer::Avg)],
+        Rolling {
+            append: true,
+            ..Rolling::default()
+        },
+    )?;
+    // out has time, close, rsi, rsi10m
+    let names: Vec<&str> = out.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["close", "rsi", "rsi10m"]);
+    assert_eq!(
+        out.column("rsi10m")?.numbers()?.get(29),
+        Some(50.92088286604516)
+    );
+
+    // An output named after an existing column is an error with append.
+    let clash = bars.rsi(Study::period(14))?.rolling_with(
+        "10m",
+        &[Agg::of("rsi", Reducer::Avg)],
+        Rolling {
+            append: true,
+            ..Rolling::default()
+        },
+    );
+    assert!(clash.is_err());
+    Ok(())
+}
+```
+
+In Rust the studies are methods on `TimeSeries` already; there is nothing to opt in to.
+
+</TabItem>
+</Tabs>
 
 An output may not take an existing column's name, so the shorthand
 `{ rsi: 'avg' }` (whose output is named after its source) is an error with
@@ -110,6 +297,9 @@ the sequence's points rather than the source's events.
 
 Pick the one that matches your output cadence:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Per-event rolling: one output per source event, same key type.
 cpu.rolling('5m', { cpu: 'avg' });
@@ -118,6 +308,57 @@ cpu.rolling('5m', { cpu: 'avg' });
 cpu.rolling(Sequence.every('1m'), '5m', { cpu: 'avg' });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, RollingOver, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Readings at uneven times.
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 50_000, 130_000, 140_000, 260_000, 330_000],
+        vec![Column::required("cpu", vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])],
+    )?;
+
+    // Per-row rolling: one output per source row, same key.
+    let per_row = cpu.rolling("2m", &[Agg::of("cpu", Reducer::Avg)])?;
+    assert_eq!(per_row.key().begin(), cpu.key().begin());
+
+    // Grid rolling: one output per minute of the sequence.
+    let grid = cpu.rolling_over(
+        &Sequence::every("1m")?,
+        "2m",
+        &[Agg::of("cpu", Reducer::Avg)],
+        RollingOver::default(),
+    )?;
+    assert_eq!(grid.key_name(), "interval");
+    assert_eq!(
+        grid.key().begin(),
+        &[0, 60_000, 120_000, 180_000, 240_000, 300_000]
+    );
+    let got: Vec<_> = grid.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(
+        got,
+        [
+            Some(1.0),
+            Some(1.5),
+            Some(2.0),
+            Some(3.5),
+            Some(3.5),
+            Some(5.0)
+        ]
+    );
+    Ok(())
+}
+```
+
+The grid form is `rolling_over` in Rust.
+
+</TabItem>
+</Tabs>
+
 The per-event form is the common one. Use the grid form when you
 want a fixed output cadence independent of where source events land
 — common for chart sampling.
@@ -125,6 +366,9 @@ want a fixed output cadence independent of where source events land
 ## Mapping shapes
 
 Same two shapes as [`aggregate`](./aggregation#mapping-shapes):
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // Shorthand
@@ -137,6 +381,52 @@ cpu.rolling('5m', {
   peak: { from: 'cpu', using: 'max' },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..10).map(|i| i * 60_000).collect(),
+        vec![Column::required(
+            "cpu",
+            vec![0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+        )],
+    )?;
+
+    // Shorthand: the output takes the source's name.
+    let short = cpu.rolling("5m", &[Agg::of("cpu", Reducer::Avg)])?;
+    assert!(short.column("cpu").is_ok());
+
+    // Named outputs: several reducers on one column, one pass.
+    let band = cpu.rolling(
+        "5m",
+        &[
+            Agg::new("avg", "cpu", Reducer::Avg),
+            Agg::new("sd", "cpu", Reducer::Stdev),
+            Agg::new("peak", "cpu", Reducer::Max),
+        ],
+    )?;
+    let names: Vec<&str> = band.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["avg", "sd", "peak"]);
+    assert_eq!(band.column("avg")?.numbers()?.get(9), Some(0.52));
+    assert_eq!(
+        band.column("sd")?.numbers()?.get(9),
+        Some(0.21354156504062624)
+    );
+    assert_eq!(band.column("peak")?.numbers()?.get(9), Some(0.8));
+    Ok(())
+}
+```
+
+`Agg::new(output, source, reducer)` is the explicit form; `Agg::of(source, reducer)` is the shorthand.
+
+</TabItem>
+</Tabs>
 
 The explicit form is how you get a band chart in one pass — `avg`
 and `sd` from the same source column without two rolling traversals.
@@ -160,6 +450,9 @@ cpu.rolling('5m', {
 
 Mix built-in and custom reducers in the same mapping.
 
+pond-rs has no custom reducer functions yet; it takes the built-in
+reducers only.
+
 ## Complexity
 
 Most built-in reducers are O(1) per event via incremental
@@ -171,6 +464,9 @@ are O(N) per event (sorted-array maintenance). Full table on
 
 Often paired with `rolling` for a "current state" readout:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Trailing 30s, then collapse to scalars.
 const recent = series.tail('30s').reduce({
@@ -178,6 +474,48 @@ const recent = series.tail('30s').reduce({
   host: 'unique',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, TimeSeries, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A reading every 5 seconds from three hosts in turn.
+    let series = TimeSeries::new(
+        "cpu",
+        (0..12).map(|i| i * 5_000).collect(),
+        vec![
+            Column::required(
+                "cpu",
+                vec![
+                    0.2, 0.4, 0.9, 0.3, 0.5, 0.6, 0.1, 0.8, 0.7, 0.35, 0.45, 0.95,
+                ],
+            ),
+            Column::required(
+                "host",
+                (0..12).map(|i| ["a", "b", "c"][i % 3]).collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    // Trailing 30s, then collapse to single values.
+    let recent = series.tail("30s")?.reduce(&[
+        Agg::new("cpu", "cpu", Reducer::Percentile(95.0)),
+        Agg::new("host", "host", Reducer::Unique),
+    ])?;
+    assert_eq!(recent.number("cpu")?, Some(0.9125));
+    let hosts = vec![Scalar::from("a"), Scalar::from("b"), Scalar::from("c")];
+    assert_eq!(recent.get("host")?, Some(Value::Array(hosts)));
+    Ok(())
+}
+```
+
+`reduce` returns a `Reduced`, read by output name. `Unique` gives a list, so it comes back as a `Value::Array`.
+
+</TabItem>
+</Tabs>
 
 `tail(duration)` is the temporal counterpart to `Array.slice(-n)`:
 it keeps events whose `begin()` is strictly greater than
@@ -209,6 +547,9 @@ aggregate at that point.
   <CoreRollingLive />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { LiveSeries } from 'pond-ts';
 
@@ -224,6 +565,67 @@ rolling.on('event', (event) => {
 rolling.value(); // Record<string, ColumnValue | undefined>, e.g. { cpu: 0.42 }
 //   (each value is `undefined` until the window reaches minSamples)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+
+    let rolling = live.rolling(live.root(), "5m", &[Agg::of("cpu", Reducer::Avg)])?;
+    // Two stats from one column in one rolling pass.
+    let band = live.rolling(
+        live.root(),
+        "1m",
+        &[
+            Agg::new("mean", "cpu", Reducer::Avg),
+            Agg::new("sd", "cpu", Reducer::Stdev),
+        ],
+    )?;
+    // pond-rs has no listeners: watch the node, and each push returns
+    // what it emitted.
+    live.watch(rolling, OutputKind::Event)?;
+
+    let mut seen = Vec::new();
+    for (i, v) in [0.2, 0.4, 0.9, 0.3].into_iter().enumerate() {
+        for out in live.push(i as i64 * 30_000, [Some(v.into())])? {
+            if let Output::Event { event, .. } = out {
+                seen.push(event.number("cpu")?);
+            }
+        }
+    }
+    assert_eq!(
+        seen,
+        [Some(0.2), Some(0.30000000000000004), Some(0.5), Some(0.45)]
+    );
+
+    // The current values, one per column, in order.
+    assert_eq!(live[rolling].value(), [Some(0.45.into())]);
+    assert_eq!(
+        live[band].value(),
+        [
+            Some(0.5333333333333333.into()),
+            Some(0.26246692913372704.into())
+        ]
+    );
+    Ok(())
+}
+```
+
+pond-rs calls none of your code during a push. Instead of `on('event')`, watch the node and read the outputs each `push` returns (see [Live series](../../pond-rs/live#what-a-push-returns-outputs)).
+
+</TabItem>
+</Tabs>
 
 Both [mapping shapes](#mapping-shapes) work on live the same way
 they work on batch — the `{ from, using }` spec form is how you get
@@ -271,6 +673,9 @@ differ (per-event by default for live, per-bucket for batch). When
 you want to **report** the rolling state at a regular cadence (e.g.
 push p95 to a backend every 30 s), set a `Trigger.every(duration)`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const rolling = live.rolling(
   '1m',
@@ -278,6 +683,56 @@ const rolling = live.rolling(
   { trigger: Trigger.every('30s') },
 );
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "req",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("latency", ColumnKind::Number),
+        ],
+    )?;
+
+    let rolling = live.rolling_with(
+        live.root(),
+        "1m",
+        &[Agg::new("latency", "latency", Reducer::Percentile(95.0))],
+        &RollingOptions::new().trigger(Trigger::every("30s")?),
+    )?;
+
+    for (t, ms) in [
+        (0, 100.0),
+        (10_000, 120.0),
+        (25_000, 300.0),
+        (31_000, 110.0),
+        (45_000, 90.0),
+        (62_000, 130.0),
+    ] {
+        live.push(t, [Some(ms.into())])?;
+    }
+
+    // One row each time an event crosses into a new 30 s, keyed at its start.
+    let rows: Vec<_> = live[rolling]
+        .events()
+        .map(|e| (e.begin(), e.number("latency").unwrap()))
+        .collect();
+    assert_eq!(
+        rows,
+        [(30_000, Some(272.99999999999994)), (60_000, Some(266.0))]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 For the full trigger reference (event / clock / count, semantics,
 sync partitioned rolling), see [Triggering](../live/triggering).
@@ -291,6 +746,9 @@ source** — a 1-minute baseline of `avg`/`stdev` plus a 200-ms
 current-tick window of raw samples for anomaly detection, say —
 pass a record-of-mappings instead of a single `(window, mapping)`
 pair:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const fused = live.rolling(
@@ -311,6 +769,72 @@ fused.on('event', (e) => {
   // …
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Scalar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+
+    let fused = live.rolling_windows(
+        live.root(),
+        &[
+            RollingWindow::new(
+                "1m",
+                &[
+                    Agg::new("cpu_avg", "cpu", Reducer::Avg),
+                    Agg::new("cpu_sd", "cpu", Reducer::Stdev),
+                ],
+            ),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)]),
+        ],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    for (t, v) in [
+        (0, 1.0),
+        (100, 2.0),
+        (150, 3.0),
+        (250, 5.0),
+        (320, 4.0),
+        (410, 6.0),
+    ] {
+        live.push(t, [Some(v.into())])?;
+    }
+
+    // All three columns from both windows on one event.
+    let e = live[fused].at(-1).unwrap();
+    assert_eq!(e.begin(), 400);
+    let (avg, sd) = (e.number("cpu_avg")?.unwrap(), e.number("cpu_sd")?.unwrap());
+    assert_eq!((avg, sd), (3.5, 1.707825127659933));
+    let samples = e.array("cpu_samples")?.unwrap();
+    assert_eq!(samples, [Scalar::from(5.0), 4.0.into(), 6.0.into()]);
+    let z: Vec<f64> = samples
+        .iter()
+        .map(|s| match s {
+            Scalar::Number(s) => (s - avg) / sd,
+            _ => f64::NAN,
+        })
+        .collect();
+    assert_eq!(z.len(), 3);
+    Ok(())
+}
+```
+
+The keyed form is `rolling_windows` in Rust, one `RollingWindow` per window.
+
+</TabItem>
+</Tabs>
 
 This is one rolling primitive that maintains all declared windows
 in one ingest pass over a single shared deque, then emits one
@@ -348,6 +872,9 @@ When one window needs different options from the rest (`minSamples`,
 e.g.), the value form switches from a bare mapping to an
 elaborated wrapper:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 live.rolling(
   {
@@ -361,6 +888,56 @@ live.rolling(
 );
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+
+    let fused = live.rolling_windows(
+        live.root(),
+        &[
+            RollingWindow::new("1m", &[Agg::new("cpu_avg", "cpu", Reducer::Avg)]),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)])
+                .min_samples(5), // this window's own setting
+        ],
+        &RollingOptions::new()
+            .trigger(Trigger::every("200ms")?)
+            .min_samples(2), // the default for the rest
+    )?;
+
+    for (t, v) in [
+        (0, 1.0),
+        (100, 2.0),
+        (150, 3.0),
+        (250, 5.0),
+        (320, 4.0),
+        (410, 6.0),
+    ] {
+        live.push(t, [Some(v.into())])?;
+    }
+
+    let e = live[fused].at(-1).unwrap();
+    assert_eq!(e.number("cpu_avg")?, Some(3.5));
+    // The 200 ms window holds 3 events, short of its 5: a gap.
+    assert_eq!(e.array("cpu_samples")?, None);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Top-level options apply as the default across all windows;
 per-window elaborated `minSamples` overrides for that window.
 
@@ -368,6 +945,9 @@ per-window elaborated `minSamples` overrides for that window.
 
 The same form composes with `partitionBy(...)` and works through
 chained pipelines:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const fused = live
@@ -383,6 +963,77 @@ const fused = live
 // One merged event per partition per boundary; partition column
 // auto-injected at the front of the schema.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, PartitionOptions, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Scalar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::required("host", ColumnKind::String),
+        ],
+    )?;
+
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    let filled = live.per_partition(hosts, |live, host| {
+        Ok(live.fill(host, &[("cpu", Fill::Hold)])?.id())
+    })?;
+    let fused = live.partition_rolling_windows(
+        filled,
+        &[
+            RollingWindow::new("1m", &[Agg::new("cpu_avg", "cpu", Reducer::Avg)]),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)]),
+        ],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    live.push(0, [Some(1.0.into()), Some("a".into())])?;
+    live.push(50, [Some(10.0.into()), Some("b".into())])?;
+    live.push(100, [None, Some("a".into())])?; // held at 1
+    live.push(150, [Some(20.0.into()), Some("b".into())])?;
+    live.push(250, [Some(3.0.into()), Some("a".into())])?;
+
+    // One row per host at each 200 ms boundary.
+    let rows: Vec<_> = live[fused]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            let samples = e.array("cpu_samples").unwrap().unwrap().to_vec();
+            (e.begin(), host, e.number("cpu_avg").unwrap(), samples)
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                200,
+                "a".to_string(),
+                Some(1.6666666666666667),
+                vec![Scalar::from(1.0), 3.0.into()]
+            ),
+            (
+                200,
+                "b".to_string(),
+                Some(15.0),
+                vec![Scalar::from(10.0), 20.0.into()]
+            ),
+        ]
+    );
+    Ok(())
+}
+```
+
+In Rust, `per_partition` builds the fill on every host, and `partition_rolling_windows` runs the windows over it. As in pond-ts, it needs a clock trigger.
+
+</TabItem>
+</Tabs>
 
 On the partitioned form, **clock trigger is required** — synced
 cross-partition emission needs a single shared boundary detector.

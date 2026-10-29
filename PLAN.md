@@ -639,9 +639,11 @@ the study oracle) is done.
   sweep (Peter, 2026-10-29): TypeScript / Rust tabs (`groupId="language"`)
   on the introduction, getting started, financial overview, and an
   "also in Rust" note on the core overview pages; process marked
-  TypeScript only. Open: the same tabs on the per-operator core pages
-  (`pond-ts/creating`, `transforms/*`, `live/*`), run the script in CI, and
-  link the published crate and `cargo doc` API reference once they exist.
+  TypeScript only (#850). Then 158 more tabs on the per-operator core pages
+  (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
+  snippets in all, each checked against pond-ts output. Open: run the script
+  in CI, and link the published crate and `cargo doc` API reference once
+  they exist.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
