@@ -2,6 +2,8 @@
 //! lookups, JSON, handles and the errors.
 
 use super::*;
+use crate::column::{Float64Column, StringColumn};
+use crate::series::{IntervalKeys, TimeRangeKeys};
 use crate::{Fill, FirstRow, Reducer, Sample};
 
 fn schema() -> Vec<ColumnDef> {
@@ -1238,4 +1240,310 @@ fn reduce_on_windows_over_history_and_rolling() {
     let hi = held.iter().cloned().fold(f64::MIN, f64::max);
     let lo = held.iter().cloned().fold(f64::MAX, f64::min);
     assert_eq!(numbers(live[r].value()), [Some(hi), Some(lo), Some(2.0)]);
+}
+
+// ── push_series: a batch series pushed as one batch ──
+
+/// A `Vec<Option<Value>>` row as a batch column cell.
+fn chunk(rows: &[(i64, &str, Option<f64>, Option<f64>)]) -> TimeSeries {
+    let time = rows.iter().map(|r| r.0).collect();
+    let host = StringColumn::from_options(rows.iter().map(|r| Some(r.1)));
+    let cpu = Float64Column::from_options(rows.iter().map(|r| r.2));
+    let mem = Float64Column::from_options(rows.iter().map(|r| r.3));
+    TimeSeries::new(
+        "chunk",
+        time,
+        vec![
+            Column::optional("host", host),
+            Column::optional("cpu", cpu),
+            Column::optional("mem", mem),
+        ],
+    )
+    .unwrap()
+}
+
+fn wide_schema() -> Vec<ColumnDef> {
+    vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("host", ColumnKind::String),
+        ColumnDef::optional("cpu", ColumnKind::Number),
+        ColumnDef::optional("mem", ColumnKind::Number),
+    ]
+}
+
+type WideRow = (i64, &'static str, Option<f64>, Option<f64>);
+
+/// The rows of one session: in order, then (from 7000 on) a late batch
+/// whose first rows are behind the tail, one at the tail, and a tail of
+/// in-order rows.
+const WIDE_ROWS: [WideRow; 12] = [
+    (0, "a", Some(1.0), Some(10.0)),
+    (1000, "b", Some(2.0), None),
+    (2000, "a", None, Some(12.0)),
+    (3000, "c", Some(4.0), Some(13.0)),
+    (4000, "a", Some(5.0), Some(14.0)),
+    (5000, "b", Some(6.0), Some(15.0)),
+    (2500, "a", Some(99.0), Some(1.0)),
+    (4500, "b", Some(98.0), Some(2.0)),
+    (5000, "c", Some(97.0), Some(3.0)),
+    (6000, "a", Some(7.0), Some(16.0)),
+    (7000, "b", Some(8.0), Some(17.0)),
+    (8000, "c", Some(9.0), Some(18.0)),
+];
+
+/// Outputs with the owner taken out of the node id, so two sessions
+/// built the same way compare equal.
+fn flat(out: &[Output]) -> Vec<String> {
+    out.iter()
+        .map(|o| {
+            format!("{} {:?}", o.node().index, o)
+                .replace(&format!("owner: {}, ", o.node().owner), "")
+        })
+        .collect()
+}
+
+/// `WIDE_ROWS` cut into batches a batch series can hold (each in key
+/// order): the late batch on its own, every row alone, and the in-order
+/// rows in one batch with the late ones after.
+fn batches() -> Vec<Vec<&'static [WideRow]>> {
+    let r = &WIDE_ROWS;
+    vec![
+        vec![&r[0..3], &r[3..6], &r[6..9], &r[9..12]],
+        r.chunks(1).collect(),
+        vec![&r[0..6], &r[6..9], &r[9..10], &r[10..12]],
+    ]
+}
+
+/// Build the same tree on two sessions, push `batches` as rows into one
+/// and as a batch series into the other, and expect the same outputs,
+/// rows and stats (and the same errors).
+fn same_as_push_many(options: LiveOptions, batches: &[&[WideRow]], build: bool) {
+    let mut by_rows = LiveSeries::with_options("cpu", wide_schema(), options.clone()).unwrap();
+    let mut by_series = LiveSeries::with_options("cpu", wide_schema(), options).unwrap();
+    let tree = |live: &mut LiveSeries| {
+        let root = live.root();
+        for kind in [OutputKind::Event, OutputKind::Batch, OutputKind::Evict] {
+            live.watch(root, kind).unwrap();
+        }
+        let f = live
+            .filter(root, |e| e.number("cpu").unwrap().is_some_and(|v| v > 2.0))
+            .unwrap();
+        live.watch(f, OutputKind::Event).unwrap();
+        let r = live
+            .rolling(root, "2s", &[Agg::of("cpu", Reducer::Avg)])
+            .unwrap();
+        live.watch(r, OutputKind::Event).unwrap();
+        let d = live.reduce(f, &[Agg::of("mem", Reducer::Max)]).unwrap();
+        live.watch(d, OutputKind::Event).unwrap();
+        (f, r, d)
+    };
+    let nodes = build.then(|| (tree(&mut by_rows), tree(&mut by_series)));
+    for &batch in batches {
+        let a = by_rows.push_many(batch.iter().map(|&(t, host, cpu, mem)| {
+            (
+                t,
+                vec![
+                    Some(Value::String(host.into())),
+                    cpu.map(Value::Number),
+                    mem.map(Value::Number),
+                ],
+            )
+        }));
+        let b = by_series.push_series(&chunk(batch));
+        match (a, b) {
+            (Ok(a), Ok(b)) => assert_eq!(flat(&a), flat(&b), "outputs of {batch:?}"),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+            (a, b) => panic!("push_many {a:?} vs push_series {b:?}"),
+        }
+    }
+    assert_eq!(by_rows.stats(), by_series.stats());
+    assert_eq!(
+        by_rows.to_time_series().unwrap(),
+        by_series.to_time_series().unwrap()
+    );
+    if let Some((a, b)) = nodes {
+        assert_eq!(
+            by_rows[a.0].to_time_series().unwrap(),
+            by_series[b.0].to_time_series().unwrap()
+        );
+        let rows = |e: &mut dyn Iterator<Item = LiveEvent>| e.collect::<Vec<_>>();
+        assert_eq!(
+            rows(&mut by_rows[a.1].events()),
+            rows(&mut by_series[b.1].events())
+        );
+        assert_eq!(
+            rows(&mut by_rows[a.2].events()),
+            rows(&mut by_series[b.2].events())
+        );
+    }
+}
+
+#[test]
+fn push_series_is_push_many_in_every_mode() {
+    let modes = [
+        LiveOptions::new(),
+        LiveOptions::new().ordering(OrderingMode::Drop),
+        LiveOptions::new().ordering(OrderingMode::Reorder),
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("1s"),
+        LiveOptions::new().max_events(4),
+        LiveOptions::new()
+            .ordering(OrderingMode::Drop)
+            .max_events(5),
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .max_events(5),
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .max_age("3s"),
+    ];
+    for options in modes {
+        for batches in batches() {
+            for build in [false, true] {
+                same_as_push_many(options.clone(), &batches, build);
+            }
+        }
+    }
+}
+
+#[test]
+fn push_series_takes_columns_in_any_order_and_empty() {
+    let mut live = LiveSeries::new("cpu", wide_schema()).unwrap();
+    let swapped = TimeSeries::new(
+        "chunk",
+        vec![0, 1000],
+        vec![
+            Column::optional("mem", Float64Column::from_options([Some(1.0), None])),
+            Column::optional("cpu", Float64Column::from_options([Some(2.0), Some(3.0)])),
+            Column::optional("host", StringColumn::from_options([Some("a"), None])),
+        ],
+    )
+    .unwrap();
+    assert!(live.push_series(&swapped).unwrap().is_empty());
+    assert_eq!(live.len(), 2);
+    assert_eq!(live.at(1).unwrap().number("cpu").unwrap(), Some(3.0));
+    assert_eq!(live.at(1).unwrap().string("host").unwrap(), None);
+    assert_eq!(live.at(0).unwrap().number("mem").unwrap(), Some(1.0));
+    let empty = chunk(&[]);
+    assert!(live.push_series(&empty).unwrap().is_empty());
+    assert_eq!(live.len(), 2);
+}
+
+#[test]
+fn push_series_checks_the_shape_and_the_rows() {
+    let err = |live: &mut LiveSeries, s: TimeSeries| live.push_series(&s).unwrap_err().to_string();
+    let mut live = LiveSeries::new("cpu", wide_schema()).unwrap();
+    let col =
+        |name: &str, v: Vec<Option<f64>>| Column::optional(name, Float64Column::from_options(v));
+    let host = |v: Vec<Option<&str>>| Column::optional("host", StringColumn::from_options(v));
+    // Key kind.
+    let ranges = TimeSeries::from_time_ranges(
+        "r",
+        TimeRangeKeys {
+            begin: vec![0],
+            end: vec![1000],
+        },
+        vec![
+            host(vec![Some("a")]),
+            col("cpu", vec![Some(1.0)]),
+            col("mem", vec![None]),
+        ],
+    )
+    .unwrap();
+    assert!(err(&mut live, ranges).contains("keyed by timeRange, but this live series by time"));
+    // Missing, extra, wrong kind.
+    let missing = TimeSeries::new(
+        "c",
+        vec![0],
+        vec![host(vec![Some("a")]), col("cpu", vec![Some(1.0)])],
+    )
+    .unwrap();
+    assert!(
+        err(&mut live, missing)
+            .contains("column 'mem' is missing from the series (it has: host, cpu)")
+    );
+    let extra = TimeSeries::new(
+        "c",
+        vec![0],
+        vec![
+            host(vec![Some("a")]),
+            col("cpu", vec![Some(1.0)]),
+            col("mem", vec![None]),
+            col("disk", vec![None]),
+        ],
+    )
+    .unwrap();
+    assert!(err(&mut live, extra).contains("columns this live series does not: disk"));
+    let wrong = TimeSeries::new(
+        "c",
+        vec![0],
+        vec![
+            host(vec![Some("a")]),
+            Column::optional("cpu", StringColumn::from_options([Some("high")])),
+            col("mem", vec![None]),
+        ],
+    )
+    .unwrap();
+    assert!(
+        err(&mut live, wrong)
+            .contains("'cpu': the series has a string column, this live series takes number")
+    );
+    // A gap in a required column names the row.
+    let mut strict = LiveSeries::new(
+        "v",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let gappy = TimeSeries::new(
+        "c",
+        vec![0, 1000, 2000],
+        vec![col("v", vec![Some(1.0), None, Some(2.0)])],
+    )
+    .unwrap();
+    assert!(err(&mut strict, gappy).contains("row 1: column 'v' is required"));
+    assert_eq!(strict.len(), 0, "all or nothing");
+    // A late row under strict ordering refuses the batch, as push_many.
+    live.push(5000, vec![Some("a".into()), Some(1.0.into()), None])
+        .unwrap();
+    let late = chunk(&[(4000, "a", Some(1.0), None), (6000, "a", Some(1.0), None)]);
+    let e = err(&mut live, late);
+    assert!(e.contains("row 0"), "{e}");
+    assert_eq!(live.len(), 1);
+    // Interval labels keep one kind.
+    let mut by_label = LiveSeries::new(
+        "i",
+        vec![
+            ColumnDef::required("key", ColumnKind::Interval),
+            ColumnDef::optional("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let numbered = TimeSeries::from_intervals(
+        "c",
+        IntervalKeys {
+            label: vec![1.0].into(),
+            begin: vec![0],
+            end: vec![1000],
+        },
+        vec![col("v", vec![Some(1.0)])],
+    )
+    .unwrap();
+    by_label.push_series(&numbered).unwrap();
+    let texted = TimeSeries::from_intervals(
+        "c",
+        IntervalKeys {
+            label: vec!["x"].into(),
+            begin: vec![1000],
+            end: vec![2000],
+        },
+        vec![col("v", vec![Some(1.0)])],
+    )
+    .unwrap();
+    let e = err(&mut by_label, texted);
+    assert!(e.contains("numbers or all text"), "{e}");
+    assert_eq!(by_label.len(), 1);
 }

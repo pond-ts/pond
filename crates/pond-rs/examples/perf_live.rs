@@ -29,7 +29,10 @@ use pond_rs::live::{
     CollectOptions, History, LiveOptions, LiveSeries, OrderingMode, OutputKind, PartitionOptions,
     RollingOptions, RollingWindow, Trigger,
 };
-use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Sample, Sequence, Value};
+use pond_rs::{
+    Agg, Column, ColumnDef, ColumnKind, Fill, Float64Column, Reducer, Sample, Sequence,
+    StringColumn, TimeSeries, Value,
+};
 
 /// Median of five timed runs after a warm-up. Each run gets its own copy of
 /// the rows, made before the clock starts: a caller hands pond-rs rows it
@@ -107,8 +110,9 @@ fn main() -> pond_rs::Result<()> {
     let mut report = Vec::new();
     // ONLY=<text> times just the cases whose name contains it.
     let only = std::env::var("ONLY").unwrap_or_default();
+    let wanted = |name: &str| name.contains(only.as_str());
     let mut run = |name: &str, input: &Vec<Row>, f: &mut dyn FnMut(Vec<Row>)| {
-        if !name.contains(only.as_str()) {
+        if !wanted(name) {
             return;
         }
         let ms = median_ms(|| input.clone(), f);
@@ -428,6 +432,59 @@ fn main() -> pond_rs::Result<()> {
             batches(&mut live, rows);
         },
     );
+    // The same rows as 1,000-row batch series, built before the clock: data
+    // that already comes in columns (an Arrow chunk, a JSON read) pushed
+    // with `push_series`, against `push_many` of the rows above.
+    let chunks: Vec<TimeSeries> = rows.chunks(1000).map(chunk_series).collect();
+    let mut run_chunks = |name: &str, f: &mut dyn FnMut(Vec<TimeSeries>)| {
+        if !wanted(name) {
+            return;
+        }
+        let ms = median_ms(|| chunks.clone(), f);
+        println!("{name:<44} {ms:>9.1} ms");
+        report.push(format!("\"{name}\": {ms:.2}"));
+    };
+    run_chunks("push_series, batches of 1000", &mut |chunks| {
+        let mut live = LiveSeries::new("live", schema()).unwrap();
+        for chunk in &chunks {
+            live.push_series(chunk).unwrap();
+        }
+    });
+    run_chunks(
+        "push_series, batches of 1000: filter + aggregate 1m",
+        &mut |chunks| {
+            let mut live = LiveSeries::new("live", schema()).unwrap();
+            live.filter(live.root(), busy).unwrap();
+            live.aggregate(live.root(), &minute, &mapping).unwrap();
+            for chunk in &chunks {
+                live.push_series(chunk).unwrap();
+            }
+        },
+    );
     println!("{{{}}}", report.join(", "));
     Ok(())
+}
+
+/// Rows as a batch series (host text, cpu and mem numbers).
+fn chunk_series(rows: &[Row]) -> TimeSeries {
+    let number = |i: usize| {
+        Float64Column::from_options(rows.iter().map(|r| match r.1[i] {
+            Some(Value::Number(x)) => Some(x),
+            _ => None,
+        }))
+    };
+    let host = StringColumn::from_options(rows.iter().map(|r| match &r.1[0] {
+        Some(Value::String(s)) => Some(s.as_str()),
+        _ => None,
+    }));
+    TimeSeries::new(
+        "chunk",
+        rows.iter().map(|r| r.0).collect(),
+        vec![
+            Column::optional("host", host),
+            Column::optional("cpu", number(1)),
+            Column::optional("mem", number(2)),
+        ],
+    )
+    .unwrap()
 }

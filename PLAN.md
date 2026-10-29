@@ -620,15 +620,6 @@ the study oracle) is done.
   it (9 with a `first` / `keep` reducer on the key column). Options: write
   the partition column into gathered outputs, or pass the key to the
   `apply` recipe. An API change in both libraries; needs a decision.
-- **[PND-RUSTLIVEBATCH]** — pond-rs live pushes in batches of 1,000 were
-  2.5× slower than pond-ts (322 vs 131 ms per 1M rows, 2026-10-29). The
-  speed review (R3 step 7 note, 2026-10-29) cut the library's own work by
-  37% (a series nobody reads stores cells with no event built), to ~255 ms
-  per 1M rows. Measured split of what remains: freeing the caller's
-  one-`Vec`-per-row input and the host `String` column is 70–130 ms of it,
-  the library's work ~50 ms. A column-shaped push (`push_columns`) would
-  remove the per-row `Vec`s; an API addition, needs Peter's OK.
-
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site

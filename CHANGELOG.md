@@ -80,6 +80,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
+  batch, for data that already comes in columns (an Arrow chunk, a JSON
+  read). Same rules and outputs as `push_many` of the same rows: the series
+  must be keyed the same way and have the live series' value columns by name
+  (any order) and kind; a gap in a required column is refused, naming the
+  row; all or nothing. When nothing is built on the series and nothing
+  watches it, the columns are copied straight into storage with no event
+  built per row ([PND-RUSTLIVEBATCH]): one million rows in batches of 1,000
+  take about half the time of `push_many` and about a third less than
+  pond-ts's `pushMany` on the same machine. pond-ts has no column-shaped
+  push.
 - **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
   on by default). `LiveSeries` takes events one at a time or in batches
   (`push` / `push_many` / `push_json`), with pond-ts's ordering modes
