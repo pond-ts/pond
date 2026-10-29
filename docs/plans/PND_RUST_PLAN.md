@@ -585,6 +585,7 @@ pond-ts shares the defect it is fixed there too, under its own tag.
 | R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
 | R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
 | R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
+| R07 | empty leading/centred time windows admit earlier rows      | fixed, both libs, [PND-ROLLEMPTY]              |
 | R06 | batch partition map panics on a missing partition column   | fixed: error; mismatched results refused too   |
 | R12 | Arrow time value `i64::MIN` panics in `abs()`              | fixed: `unsigned_abs`                          |
 | R13 | huge study periods panic; Ichimoku offsets flip sign       | fixed: gaps (period > rows); offsets error     |

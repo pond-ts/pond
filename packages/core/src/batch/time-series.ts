@@ -4405,6 +4405,15 @@ export class TimeSeries<S extends SeriesSchema> {
           removeEvent(windowStart);
           windowStart += 1;
         }
+        // [PND-ROLLEMPTY] With the window empty, rows before the lower
+        // bound never entered: step past them instead of adding them below
+        // (a 0 ms window, or one whose float edges round shut, counted them).
+        if (windowStart === windowEnd) {
+          while (windowEnd < rowCount && beginTimes[windowEnd]! < lowerBound) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
+        }
 
         const upperBound = anchor + windowMs;
         while (windowEnd < rowCount && beginTimes[windowEnd]! < upperBound) {
@@ -4432,6 +4441,15 @@ export class TimeSeries<S extends SeriesSchema> {
         ) {
           removeEvent(windowStart);
           windowStart += 1;
+        }
+        // [PND-ROLLEMPTY] With the window empty, rows before the lower
+        // bound never entered: step past them instead of adding them below
+        // (a 0 ms window, or one whose float edges round shut, counted them).
+        if (windowStart === windowEnd) {
+          while (windowEnd < rowCount && beginTimes[windowEnd]! < lowerBound) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
         }
 
         const upperBound = anchor + halfWindow;
@@ -4887,6 +4905,16 @@ export class TimeSeries<S extends SeriesSchema> {
           removeEvent(windowStart);
           windowStart += 1;
         }
+        // [PND-ROLLEMPTY] Skip rows that never entered an empty window.
+        if (windowStart === windowEnd) {
+          while (
+            windowEnd < this.events.length &&
+            sorted[windowEnd]! < anchor
+          ) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
+        }
 
         const upperBound = anchor + windowMs;
         while (
@@ -4904,6 +4932,16 @@ export class TimeSeries<S extends SeriesSchema> {
         ) {
           removeEvent(windowStart);
           windowStart += 1;
+        }
+        // [PND-ROLLEMPTY] Skip rows that never entered an empty window.
+        if (windowStart === windowEnd) {
+          while (
+            windowEnd < this.events.length &&
+            sorted[windowEnd]! < anchor - halfWindow
+          ) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
         }
 
         const upperBound = anchor + halfWindow;

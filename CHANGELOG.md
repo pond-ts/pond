@@ -181,6 +181,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **Empty leading / centred rolling windows count nothing**
+  ([PND-ROLLEMPTY]). A time window that holds no rows (`'0ms'`, or a
+  centred `'1ms'` window whose edges round to the same millisecond past
+  2^52 ms) let earlier rows in: `rolling('0ms', count, { alignment:
+'leading' })` on three rows gave 0, 1, 1. Same fix in `smooth`'s moving
+  average. Both pond-ts and pond-rs; found by a Codex review of pond-rs.
 - **pond-rs: four panics are now errors or gaps** (Codex review).
   `PartitionedSeries::map` returns an error, not a panic, when one
   partition's result drops a partition column (and refuses results with

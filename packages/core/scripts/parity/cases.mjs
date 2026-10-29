@@ -1597,6 +1597,25 @@ const ROLLING_OPTION_CASES = [
     'rolling',
     [every('3ms'), '1ms', { v: 'count' }, { alignment: 'centered', sample }],
   ]),
+  // [PND-ROLLEMPTY] empty leading / centred windows count nothing: a 0 ms
+  // window, and a 1 ms centred one whose edges round shut past 2^52 ms
+  ...[
+    ['0ms', 'leading'],
+    ['0ms', 'centered'],
+    ['1ms', 'centered'],
+    ['1ms', 'leading'],
+  ].map(([window, alignment]) => [
+    `rolling-empty-${window}-${alignment}`,
+    'bigSparse',
+    'rolling',
+    [window, { v: 'count', w: 'sum' }, { alignment }],
+  ]),
+  ...['leading', 'centered'].map((alignment) => [
+    `smooth-ma-empty-0ms-${alignment}`,
+    'bigSparse',
+    'smooth',
+    ['v', 'movingAverage', { window: '0ms', alignment }],
+  ]),
   // a minimum on a grid gaps a list column too
   [
     'rolling-grid-tags-min2-lists',
@@ -5060,6 +5079,21 @@ export function buildFixture(pond) {
         2 ** 52 + i,
         i,
         i % 3 === 1 ? null : i / 4,
+      ]),
+    }),
+    // Rows 4 ms apart past 2^52 ms, where a 1 ms centred window's half-ms
+    // edges round to the same even millisecond ([PND-ROLLEMPTY]).
+    bigSparse: TimeSeries.fromJSON({
+      name: 'bigSparse',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+        { name: 'w', kind: 'number', required: false },
+      ],
+      rows: Array.from({ length: 4 }, (_, i) => [
+        2 ** 52 + 100 + 4 * i,
+        i + 1,
+        i,
       ]),
     }),
     // Odd-length time ranges: midpoints on a half millisecond, one past
