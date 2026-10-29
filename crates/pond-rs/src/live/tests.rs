@@ -1547,3 +1547,139 @@ fn push_series_checks_the_shape_and_the_rows() {
     assert!(e.contains("numbers or all text"), "{e}");
     assert_eq!(by_label.len(), 1);
 }
+
+#[test]
+fn push_series_with_range_and_interval_keys_is_push_many() {
+    // Time ranges: the equivalence holds for a ranged key too, with a
+    // filter built on the series (the event path).
+    let mut by_rows = LiveSeries::new(
+        "r",
+        vec![
+            ColumnDef::required("range", ColumnKind::TimeRange),
+            ColumnDef::optional("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let mut by_series = LiveSeries::new("r", by_rows.schema().to_vec()).unwrap();
+    for live in [&mut by_rows, &mut by_series] {
+        let root = live.root();
+        live.watch(root, OutputKind::Event).unwrap();
+        let f = live
+            .filter(root, |e| e.number("v").unwrap().is_some())
+            .unwrap();
+        live.watch(f, OutputKind::Event).unwrap();
+    }
+    let a = by_rows
+        .push_many([
+            (
+                EventKey::time_range(0, 1000).unwrap(),
+                vec![Some(Value::Number(1.0))],
+            ),
+            (EventKey::time_range(1000, 3000).unwrap(), vec![None]),
+            (
+                EventKey::time_range(1000, 4000).unwrap(),
+                vec![Some(Value::Number(3.0))],
+            ),
+        ])
+        .unwrap();
+    let ranges = TimeSeries::from_time_ranges(
+        "c",
+        TimeRangeKeys {
+            begin: vec![0, 1000, 1000],
+            end: vec![1000, 3000, 4000],
+        },
+        vec![Column::optional(
+            "v",
+            Float64Column::from_options([Some(1.0), None, Some(3.0)]),
+        )],
+    )
+    .unwrap();
+    let b = by_series.push_series(&ranges).unwrap();
+    assert_eq!(flat(&a), flat(&b));
+    assert_eq!(
+        by_rows.to_time_series().unwrap(),
+        by_series.to_time_series().unwrap()
+    );
+
+    // Intervals: a batch series orders its rows by (begin, end) only, while
+    // a live series also orders equal spans by label, so a valid series
+    // whose labels are out of label order carries a "late" row in the
+    // middle. The outcome is push_many's for the same rows: refused under
+    // Strict, stored in key order under Reorder.
+    let schema = vec![
+        ColumnDef::required("key", ColumnKind::Interval),
+        ColumnDef::optional("v", ColumnKind::Number),
+    ];
+    let intervals = TimeSeries::from_intervals(
+        "c",
+        IntervalKeys {
+            label: vec!["b", "a", "c"].into(),
+            begin: vec![0, 0, 0],
+            end: vec![1000, 1000, 1000],
+        },
+        vec![Column::optional(
+            "v",
+            Float64Column::from_options([Some(1.0), Some(2.0), Some(3.0)]),
+        )],
+    )
+    .unwrap();
+    let rows = || {
+        ["b", "a", "c"]
+            .into_iter()
+            .zip([1.0, 2.0, 3.0])
+            .map(|(l, v)| {
+                (
+                    EventKey::interval(l, 0, 1000).unwrap(),
+                    vec![Some(Value::Number(v))],
+                )
+            })
+    };
+    for options in [
+        LiveOptions::new(),
+        LiveOptions::new().ordering(OrderingMode::Reorder),
+        LiveOptions::new().ordering(OrderingMode::Drop),
+    ] {
+        let mut by_rows = LiveSeries::with_options("i", schema.clone(), options.clone()).unwrap();
+        let mut by_series = LiveSeries::with_options("i", schema.clone(), options).unwrap();
+        let a = by_rows.push_many(rows());
+        let b = by_series.push_series(&intervals);
+        match (a, b) {
+            (Ok(a), Ok(b)) => assert_eq!(flat(&a), flat(&b)),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+            (a, b) => panic!("push_many {a:?} vs push_series {b:?}"),
+        }
+        assert_eq!(by_rows.stats(), by_series.stats());
+        assert_eq!(
+            by_rows.to_time_series().unwrap(),
+            by_series.to_time_series().unwrap()
+        );
+    }
+}
+
+#[test]
+fn push_series_required_gap_on_the_event_path_stores_nothing() {
+    let mut live = LiveSeries::new(
+        "v",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("v", ColumnKind::Number),
+        ],
+    )
+    .unwrap();
+    let root = live.root();
+    live.watch(root, OutputKind::Event).unwrap();
+    let f = live.filter(root, |_| true).unwrap();
+    let gappy = TimeSeries::new(
+        "c",
+        vec![0, 1000],
+        vec![Column::optional(
+            "v",
+            Float64Column::from_options([Some(1.0), None]),
+        )],
+    )
+    .unwrap();
+    let e = live.push_series(&gappy).unwrap_err().to_string();
+    assert!(e.contains("row 1: column 'v' is required"), "{e}");
+    assert_eq!(live.len(), 0);
+    assert_eq!(live[f].len(), 0);
+}

@@ -772,7 +772,12 @@ impl LiveSeries {
     /// in a required column, or an array cell with a non-finite number, is
     /// refused like a bad row of [`LiveSeries::push_many`]. All or nothing,
     /// with the same ordering rules, retention and outputs as `push_many`
-    /// of the same rows.
+    /// of the same rows. Two things a batch series settles before it gets
+    /// here: a non-finite number is already a gap in its column (where a
+    /// `push_many` cell of `NaN` is refused), and its interval rows are
+    /// ordered by span only, so equal spans whose labels are out of label
+    /// order count as late rows (refused under `Strict`, placed under
+    /// `Reorder`), as the same rows would through `push_many`.
     ///
     /// When nothing is built on or watching the series, the columns are
     /// copied straight into its storage, with no event built per row.
