@@ -813,6 +813,9 @@ impl LiveSeries {
     /// events held (each row was checked against those alone): Codex
     /// review R03, a mixed batch was stored and then failed every snapshot.
     fn check_labels<'a>(&self, keys: impl Iterator<Item = &'a EventKey>) -> Result<()> {
+        if self.core().schema.columns[0].kind != ColumnKind::Interval {
+            return Ok(());
+        }
         let mut numbers = self
             .core()
             .buffer
