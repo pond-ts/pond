@@ -1187,3 +1187,55 @@ fn reduce_through_a_view_of_a_reorder_series() {
     assert_eq!(numbers(live[on_f].value()), want);
     assert_eq!(numbers(live[on_g].value()), want);
 }
+
+#[test]
+fn reduce_on_windows_over_history_and_rolling() {
+    // A window built over history, then a reduce on it.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    for t in [1000, 2000, 3000, 4000] {
+        live.push(t, row("a", (t / 1000) as f64)).unwrap();
+    }
+    let w = live.window_rows(root, 2).unwrap();
+    let sum = [Agg::new("s", "cpu", Reducer::Sum)];
+    let r = live.reduce(w, &sum).unwrap();
+    assert_eq!(numbers(live[r].value()), [Some(7.0)]);
+    live.push(5000, row("a", 5.0)).unwrap();
+    assert_eq!(numbers(live[r].value()), [Some(9.0)]);
+    // A filter on a window keeps what the window trims.
+    let f = live.filter(w, |_| true).unwrap();
+    let rf = live.reduce(f, &sum).unwrap();
+    live.push(6000, row("a", 6.0)).unwrap();
+    assert_eq!(live[f].len(), 3);
+    assert_eq!(numbers(live[rf].value()), [Some(15.0)]);
+
+    // Rolling of a reorder series: a late event comes out keyed in the
+    // past, so a window over the rolling output trims by key order.
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let root = live.root();
+    let ro = live
+        .rolling(root, "10s", &[Agg::new("cpu", "cpu", Reducer::Max)])
+        .unwrap();
+    let w = live.window_rows(ro, 2).unwrap();
+    let r = live
+        .reduce(
+            w,
+            &[
+                Agg::new("hi", "cpu", Reducer::Max),
+                Agg::new("lo", "cpu", Reducer::Min),
+                Agg::new("last", "cpu", Reducer::Last),
+            ],
+        )
+        .unwrap();
+    for (t, cpu) in [(1000, 1.0), (2000, 2.0), (500, 7.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    let held: Vec<f64> = live[w]
+        .events()
+        .map(|e| e.number("cpu").unwrap().unwrap())
+        .collect();
+    assert_eq!(held.len(), 2);
+    let hi = held.iter().cloned().fold(f64::MIN, f64::max);
+    let lo = held.iter().cloned().fold(f64::MAX, f64::min);
+    assert_eq!(numbers(live[r].value()), [Some(hi), Some(lo), Some(2.0)]);
+}

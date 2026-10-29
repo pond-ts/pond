@@ -103,3 +103,51 @@ describe('[PND-REDUCETRIM] reduce on a view of a reorder series', () => {
     expect(onG.value()).toEqual(want);
   });
 });
+
+describe('[PND-REDUCETRIM] other chains', () => {
+  it('window built over history, then a reduce, then more pushes', () => {
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    for (const t of [1000, 2000, 3000, 4000]) live.push([t, t / 1000]);
+    const w = live.window(2);
+    const r = w.reduce(MAPPING);
+    expect(r.value()).toEqual({ s: 7, n: 2, lo: 3 });
+    live.push([5000, 5]);
+    expect(r.value()).toEqual({ s: 9, n: 2, lo: 4 });
+  });
+
+  it('a filter on a window keeps what the window trims', () => {
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    const f = live.window(2).filter(() => true);
+    const r = f.reduce({ s: { from: 'v', using: 'sum' } });
+    for (const t of [1000, 2000, 3000]) live.push([t, t / 1000]);
+    expect(f.length).toBe(3);
+    expect(r.value()).toEqual({ s: 6 });
+  });
+
+  it('rolling of a reorder series, then a window, then a reduce', () => {
+    // The rolling output carries the late event's key, so the window
+    // over it trims by key order, not arrival order.
+    const live = new LiveSeries({
+      name: 'x',
+      schema: SCHEMA,
+      ordering: 'reorder',
+    });
+    const ro = live.rolling('10s', { v: 'max' });
+    const w = ro.window(2);
+    const r = w.reduce({
+      hi: { from: 'v', using: 'max' },
+      lo: { from: 'v', using: 'min' },
+      last: { from: 'v', using: 'last' },
+    });
+    live.push([1000, 1]);
+    live.push([2000, 2]);
+    live.push([500, 7]); // late: rolling emits at 500, the window trims it
+    expect(w.length).toBe(2);
+    const held = [w.at(0)!.get('v'), w.at(1)!.get('v')];
+    expect(r.value()).toEqual({
+      hi: Math.max(...(held as number[])),
+      lo: Math.min(...(held as number[])),
+      last: 2,
+    });
+  });
+});

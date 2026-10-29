@@ -132,7 +132,10 @@ declare function queueMicrotask(callback: () => void): void;
  * bound (no removes ever fire). Today every pond LiveSource that
  * evicts also marks itself with `EMITS_EVICT` (`LiveSeries`,
  * `LiveView` with eviction); future LiveSource implementations
- * must preserve this contract.
+ * must preserve this contract. The one internal eviction that is
+ * silent on `'evict'` — a `window` view trimming itself — reaches a
+ * reduce through the view's internal `_onTrim` channel instead
+ * ([PND-REDUCETRIM]).
  *
  * Public API: constructed via `live.reduce(mapping, opts?)` on
  * `LiveSeries` / `LiveView`. User code doesn't import this class
@@ -369,7 +372,8 @@ export class LiveReduce<
    *   non-empty source — phrased uniformly with sibling classes'
    *   stats() docs. Never decreases.
    * - `evictions`: total events removed from reducer state via
-   *   the source's `'evict'` channel. Events that predated this
+   *   the source's `'evict'` channel, or trimmed by a `window` view
+   *   source ([PND-REDUCETRIM]). Events that predated this
    *   `LiveReduce` (already past the FIFO evict cursor) don't count.
    *   Never decreases.
    * - `emissions`: total output events fired. Never decreases.
