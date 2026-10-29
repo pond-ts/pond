@@ -19,7 +19,7 @@ use crate::smooth::Sample;
 
 use super::event::{LiveEvent, LiveSchema};
 use super::sealed::State;
-use super::view::{LiveView, Step, Window};
+use super::view::{Kept, LiveView, Step, Window};
 use super::{LiveSeries, Node};
 
 #[derive(Clone, Copy)]
@@ -160,7 +160,7 @@ impl LiveSeries {
                     cell
                 );
             }
-            Some(LiveEvent::new(Arc::clone(&out), e.key().clone(), values))
+            Some(Kept::New(values))
         });
         Ok(self.add_view(source, schema, step, None, self.window_ms_of(source)))
     }
@@ -182,13 +182,9 @@ impl LiveSeries {
         let mut columns = vec![schema.columns[0].clone()];
         columns.extend(keep.iter().map(|&c| schema.values()[c].clone()));
         let out = LiveSchema::new(columns);
-        let schema_out = Arc::clone(&out);
         let step: Step = Box::new(move |e: &LiveEvent| {
-            let values = keep.iter().map(|&c| e.values()[c].clone()).collect();
-            Some(LiveEvent::new(
-                Arc::clone(&schema_out),
-                e.key().clone(),
-                values,
+            Some(Kept::New(
+                keep.iter().map(|&c| e.values()[c].clone()).collect(),
             ))
         });
         Ok(self.add_view(source, out, step, None, self.window_ms_of(source)))
@@ -224,7 +220,7 @@ impl LiveSeries {
         let mut seen = 0usize;
         let step: Step = Box::new(move |e: &LiveEvent| {
             seen += 1;
-            (seen % stride == 0).then(|| e.clone())
+            (seen % stride == 0).then(|| Kept::Pass(e.clone()))
         });
         Ok(self.add_view(source, schema, step, None, None))
     }
@@ -240,7 +236,7 @@ impl LiveSeries {
         let source = self.source_of("LiveSeries::window", from.into())?;
         let ms = parse_duration(duration)?;
         let schema = self.schema_of(source);
-        let step: Step = Box::new(|e: &LiveEvent| Some(e.clone()));
+        let step: Step = Box::new(|e: &LiveEvent| Some(Kept::Pass(e.clone())));
         Ok(self.add_view(source, schema, step, Some(Window::Span(ms)), Some(ms)))
     }
 
@@ -260,7 +256,7 @@ impl LiveSeries {
             });
         }
         let schema = self.schema_of(source);
-        let step: Step = Box::new(|e: &LiveEvent| Some(e.clone()));
+        let step: Step = Box::new(|e: &LiveEvent| Some(Kept::Pass(e.clone())));
         Ok(self.add_view(source, schema, step, Some(Window::Rows(rows)), None))
     }
 
@@ -369,7 +365,6 @@ impl LiveSeries {
         }
         let targets = Self::columns_of(call, &schema, columns, Some(ColumnKind::Number))?;
         let out = Self::numbers_at(&schema, &targets);
-        let schema_out = Arc::clone(&out);
         let mut prev: Option<(LiveEvent, i64)> = None;
         let step: Step = Box::new(move |e: &LiveEvent| {
             let mut values = e.values().to_vec();
@@ -403,11 +398,7 @@ impl LiveSeries {
                     prev = Some((e.clone(), e.begin()));
                 }
             }
-            Some(LiveEvent::new(
-                Arc::clone(&schema_out),
-                e.key().clone(),
-                values,
-            ))
+            Some(Kept::New(values))
         });
         Ok(self.add_view(source, out, step, None, None))
     }
@@ -571,8 +562,8 @@ impl LiveSeries {
                 }
             }
             Some(match values {
-                None => e.clone(),
-                Some(values) => LiveEvent::new(Arc::clone(e.schema_arc()), e.key().clone(), values),
+                None => Kept::Pass(e.clone()),
+                Some(values) => Kept::New(values),
             })
         });
         Ok(self.add_view(source, schema, step, None, None))
@@ -668,7 +659,6 @@ impl LiveSeries {
         }
         let targets = Self::columns_of(call, &schema, names, Some(ColumnKind::Number))?;
         let out = Self::numbers_at(&schema, &targets);
-        let schema_out = Arc::clone(&out);
         let mut acc: Vec<Option<f64>> = vec![None; targets.len()];
         let step: Step = Box::new(move |e: &LiveEvent| {
             let mut values = e.values().to_vec();
@@ -678,11 +668,7 @@ impl LiveSeries {
                 }
                 values[t] = acc[k].filter(|a| a.is_finite()).map(Value::Number);
             }
-            Some(LiveEvent::new(
-                Arc::clone(&schema_out),
-                e.key().clone(),
-                values,
-            ))
+            Some(Kept::New(values))
         });
         Ok(self.add_view(source, out, step, None, None))
     }

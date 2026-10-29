@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::column::Value;
 use crate::error::Result;
 use crate::query::EventKey;
 use crate::series::{ColumnDef, TimeSeries};
@@ -12,8 +13,18 @@ use super::buffer::EventBuffer;
 use super::event::{LiveEvent, LiveSchema};
 use super::reduce::Place;
 
-/// What a view does with each source event: the event it keeps, if any.
-pub(crate) type Step = Box<dyn FnMut(&LiveEvent) -> Option<LiveEvent> + Send>;
+/// What a view does with each source event: what it keeps, if anything.
+pub(crate) type Step = Box<dyn FnMut(&LiveEvent) -> Option<Kept> + Send>;
+
+/// What a step keeps of a source event: the event itself (a pass-through
+/// view: `filter`, `sample`, `window`, a `fill` with nothing to fill), or
+/// fresh cells under the source's key. Fresh cells go straight into the
+/// view's storage unless something takes this view's events, when an
+/// event is built from them.
+pub(crate) enum Kept {
+    Pass(LiveEvent),
+    New(Vec<Option<Value>>),
+}
 
 /// How a `window` view trims itself after each event it takes.
 #[derive(Debug, Clone, Copy)]
@@ -82,9 +93,11 @@ impl LiveView {
             window_ms,
         };
         for event in history {
-            if let Some(kept) = (view.step)(&event) {
-                view.buffer.insert_owned(kept);
-            }
+            match (view.step)(&event) {
+                Some(Kept::Pass(kept)) => view.buffer.insert_owned(kept),
+                Some(Kept::New(values)) => view.buffer.insert_cells(event.key().clone(), values),
+                None => continue,
+            };
         }
         view.trim();
         view
@@ -100,7 +113,17 @@ impl LiveView {
         event: &LiveEvent,
         hand_on: bool,
     ) -> Option<(Option<LiveEvent>, Place)> {
-        let kept = (self.step)(event)?;
+        let kept = match (self.step)(event)? {
+            Kept::Pass(kept) => kept,
+            Kept::New(values) if hand_on => {
+                LiveEvent::new(Arc::clone(&self.schema), event.key().clone(), values)
+            }
+            Kept::New(values) => {
+                let at = self.buffer.insert_cells(event.key().clone(), values);
+                let trimmed = self.trim();
+                return Some((None, Place { at, trimmed }));
+            }
+        };
         let (out, at) = if hand_on {
             let at = self.buffer.insert(&kept);
             (Some(kept), at)
@@ -128,22 +151,14 @@ impl LiveView {
         n
     }
 
-    /// Mirror a source eviction whose last evicted event started at
-    /// `cutoff`: drop held events starting at or before it. Returns the
-    /// start of the last one dropped (`None` when none was), and the events
-    /// themselves when `keep` is set (something watches this view's
+    /// Mirror a source eviction: drop the oldest `n` held events (n > 0,
+    /// those starting at or before the source's last evicted one, counted
+    /// by the owner). Returns the start of the last one dropped, and the
+    /// events themselves when `keep` is set (something watches this view's
     /// evictions).
-    pub(crate) fn mirror_evict(
-        &mut self,
-        cutoff: i64,
-        keep: bool,
-    ) -> (Option<i64>, Vec<LiveEvent>) {
-        let n = self.buffer.count_through(cutoff);
-        if n == 0 {
-            return (None, Vec::new());
-        }
+    pub(crate) fn mirror_evict(&mut self, n: usize, keep: bool) -> (i64, Vec<LiveEvent>) {
         let last = self.buffer.begin_at(n - 1);
-        (Some(last), self.buffer.evict(n, keep))
+        (last, self.buffer.evict(n, keep))
     }
 
     /// The source's name.

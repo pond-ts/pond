@@ -50,8 +50,12 @@ pub struct LivePartitionedRolling {
     keys: Vec<String>,
     windows: Vec<LiveRolling>,
     index: HashMap<String, usize>,
-    /// The partition value of each slot that feeds it.
-    pub(crate) feeds: HashMap<usize, String>,
+    /// Each slot that feeds it: a position in `feed_keys`.
+    pub(crate) feeds: HashMap<usize, usize>,
+    /// Per feed, its partition value and its window once made (a window is
+    /// made when the first event arrives, as pond-ts, which sets the order
+    /// partitions emit in).
+    feed_keys: Vec<(String, Option<usize>)>,
     step: i64,
     anchor: i64,
     last_bucket: Option<i128>,
@@ -117,11 +121,23 @@ impl LivePartitionedRolling {
         self.keys.len() - 1
     }
 
-    /// Take `event` from the partition `key`; the rows a tick emitted, if
-    /// it crossed into a new bucket (built only when `hand_on`).
-    pub(crate) fn ingest(&mut self, key: &str, event: &LiveEvent, hand_on: bool) -> Vec<LiveEvent> {
+    /// The window of feed `f`, made on its first event.
+    fn window_of(&mut self, f: usize) -> usize {
+        match self.feed_keys[f].1 {
+            Some(w) => w,
+            None => {
+                let w = self.ensure(&self.feed_keys[f].0.clone());
+                self.feed_keys[f].1 = Some(w);
+                w
+            }
+        }
+    }
+
+    /// Take `event` from feed `f` (see `feeds`); the rows a tick emitted,
+    /// if it crossed into a new bucket (built only when `hand_on`).
+    pub(crate) fn ingest(&mut self, f: usize, event: &LiveEvent, hand_on: bool) -> Vec<LiveEvent> {
         self.events_observed += 1;
-        let i = self.ensure(key);
+        let i = self.window_of(f);
         self.windows[i].take(event);
         let ts = event.begin();
         let Some(start) = clock_crossed(&mut self.last_bucket, ts, self.step, self.anchor) else {
@@ -130,19 +146,26 @@ impl LivePartitionedRolling {
         let mut emitted = Vec::new();
         for p in 0..self.windows.len() {
             self.windows[p].advance(ts);
-            let mut values = Vec::with_capacity(self.schema.columns.len() - 1);
-            values.push(Some(Value::String(self.keys[p].clone())));
-            values.extend(self.windows[p].values());
             self.emissions += 1;
             let key = EventKey::time(start);
+            let partition = Some(Value::String(self.keys[p].clone()));
             if hand_on {
+                let mut values = Vec::with_capacity(self.schema.columns.len() - 1);
+                values.push(partition);
+                values.extend(self.windows[p].values());
                 let event = LiveEvent::new(Arc::clone(&self.schema), key, values);
                 if self.keep.on() {
                     self.out.append_ref(&event);
                 }
                 emitted.push(event);
             } else if self.keep.on() {
-                self.out.append(key, values);
+                // Straight into storage, no event built.
+                self.out.append_values(
+                    key,
+                    std::iter::once(partition).chain(self.windows[p].snapshots()),
+                );
+            } else {
+                self.windows[p].snapshots().for_each(drop);
             }
         }
         if self.keep.on() {
@@ -341,6 +364,7 @@ impl LiveSeries {
             windows: Vec::new(),
             index: HashMap::new(),
             feeds: HashMap::new(),
+            feed_keys: Vec::new(),
             step,
             anchor,
             last_bucket: None,
@@ -380,14 +404,16 @@ impl LiveSeries {
             history.extend(self.held(feed).map(|e| (k, e)));
         }
         history.sort_by_key(|(_, e)| e.begin());
+        // Feeds are registered first (in partition order), windows are made
+        // as the replay reaches each feed's first event.
+        for (key, feed) in feeds {
+            self.feed_rolling(index, feed, key);
+        }
         let State::PartitionRolling(node) = &mut self.slots[index].state else {
             unreachable!()
         };
         for (k, event) in &history {
-            node.ingest(&feeds[*k].0, event, false);
-        }
-        for (key, feed) in feeds {
-            self.feed_rolling(index, feed, key);
+            node.ingest(*k, event, false);
         }
         self.partitioned_mut(p).hooks.push(Hook::Rolling {
             recipe,
@@ -405,7 +431,8 @@ impl LiveSeries {
         let State::PartitionRolling(node) = &mut self.slots[target].state else {
             unreachable!("slot {target} is not partition rolling")
         };
-        node.feeds.insert(feed, key);
+        node.feeds.insert(feed, node.feed_keys.len());
+        node.feed_keys.push((key, None));
         self.slots[feed].subs[OutputKind::Event.slot()].push(Sub::Child(target));
     }
 

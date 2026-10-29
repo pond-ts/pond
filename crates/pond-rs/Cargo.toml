@@ -66,3 +66,7 @@ required-features = ["live"]
 [[example]]
 name = "mem_live"
 required-features = ["live"]
+
+[[example]]
+name = "prof_live"
+required-features = ["live"]
