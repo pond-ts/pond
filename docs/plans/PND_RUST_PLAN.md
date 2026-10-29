@@ -3858,6 +3858,25 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          map). 1000 hosts, batches of 1000, per-host rolling 4,288 ms
          before, 994 after. The up-front partition check is skipped when
          the root's own order check already covers it.
+       - Threads (tried 2026-10-28/29, not kept; pjm17971 chose "stop").
+         `PartitionOptions::threads(n)` split partitions over shards, each
+         push's per-partition work ran on rayon and outputs were merged
+         back in one-thread order (an event engine trait shared by the
+         owner and a shard). Outputs matched on 1-5 shards (fixture plus
+         random pipelines), but the go/no-go (>= 1.5x on 4 threads, 1000
+         hosts, 1000-row pushes, rolling + collect) failed: 0.96 s on one
+         thread, 1.5-1.9 s on 2-4. Causes measured: a 1000-row push holds
+         ~0.5 ms of work, about what waking threads and merging cost;
+         with glibc malloc each shard ran ~2x slower when shards ran
+         together (mimalloc removed most of that and made one thread
+         35% faster); `collect` stays on the owner. At 50 hosts and 1M
+         rows/s one thread already does 1.0-1.4M rows/s (1.4-2.0M with
+         mimalloc); threads gave at best 1.3x. The parked code is commit
+         ff570b52 (reachable from branch claude/project-thread-225u77).
+         For more cores: several `LiveSeries`, each with a share of the
+         keys (2.5x on 4 threads at 1000 hosts). The same work found
+         the per-row linear search through declared `groups` (fixed,
+         1000 declared hosts 2.8 s -> 1.2 s).
     7. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
        a streaming task against polars-or-hand-written Rust; also the same
        task with a channel-style API vs owner-and-handles, to test rather

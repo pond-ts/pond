@@ -1001,6 +1001,24 @@ copies the cells it keeps. Batches of 1,000 are still slower than pond-ts
 (204 ms against 92 on that run): pond-rs still makes one short-lived event
 per row.
 
+### Threads and memory allocators
+
+A `LiveSeries` and everything built on it runs on the thread that pushes.
+One thread handled 50 hosts at about 1.0–1.4 million rows a second
+(pushes of 1,000 to 100,000 rows, a 1 s rolling average per host, with
+`collect` or `partition_rolling`; about 1 µs per row in all). Splitting
+partitions over threads inside one series was tried and was slower, not
+faster: each row's work per host is too small to be worth handing to
+another core. For more than one core, run several series, each taking a
+share of the hosts; on 1,000 hosts that ran 2.5× faster on 4 threads.
+
+A faster memory allocator helps more than threads. Pushes make and free
+many small allocations, and swapping the system allocator (glibc, on Linux) for
+[mimalloc](https://crates.io/crates/mimalloc) made the 50-host case
+30–45% faster, with no other change (add the crate, then
+`#[global_allocator] static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;`
+in your program).
+
 ### Memory
 
 A live series stores each column as its own list: a start time per event,
