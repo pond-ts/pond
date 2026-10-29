@@ -6,6 +6,8 @@ sidebar_position: 1
 
 import ChartExample from '@site/src/components/ChartExample';
 import FinancialCalendarChart from '@site/src/examples/financial-calendar-chart';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # @pond-ts/financial
 
@@ -19,9 +21,30 @@ Two things, both built on plain pond series:
   intraday breaks) plus the query surface pond's data ops and
   `@pond-ts/charts`' trading-time axis need. One class, `TradingCalendar`.
 
+Both are in **TypeScript or Rust**. In Rust they are part of the
+`pond-rs` crate (`pond_rs::financial`): every study `@pond-ts/financial`
+has, with the same numbers to the bit, and the trading calendar. The
+[pond-rs finance studies](../pond-rs/finance-studies) page has the Rust
+details. The charts on this page are TypeScript only.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 **Install** — `npm install @pond-ts/financial pond-ts`. Peer-depends on
 `pond-ts`; the pond packages release together, so keep their ranges in
 step.
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```toml
+# Cargo.toml: the studies come with the core crate
+[dependencies]
+pond-rs = { git = "https://github.com/pond-ts/pond" }
+```
+
+</TabItem>
+</Tabs>
 
 ## Studies
 
@@ -32,6 +55,9 @@ periods, and **appends** its
 output column(s) with the warm-up rows left `undefined` so the result lines
 up on the source's time axis. Studies compose because each returns the
 widened series. Opt in to the fluent surface once and chain them:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import '@pond-ts/financial/fluent';
@@ -44,6 +70,63 @@ const bars = candles
   .vwap({ period: 20 });
 // + bbUpper / bbMiddle / bbLower, ema, rsi, macdLine / macdSignal / macdHist, vwap
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::financial::{Bollinger, Macd, Study, Vwap};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 60 one-minute bars of made-up prices.
+    let n = 60;
+    let close: Vec<f64> = (0..n)
+        .map(|i| 100.0 + (i as f64 * 0.7).sin() * 3.0 + i as f64 * 0.1)
+        .collect();
+    let candles = TimeSeries::new(
+        "candles",
+        (0..n as i64).map(|i| i * 60_000).collect(),
+        vec![
+            Column::required("high", close.iter().map(|c| c + 0.5).collect::<Vec<_>>()),
+            Column::required("low", close.iter().map(|c| c - 0.5).collect::<Vec<_>>()),
+            Column::required("close", close.clone()),
+            Column::required(
+                "volume",
+                (0..n)
+                    .map(|i| 1_000.0 + (i % 7) as f64 * 50.0)
+                    .collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    let bars = candles
+        .bollinger(Bollinger::new(20))?
+        .ema(Study::period(10))?
+        .rsi(Study::period(14))?
+        .macd(Macd::default().fast(12).slow(26).signal(9))?
+        .vwap(Vwap::new(20))?;
+    // + bbUpper / bbMiddle / bbLower, ema, rsi, macdLine / macdSignal / macdHist, vwap
+
+    // The same numbers pond-ts gives for the same bars.
+    let last = bars.slice(-1..);
+    assert_eq!(
+        last.column("rsi")?.numbers()?.get(0),
+        Some(49.37483595541058)
+    );
+    assert_eq!(
+        last.column("macdHist")?.numbers()?.get(0),
+        Some(0.05182032081976984)
+    );
+    Ok(())
+}
+```
+
+In Rust every study is a method on `TimeSeries` with an options struct;
+`Study::period(n)` covers the ones that take only a period.
+
+</TabItem>
+</Tabs>
 
 Every study is also a plain function for code that would rather not augment
 `TimeSeries` — `rsi(ema(bollinger(candles, { period: 20 }), { period: 10 }))`
@@ -100,6 +183,9 @@ only needs an object shaped like `{ discontinuities(): ... }`, which
 Two constructors, both first-class — pick whichever shape your data
 starts in:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { TradingCalendar } from '@pond-ts/financial';
 
@@ -114,12 +200,42 @@ const cal = TradingCalendar.fromRules(
 const cal2 = TradingCalendar.fromSessions(sessions);
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::financial::{Session, SessionRules, TradingCalendar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // From hours + a date range: a calendar that generates its sessions.
+    let rules = SessionRules::new("America/New_York", "09:30", "16:00");
+    let cal = TradingCalendar::from_rules(&rules, "2026-01-05", "2026-02-13")?;
+
+    // From an explicit session list: dated open/close instants (epoch ms)
+    // from a vendor calendar or a holiday API.
+    let cal2 = TradingCalendar::from_sessions([
+        Session::new("2026-01-05", 1_767_623_400_000, 1_767_646_800_000),
+        Session::new("2026-01-06", 1_767_709_800_000, 1_767_733_200_000),
+    ])?;
+
+    assert_eq!(cal.len(), 30); // six weeks of weekdays
+    assert_eq!(cal2.sessions()[0], cal.sessions()[0]); // the same 5 January
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 `SessionRules` also takes `weekmask` (default Monday–Friday), `breaks`
 (a lunch), `holidays` (dates with no session), and `earlyCloses`
 (per-date override closes) — every hour is resolved DST-correctly
 against the IANA `timeZone` you give it, not a fixed UTC offset.
 
 ## Querying the calendar
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 cal.sessions(); // every session, ascending
@@ -128,6 +244,30 @@ cal.isTradingDay('2026-01-10'); // false — a Saturday
 cal.sessionContaining(instant); // the session an instant falls in
 cal.isOpen(instant); // inside a session AND not inside a break
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::financial::{SessionRules, TradingCalendar};
+use pond_rs::parse_time;
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let rules = SessionRules::new("America/New_York", "09:30", "16:00");
+    let cal = TradingCalendar::from_rules(&rules, "2026-01-05", "2026-02-13")?;
+    let instant = parse_time("2026-01-06T15:00:00Z")?; // 10:00 in New York
+
+    cal.sessions(); // every session, ascending
+    assert!(cal.session_on("2026-01-06").is_some()); // the session on a date, or None
+    assert!(!cal.is_trading_day("2026-01-10")); // a Saturday
+    assert_eq!(cal.session_containing(instant).unwrap().date, "2026-01-06");
+    assert!(cal.is_open(instant)); // inside a session and not inside a break
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ## Feeding a chart-ready bucketing grid
 
@@ -150,11 +290,18 @@ const fiveMinBars = tickSeries.aggregate(cal.barSequence('5m'), {
 boundary or an intraday break, and the final bar of each tradeable
 segment truncates at the close rather than overrunning it.
 
+pond-rs has not built `sessionSequence` / `barSequence` yet, so this
+section has no Rust tab. In Rust, `tag_sessions` (below) with
+`partition_by` covers the per-session work.
+
 ## Tagging events with their session
 
 `tagSessions` appends a session-id column — use it as a `partitionBy` key
 so stateful ops (`rolling`, `fill`, cumulative folds) don't bridge across
 a session boundary a raw time-based window would silently cross:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const tagged = cal.tagSessions(series); // adds a "session" column
@@ -164,10 +311,51 @@ const smoothed = tagged
   .collect();
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::financial::{SessionRules, TagSessions, TradingCalendar};
+use pond_rs::{Agg, Column, Reducer, TimeSeries, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let rules = SessionRules::new("America/New_York", "09:30", "16:00");
+    let cal = TradingCalendar::from_rules(&rules, "2026-01-05", "2026-01-06")?;
+
+    // Two prices near the Monday close, one at the Tuesday open.
+    let series = TimeSeries::new(
+        "ticks",
+        vec![
+            parse_time("2026-01-05T20:57:00Z")?, // 15:57 New York
+            parse_time("2026-01-05T20:59:00Z")?,
+            parse_time("2026-01-06T14:30:00Z")?, // 09:30 the next day
+        ],
+        vec![Column::required("price", vec![10.0, 12.0, 20.0])],
+    )?;
+
+    let tagged = cal.tag_sessions(&series, TagSessions::default())?; // adds a "session" column
+    let smoothed = tagged
+        .partition_by(&["session"])?
+        .rolling("5m", &[Agg::of("price", Reducer::Avg)])?
+        .collect()?;
+
+    // Tuesday's first average is its own price: the 5-minute window did not
+    // reach back into Monday's session.
+    let avg: Vec<_> = smoothed.column("price")?.numbers()?.iter().collect();
+    assert_eq!(avg, [Some(10.0), Some(11.0), Some(20.0)]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## Where to go next
 
 - [**API reference**](pathname:///generated-api/financial/) — the
   generated, full-width reference: every method, option, and type.
+- [pond-rs finance studies](../pond-rs/finance-studies) — the same studies
+  and calendar in Rust, every study listed with its options.
 - [Learn charts](../learn-charts/) — the tutorial track this page's chart
   reuses every primitive from.
 - [Resizable multi-panel layout](../recipes/resizable-panels) — the
