@@ -906,7 +906,7 @@ fn read_time_values(
             let whole = v
                 .div_euclid(per_ms)
                 .checked_mul(ms_per)
-                .filter(|ms| ms.abs() <= MAX_EXACT_F64)
+                .filter(|ms| ms.unsigned_abs() <= MAX_EXACT_F64 as u64)
                 .ok_or_else(|| {
                     invalid(
                         FROM,
@@ -1758,6 +1758,24 @@ mod tests {
         .unwrap();
         let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
         assert!(e.to_string().contains("too large"), "{e}");
+
+        // Codex review R12: i64::MIN panicked in `abs()` (debug) instead of
+        // being refused; with overflow unchecked it slipped past the check.
+        for v in [i64::MIN, i64::MIN + 1, i64::MAX] {
+            let b = RecordBatch::try_from_iter([
+                (
+                    "time",
+                    Arc::new(TimestampMillisecondArray::from(vec![0])) as ArrayRef,
+                ),
+                (
+                    "v",
+                    Arc::new(TimestampMillisecondArray::from(vec![v])) as ArrayRef,
+                ),
+            ])
+            .unwrap();
+            let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
+            assert!(e.to_string().contains("too large"), "{v}: {e}");
+        }
     }
 
     #[test]

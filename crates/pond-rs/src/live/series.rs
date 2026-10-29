@@ -76,7 +76,7 @@ impl SubSeries {
         let len = self.buffer.len();
         let mut n = self.max_events.map_or(0, |m| len.saturating_sub(m));
         if let (Some(age), Some(latest)) = (self.max_age_ms, self.buffer.back_begin()) {
-            n = n.max(self.buffer.count_before(latest - age));
+            n = n.max(self.buffer.count_before(latest.saturating_sub(age)));
         }
         n
     }

@@ -187,6 +187,45 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **pond-rs: numeric group names match JavaScript exactly.** A number
+  halfway between two shortest spellings (`667962307169479.25`) named its
+  pivot column, live partition and array group key by rounding up, where
+  JavaScript rounds to even (`667962307169479.2`), so a declared group could
+  be refused. 78 of 300,000 sampled doubles differed; none now.
+- **pond-rs: the study catalog reads session times however JSON spells a
+  whole number.** `sessionVwap` / `pivotPoints` session opens, closes and
+  breaks accept `100.0` and `1e2` as well as `100` (fractions are still
+  refused).
+- **Empty leading / centred rolling windows count nothing**
+  ([PND-ROLLEMPTY]). A time window that holds no rows (`'0ms'`, or a
+  centred `'1ms'` window whose edges round to the same millisecond past
+  2^52 ms) let earlier rows in: a leading `'0ms'` count on three rows gave
+  0, 1, 1. Same fix in `smooth`'s moving average. Both pond-ts and pond-rs;
+  found by a Codex review of pond-rs.
+- **pond-rs: four panics are now errors or gaps** (Codex review).
+  `PartitionedSeries::map` returns an error, not a panic, when one
+  partition's result drops a partition column (and refuses results with
+  different columns, which used to come back as mismatched partitions);
+  reading an Arrow time value of `i64::MIN` is refused instead of panicking;
+  a `max_age` near `i64::MAX` no longer overflows its cutoff; and
+  `linear_regression` / `time_series_forecast` /
+  `chande_forecast_oscillator` / `aroon` with a period no window can fill
+  give gaps instead of panicking for periods past `isize::MAX`.
+  `Ichimoku::offsets` refuses a displacement past `i64::MAX` (it flipped
+  the offsets' signs).
+- **Live interval-keyed series keep one label type** ([PND-LIVELABEL]).
+  A `pushMany` mixing number and text interval labels is refused whole
+  (pond-ts never checked live labels; pond-rs only checked each row
+  against the events held), instead of being stored and failing every
+  later `toTimeSeries()`.
+- **Live `map` views no longer claim required columns** ([PND-MAPGAP]).
+  A mapping may return a gap, and a non-finite number becomes one, so every
+  value column of a `map` view is now optional; a gap used to make each
+  snapshot throw. Both pond-ts and pond-rs.
+- **pond-rs: `partition_by` with declared groups checks rows already
+  held**, as pond-ts does, and refuses before building anything. Building
+  partitions over a long history with many groups is no longer quadratic
+  (64,000 rows each with its own host: 7.6 s → 0.19 s).
 - **`live.reduce` over a view now tracks what the view holds**
   ([PND-REDUCETRIM]). A reduce on a `window` view removes what the window
   trims (it used to keep every value the window had ever taken), and a

@@ -613,6 +613,17 @@ pond-ts shares the defect it is fixed there too, under its own tag.
 | --- | ---------------------------------------------------------- | ---------------------------------------------- |
 | R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
 | R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R03 | a batch can mix interval label kinds                       | fixed, both libs, [PND-LIVELABEL]              |
+| R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
+| R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
+| R08 | numeric group names round ties up, JavaScript to even      | fixed: shares the JSON writer's digits         |
+| R09 | catalog refuses `100.0` / `1e2` session milliseconds       | fixed: whole-number floats read                |
+| R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
+| R07 | empty leading/centred time windows admit earlier rows      | fixed, both libs, [PND-ROLLEMPTY]              |
+| R06 | batch partition map panics on a missing partition column   | fixed: error; mismatched results refused too   |
+| R12 | Arrow time value `i64::MIN` panics in `abs()`              | fixed: `unsigned_abs`                          |
+| R13 | huge study periods panic; Ichimoku offsets flip sign       | fixed: gaps (period > rows); offsets error     |
+| R14 | `max_age` near `i64::MAX` overflows the cutoff             | fixed: saturating cutoff                       |
 | R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
 
 Codex also listed four existing limitations, not on the fix list:
@@ -621,6 +632,12 @@ pond-ts, belongs to [PND-CHANGE]), schema-only Arrow IPC files unreadable,
 composition tests (view→reduce, window→reduce, building over history,
 schema after transforms) and ARCHITECTURE.md describing only the
 TypeScript classes.
+
+R13 note: an existing test (`huge_periods_give_gaps`) pins that a period no
+window can fill gives gaps, not an error, so the fix short-circuits those
+studies rather than capping periods at 2^53. A sweep of every catalog bar
+option at usize::MAX, isize::MAX + 1 and 2^53 + 2 (catalog cap lifted for
+the run) found exactly the reviewed studies and no others.
 
 ## Next
 

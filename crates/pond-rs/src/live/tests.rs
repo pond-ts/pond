@@ -157,6 +157,48 @@ fn interval_labels_keep_one_kind() {
 }
 
 #[test]
+fn a_batch_keeps_one_interval_label_kind() {
+    // Codex review R03: on an empty series each row was checked only
+    // against the events held, so a mixed batch was stored and every
+    // snapshot failed afterwards.
+    let make = || {
+        LiveSeries::new(
+            "i",
+            vec![
+                ColumnDef::required("interval", ColumnKind::Interval),
+                ColumnDef::optional("v", ColumnKind::Number),
+            ],
+        )
+        .unwrap()
+    };
+    let mixed = || {
+        vec![
+            (EventKey::interval(1.0, 0, 10).unwrap(), vec![None]),
+            (EventKey::interval("a", 10, 20).unwrap(), vec![None]),
+        ]
+    };
+    // Nothing built on the root (cells stored straight away) and with a
+    // view (events built): both refuse the whole batch.
+    let mut bare = make();
+    assert!(bare.push_many(mixed()).is_err());
+    assert!(bare.is_empty());
+    let mut watched = make();
+    let v = watched.filter(watched.root(), |_| true).unwrap();
+    assert!(watched.push_many(mixed()).is_err());
+    assert!(watched.is_empty() && watched[v].is_empty());
+    // One kind per batch is fine, and sets the kind for later batches.
+    watched
+        .push_many([(EventKey::interval("a", 0, 10).unwrap(), vec![None])])
+        .unwrap();
+    assert!(
+        watched
+            .push_many([(EventKey::interval(2.0, 10, 20).unwrap(), vec![None])])
+            .is_err()
+    );
+    assert_eq!(watched.to_time_series().unwrap().len(), 1);
+}
+
+#[test]
 fn schemas_and_options_are_checked() {
     let decimal = vec![
         ColumnDef::required("time", ColumnKind::Time),
@@ -1238,4 +1280,76 @@ fn reduce_on_windows_over_history_and_rolling() {
     let hi = held.iter().cloned().fold(f64::MIN, f64::max);
     let lo = held.iter().cloned().fold(f64::MAX, f64::min);
     assert_eq!(numbers(live[r].value()), [Some(hi), Some(lo), Some(2.0)]);
+}
+
+#[test]
+fn a_map_may_leave_gaps_in_required_columns() {
+    // Codex review R04: the view kept `required`, so a gap (None or a
+    // non-finite number, both allowed) made every snapshot fail.
+    let mut live = LiveSeries::new(
+        "m",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("v", ColumnKind::Number),
+            ColumnDef::required("host", ColumnKind::String),
+        ],
+    )
+    .unwrap();
+    let root = live.root();
+    let inf = live
+        .map(root, |e| {
+            vec![Some(Value::Number(f64::INFINITY)), e.values()[1].clone()]
+        })
+        .unwrap();
+    let none = live.map(root, |_| vec![None, None]).unwrap();
+    assert!(live[inf].schema()[1..].iter().all(|c| !c.required));
+    live.push(0, [Some(1.0.into()), Some("a".into())]).unwrap();
+    let ts = live[inf].to_time_series().unwrap();
+    assert_eq!(ts.len(), 1);
+    assert_eq!(live[none].to_time_series().unwrap().len(), 1);
+    // The root keeps its schema.
+    assert!(live.schema()[1].required);
+}
+
+#[test]
+fn declared_groups_check_the_history() {
+    // Codex review R05: rows already held bypassed the declared groups, so
+    // partition_by(["a"]) over a held "b" built a "b" partition.
+    for options in [
+        LiveOptions::new(),
+        LiveOptions::new().ordering(OrderingMode::Reorder),
+    ] {
+        let mut live = series(options);
+        let root = live.root();
+        live.push(0, row("b", 1.0)).unwrap();
+        assert!(
+            live.partition_by(root, "host", &PartitionOptions::new().groups(&["a"]))
+                .is_err()
+        );
+        // Nothing half built: a left-over partition node would refuse "b".
+        live.push(1000, row("b", 2.0)).unwrap();
+        let p = live
+            .partition_by(root, "host", &PartitionOptions::new().groups(&["a", "b"]))
+            .unwrap();
+        assert_eq!(live[p].keys(), ["a", "b"]);
+    }
+}
+
+#[test]
+fn a_huge_max_age_does_not_overflow() {
+    // Codex review R14: the cutoff `latest - age` overflowed (a panic in
+    // debug; in release it wrapped and could evict fresh data).
+    let age = "9223372036854775807ms";
+    let mut live = series(LiveOptions::new().max_age(age));
+    let root = live.root();
+    let p = live
+        .partition_by(root, "host", &PartitionOptions::new().max_age(age))
+        .unwrap();
+    for t in [-2, -1, 5] {
+        live.push(t, row("a", 1.0)).unwrap();
+    }
+    assert_eq!(live.len(), 3);
+    assert_eq!(live[p].keys(), ["a"]);
+    let part = live[p].partition("a").unwrap();
+    assert_eq!(live[part].len(), 3);
 }

@@ -632,6 +632,16 @@ pub(crate) fn walk<T: Anchor>(frame: &Frame<T>, w: &mut impl Window) {
                     w.leave(start);
                     start += 1;
                 }
+                // With the window empty, rows before `lower` never entered:
+                // step past them rather than let them in below (Codex
+                // review R07: a 0 ms window, or one whose f64 edges round
+                // shut, counted earlier rows).
+                if start == end {
+                    while end < rows && t(end) < lower {
+                        end += 1;
+                    }
+                    start = end;
+                }
                 while end < rows && t(end) < upper {
                     w.enter(end);
                     end += 1;

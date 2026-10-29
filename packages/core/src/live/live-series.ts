@@ -545,6 +545,7 @@ export class LiveSeries<S extends SeriesSchema> {
       // 'evict' skipped.
       const events = rows.map((row) => this.#validateRow(row));
       this.#checkOrder(events);
+      this.#checkLabels(events);
       const added: EventForSchema<S>[] = [];
       const errors: unknown[] = [];
 
@@ -1647,6 +1648,30 @@ export class LiveSeries<S extends SeriesSchema> {
         throw new ValidationError(
           `event at ${event.begin()} is outside grace window ` +
             `(latest: ${last.begin()}, grace: ${this.#graceWindowMs}ms)`,
+        );
+      }
+    }
+  }
+
+  /**
+   * [PND-LIVELABEL] An interval-keyed series holds one label type (all
+   * numbers or all text), like a batch series. Check the whole batch, and
+   * against the events held, before committing any of it: a mixed batch
+   * used to be stored and only fail later, in `toTimeSeries()`.
+   */
+  #checkLabels(events: ReadonlyArray<EventForSchema<S>>): void {
+    if (this.schema[0]!.kind !== 'interval') return;
+    const held = this.#perRow!.keyAt(0);
+    let kind: string | undefined =
+      held instanceof Interval ? typeof held.value : undefined;
+    for (let i = 0; i < events.length; i++) {
+      const key = events[i]!.key();
+      if (!(key instanceof Interval)) continue;
+      const t = typeof key.value;
+      if (kind === undefined) kind = t;
+      else if (t !== kind) {
+        throw new ValidationError(
+          `row ${i} has interval label of type ${t} but earlier rows had ${kind} labels — interval-keyed series must use one label type throughout`,
         );
       }
     }
