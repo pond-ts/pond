@@ -1064,3 +1064,178 @@ fn removing_partition_rolling_removes_its_whole_chain() {
     live.remove(r).unwrap();
     assert_eq!(views(&live), 0);
 }
+
+fn numbers(values: Vec<Option<Value>>) -> Vec<Option<f64>> {
+    values
+        .into_iter()
+        .map(|v| match v {
+            Some(Value::Number(x)) => Some(x),
+            None => None,
+            other => panic!("not a number: {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn reduce_removes_what_a_window_trims() {
+    // Codex review R01: a reduce on a window kept every value the window
+    // had ever taken.
+    let sum_count = [
+        Agg::new("s", "cpu", Reducer::Sum),
+        Agg::new("n", "cpu", Reducer::Count),
+        Agg::new("lo", "cpu", Reducer::Min),
+    ];
+    let mut live = series(LiveOptions::new().max_events(3));
+    let root = live.root();
+    let rows = live.window_rows(root, 2).unwrap();
+    let span = live.window(root, "1500ms").unwrap();
+    let by_rows = live.reduce(rows, &sum_count).unwrap();
+    let by_span = live.reduce(span, &sum_count).unwrap();
+    for (t, cpu) in [(1000, 1.0), (2000, 2.0), (3000, 3.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    assert_eq!(
+        numbers(live[by_rows].value()),
+        [Some(5.0), Some(2.0), Some(2.0)]
+    );
+    assert_eq!(live[by_rows].stats().buffer_size, 2);
+    assert_eq!(
+        numbers(live[by_span].value()),
+        [Some(5.0), Some(2.0), Some(2.0)]
+    );
+    // The emitted events agree with value().
+    let last = live[by_rows].at(-1).unwrap();
+    assert_eq!(last.number("s").unwrap(), Some(5.0));
+    // Root retention after trims: the root drops 1000 and 2000, the
+    // windows had already trimmed 1000 and only lose 2000.
+    live.push_many([(4000, row("a", 4.0)), (5000, row("a", 5.0))])
+        .unwrap();
+    assert_eq!(
+        numbers(live[by_rows].value()),
+        [Some(9.0), Some(2.0), Some(4.0)]
+    );
+    assert_eq!(live[by_rows].stats().buffer_size, 2);
+    assert_eq!(
+        numbers(live[by_span].value()),
+        [Some(9.0), Some(2.0), Some(4.0)]
+    );
+    // Clear empties everything.
+    live.clear();
+    live.push(6000, row("a", 6.0)).unwrap();
+    assert_eq!(
+        numbers(live[by_rows].value()),
+        [Some(6.0), Some(1.0), Some(6.0)]
+    );
+    assert_eq!(
+        numbers(live[by_span].value()),
+        [Some(6.0), Some(1.0), Some(6.0)]
+    );
+}
+
+#[test]
+fn reduce_on_a_window_of_a_reorder_series_removes_late_trims() {
+    // A late event older than the window's cutoff is trimmed straight
+    // away: the reduce adds and removes it.
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let root = live.root();
+    let w = live.window(root, "1s").unwrap();
+    let red = live
+        .reduce(
+            w,
+            &[
+                Agg::new("s", "cpu", Reducer::Sum),
+                Agg::new("hi", "cpu", Reducer::Max),
+                Agg::new("l", "cpu", Reducer::Last),
+            ],
+        )
+        .unwrap();
+    for (t, cpu) in [(1000, 1.0), (2000, 2.0), (2500, 3.0), (100, 50.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    assert_eq!(begins(live[w].events()), [2000, 2500]);
+    assert_eq!(
+        numbers(live[red].value()),
+        [Some(5.0), Some(3.0), Some(3.0)]
+    );
+}
+
+#[test]
+fn reduce_through_a_view_of_a_reorder_series() {
+    // Codex review R02: a reduce on a view of a reorder series used
+    // states that only remove the oldest arrival.
+    let mut live = series(
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .max_events(2),
+    );
+    let root = live.root();
+    let f = live.filter(root, |_| true).unwrap();
+    let g = live.filter(f, |_| true).unwrap();
+    let mapping = [
+        Agg::new("hi", "cpu", Reducer::Max),
+        Agg::new("lo", "cpu", Reducer::Min),
+        Agg::new("first", "cpu", Reducer::First),
+        Agg::new("last", "cpu", Reducer::Last),
+    ];
+    let on_f = live.reduce(f, &mapping).unwrap();
+    let on_g = live.reduce(g, &mapping).unwrap();
+    for (t, cpu) in [(1000, 10.0), (2000, 20.0), (500, 100.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    assert_eq!(begins(live[f].events()), [1000, 2000]);
+    let want = [Some(20.0), Some(10.0), Some(10.0), Some(20.0)];
+    assert_eq!(numbers(live[on_f].value()), want);
+    assert_eq!(numbers(live[on_g].value()), want);
+}
+
+#[test]
+fn reduce_on_windows_over_history_and_rolling() {
+    // A window built over history, then a reduce on it.
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    for t in [1000, 2000, 3000, 4000] {
+        live.push(t, row("a", (t / 1000) as f64)).unwrap();
+    }
+    let w = live.window_rows(root, 2).unwrap();
+    let sum = [Agg::new("s", "cpu", Reducer::Sum)];
+    let r = live.reduce(w, &sum).unwrap();
+    assert_eq!(numbers(live[r].value()), [Some(7.0)]);
+    live.push(5000, row("a", 5.0)).unwrap();
+    assert_eq!(numbers(live[r].value()), [Some(9.0)]);
+    // A filter on a window keeps what the window trims.
+    let f = live.filter(w, |_| true).unwrap();
+    let rf = live.reduce(f, &sum).unwrap();
+    live.push(6000, row("a", 6.0)).unwrap();
+    assert_eq!(live[f].len(), 3);
+    assert_eq!(numbers(live[rf].value()), [Some(15.0)]);
+
+    // Rolling of a reorder series: a late event comes out keyed in the
+    // past, so a window over the rolling output trims by key order.
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+    let root = live.root();
+    let ro = live
+        .rolling(root, "10s", &[Agg::new("cpu", "cpu", Reducer::Max)])
+        .unwrap();
+    let w = live.window_rows(ro, 2).unwrap();
+    let r = live
+        .reduce(
+            w,
+            &[
+                Agg::new("hi", "cpu", Reducer::Max),
+                Agg::new("lo", "cpu", Reducer::Min),
+                Agg::new("last", "cpu", Reducer::Last),
+            ],
+        )
+        .unwrap();
+    for (t, cpu) in [(1000, 1.0), (2000, 2.0), (500, 7.0)] {
+        live.push(t, row("a", cpu)).unwrap();
+    }
+    let held: Vec<f64> = live[w]
+        .events()
+        .map(|e| e.number("cpu").unwrap().unwrap())
+        .collect();
+    assert_eq!(held.len(), 2);
+    let hi = held.iter().cloned().fold(f64::MIN, f64::max);
+    let lo = held.iter().cloned().fold(f64::MAX, f64::min);
+    assert_eq!(numbers(live[r].value()), [Some(hi), Some(lo), Some(2.0)]);
+}

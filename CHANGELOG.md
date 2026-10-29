@@ -181,6 +181,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`live.reduce` over a view now tracks what the view holds**
+  ([PND-REDUCETRIM]). A reduce on a `window` view removes what the window
+  trims (it used to keep every value the window had ever taken), and a
+  reduce on a view of a `reorder` series removes late arrivals correctly
+  (`min` / `max` / `first` / `last` could go stale or empty). Fixed in both
+  pond-ts and pond-rs; found by a Codex review of pond-rs.
 - **pond-rs: live partitions with declared groups are no longer slow per
   row.** With `PartitionOptions::groups`, every row of a push was checked
   against the declared values one by one, and a map of each partition's

@@ -45,7 +45,8 @@ pub(crate) enum Window {
 /// view also trims itself after each event, silently (as pond-ts: no
 /// `Evict` output, and views built on it keep what it trimmed). So a late
 /// event older than a window's cutoff is trimmed at once but still handed
-/// to views built on the window, which keep it.
+/// to views built on the window, which keep it. A reduce built on the
+/// window does hear of each trim and removes what it dropped.
 ///
 /// A late event (one a [`Reorder`](super::OrderingMode::Reorder) source
 /// accepts before its newest) goes into the view at its key's position.
@@ -106,8 +107,11 @@ impl LiveView {
     /// Run the step on one source event and hold what it keeps: `None`
     /// when it keeps nothing. Otherwise where the kept event went, and the
     /// event itself when `hand_on` is set (something takes this view's
-    /// events): handed on even if a window trims it straight away. Without
-    /// `hand_on` the cells are moved into storage.
+    /// events). Without `hand_on` the cells are moved into storage. A
+    /// window is not applied here: the owner hands the event on first,
+    /// then trims with [`LiveView::excess`], so a reduce built on the
+    /// window removes what it trims (even the event just taken, when a
+    /// late event lands before the cutoff).
     pub(crate) fn take(
         &mut self,
         event: &LiveEvent,
@@ -120,35 +124,47 @@ impl LiveView {
             }
             Kept::New(values) => {
                 let at = self.buffer.insert_cells(event.key().clone(), values);
-                let trimmed = self.trim();
-                return Some((None, Place { at, trimmed }));
+                return Some((None, Place { at }));
             }
         };
-        let (out, at) = if hand_on {
+        if hand_on {
             let at = self.buffer.insert(&kept);
-            (Some(kept), at)
+            Some((Some(kept), Place { at }))
         } else {
-            (None, self.buffer.insert_owned(kept))
-        };
-        let trimmed = self.trim();
-        Some((out, Place { at, trimmed }))
+            Some((
+                None,
+                Place {
+                    at: self.buffer.insert_owned(kept),
+                },
+            ))
+        }
     }
 
-    /// Apply the window, if any: drop the oldest events past it. Returns
-    /// how many it dropped.
-    fn trim(&mut self) -> usize {
-        let n = match self.window {
-            None => return 0,
+    /// Apply the window, if any: drop the oldest events past it.
+    fn trim(&mut self) {
+        let n = self.excess();
+        if n > 0 {
+            self.buffer.evict(n, false);
+        }
+    }
+
+    /// How many of the oldest events the window would drop now (0 without
+    /// a window).
+    pub(crate) fn excess(&self) -> usize {
+        match self.window {
+            None => 0,
             Some(Window::Rows(keep)) => self.buffer.len().saturating_sub(keep),
             Some(Window::Span(ms)) => match self.buffer.back_begin() {
                 None => 0,
                 Some(last) => self.buffer.count_before(last.saturating_sub(ms)),
             },
-        };
-        if n > 0 {
-            self.buffer.evict(n, false);
         }
-        n
+    }
+
+    /// Drop the oldest `n` events (a window trim the owner has told the
+    /// reduces built on this view about).
+    pub(crate) fn drop_front(&mut self, n: usize) {
+        self.buffer.evict(n, false);
     }
 
     /// Mirror a source eviction: drop the oldest `n` held events (n > 0,

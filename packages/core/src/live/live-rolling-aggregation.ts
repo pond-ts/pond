@@ -313,6 +313,18 @@ export class LiveRollingAggregation<
     return onSourceSettle(this.#settleSource, fn);
   }
 
+  /**
+   * @internal [PND-REDUCETRIM] Its source's eviction order: a late event
+   * from a `reorder` source comes out keyed in the past, so a view built
+   * on this (and a reduce on that view) can drop a recent arrival.
+   */
+  get _evictionOrder(): 'arrival' | 'sorted' {
+    return (
+      (this.#settleSource as { _evictionOrder?: 'arrival' | 'sorted' })
+        ._evictionOrder ?? 'arrival'
+    );
+  }
+
   at(index: number): EventForSchema<Out> | undefined {
     if (index < 0) index = this.#outputEvents.length + index;
     return this.#outputEvents[index];
