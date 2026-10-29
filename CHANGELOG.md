@@ -160,7 +160,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   `cumulative` / `fill` view with nothing built on it stores its cells
   directly. Every case runs fewer instructions per event, from 7% to 42%
   (push alone −41%, `reduce` −31%, 1,000-host synchronised rolling −27%).
-  Results are unchanged (all 65 live replay cases match pond-ts).
+  Results are unchanged (all 69 live replay cases match pond-ts; four new cases push into a series nothing listens to, the path the batch fix takes, under strict retention, drop, reorder and a view added later).
 - **pond-rs: live series and views store events by column**, not as one
   shared object per event: 5 to 7 times less memory for number columns,
   about 5 times with a text column (1M events with three number columns:

@@ -18,7 +18,9 @@
  *   { dispose: id }       nodes[id].dispose()
  *
  * Every node (and the root) gets one listener per output kind its class
- * has, unless built with `watch: false`: pond-ts disposes an intermediate
+ * has, unless built with `watch: false` (a case with `watch: false` attaches
+ * none to the root, so nothing takes its events: pond-rs stores such a
+ * push without building events, and must still hold the same rows): pond-ts disposes an intermediate
  * view along with the last view built on it only if nothing else listens
  * to it, so case `view-dispose-chain` needs a node with no listeners (LiveSeries: event, batch, evict; LiveView: event, evict;
  * LiveAggregation: event, bucket, update; LiveRollingAggregation: event,
@@ -299,6 +301,62 @@ const CASES = [
       ...each(ROWS.slice(0, 8)),
       { push: ROWS.slice(8, 16) },
       { pushMany: ROWS.slice(16) },
+    ],
+  },
+  // Nothing listens to the root (pond-rs's bare-root path): strict with
+  // retention, `clear`, an empty push; drop and reorder with late rows; and
+  // a root that gains a view (events built again), then loses it.
+  {
+    name: 'series-unwatched',
+    schema: SCHEMA,
+    watch: false,
+    options: { retention: { maxEvents: 5 } },
+    steps: [
+      ...each(ROWS.slice(0, 4)),
+      { push: [] },
+      { pushMany: ROWS.slice(4, 12) },
+      { push: [[2000, 'a', 1, 1]] },
+      { clear: true },
+      { pushMany: ROWS.slice(12) },
+    ],
+  },
+  {
+    name: 'series-unwatched-drop-late',
+    schema: SCHEMA,
+    watch: false,
+    options: { ordering: 'drop', retention: { maxEvents: 6 } },
+    steps: [
+      ...LATE_STEPS,
+      { pushMany: [ROWS[14], [100, 'a', 1, 1], ROWS[15]] },
+    ],
+  },
+  {
+    name: 'series-unwatched-reorder',
+    schema: SCHEMA,
+    watch: false,
+    options: {
+      ordering: 'reorder',
+      graceWindow: '3s',
+      retention: { maxAge: '4s', maxEvents: 6 },
+    },
+    steps: [
+      ...LATE_STEPS,
+      { pushMany: [ROWS[14], [100, 'a', 1, 1], ROWS[15]] },
+    ],
+  },
+  {
+    name: 'series-unwatched-then-view',
+    schema: SCHEMA,
+    watch: false,
+    options: { retention: { maxEvents: 6 } },
+    steps: [
+      { pushMany: ROWS.slice(0, 5) },
+      node('f', 'filter', 'root', filterGt('cpu', 1)),
+      ...each(ROWS.slice(5, 9)),
+      { pushMany: ROWS.slice(9, 12) },
+      { dispose: 'f' },
+      ...each(ROWS.slice(12, 14)),
+      { pushMany: ROWS.slice(14) },
     ],
   },
   {
@@ -1472,7 +1530,8 @@ async function runCase(pond, spec) {
   const record = (o) => sink.push(o);
   const nodes = new Map([['root', root]]);
   const disposed = new Set();
-  attach(root, 'root', record);
+  if (spec.watch === false) out.watch = false;
+  else attach(root, 'root', record);
   out.steps = [];
   for (const step of spec.steps) {
     sink = [];

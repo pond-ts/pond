@@ -882,20 +882,29 @@ impl LiveSeries {
             self.emit_event(part, event, Some(place), out);
             self.series_mut(part).buffer.insert(event);
         }
-        // 3. Each partition finishes, in order of its last row.
+        // 3. Each partition finishes, in order of its last row. A
+        //    partition with `Batch` watchers gets its rows of the push,
+        //    gathered in one pass over the push.
+        let wants_batch: Vec<bool> = shares
+            .iter()
+            .map(|share| !self.slots[share.slot].subs[OutputKind::Batch.slot()].is_empty())
+            .collect();
+        let mut added: Vec<Vec<LiveEvent>> = vec![Vec::new(); shares.len()];
+        if wants_batch.iter().any(|&w| w) {
+            for (event, &s) in events.iter().zip(&share_of) {
+                if s != NO_SHARE && wants_batch[s as usize] {
+                    added[s as usize].push(event.clone());
+                }
+            }
+        }
         let mut close: Vec<u32> = (0..shares.len() as u32).collect();
         close.sort_unstable_by_key(|&s| shares[s as usize].last);
         for &s in &close {
             let share = &shares[s as usize];
             let part = share.slot;
             let n = self.series(part).retention_count();
-            if !self.slots[part].subs[OutputKind::Batch.slot()].is_empty() {
-                let added: Vec<LiveEvent> = events
-                    .iter()
-                    .zip(&share_of)
-                    .filter(|(_, of)| **of == s)
-                    .map(|(e, _)| e.clone())
-                    .collect();
+            if wants_batch[s as usize] {
+                let added = std::mem::take(&mut added[s as usize]);
                 self.emit(part, OutputKind::Batch, out, |node| Output::Batch {
                     node,
                     events: added.clone(),
