@@ -206,6 +206,8 @@ export class LiveReduce<
   readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribeEvent: () => void;
   readonly #unsubscribeEvict: (() => void) | undefined;
+  /** [PND-REDUCETRIM] A `window` view's silent trims; `undefined` for other sources. */
+  readonly #unsubscribeTrim: (() => void) | undefined;
   /** [PND-REDUCETICK] Root series' end-of-push hook; `undefined` if the source has none. */
   readonly #unsubscribeSettle: (() => void) | undefined;
   readonly #source: LiveSource<S>;
@@ -293,6 +295,20 @@ export class LiveReduce<
         },
       );
     }
+
+    // [PND-REDUCETRIM] A `window` view trims itself without `'evict'`;
+    // it tells a reduce through this internal channel, after the event.
+    const trimSource = source as {
+      _onTrim?: (
+        fn: (events: ReadonlyArray<EventForSchema<S>>) => void,
+      ) => () => void;
+    };
+    this.#unsubscribeTrim =
+      typeof trimSource._onTrim === 'function'
+        ? trimSource._onTrim((trimmed) => {
+            for (const ev of trimmed) this.#evictOne(ev);
+          })
+        : undefined;
 
     // [PND-REDUCETICK] Emit at the end of each push, after retention and
     // `'evict'`, through the root series' settle hook. Subscribed after
@@ -392,6 +408,7 @@ export class LiveReduce<
     this.#disposed = true;
     this.#unsubscribeEvent();
     this.#unsubscribeEvict?.();
+    this.#unsubscribeTrim?.();
     this.#unsubscribeSettle?.();
   }
 

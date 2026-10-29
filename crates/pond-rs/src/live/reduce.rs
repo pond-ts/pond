@@ -26,13 +26,10 @@ use super::states::LiveState;
 const CALL: &str = "LiveSeries::reduce";
 
 /// Where an event went in its source, for a reduce that follows the
-/// source's evictions: its position among the events the source holds, and
-/// how many of the oldest the source dropped straight after without saying
-/// so (a `window` view trimming itself).
+/// source's evictions: its position among the events the source holds.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Place {
     pub(crate) at: usize,
-    pub(crate) trimmed: usize,
 }
 
 /// A reduction over what a source holds now, read through the owner.
@@ -112,7 +109,7 @@ impl LiveReduce {
             emissions: 0,
         };
         for (at, event) in history.enumerate() {
-            reduce.ingest(&event, Place { at, trimmed: 0 });
+            reduce.ingest(&event, Place { at });
         }
         // pond-ts emits for the replay on a microtask, after the build;
         // here it goes straight into the kept events.
@@ -126,7 +123,6 @@ impl LiveReduce {
         let index = self.next;
         self.next += 1;
         self.held.insert(place.at, index);
-        self.held.drain(..place.trimmed.min(self.held.len()));
         for (src, state) in &mut self.columns {
             if let Some(v) = &event.values()[*src] {
                 state.add(index, v);
@@ -139,7 +135,8 @@ impl LiveReduce {
     }
 
     /// The source is about to drop its oldest `n` events, still in
-    /// `buffer`: remove them, oldest first.
+    /// `buffer` (an eviction, or a `window` view trimming itself): remove
+    /// them, oldest first.
     pub(crate) fn evict_cells(&mut self, buffer: &EventBuffer, n: usize) {
         for i in 0..n.min(buffer.len()) {
             let Some(index) = self.held.pop_front() else {

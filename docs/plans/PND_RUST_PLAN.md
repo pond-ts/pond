@@ -570,6 +570,26 @@ Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
 partitioned variants); a mutation run (dropping one appended column, renaming
 the output) failed all 10.
 
+## Codex review of the whole crate (2026-10-29)
+
+pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
+findings (2 P1, 10 P2, 2 P3), checked one by one against main after #852
+and fixed in small PRs, each with a test that fails before the fix. Where
+pond-ts shares the defect it is fixed there too, under its own tag.
+
+| #   | Finding                                                    | Status                                         |
+| --- | ---------------------------------------------------------- | ---------------------------------------------- |
+| R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
+| R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
+
+Codex also listed four existing limitations, not on the fix list:
+duplicate-timestamp retention removing still-held view rows (mirrors
+pond-ts, belongs to [PND-CHANGE]), schema-only Arrow IPC files unreadable,
+composition tests (view→reduce, window→reduce, building over history,
+schema after transforms) and ARCHITECTURE.md describing only the
+TypeScript classes.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

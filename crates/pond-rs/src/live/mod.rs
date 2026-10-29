@@ -1010,7 +1010,6 @@ impl LiveSeries {
             // when no output kept the event.
             let place = Place {
                 at: series.buffer.position(event.key()),
-                trimmed: 0,
             };
             self.emit_event(i, &event, Some(place), out);
             if want_batch {
@@ -1065,6 +1064,25 @@ impl LiveSeries {
         let cutoff = series.buffer.begin_at(n - 1);
         let evicted = series.buffer.evict(n, keep);
         self.emit_evict(i, cutoff, &evicted, out);
+    }
+
+    /// Apply view `c`'s window, if any, after the event it took went on:
+    /// the reduces built on it remove what it drops first. Silent
+    /// otherwise, as pond-ts (no `Evict` output; views built on it keep
+    /// what it trimmed).
+    fn trim_view(&mut self, c: usize) {
+        let State::View(view) = &self.slots[c].state else {
+            unreachable!("a view")
+        };
+        let n = view.excess();
+        if n == 0 {
+            return;
+        }
+        self.remove_from_reduces(c, n);
+        let State::View(view) = &mut self.slots[c].state else {
+            unreachable!("a view")
+        };
+        view.drop_front(n);
     }
 
     /// Whether a watcher needs the events `node` evicts (a view only needs
@@ -1190,8 +1208,11 @@ impl LiveSeries {
         let hand_on = !self.slots[c].subs[OutputKind::Event.slot()].is_empty();
         match &mut self.slots[c].state {
             State::View(view) => {
-                if let Some((Some(kept), place)) = view.take(event, hand_on) {
-                    self.emit_event(c, &kept, Some(place), out);
+                if let Some((kept, place)) = view.take(event, hand_on) {
+                    if let Some(kept) = kept {
+                        self.emit_event(c, &kept, Some(place), out);
+                    }
+                    self.trim_view(c);
                 }
             }
             State::Rolling(rolling) => {
@@ -1619,10 +1640,7 @@ impl LiveSeries {
             });
         }
         let schema = self.schema_of(source);
-        let sorted = matches!(
-            &self.slots[source].state,
-            State::Series(s) if s.ordering == OrderingMode::Reorder
-        );
+        let sorted = self.reorders(source);
         let reduce = LiveReduce::new(
             self.name_of(source),
             &schema.columns,
@@ -1632,6 +1650,26 @@ impl LiveSeries {
             self.held(source),
         )?;
         Ok(self.add_node(source, State::Reduce(reduce)))
+    }
+
+    /// Whether `node` can drop events in another order than they reached
+    /// it: the nearest series at or above it is [`OrderingMode::Reorder`],
+    /// so a late event can sit before ones that arrived earlier, and
+    /// evictions and window trims take the oldest by key. A view keeps its
+    /// source's late events, so this walks up through views, not just the
+    /// node itself; a series below decides for itself what it accepts.
+    fn reorders(&self, node: usize) -> bool {
+        let mut at = Some(node);
+        while let Some(i) = at {
+            match &self.slots[i].state {
+                State::Series(s) => return s.ordering == OrderingMode::Reorder,
+                // Closed buckets come out in order (late rows for a closed
+                // bucket are dropped), as pond-ts.
+                State::Aggregation(_) => return false,
+                _ => at = self.slots[i].source,
+            }
+        }
+        false
     }
 
     /// The node behind `node`; an error when it was removed or is another

@@ -990,9 +990,10 @@ const CASES = [
     // can be a late (recent) arrival: a reduce on the root must remove
     // that event, not the oldest arrival, and switches min / max / first /
     // last / difference to states that remove any event ([PND-LIVFIX]).
-    // A reduce on a filter of it keeps the arrival-order states; one on a
-    // window view never hears of what the window trims. Rolling windows
-    // take late events as new arrivals.
+    // A reduce on a filter of it takes the same states, as its evictions
+    // follow the root's ([PND-REDUCETRIM]); one on a window view removes
+    // what the window trims, a late event before the cutoff included.
+    // Rolling windows take late events as new arrivals.
     name: 'reduce-and-rolling-reorder',
     schema: SCHEMA,
     options: { ordering: 'reorder', retention: { maxEvents: 4 } },
@@ -1028,6 +1029,35 @@ const CASES = [
       }),
       ...LATE_STEPS,
       { pushMany: [ROWS[15], [9500, 'a', 5, 5], ROWS[16]] },
+    ],
+  },
+  {
+    // [PND-REDUCETRIM] A reduce on a row window and a time window removes
+    // what they trim; the root's retention afterwards only removes what
+    // the windows still hold; `clear` empties both.
+    name: 'reduce-on-window',
+    schema: SCHEMA,
+    options: { retention: { maxEvents: 5 } },
+    steps: [
+      node('wr', 'window', 'root', 3),
+      node('ws', 'window', 'root', '2s'),
+      node('f', 'filter', 'wr', filterGt('cpu', 0)),
+      node('rr', 'reduce', 'wr', {
+        cpu: 'sum',
+        n: { from: 'cpu', using: 'count' },
+        lo: { from: 'mem', using: 'min' },
+        s: { from: 'cpu', using: 'samples' },
+      }),
+      node('rs', 'reduce', 'ws', {
+        cpu: 'max',
+        mem: 'avg',
+        l: { from: 'cpu', using: 'last' },
+      }),
+      node('rf', 'reduce', 'f', { cpu: 'sum' }),
+      ...each(ROWS.slice(0, 8)),
+      { pushMany: ROWS.slice(8, 12) },
+      { clear: true },
+      ...each(ROWS.slice(12)),
     ],
   },
   {

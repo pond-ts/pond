@@ -877,7 +877,6 @@ impl LiveSeries {
             let part = shares[s as usize].slot;
             let place = super::reduce::Place {
                 at: self.series(part).buffer.position(event.key()),
-                trimmed: 0,
             };
             self.emit_event(part, event, Some(place), out);
             self.series_mut(part).buffer.insert(event);
