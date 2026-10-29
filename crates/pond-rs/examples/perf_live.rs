@@ -409,6 +409,25 @@ fn main() -> pond_rs::Result<()> {
             batches(&mut live, rows);
         },
     );
+    // Hosts declared up front (`groups`): each row is checked against
+    // them before the push is stored.
+    let names: Vec<String> = (0..1000).map(|i| format!("h{i}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let declared = PartitionOptions::new().groups(&names).max_events(100);
+    run(
+        "partition 1000 declared hosts, batches of 1000: rolling",
+        &rows1k,
+        &mut |rows| {
+            let mut live = capped();
+            let p = live.partition_by(live.root(), "host", &declared).unwrap();
+            let m = avg.clone();
+            let chain = live
+                .per_partition(p, move |live, part| Ok(live.rolling(part, "30s", &m)?.id()))
+                .unwrap();
+            live.collect(chain, &all).unwrap();
+            batches(&mut live, rows);
+        },
+    );
     println!("{{{}}}", report.join(", "));
     Ok(())
 }
