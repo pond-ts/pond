@@ -236,7 +236,7 @@ fn finite(v: f64) -> bool {
 fn blocked_sum_finite(values: &[f64]) -> f64 {
     let mut a = [0.0f64; 8];
     let lim = values.len() / 8 * 8;
-    for chunk in values[..lim].chunks_exact(8) {
+    for chunk in values.as_chunks::<8>().0 {
         for (lane, &v) in a.iter_mut().zip(chunk) {
             *lane += if finite(v) { v } else { 0.0 };
         }
