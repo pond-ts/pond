@@ -13,8 +13,7 @@ view, a running per-minute average. It is the Rust version of pond-ts's
 `LiveSeries`, and each push gives the same results as pond-ts, in the same
 order (checked against cases pond-ts writes out).
 
-The live layer is being built in steps. Built so far: the live series
-itself (pushing, ordering rules, how many events to keep, lookups); the
+The live layer is complete. It covers the live series itself (pushing, ordering rules, how many events to keep, lookups); the
 views `filter`, `map`, `select`, `sample` and `window`; the running ones
 `diff`, `rate`, `pct_change`, `fill` and `cumulative`; `aggregate`
 into fixed-length or calendar buckets; rolling windows and `reduce`, with
@@ -93,7 +92,8 @@ things.
   `stats().rejected`.
 - `OrderingMode::Reorder`: store it in its place in time.
   `.grace_window("5s")` limits how late it may be; an older one is
-  refused.
+  refused. (To keep every late event but let buckets wait for them, see
+  [Per-host buckets over late events](#per-host-buckets-over-late-events).)
 
 **How many to keep** (oldest go first, after each push):
 
@@ -733,6 +733,92 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(
         rows,
         [(10_000, "a".to_string(), Some(1.5)), (10_000, "b".to_string(), Some(3.0))]
+    );
+    Ok(())
+}
+```
+
+### Per-host buckets over late events
+
+A common shape: readings from many hosts arrive out of order, and each
+host needs its own minute buckets that wait a few seconds for stragglers
+before closing. Three things trip people up here:
+
+- **Put the delay on the buckets, not the series.** A series' grace window
+  refuses any event later than it, and the whole push fails. To keep every
+  late event but hold buckets open for a while, give the series no grace
+  window and pass the delay to `aggregate_with`.
+- **Carry the host into the buckets.** A closed bucket has only its time
+  span and its reducer columns, and the series `apply` gathers mixes every
+  host. A `first` reducer on `host` puts it back.
+  (`partition_outputs` names each partition, but only the ones that exist
+  when it is called.)
+- **Buckets from different hosts close out of time order,** so the
+  gathered series needs `Reorder`. It takes the partitions' ordering
+  unless you set one.
+
+```rust
+use pond_rs::live::{CollectOptions, LiveOptions, LiveSeries, OrderingMode, PartitionOptions};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Readings arrive out of order. No grace window on the series, so no
+    // late event is refused; the 5-second delay goes on the buckets.
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+        LiveOptions::new().ordering(OrderingMode::Reorder),
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    // Minute buckets per host. A bucket closes once its own host's latest
+    // event is 5 s past its end. The `host` column carries the host into
+    // the gathered series, which otherwise mixes every host's buckets.
+    let minutes = live.apply(
+        hosts,
+        |live, host| {
+            let buckets = live.aggregate_with(
+                host,
+                &Sequence::every("1m")?,
+                &[
+                    Agg::new("host", "host", Reducer::First),
+                    Agg::new("cpu_avg", "cpu", Reducer::Avg),
+                    Agg::new("readings", "cpu", Reducer::Count),
+                ],
+                Some("5s"),
+            )?;
+            Ok(buckets.id())
+        },
+        // Buckets from different hosts can close out of time order. The
+        // gathered series takes the partitions' ordering (Reorder here);
+        // setting it says so.
+        &CollectOptions::new().ordering(OrderingMode::Reorder),
+    )?;
+
+    let s = 1_000;
+    live.push(10 * s, [Some("a".into()), Some(1.0.into())])?;
+    live.push(20 * s, [Some("b".into()), Some(5.0.into())])?;
+    live.push(50 * s, [Some("a".into()), Some(3.0.into())])?;
+    live.push(62 * s, [Some("a".into()), Some(2.0.into())])?;
+    live.push(59 * s, [Some("a".into()), Some(5.0.into())])?; // late, still in time
+    live.push(66 * s, [Some("a".into()), Some(1.0.into())])?; // closes a's first minute
+    live.push(58 * s, [Some("a".into()), Some(100.0.into())])?; // too late: left out
+    assert_eq!(live[minutes].len(), 1);
+    live.push(70 * s, [Some("b".into()), Some(7.0.into())])?; // closes b's first minute
+
+    let closed: Vec<_> = live[minutes]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (host, e.number("cpu_avg").unwrap(), e.number("readings").unwrap())
+        })
+        .collect();
+    assert_eq!(
+        closed,
+        [("a".to_string(), Some(3.0), Some(3.0)), ("b".to_string(), Some(5.0), Some(1.0))]
     );
     Ok(())
 }

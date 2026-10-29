@@ -16,6 +16,10 @@ reading from host `a`'s, which means nothing.
 columns. Operations on the result run on each partition separately, and
 `collect()` puts the rows back into one series, in time order.
 
+This page is about a series you already have. For events that arrive one
+at a time, a live series splits the same way; see
+[Live series: partitions](./live#partitions-one-series-per-host).
+
 ```rust
 use pond_rs::{Column, TimeSeries};
 
