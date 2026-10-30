@@ -6,18 +6,26 @@
 //   node test/parity.mjs           (after ./build.sh)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { TimeSeries, Sequence, alive } from '../index.js';
+import {
+  TimeSeries,
+  Sequence,
+  Time,
+  TimeRange,
+  Interval,
+  ROW_INDEX,
+  alive,
+} from '../index.js';
+import { closure } from '../../core/scripts/parity/cases.mjs';
 
 const FIXTURE = fileURLToPath(
   new URL('../../core/test/fixtures/parity.json', import.meta.url),
 );
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
 
-// Cases the bridge cannot run yet: callbacks (filter, mapColumns, scan,
-// collapse, asInterval with a function) arrive in step J1b.
+// Ops the bridge does not have (none at the moment; kept so a new fixture
+// op shows up as skipped rather than as a failure).
 const STATICS = new Set(['partitionBy', 'joinMany', 'concat']);
-const usesCallback = (c) =>
-  JSON.stringify(c.args).includes('"fn":') ||
+const unsupported = (c) =>
   !(STATICS.has(c.op) || typeof TimeSeries.prototype[c.op] === 'function');
 
 // A pond-ts error case matches any error pond-rs raises (the messages
@@ -81,7 +89,7 @@ function input(name) {
   let s = inputs.get(name);
   if (!s) {
     const json = fixture.inputs[name];
-    s = new TimeSeries({ ...json, rows: untagRows(json.rows) });
+    s = TimeSeries.fromJSON({ ...json, rows: untagRows(json.rows) });
     inputs.set(name, s);
   }
   return s;
@@ -94,6 +102,7 @@ function arg(v) {
     if ('series' in v) return input(v.series);
     if ('sequence' in v) return new Sequence(v.sequence);
     if ('f64' in v) return number(v.f64);
+    if ('fn' in v) return closure(v.fn);
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, arg(x)]));
   }
   return v;
@@ -275,8 +284,14 @@ function check(c, got) {
   return 'fixture case has no expectation';
 }
 
-/** [PND-COLLAPSEREQ]: pond-rs marks a collapse output with gaps optional. */
 function adjust(c) {
+  // [PND-MAPREQ]: pond-rs marks a mapped column that gained a gap optional.
+  if (c.id === 'mapColumns-overflow') {
+    const expected = structuredClone(c.expected);
+    expected.schema[1].required = false;
+    return { ...c, expected };
+  }
+  // [PND-COLLAPSEREQ]: pond-rs marks a collapse output with gaps optional.
   if (c.op !== 'collapse' || !c.expected) return c;
   const expected = structuredClone(c.expected);
   const at = expected.schema.findIndex((d) => d.name === c.args[1]);
@@ -292,7 +307,7 @@ let ran = 0;
 let skipped = 0;
 const failures = [];
 for (const c of fixture.cases) {
-  if (usesCallback(c)) {
+  if (unsupported(c)) {
     skipped++;
     continue;
   }
@@ -311,13 +326,89 @@ for (const c of fixture.cases) {
   }
   if (why) failures.push(`${c.id} (${c.op}): ${why}`);
 }
+const caseFailures = failures.length;
 
+// ---- row lookups (fixture `queries`) ---------------------------------------
+
+/** A query argument: a filter test spec, or a key (tagged ones as classes). */
+function queryArg(q) {
+  if (['find', 'some', 'every'].includes(q.op)) return closure(q.arg);
+  const a = q.arg;
+  if (a && typeof a === 'object' && !Array.isArray(a)) {
+    if ('time' in a) return new Time(a.time);
+    if ('timeRange' in a) return new TimeRange(a.timeRange);
+    if ('interval' in a) return new Interval(a.interval);
+  }
+  return a;
+}
+
+/** An answer in the fixture's encoding: a row position, [begin, end], … */
+function answer(v) {
+  if (v === undefined) return null;
+  if (v instanceof TimeRange) return [v.begin(), v.end()];
+  if (v && typeof v === 'object' && ROW_INDEX in v) return v[ROW_INDEX];
+  return v;
+}
+
+let queriesRan = 0;
+const beforeQueries = failures.length;
+for (const q of fixture.queries) {
+  queriesRan++;
+  const s = input(q.input);
+  let got;
+  try {
+    got = { value: answer(q.op === 'at' ? s.at(q.arg) : s[q.op](queryArg(q))) };
+  } catch (e) {
+    got = { error: e.message, errorName: e.name };
+  }
+  const want = q.error === undefined ? (q.expected ?? null) : undefined;
+  let same;
+  if (got.error !== undefined) {
+    // Known difference: on an empty series pond-ts `nearest` returns before
+    // it builds the key, so a backwards range is no error there.
+    same =
+      (want === undefined && got.errorName !== 'TypeError') ||
+      (q.op === 'nearest' && s.length === 0 && Array.isArray(q.arg));
+  } else {
+    same =
+      want !== undefined && JSON.stringify(got.value) === JSON.stringify(want);
+  }
+  if (!same)
+    failures.push(
+      `query ${q.input}.${q.op}(${JSON.stringify(q.arg)}): bridge ${JSON.stringify(got)}, pond-ts ${JSON.stringify(q.expected ?? q.error)}`,
+    );
+}
+
+// ---- Time.parse (fixture `timeParse`) -------------------------------------
+
+const queryFailures = failures.length - beforeQueries;
+const beforeParse = failures.length;
+
+for (const t of fixture.timeParse) {
+  let got;
+  try {
+    got = Time.parse(t.input, { timeZone: t.timeZone }).timestamp;
+  } catch (e) {
+    got = { error: e.message };
+  }
+  const ok =
+    t.expected === undefined ? typeof got === 'object' : got === t.expected;
+  if (!ok)
+    failures.push(
+      `Time.parse(${JSON.stringify(t.input)}, ${t.timeZone}): bridge ${JSON.stringify(got)}, pond-ts ${t.expected ?? t.error}`,
+    );
+}
+
+const parseFailures = failures.length - beforeParse;
 for (const s of inputs.values()) s.free();
 const leaked = alive();
 
 console.log(
-  `core parity through @pond-ts/rs: ${ran - failures.length}/${ran} match pond-ts; ` +
-    `${skipped} skipped (callbacks, step J1b); ${leaked} series left in memory`,
+  `core parity through @pond-ts/rs, matching pond-ts: ` +
+    `cases ${ran - caseFailures}/${ran} (${skipped} skipped: ops not in the bridge); ` +
+    `row lookups ${queriesRan - queryFailures}/${queriesRan}; ` +
+    `Time.parse ${fixture.timeParse.length - parseFailures}/${fixture.timeParse.length}; ` +
+    `${leaked} series left in memory`,
 );
 for (const f of failures) console.log('  ' + f);
 if (failures.length || leaked) process.exit(1);

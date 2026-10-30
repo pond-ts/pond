@@ -4138,6 +4138,23 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `test/inputs.mjs` pins what the fixture misses: the constructor's cell
     checks (pond-ts's messages), -0 as a whole number, empty lists. Size
     6.2 MB raw, 1.12 MB brotli before `wasm-opt` and the size cuts (J2).
+  - J1b built (2026-10-30, PR pending Peter's OK as new API): functions,
+    row lookups, `Time.parse`. A function argument crosses as `{"fn": k}`,
+    the k-th entry of a JS array passed beside the JSON; Rust calls it back
+    through one trait (`callbacks.rs`), so the dispatcher stays testable
+    without JS. pond-rs closures cannot fail, so the first exception is
+    kept, the remaining rows skip the function, and the call rethrows that
+    same exception object. The input series is cloned out of the table
+    first, so a function may call the bridge. Where pond-ts does not check a
+    function's result, the bridge copies it: a result of the wrong type is a
+    gap (`mapColumns`, `collapse`, `scan` output), and `scan` reads
+    `result[0]` / `result[1]` of anything but null / undefined. New JS
+    classes as pond-ts: `Event` (lookup and test results), `Time`,
+    `TimeRange`, `Interval`. Also changed: the constructor now refuses
+    `null` cells (pond-ts does; `fromJSON` still reads them as gaps). Check:
+    all 1,230 core cases, 2,907 row lookups and 1,332 time texts match
+    through JS; `test/inputs.mjs` passes against pond-ts itself too (one
+    listed line aside: `joinMany([])`).
   - Found by both probes, handed to the live speed review: pond-rs live
     filter + aggregate over 1M one-at-a-time pushes took 230-256 ms from
     Rust; a hand-written Python dict took 110-132 ms.
