@@ -621,7 +621,17 @@ the study oracle) is done.
   through JS), J2 (studies, `LiveSeries`), J3 (browser build, npm publish,
   docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
   pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
-  Detail in the breakout plan.
+  P1 built 2026-10-30 (awaiting Peter's OK). Detail in the breakout plan.
+
+- **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
+  scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
+  300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
+  about 70 ms. Found by the Python bridge benchmark (per-host rolling 428 ms
+  against polars' 127 ms) and reproduced from plain Rust. The instruction
+  count grows in step with the rows (callgrind), so it is memory access, most
+  likely the 16-bit radix sort's 65,536-bucket scatter in `merge_order`;
+  partitions are already sorted, so a k-way merge is the obvious candidate.
+  No API change.
 
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
