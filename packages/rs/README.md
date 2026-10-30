@@ -42,15 +42,18 @@ cpu.free();
   exception is rethrown. `mapColumns` on an array column is not supported
   yet.
 - **Row lookups** (`at`, `bisect`, `nearest`, `find`, …) return `Event`s
-  with pond-ts's `get`, `data`, `key`, `begin`, `end`; `Time`, `TimeRange`,
-  `Interval` and `Time.parse` are there too.
+  with only part of pond-ts's API: `get`, `data`, `key`, `type`, `begin`,
+  `end`, `timeRange` (no `set`, `merge`, `select`, …). `Time`, `TimeRange`
+  and `Interval` are likewise cut down (no `overlaps`, `contains`,
+  `intersection`); `Time.parse` matches pond-ts.
 - **Not there yet:** the financial studies and `LiveSeries` (step J2), and
   a browser build (step J3). This build is for Node 20 and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
 - **Error messages differ.** The bridge throws where pond-ts throws, but
-  most messages are pond-rs's and some name its Rust API (for example
+  often a plain `Error` where pond-ts throws a `TypeError` or `RangeError`,
+  and most messages are pond-rs's and some name its Rust API (for example
   `by_column:` or `Column::optional`).
 
 Where pond-rs and pond-ts give different answers on purpose, the list is in

@@ -186,12 +186,15 @@ assert.deepEqual(
   [null, null, null],
 );
 // pond-ts fails reading undefined[0]; the bridge names the problem.
-assert.throws(() => g.scan('v', () => undefined, 0));
+assert.throws(
+  () => g.scan('v', () => undefined, 0),
+  /returned nothing|reading '0'/,
+);
 assert.deepEqual(
   rows(g.collapse(['v'], 'o', () => ({}))).map((r) => r.at(-1)),
   [null, null, null],
 );
-assert.throws(() => g.asInterval(() => true));
+assert.throws(() => g.asInterval(() => true), /got boolean|no label/);
 
 // What the functions are given.
 const seen = [];
@@ -244,6 +247,12 @@ assert.deepEqual(
 
 // Row lookups take Time and TimeRange as well as ms.
 assert.equal(g.bisect(new Time(1500)), 2);
+const k = g.at(1).key();
+assert.deepEqual(
+  [+k, k.timestampMs(), k.toDate().getTime(), k.duration()],
+  [1000, 1000, 1000, 0],
+);
+assert.ok(k.equals(new Time(1000)) && !k.equals(new Time(999)));
 assert.equal(g.atOrBefore(new Time(1500)).begin(), 1000);
 assert.equal(g.overlaps(new TimeRange([500, 1500])), true);
 assert.deepEqual([g.timeRange().begin(), g.timeRange().end()], [0, 2000]);

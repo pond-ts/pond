@@ -60,6 +60,21 @@ export class Time {
   timeRange() {
     return new TimeRange([this.timestamp, this.timestamp]);
   }
+  timestampMs() {
+    return this.timestamp;
+  }
+  toDate() {
+    return new Date(this.timestamp);
+  }
+  valueOf() {
+    return this.timestamp;
+  }
+  duration() {
+    return 0;
+  }
+  equals(other) {
+    return other instanceof Time && this.timestamp === other.timestamp;
+  }
 }
 
 /** A span `[start, end]` (ms), as pond-ts `TimeRange`: `new TimeRange([s, e])` or `{ start, end }`. */
@@ -126,8 +141,8 @@ export class Interval {
   }
 }
 
-/** @internal An event's row position in the series it came from. */
-export const ROW_INDEX = Symbol('pond-rs row index');
+// An event's row position in the series it came from (read by the tests).
+const ROW_INDEX = Symbol.for('pond-rs row index');
 
 /** One row, as pond-ts `Event`: `get(column)`, `data()`, `key()`, `begin()`, `end()`. */
 export class Event {

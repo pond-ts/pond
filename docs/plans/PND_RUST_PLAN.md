@@ -4149,8 +4149,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     function's result, the bridge copies it: a result of the wrong type is a
     gap (`mapColumns`, `collapse`, `scan` output), and `scan` reads
     `result[0]` / `result[1]` of anything but null / undefined. New JS
-    classes as pond-ts: `Event` (lookup and test results), `Time`,
-    `TimeRange`, `Interval`. Also changed: the constructor now refuses
+    classes, cut-down versions of pond-ts's: `Event` (lookup and test
+    results), `Time`, `TimeRange`, `Interval`. Also changed: the constructor now refuses
     `null` cells (pond-ts does; `fromJSON` still reads them as gaps). Check:
     all 1,230 core cases, 2,907 row lookups and 1,332 time texts match
     through JS; `test/inputs.mjs` passes against pond-ts itself too (one

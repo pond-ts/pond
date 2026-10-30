@@ -12,7 +12,6 @@ import {
   Time,
   TimeRange,
   Interval,
-  ROW_INDEX,
   alive,
 } from '../index.js';
 import { closure } from '../../core/scripts/parity/cases.mjs';
@@ -84,6 +83,7 @@ function untagRows(rows) {
   return rows.map((r) => r.map(cell));
 }
 
+const ROW_INDEX = Symbol.for('pond-rs row index');
 const inputs = new Map();
 function input(name) {
   let s = inputs.get(name);

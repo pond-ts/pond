@@ -67,8 +67,8 @@ pub const PARTITIONED_OPS: &[&str] = &[
     "scan",
 ];
 
-/// The ops [`call`] runs (with [`crate::callbacks::OPS`]). Callback ops (`filter`, `mapColumns`, `scan`,
-/// `collapse`, `asInterval` with a function) come in a later step.
+/// The ops [`call`] runs without functions or row lookups; those are
+/// [`crate::callbacks::OPS`].
 pub const OPS: &[&str] = &[
     "rolling",
     "aggregate",
