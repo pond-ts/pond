@@ -81,6 +81,13 @@ fn json(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Value> {
     if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(Value::Bool(b.is_true()));
     }
+    // numpy's bool is not a Python bool; keep it a bool so a number option
+    // refuses it as it refuses True.
+    if let Ok(dtype) = obj.getattr("dtype")
+        && dtype.getattr("kind")?.extract::<String>()? == "b"
+    {
+        return Ok(Value::Bool(obj.is_truthy()?));
+    }
     if obj.is_instance_of::<PyInt>() {
         if let Ok(i) = obj.extract::<i64>() {
             return Ok(Value::from(i));
@@ -140,6 +147,14 @@ impl StudyCall {
         for (k, v) in options.into_iter().flat_map(|o| o.iter()) {
             let given: String = k.extract()?;
             let key = camel(&given);
+            if map.contains_key(&key) || (key == "sessions" && calendar.is_some()) {
+                return Err(PyTypeError::new_err(format!(
+                    "{}() got option '{given}' twice (as {} and {})",
+                    snake(d.name),
+                    snake(&key),
+                    key
+                )));
+            }
             if !known.contains(&key.as_str()) {
                 let mut names: Vec<String> = known.iter().map(|n| snake(n)).collect();
                 names.sort();
@@ -249,45 +264,27 @@ fn describe(d: &StudyDescriptor) -> Value {
     v
 }
 
-/// `series.rsi`: a study bound to its series, called with the options.
-#[pyclass(module = "pond_rs", frozen)]
-pub struct BoundStudy {
-    target: Py<PyAny>,
-    name: &'static str,
-}
-
-#[pymethods]
-impl BoundStudy {
-    #[pyo3(signature = (**options))]
-    fn __call__<'py>(
-        &self,
-        py: Python<'py>,
-        options: Option<&Bound<'py, PyDict>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.target
-            .bind(py)
-            .call_method("study", (self.name,), options)
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<study {}>", snake(self.name))
-    }
-
-    #[getter]
-    fn __doc__(&self) -> String {
-        descriptor(self.name).map_or(String::new(), |d| d.summary.to_string())
-    }
-}
-
 /// The attribute lookup both series classes fall back to: a study by its
-/// Python name.
-pub fn study_attribute(target: &Bound<'_, PyAny>, name: &str) -> PyResult<BoundStudy> {
-    // Only Python spellings: `series.rsi`, `series.anchored_vwap`.
+/// Python name (`series.rsi`, `series.anchored_vwap`), as
+/// `functools.partial(series.study, name)` carrying the study's summary as
+/// its `__doc__`.
+pub fn study_attribute<'py>(target: &Bound<'py, PyAny>, name: &str) -> PyResult<Bound<'py, PyAny>> {
     match descriptor(name) {
-        Some(d) if !name.starts_with('_') && snake(d.name) == name => Ok(BoundStudy {
-            target: target.clone().unbind(),
-            name: d.name,
-        }),
+        Some(d) if !name.starts_with('_') && snake(d.name) == name => {
+            let py = target.py();
+            let bound = py
+                .import("functools")?
+                .call_method1("partial", (target.getattr("study")?, d.name))?;
+            let doc = format!(
+                "{}.\n\nAdds {} ({}). Options are keywords; pond_rs.study_info({:?}) lists them with defaults and ranges.",
+                d.summary.trim_end_matches('.'),
+                d.output_names().join(", "),
+                d.family.as_str(),
+                name
+            );
+            bound.setattr("__doc__", doc)?;
+            Ok(bound)
+        }
         _ => Err(PyAttributeError::new_err(format!(
             "'{}' object has no attribute '{name}'",
             target.get_type().name()?

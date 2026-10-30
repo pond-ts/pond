@@ -1675,11 +1675,12 @@ class TradingCalendar:
     def sessions_in_range(self, start: Time, end: Time) -> list[Session]:
         """The sessions overlapping [start, end)."""
     def next_session(self, from_: Union[Date, Time]) -> Optional[Session]:
-        """After a date (text or date): the next trading day. After a time:
-        the next session to open."""
+        """After a date (YYYY-MM-DD or a date): the next trading day. After
+        a time (any other text included): the next session to open."""
     def previous_session(self, from_: Union[Date, Time]) -> Optional[Session]:
-        """Before a date: the trading day before. Before a time: the last
-        session to open (so a time inside a session gives that session)."""
+        """Before a date (YYYY-MM-DD or a date): the trading day before.
+        Before a time (any other text included): the last session to open
+        (so a time inside a session gives that session)."""
     def tag_sessions(
         self, series: TimeSeries, *, column: str = "session", stamped: Literal["open", "close"] = "open"
     ) -> TimeSeries:

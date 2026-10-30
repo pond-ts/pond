@@ -70,7 +70,8 @@ Type hints for every method are in the package (`pond_rs.pyi`).
 All 109 studies of `@pond-ts/financial` (moving averages, bands, RSI and
 other momentum oscillators, trend, volatility, volume, statistics, session
 VWAP and pivot points) run on any series of bars, with the same numbers as
-pond-ts to the last bit:
+pond-ts to the last bit (one difference: a source column that is missing or
+not numbers is an error here, where pond-ts fills the output with gaps):
 
 ```python
 bars = pond_rs.TimeSeries(df)                      # open/high/low/close/volume
@@ -88,8 +89,9 @@ bars.session_vwap(sessions=nyse)
 Each study adds its columns and keeps every row (the first rows are gaps
 until the window fills). Columns it reads default to `close`, `high`, `low`,
 `open` and `volume`; pass `column=` / `high=` … to use others. Options are
-keywords (`ema_period` or pond-ts's `emaPeriod`); an option the study does
-not have is a `TypeError`, so a typo cannot pass silently.
+keywords in Python's spelling (`ema_period`, which the type hints list);
+pond-ts's `emaPeriod` also works. An option the study does not have, or one
+given twice, is a `TypeError`, so a typo cannot pass silently.
 `pond_rs.studies()` describes every study: the columns it reads, its
 options with defaults and ranges, and the columns it writes.
 

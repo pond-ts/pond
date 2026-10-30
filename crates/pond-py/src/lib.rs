@@ -73,7 +73,6 @@ fn pond_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<row::PyRow>()?;
     m.add_class::<value_series::PyValueSeries>()?;
     m.add_class::<calendar::PyTradingCalendar>()?;
-    m.add_class::<study::BoundStudy>()?;
     m.add_function(wrap_pyfunction!(study::studies, m)?)?;
     m.add_function(wrap_pyfunction!(study::study_info, m)?)?;
     m.add("tzdb_version", ::pond_rs::tzdb_version())?;

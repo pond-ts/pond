@@ -101,8 +101,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   `series.study("rsi", period=14)`, or as its own method,
   `series.rsi(period=14)`, `series.anchored_vwap(anchor=...)`; on a
   `PartitionedSeries` a study runs per group. Options are keywords in
-  Python's spelling (`ema_period`) or pond-ts's (`emaPeriod`); one the study
-  does not have is a `TypeError`. `pond_rs.studies()` / `study_info(name)`
+  Python's spelling (`ema_period`; pond-ts's `emaPeriod` also works); one the
+  study does not have, or one given twice, is a `TypeError`. `pond_rs.studies()` / `study_info(name)`
   describe each study (inputs, options with defaults and ranges, outputs).
   `TradingCalendar.from_rules` / `from_sessions` build exchange sessions
   (time zone, weekdays, holidays, early closes, breaks) with pond-ts's

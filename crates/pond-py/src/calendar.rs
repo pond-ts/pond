@@ -23,8 +23,19 @@ pub struct PyTradingCalendar {
     pub inner: Arc<TradingCalendar>,
 }
 
-/// A date given as text (`"2024-01-08"`) or a `date`; `None` for anything
-/// else.
+/// `YYYY-MM-DD`, exactly.
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        })
+}
+
+/// A date for pond-rs to check: any text as it is (pond-rs reads it as
+/// pond-ts does), a `date` (not a `datetime`) or a numpy `datetime64` in
+/// days. `None` for anything else.
 fn date_text(obj: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     if let Ok(s) = obj.cast::<PyString>() {
         return Ok(Some(s.to_cow()?.into_owned()));
@@ -35,7 +46,41 @@ fn date_text(obj: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     if is_date && !is_datetime {
         return Ok(Some(obj.call_method0("isoformat")?.extract()?));
     }
+    if let Ok(dtype) = obj.getattr("dtype")
+        && dtype.str()?.to_cow()? == "datetime64[D]"
+    {
+        return Ok(Some(obj.str()?.to_cow()?.into_owned()));
+    }
     Ok(None)
+}
+
+/// A date (text or a `date`), or a `TypeError`.
+fn date_only(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<String> {
+    date_text(obj)?.ok_or_else(|| {
+        PyTypeError::new_err(format!(
+            "{what}: expected a date (text YYYY-MM-DD or a date), got {}",
+            obj.get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        ))
+    })
+}
+
+/// A date to look a session up by. Lookups compare dates as text, so
+/// anything but `YYYY-MM-DD` would quietly find nothing (or the wrong
+/// neighbour): refuse it. `None` for a time.
+fn lookup_date(obj: &Bound<'_, PyAny>, what: &str, times: bool) -> PyResult<Option<String>> {
+    let text = obj.is_instance_of::<PyString>();
+    match date_text(obj)? {
+        Some(d) if is_iso_date(&d) => Ok(Some(d)),
+        Some(_) if text && times => Ok(None),
+        Some(d) => Err(value_error(format!(
+            "{what}: expected a date as YYYY-MM-DD, got {d:?}"
+        ))),
+        None if times => Ok(None),
+        None => date_only(obj, what).map(Some),
+    }
 }
 
 /// One end of a range of dates: a date (text or `date`) or a time
@@ -82,8 +127,7 @@ pub fn session(obj: &Bound<'_, PyAny>) -> PyResult<Session> {
         d.get_item(k)?
             .ok_or_else(|| value_error(format!("{WHAT}: missing '{k}'")))
     };
-    let date = date_text(&get("date")?)?
-        .ok_or_else(|| PyTypeError::new_err("session 'date' is text (YYYY-MM-DD) or a date"))?;
+    let date = date_only(&get("date")?, "session date")?;
     let mut s = Session::new(
         &date,
         time_ms(&get("open")?, "session open")?,
@@ -141,7 +185,7 @@ impl PyTradingCalendar {
         from: &Bound<'py, PyAny>,
         next: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let date = date_text(from)?;
+        let date = lookup_date(from, "from", true)?;
         let at = match &date {
             Some(_) => 0,
             None => time_ms(from, "from")?,
@@ -193,14 +237,11 @@ impl PyTradingCalendar {
         }
         for h in holidays.into_iter().flat_map(|h| h.try_iter()).flatten() {
             let h = h?;
-            let d = date_text(&h)?
-                .ok_or_else(|| PyTypeError::new_err("a holiday is text (YYYY-MM-DD) or a date"))?;
+            let d = date_only(&h, "holiday")?;
             rules = rules.holiday(&d);
         }
         for (date, at) in early_closes.into_iter().flat_map(|d| d.iter()) {
-            let d = date_text(&date)?.ok_or_else(|| {
-                PyTypeError::new_err("an early close's date is text (YYYY-MM-DD) or a date")
-            })?;
+            let d = date_only(&date, "early close")?;
             rules = rules.early_close(&d, &at.extract::<String>()?);
         }
         let (from, to) = (date_bound(start, "start")?, date_bound(end, "end")?);
@@ -269,15 +310,13 @@ impl PyTradingCalendar {
         py: Python<'py>,
         date: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let d = date_text(date)?
-            .ok_or_else(|| PyTypeError::new_err("expected a date (text YYYY-MM-DD or a date)"))?;
+        let d = lookup_date(date, "session_on", false)?.unwrap_or_default();
         maybe_session(py, self.inner.session_on(&d))
     }
 
     /// Whether `date` has a session.
     fn is_trading_day(&self, date: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let d = date_text(date)?
-            .ok_or_else(|| PyTypeError::new_err("expected a date (text YYYY-MM-DD or a date)"))?;
+        let d = lookup_date(date, "is_trading_day", false)?.unwrap_or_default();
         Ok(self.inner.is_trading_day(&d))
     }
 
@@ -314,8 +353,9 @@ impl PyTradingCalendar {
         PyList::new(py, items)
     }
 
-    /// The first session after `from_`: a date (text or `date`) gives the
-    /// next trading day; a time gives the next session to open after it.
+    /// The first session after `from_`: a date (`YYYY-MM-DD` or a `date`)
+    /// gives the next trading day; a time (any other text included) gives
+    /// the next session to open after it.
     fn next_session<'py>(
         &self,
         py: Python<'py>,
@@ -324,9 +364,10 @@ impl PyTradingCalendar {
         self.lookup(py, from_, true)
     }
 
-    /// The last session before `from_`: a date gives the trading day
-    /// before; a time gives the last session to open before it (so a time
-    /// inside a session gives that session).
+    /// The last session before `from_`: a date (`YYYY-MM-DD` or a `date`)
+    /// gives the trading day before; a time (any other text included)
+    /// gives the last session to open before it (so a time inside a
+    /// session gives that session).
     fn previous_session<'py>(
         &self,
         py: Python<'py>,

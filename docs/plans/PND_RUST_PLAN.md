@@ -4139,6 +4139,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         with a finite value was caught every time (one-off run); oracle
         220/220 within 5e-10; 109 descriptors equal pond-ts's; every study
         runs from its method with its defaults; calendar parity 110/110.
+        Decision (review): calendar lookups (`session_on`,
+        `is_trading_day`, `next_session`, `previous_session`) take only
+        `YYYY-MM-DD` text as a date; other text is an error, or a time for
+        next/previous. pond-ts compares any text with session dates as
+        strings, so `""` or `"Jan 12"` quietly found nothing or the wrong
+        neighbour (pond-rs keeps pond-ts's rule; the fixture's 32 such
+        queries are checked to raise here).
         Speed, 1M rows, frame in to frame out (shared 4-core VM; runs vary
         by about a third): RSI 21.5 ms vs polars 36.3 / pandas 58.4 (both
         hand-written, as neither has RSI), Bollinger 22.2 vs 34.6 / 70.2.

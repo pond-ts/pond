@@ -589,10 +589,10 @@ macro_rules! shared_methods {
                     .map(Self::wrap).map_err(crate::convert::err)
             }
 
-            fn __getattr__(
-                slf: &Bound<'_, Self>,
+            fn __getattr__<'py>(
+                slf: &Bound<'py, Self>,
                 name: &str,
-            ) -> PyResult<crate::study::BoundStudy> {
+            ) -> PyResult<Bound<'py, PyAny>> {
                 crate::study::study_attribute(slf.as_any(), name)
             }
 

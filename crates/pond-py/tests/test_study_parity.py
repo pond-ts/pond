@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import zlib
 
 import pyarrow as pa
@@ -147,7 +148,9 @@ def test_studies_match_pond_ts():
             counts["matched"] += 1
     print(f"study parity: {counts}")
     assert not failures, f"{len(failures)} of {len(fixture['cases'])} failed:\n" + "\n".join(failures[:40])
-    assert counts["matched"] > 3000
+    # The Rust harness: 3,702 matched (here 3,680 + the 22 cases passing an
+    # option the study does not have), 827 errors agree, 526 refused.
+    assert counts == {"matched": 3680, "errors": 827, "refused": 526, "unknown option": 22}
 
 
 def check_study(source: TimeSeries, got: TimeSeries, expected):
@@ -301,6 +304,37 @@ def test_study_errors():
         bars.anchoredVwap  # only the Python spelling is a method
     assert bars.study("anchoredVwap", anchor=fixture["bars"][30][0]).columns[-1] == "avwap"
     assert "rsi" in dir(bars) and "anchored_vwap" in dir(bars)
+    assert not hasattr(bars, "not_a_study")
+    assert "relative strength" in bars.rsi.__doc__
+    with pytest.raises(TypeError, match="twice"):
+        bars.macd(fast_period=5, fastPeriod=50)
+    np = pytest.importorskip("numpy")
+    with pytest.raises(pond_rs.PondError, match="must be a number"):
+        bars.rsi(period=np.bool_(True))
+    with pytest.raises(pond_rs.PondError, match="must be a number"):
+        bars.rsi(period=True)
+    assert bars.rsi(period=np.int64(5)).column("rsi") == bars.rsi(period=5).column("rsi")
+
+
+def test_calendar_dates_are_strict():
+    np = pytest.importorskip("numpy")
+    import datetime as dt
+
+    nyse = TradingCalendar.from_rules("America/New_York", "09:30", "16:00", "2024-01-08", "2024-01-19", holidays=["2024-01-15"])
+    for bad in ("Jan 12", "2024-01-12T10:00", "2024-1-12"):
+        with pytest.raises(pond_rs.PondError, match="YYYY-MM-DD"):
+            nyse.session_on(bad)
+    with pytest.raises(pond_rs.PondError, match="YYYY-MM-DD"):
+        nyse.is_trading_day("2024-01-12 ")
+    # A date, however given, steps by trading day.
+    for d in ("2024-01-12", dt.date(2024, 1, 12), np.datetime64("2024-01-12")):
+        assert nyse.next_session(d)["date"] == "2024-01-16"
+        assert nyse.previous_session(d)["date"] == "2024-01-11"
+    assert nyse.session_on(np.datetime64("2024-01-12"))["date"] == "2024-01-12"
+    # Other text is a time: 10:00 New York on the 12th is inside that session.
+    assert nyse.next_session("2024-01-12T10:00-05:00")["date"] == "2024-01-16"
+    assert nyse.previous_session("2024-01-12T10:00-05:00")["date"] == "2024-01-12"
+    assert nyse.previous_session(dt.datetime(2024, 1, 12, 15, tzinfo=dt.timezone.utc))["date"] == "2024-01-12"
 
 
 def test_session_studies_take_a_calendar_a_list_or_a_column():
@@ -423,6 +457,16 @@ def queries_case(case):
 
     for q in case["queries"]:
         c, a = q["call"], q["arg"]
+        if isinstance(a, str) and not re.fullmatch(r"\d{4}-\d\d-\d\d", a):
+            # Known difference: pond-ts compares any text with session dates
+            # as strings ("" sorts first); pond_rs takes YYYY-MM-DD as a
+            # date and reads other text as a time, so "" and "2024-01-08x"
+            # are errors.
+            try:
+                getattr(cal, re.sub(r"([A-Z])", lambda m: "_" + m.group(1).lower(), c))(a)
+            except pond_rs.PondError:
+                continue
+            return f"{c}({a!r}) should raise"
         if c == "length":
             got = len(cal)
         elif c == "sessionOn":
