@@ -67,6 +67,29 @@ function decode(result) {
 
 const KEY_KINDS = ['time', 'timeRange', 'interval'];
 
+const scalar = (x) =>
+  (typeof x === 'number' && Number.isFinite(x)) ||
+  typeof x === 'string' ||
+  typeof x === 'boolean';
+const check = (test, want) => Object.assign(test, { want });
+const CELL_CHECKS = {
+  string: check(
+    (x) => typeof x === 'string',
+    () => 'expected string',
+  ),
+  boolean: check(
+    (x) => typeof x === 'boolean',
+    () => 'expected boolean',
+  ),
+  array: check(
+    (x) => Array.isArray(x) && x.every(scalar),
+    (x) =>
+      Array.isArray(x)
+        ? `array element ${x.findIndex((e) => !scalar(e))} must be a finite number, string, or boolean`
+        : 'expected array of scalars',
+  ),
+};
+
 // A pond-ts `toJSON()` object with numeric times, as columns for Rust.
 function columnsOf(input) {
   const { schema, rows } = input;
@@ -90,15 +113,26 @@ function columnsOf(input) {
     for (let i = 0; i < n; i++) [labels[i], begin[i], end[i]] = rows[i][0];
   }
   const columns = schema.slice(1).map((def, c) => {
-    if ((def.kind ?? 'number') === 'number') {
+    const kind = def.kind ?? 'number';
+    const at = (i) => `row ${i} col ${c + 1}`;
+    if (kind === 'number') {
       const v = new Float64Array(n);
       for (let i = 0; i < n; i++) {
         const x = rows[i][c + 1];
-        v[i] = x === null || x === undefined ? NaN : x;
+        if (x === null || x === undefined) v[i] = NaN;
+        else if (typeof x === 'number' && Number.isFinite(x)) v[i] = x;
+        else throw new TypeError(`${at(i)}: expected finite number`);
       }
       return v;
     }
-    return rows.map((r) => r[c + 1] ?? null);
+    // The cell checks (and messages) pond-ts's constructor makes.
+    const ok = CELL_CHECKS[kind];
+    return rows.map((r, i) => {
+      const x = r[c + 1];
+      if (x === null || x === undefined) return null;
+      if (ok && !ok(x)) throw new TypeError(`${at(i)}: ${ok.want(x)}`);
+      return x;
+    });
   });
   return { begin, end, labels, columns };
 }
@@ -158,11 +192,19 @@ export class TimeSeries {
   }
 
   static joinMany(list, options) {
+    if (!list.length)
+      throw new TypeError(
+        'TimeSeries.joinMany requires at least one input series.',
+      );
     const [first, ...rest] = list;
     return first.#call('joinMany', [rest, options]);
   }
 
   static concat(list) {
+    if (!list.length)
+      throw new TypeError(
+        'TimeSeries.concat requires at least one input series.',
+      );
     const [first, ...rest] = list;
     return first.#call('concat', [rest]);
   }

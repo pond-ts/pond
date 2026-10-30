@@ -44,6 +44,10 @@ cpu.free();
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
+- **Error messages differ.** The bridge throws where pond-ts throws, but
+  most messages are pond-rs's and some name its Rust API (for example
+  `by_column:` or `Column::optional`).
+
 Where pond-rs and pond-ts give different answers on purpose, the list is in
 `crates/pond-rs/tests/core_parity.rs`.
 
@@ -57,4 +61,5 @@ rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.129
 ./build.sh               # crates/pond-wasm -> pkg/
 node test/parity.mjs     # pond-ts's core parity fixture through this package
+node test/inputs.mjs     # cell checks, -0 and other inputs the fixture misses
 ```

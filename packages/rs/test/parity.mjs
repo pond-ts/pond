@@ -15,7 +15,26 @@ const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
 
 // Cases the bridge cannot run yet: callbacks (filter, mapColumns, scan,
 // collapse, asInterval with a function) arrive in step J1b.
-const usesCallback = (c) => JSON.stringify(c.args).includes('"fn":');
+const STATICS = new Set(['partitionBy', 'joinMany', 'concat']);
+const usesCallback = (c) =>
+  JSON.stringify(c.args).includes('"fn":') ||
+  !(STATICS.has(c.op) || typeof TimeSeries.prototype[c.op] === 'function');
+
+// A pond-ts error case matches any error pond-rs raises (the messages
+// differ), but not a slip in the bridge: a JS TypeError (a missing method,
+// a bad argument in index.js) never matches, and the dispatcher's own
+// argument checks match only in these cases, where pond-ts refuses the
+// same argument.
+const DECODER_ERROR =
+  /argument \d+ must be|option '\w+' must be|give \{ stride \}|expected a (mapping|Sequence|series)/;
+const DECODER_REFUSES = new Set([
+  'error-shift-fraction',
+  'smooth-ema-warmup-neg',
+  'smooth-ema-warmup-frac',
+  'smooth-ema-minSamples-frac',
+  'sample-stride-frac',
+  'sample-reservoir-frac',
+]);
 
 // Known differences between pond-rs and pond-ts, the same list (and the same
 // reasons) as crates/pond-rs/tests/core_parity.rs.
@@ -135,7 +154,7 @@ function run(c) {
     if (Array.isArray(out)) return { records: out.map(recordJson) };
     return { record: recordJson(out) };
   } catch (e) {
-    return { error: e.message };
+    return { error: e.message, errorName: e.name };
   } finally {
     for (const s of made) s.free();
   }
@@ -213,8 +232,14 @@ function recordDiff(e, a, tol) {
 /** Why the outcome differs from the case's expectation, or null. */
 function check(c, got) {
   const tol = c.tolerance ?? undefined;
-  if (c.error)
-    return got.error !== undefined ? null : 'pond-ts throws, bridge succeeded';
+  if (c.error) {
+    if (got.error === undefined) return 'pond-ts throws, bridge succeeded';
+    if (got.errorName === 'TypeError')
+      return `pond-ts throws, bridge failed in JS: ${got.error}`;
+    if (DECODER_ERROR.test(got.error) && !DECODER_REFUSES.has(c.id))
+      return `pond-ts throws, bridge refused an argument: ${got.error}`;
+    return null;
+  }
   if (got.error !== undefined)
     return `pond-ts succeeds, bridge threw: ${got.error}`;
   if (c.expected)

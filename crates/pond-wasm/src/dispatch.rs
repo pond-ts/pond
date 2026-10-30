@@ -139,14 +139,7 @@ impl<'a> Args<'a> {
         }
     }
     fn whole(&self, i: usize, want: &str) -> Res<i64> {
-        let v = self.get(i);
-        v.as_i64()
-            .or_else(|| {
-                v.as_f64()
-                    .filter(|n| n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15)
-                    .map(|n| n as i64)
-            })
-            .ok_or_else(|| self.bad(i, want))
+        whole_number(self.get(i)).ok_or_else(|| self.bad(i, want))
     }
 }
 
@@ -172,16 +165,21 @@ fn choice<'a>(op: &str, o: &'a Value, field: &str, allowed: &[&'a str]) -> Res<&
 fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
     match &o[field] {
         Value::Null => Ok(None),
-        v => v
-            .as_u64()
-            .or_else(|| {
-                v.as_f64()
-                    .filter(|n| n.fract() == 0.0 && *n >= 0.0)
-                    .map(|n| n as u64)
-            })
-            .map(|n| Some(n as usize))
+        v => whole_number(v)
+            .and_then(|n| usize::try_from(n).ok())
+            .map(Some)
             .ok_or_else(|| format!("{op}: option '{field}' must be a whole number, got {v}")),
     }
+}
+
+/// A whole number within JavaScript's exact range. `-0` (sent as
+/// `{"f64": "-0"}`) is 0, as JavaScript reads it.
+fn whole_number(v: &Value) -> Option<i64> {
+    v.as_i64().or_else(|| {
+        decode_f64(v)
+            .filter(|n| n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15)
+            .map(|n| n as i64)
+    })
 }
 
 /// A number, with the `{"f64": …}` tags for what JSON cannot write.
@@ -216,7 +214,7 @@ fn sequence(v: &Value) -> Res<Sequence> {
     let seq = pond(Sequence::calendar(unit, zone))?;
     match &s["weekStartsOn"] {
         Value::Null => Ok(seq),
-        w => match w.as_i64() {
+        w => match whole_number(w) {
             Some(day) if (-128..=127).contains(&day) => pond(seq.with_week_start(day as i8)),
             _ => Err(format!("weekStartsOn must be a day number, got {w}")),
         },
@@ -264,13 +262,11 @@ fn at(op: &str, o: &Value, field: &str) -> Res<At> {
 }
 
 fn range(op: &str, o: &Value) -> Res<Option<(i64, i64)>> {
-    let ms = |v: &Value| {
-        v.as_i64()
-            .ok_or_else(|| format!("{op}: range times must be whole ms"))
-    };
+    let ms =
+        |v: &Value| whole_number(v).ok_or_else(|| format!("{op}: range times must be whole ms"));
     match &o["range"] {
         Value::Null => Ok(None),
-        Value::Number(_) => {
+        v if v.is_number() || v.get("f64").is_some() => {
             let t = ms(&o["range"])?;
             Ok(Some((t, t)))
         }
@@ -387,10 +383,8 @@ fn join_options(o: &Value) -> Res<Join> {
 /// A pond-ts `KeyLike`: a number or `{"time": t}`, `[start, end]` or
 /// `{"timeRange": …}`, `[label, start, end]` or `{"interval": …}`.
 fn event_key(v: &Value) -> Res<pond_rs::EventKey> {
-    let ms = |v: &Value| {
-        v.as_i64()
-            .ok_or_else(|| format!("key times must be whole ms, got {v}"))
-    };
+    let ms =
+        |v: &Value| whole_number(v).ok_or_else(|| format!("key times must be whole ms, got {v}"));
     match v {
         Value::Array(a) if a.len() == 2 => {
             pond(pond_rs::EventKey::time_range(ms(&a[0])?, ms(&a[1])?))
@@ -482,7 +476,9 @@ macro_rules! shared_op {
                 let o = a.options(2)?;
                 let aggs = mapping(a.op, a.get(1))?;
                 pond($target.rolling_with(window, &aggs, rolling_options(a.op, o)?))
-            } else if let Some(rows) = a.get(0)["count"].as_u64() {
+            } else if let Some(rows) =
+                whole_number(&a.get(0)["count"]).and_then(|n| u64::try_from(n).ok())
+            {
                 let o = a.options(2)?;
                 let aggs = mapping(a.op, a.get(1))?;
                 pond($target.rolling_rows(rows as usize, &aggs, rolling_options(a.op, o)?))
@@ -637,7 +633,7 @@ macro_rules! shared_op {
             }
             "sample" => {
                 let o = a.options(0)?;
-                let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
+                let whole = |v: &Value| whole_number(v).filter(|n| *n >= 0);
                 Some(
                     match (whole(&o["stride"]), whole(&o["reservoir"]["size"])) {
                         (Some(n), _) => pond($target.sample(pond_rs::Sample::Stride(n as usize))),

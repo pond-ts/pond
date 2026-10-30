@@ -136,6 +136,9 @@ jobs:
       - name: Core parity through JS
         run: node packages/rs/test/parity.mjs
 
+      - name: Inputs the fixture does not cover
+        run: node packages/rs/test/inputs.mjs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest
