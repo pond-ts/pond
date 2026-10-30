@@ -4,9 +4,14 @@ The committed fixture `packages/core/test/fixtures/live-parity.json` (the
 same one the Rust `tests/live_parity.rs` reads): each case is a scripted
 session on one live series, with pushes, nodes built at given points,
 removals, and for each step the outputs pond-ts dispatched, in order. Here
-every case runs through the Python API, and every output, every node's
-final rows, values and counters must match pond-ts, cell by cell (`-0`
-differs from `0`).
+every case runs through the Python API, and every output and every node's
+final state the fixture records must match pond-ts, cell by cell (`-0`
+differs from `0`): rows for every node, values for rolling windows and
+reduces, counters for series and aggregations (the only nodes pond-ts's
+fixture records them for). A reduce built over history emits its first
+value at the build in pond-rs and just after in pond-ts; that value is
+read from the node's events and compared with pond-ts's deferred output,
+as in the Rust test.
 
 The two nodes and one push pond-rs refuses on purpose are the same as in
 the Rust test, with the same reasons.
@@ -387,8 +392,9 @@ def run_case(case):
                 names[made] = spec["id"]
                 if made.kind in ("partitioned", "partitioned_view"):
                     partitioned.add(spec["id"])
-                if spec.get("watch") is not False:
-                    made.watch(*KINDS_OF[finals[spec["id"]]["class"]])
+                kinds = KINDS_OF[finals[spec["id"]]["class"]]
+                if spec.get("watch") is not False and kinds:
+                    made.watch(*kinds)
                     # A reduce built over history emits at the build, into
                     # its events; pond-ts emits the same event just after.
                     if made.kind == "reduce":

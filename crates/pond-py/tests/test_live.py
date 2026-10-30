@@ -5,6 +5,7 @@ is `test_live_parity.py`; this file covers what only the Python side has."""
 from __future__ import annotations
 
 import threading
+import time
 from datetime import timedelta
 
 import pyarrow as pa
@@ -348,6 +349,41 @@ def test_map_checks_what_the_function_returns():
     assert m.last().to_dict() == {"host": "A", "cpu": 1.0}
 
 
+def test_one_function_failing_leaves_the_others_alone():
+    live = series()
+
+    def bad(e):
+        if e["cpu"] == 2.0:
+            raise RuntimeError("no twos")
+        return {"cpu": e["cpu"] * 10}
+
+    mapped = live.map(bad)
+    every = live.filter(lambda e: True)
+    total = live.cumulative({"cpu": lambda acc, v: acc + v if v != 3.0 else 1 / 0})
+    mapped.watch()
+    with pytest.raises(RuntimeError, match="no twos") as raised:
+        live.push_many([(t, {"cpu": c}) for t, c in ((0, 1.0), (1000, 2.0), (2000, 4.0))])
+    # Only the failing event lost its values; the rest ran.
+    assert [e["cpu"] for e in mapped.events()] == [10.0, None, 40.0]
+    assert len(every) == 3
+    # The push happened, and its outputs ride on the exception.
+    assert [o.event["cpu"] for o in raised.value.outputs] == [10.0, None, 40.0]
+    # A failing fold keeps the running value, and later pushes go on.
+    with pytest.raises(ZeroDivisionError):
+        live.push(3000, cpu=3.0)
+    live.push(4000, cpu=1.0)
+    assert [e["cpu"] for e in total.events()] == [1.0, 3.0, 7.0, 7.0, 8.0]
+
+
+def test_partitioned_nodes_cannot_be_watched():
+    live = series()
+    by_host = live.partition_by("host")
+    with pytest.raises(PondError, match="partitioned node emits nothing"):
+        by_host.watch()
+    with pytest.raises(PondError, match="partitioned node emits nothing"):
+        by_host.fill("hold").watch("event")
+
+
 def test_a_function_cannot_use_its_own_series():
     live = series()
     live.filter(lambda e: len(live) > 0)
@@ -378,31 +414,41 @@ def test_threads_push_into_one_series():
     assert total.value() == {"n": 800.0}
 
 
-def test_push_releases_python_while_it_waits():
-    # A slow filter on one thread must not stop another thread from
-    # running Python (it may wait for the series, not for Python).
+def test_a_long_push_lets_other_threads_run_python():
+    # push_frame works with Python's lock released, so another thread keeps
+    # running Python meanwhile. Were the lock held, the other thread could
+    # run only before the call starts or after it returns (a switch just
+    # before the call lasts at most one switch interval, 5 ms), so no tick
+    # could land well inside the call.
     live = series()
-    started = threading.Event()
+    for w in ("1m", "2m", "5m"):
+        live.rolling(w, {"cpu": "avg"})
+    n = 600_000
+    data = pa.table({"time": pa.array(range(n), pa.int64()), "host": ["a"] * n, "cpu": [1.0] * n})
     ticks = []
+    stop = threading.Event()
 
-    def slow(e):
-        started.set()
-        for _ in range(20000):
-            pass
-        return True
+    def spin():
+        i = 0
+        while not stop.is_set():
+            i += 1
+            if i % 1000 == 0:
+                ticks.append(time.perf_counter())
 
-    live.filter(slow)
-
-    def ticker():
-        started.wait()
-        for i in range(100):
-            ticks.append(i)
-
-    t = threading.Thread(target=ticker)
+    t = threading.Thread(target=spin)
     t.start()
-    live.push_many([(i, {"cpu": 1.0}) for i in range(50)])
-    t.join()
-    assert len(ticks) == 100
+    try:
+        time.sleep(0.01)
+        start = time.perf_counter()
+        live.push_frame(data)
+        end = time.perf_counter()
+    finally:
+        stop.set()
+        t.join()
+    margin = 0.015
+    assert end - start > 4 * margin, "the push must take long enough to measure"
+    inside = [x for x in ticks if start + margin < x < end - margin]
+    assert len(inside) > 10, (len(inside), end - start)
 
 
 def test_repr():

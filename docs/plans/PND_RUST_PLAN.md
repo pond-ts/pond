@@ -4169,11 +4169,18 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         back to waiting released. Safe because a thread holding both runs
         only Rust, so no other thread can be holding Python's lock while
         waiting for the series. (2) A node's Python function runs inside
-        the push; its first exception is kept, later calls of such
-        functions are skipped for that push, and it is raised when the
-        push returns (the push has happened: pond-rs has no rollback). (3)
-        A function that calls back into its own series would wait on its
-        own lock; a thread id kept with the lock turns that into an error.
+        the push; an exception costs only that event's value from that
+        node (filter: left out; map: gaps; cumulative fold: the running
+        value stays), every function keeps running, and the first
+        exception is raised when the push returns with the push's outputs
+        as its `outputs` attribute (the push has happened: pond-rs has no
+        rollback). Review of #864 found the first version skipping every
+        later function call in the push, which broke unrelated nodes and
+        left a fold at NaN for good. (3) A function that calls back into
+        its own series would wait on its own lock; a thread id kept with
+        the lock turns that into an error on the push's thread (handing
+        the call to another thread and joining it still waits forever).
+        A partitioned node refuses `watch()` (it emits nothing itself).
         (4) A node built over history runs its function at once; if that
         raises, the node is removed before the error reaches Python (no
         handle would exist). (5) No Python `apply(fn)`: chaining on a

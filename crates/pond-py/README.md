@@ -126,9 +126,12 @@ smooth.to_polars()
 
 A frame is the fastest way in (`push_frame`); `push_many` takes a batch of
 `(time, values)` rows; `push` takes one event. A function you give a node
-(`filter`, `map`) runs during the push; if it raises, the push has still
-happened and the error is raised when it returns. Such a function must not
-use the series it belongs to (that is an error). Calls from several threads
+(`filter`, `map`) runs during the push; if it raises, that event gets no
+value from it, the other nodes carry on, and the first error is raised when
+the push returns, with the push's outputs as its `outputs` attribute (the
+push has happened). Such a function must not use the series it belongs to:
+on the same thread that is an error, and from a thread it waits for it
+would wait forever. Calls from several threads
 are safe: each call takes the series in turn, and waits with Python's lock
 released.
 

@@ -3,11 +3,12 @@
 //! update with every push.
 //!
 //! One `LiveSeries` owns every node built from it, as in pond-rs. Python
-//! holds the owner behind a lock: every call takes the lock with Python's
-//! own lock released, so a push on one thread never blocks the others from
-//! running Python, and a function you gave a node (a filter) can run while
-//! the push holds the series. Such a function must not use the series
-//! itself (that would wait on its own lock); it gets a clear error instead.
+//! holds the owner behind a lock. A call waits for that lock with Python's
+//! own lock released, so a push on one thread never stops the others from
+//! running Python while it waits, and a function you gave a node (a filter)
+//! can run while the push holds the series. Such a function must not use
+//! the series itself: on the push's own thread that is an error; handing
+//! the work to another thread and waiting for it would wait forever.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -39,8 +40,8 @@ use crate::series::{PyTimeSeries, schema_list};
 // ---------------------------------------------------------------------------
 
 /// The first exception a Python function given to a node raised during the
-/// current call; later calls of such functions are skipped until it is
-/// raised.
+/// current call. Every function still runs for every event; only the first
+/// exception is kept, to be raised when the call returns.
 #[derive(Default)]
 struct Raised {
     error: Mutex<Option<PyErr>>,
@@ -152,6 +153,26 @@ impl Shared {
         py: Python<'_>,
         f: impl FnOnce(&mut LiveSeries) -> R + Send,
     ) -> PyResult<R> {
+        Self::raise(self.run(py, f))
+    }
+
+    /// `with` for short calls (one push, a count); see [`Shared::run_quick`].
+    fn quick<R: Send>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut LiveSeries) -> R + Send,
+    ) -> PyResult<R> {
+        Self::raise(self.run_quick(py, f))
+    }
+
+    fn raise<R>(r: PyResult<(R, Option<PyErr>)>) -> PyResult<R> {
+        match r? {
+            (_, Some(e)) => Err(e),
+            (r, None) => Ok(r),
+        }
+    }
+
+    fn reentered(&self) -> PyResult<u64> {
         let me = this_thread();
         if self.holder.load(Ordering::SeqCst) == me {
             return Err(value_error(
@@ -159,9 +180,19 @@ impl Shared {
                  to one of its nodes (a filter, a map) cannot use the series itself",
             ));
         }
-        // The exception is taken while the lock is held, so a call on
-        // another thread never picks up this call's error.
-        let (r, raised) = py.detach(|| {
+        Ok(me)
+    }
+
+    /// `f`'s result and the first exception a Python function raised
+    /// while it ran (taken while the lock is held, so a call on another
+    /// thread never picks up this call's error).
+    fn run<R: Send>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut LiveSeries) -> R + Send,
+    ) -> PyResult<(R, Option<PyErr>)> {
+        let me = self.reentered()?;
+        Ok(py.detach(|| {
             let guard = self.live.lock().unwrap_or_else(|p| p.into_inner());
             self.holder.store(me, Ordering::SeqCst);
             let mut held = Held {
@@ -170,32 +201,26 @@ impl Shared {
             };
             let r = f(&mut held.guard);
             (r, self.raised.take())
-        });
-        match raised {
-            Some(e) => Err(e),
-            None => Ok(r),
-        }
+        }))
     }
 
-    /// `with` for short calls (one push, a count): when the lock is free,
-    /// take it without releasing Python's lock, which costs more than such
-    /// a call. When another thread holds it, wait as `with` does, with
-    /// Python's lock released. (Holding both is safe: while this thread
-    /// runs Rust with Python's lock held, no other thread runs Python, so
-    /// none can be waiting on this lock while holding Python's.)
-    fn quick<R: Send>(
+    /// `run` for short calls: when the lock is free, take it without
+    /// releasing Python's lock, which costs more than such a call. When
+    /// another thread holds it, wait as `run` does, with Python's lock
+    /// released. No thread ever waits for this lock while holding
+    /// Python's: a thread that finds it taken waits with Python's lock
+    /// released, so the holder can always get Python's lock back (to run a
+    /// node's function, or to return).
+    fn run_quick<R: Send>(
         &self,
         py: Python<'_>,
         f: impl FnOnce(&mut LiveSeries) -> R + Send,
-    ) -> PyResult<R> {
-        let me = this_thread();
-        if self.holder.load(Ordering::SeqCst) == me {
-            return self.with(py, f);
-        }
+    ) -> PyResult<(R, Option<PyErr>)> {
+        let me = self.reentered()?;
         let guard = match self.live.try_lock() {
             Ok(g) => g,
             Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return self.with(py, f),
+            Err(std::sync::TryLockError::WouldBlock) => return self.run(py, f),
         };
         self.holder.store(me, Ordering::SeqCst);
         let mut held = Held {
@@ -205,9 +230,31 @@ impl Shared {
         let r = f(&mut held.guard);
         let raised = self.raised.take();
         drop(held);
+        Ok((r, raised))
+    }
+
+    /// A push's outputs. When a node's Python function raised during it,
+    /// the exception is raised with the outputs (the push happened) as its
+    /// `outputs` attribute.
+    fn push_outputs<'py>(
+        self: &Arc<Self>,
+        py: Python<'py>,
+        quick: bool,
+        f: impl FnOnce(&mut LiveSeries) -> pond_rs::Result<Vec<Output>> + Send,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let run = move |l: &mut LiveSeries| f(l).map(|o| Outs::of(l, o));
+        let (outs, raised) = if quick {
+            self.run_quick(py, run)?
+        } else {
+            self.run(py, run)?
+        };
+        let list = outputs_to_py(py, self, outs.map_err(err)?)?;
         match raised {
-            Some(e) => Err(e),
-            None => Ok(r),
+            Some(e) => {
+                e.value(py).setattr("outputs", &list)?;
+                Err(e)
+            }
+            None => Ok(list),
         }
     }
 
@@ -666,9 +713,6 @@ impl Step {
 /// the call returns) and the event is left out.
 fn filter_fn(f: Callable, raised: Arc<Raised>) -> impl FnMut(&LiveEvent) -> bool + Send + 'static {
     move |e: &LiveEvent| {
-        if raised.failed() {
-            return false;
-        }
         Python::attach(|py| {
             let ev = PyLiveEvent { event: e.clone() };
             match f.bind(py).call1((ev,)).and_then(|r| r.is_truthy()) {
@@ -744,9 +788,6 @@ fn map_fn(
 ) -> impl FnMut(&LiveEvent) -> Vec<Option<Value>> + Send + 'static {
     move |e: &LiveEvent| {
         let gaps = || vec![None; e.values().len()];
-        if raised.failed() {
-            return gaps();
-        }
         Python::attach(|py| match map_cells(py, &f, e) {
             Ok(cells) => cells,
             Err(error) => {
@@ -759,15 +800,13 @@ fn map_fn(
 
 fn fold_fn(f: Callable, raised: Arc<Raised>) -> impl FnMut(f64, f64) -> f64 + Send + 'static {
     move |acc: f64, v: f64| {
-        if raised.failed() {
-            return f64::NAN;
-        }
         Python::attach(
             |py| match f.bind(py).call1((acc, v)).and_then(|r| r.extract::<f64>()) {
                 Ok(x) => x,
+                // The running value stays as it was before this event.
                 Err(error) => {
                     raised.keep(error);
-                    f64::NAN
+                    acc
                 }
             },
         )
@@ -1463,6 +1502,12 @@ macro_rules! live_readers {
 
         impl $t {
             fn kinds_or_all(&self, kinds: &[String]) -> PyResult<Vec<OutputKind>> {
+                if self.node_kind().partitioned() {
+                    return Err(value_error(
+                        "a partitioned node emits nothing itself: watch a partition, the \
+                         chain on one (partitions()), or what collect() gathers",
+                    ));
+                }
                 if kinds.is_empty() {
                     return Ok(match self.node_kind() {
                         NodeKind::Root | NodeKind::Series => {
@@ -1474,7 +1519,7 @@ macro_rules! live_readers {
                         }
                         NodeKind::Rolling => vec![OutputKind::Event, OutputKind::Update],
                         NodeKind::Reduce | NodeKind::PartitionRolling => vec![OutputKind::Event],
-                        NodeKind::Partitioned | NodeKind::PartitionedView => Vec::new(),
+                        NodeKind::Partitioned | NodeKind::PartitionedView => unreachable!(),
                     });
                 }
                 kinds.iter().map(|k| output_kind(k)).collect()
@@ -1822,11 +1867,7 @@ impl PyLiveSeries {
         py: Python<'py>,
         f: impl FnOnce(&mut LiveSeries) -> pond_rs::Result<Vec<Output>> + Send,
     ) -> PyResult<Bound<'py, PyList>> {
-        let outs = self
-            .shared
-            .with(py, move |l| f(l).map(|o| Outs::of(l, o)))?
-            .map_err(err)?;
-        outputs_to_py(py, &self.shared, outs)
+        self.shared.push_outputs(py, false, f)
     }
 
     fn row_values(
@@ -1988,11 +2029,8 @@ impl PyLiveSeries {
     ) -> PyResult<Bound<'py, PyList>> {
         let key = event_key(&key, "push")?;
         let row = self.row_values(values.as_ref(), cells.as_ref(), self.value_defs())?;
-        let outs = self
-            .shared
-            .quick(py, move |l| l.push(key, row).map(|o| Outs::of(l, o)))?
-            .map_err(err)?;
-        outputs_to_py(py, &self.shared, outs)
+        self.shared
+            .push_outputs(py, true, move |l| l.push(key, row))
     }
 
     /// Push many events as one batch, all or nothing: each row a `(key,
@@ -2048,7 +2086,9 @@ impl PyLiveSeries {
 
     /// Push a frame (a `TimeSeries`, pyarrow / polars / pandas, a dict of
     /// columns) as one batch, the fastest way in: it needs this series'
-    /// key column and exactly its value columns. All or nothing.
+    /// key column and exactly its value columns. All or nothing. A NaN in
+    /// a number column is a gap here (as in any `TimeSeries`), where
+    /// `push` refuses a NaN cell.
     fn push_frame<'py>(
         &self,
         py: Python<'py>,

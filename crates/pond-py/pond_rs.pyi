@@ -1753,9 +1753,10 @@ class _LiveBase:
     every partition (a partitioned view); collect() gathers the results."""
 
     def filter(self, f: Callable[[LiveEvent], bool]) -> LiveNode:
-        """The events f accepts. An exception in f leaves the event out and
-        is raised when the push returns (the push has happened). f must not
-        use this LiveSeries."""
+        """The events f accepts. An exception in f leaves that event out;
+        the first one is raised when the push returns, with the push's
+        outputs as its `outputs` attribute (the push has happened). f must
+        not use this LiveSeries."""
     def map(self, f: Callable[[LiveEvent], Union[Mapping[str, Cell], _Seq[Cell]]]) -> LiveNode:
         """Each event with new values: f returns {column: cell} for the
         columns to change, or every cell in schema order. Every value column
@@ -1815,6 +1816,7 @@ class _LiveBase:
         """Have each push return this node's outputs of these kinds (all it
         emits when none are named)."""
     def unwatch(self, *kinds: OutputKind) -> None: ...
+    # A partitioned node emits nothing itself; watch() on it is an error.
 
 class LiveNode(_LiveBase):
     """A node of a LiveSeries. Equal to another handle on the same node."""

@@ -121,9 +121,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   at once, with triggers and history), `reduce`, and `partition_by` with
   steps per partition, `collect()` and synchronised per-partition rolling.
   Each push returns what the watched nodes emitted (`LiveOutput`s carrying
-  `LiveEvent`s). An exception in a node's Python function is raised when
-  the push returns (the push has happened); a function that uses its own
-  series gets an error instead of a deadlock. Calls from several threads
+  `LiveEvent`s). An exception in a node's Python function costs only that
+  event's value from that node; the first one is raised when the push
+  returns, carrying the push's outputs (the push has happened). A function
+  that uses its own series on the push's thread gets an error instead of a
+  deadlock. Calls from several threads
   are safe and wait with Python's lock released. Checked by pytest against
   pond-ts's live parity fixture (all 70 cases, every output and final
   state).
