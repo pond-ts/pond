@@ -7,6 +7,7 @@
 //! JavaScript exception for bad input rather than stopping the instance: a
 //! Rust panic in WebAssembly aborts the whole module.
 
+pub mod callbacks;
 pub mod dispatch;
 
 use std::cell::RefCell;
@@ -341,8 +342,17 @@ pub fn series_to_object(id: u32) -> Result<JsValue, JsError> {
 fn to_object(s: &TimeSeries) -> JsValue {
     let o = Object::new();
     set(&o, "name", &JsValue::from_str(s.name()));
-    let schema: Array = s
-        .schema()
+    set(&o, "schema", &schema(s));
+    let rows = Array::new_with_length(s.len() as u32);
+    for i in 0..s.len() {
+        rows.set(i as u32, row(s, i).into());
+    }
+    set(&o, "rows", &rows);
+    o.into()
+}
+
+fn schema(s: &TimeSeries) -> Array {
+    s.schema()
         .into_iter()
         .map(|def| {
             let d = Object::new();
@@ -357,38 +367,36 @@ fn to_object(s: &TimeSeries) -> JsValue {
             }
             JsValue::from(d)
         })
-        .collect();
-    set(&o, "schema", &schema);
-    let rows = Array::new_with_length(s.len() as u32);
-    for i in 0..s.len() {
-        let row = Array::new();
-        row.push(&match s.key() {
-            Key::Time(t) => JsValue::from_f64(t[i] as f64),
-            Key::TimeRange(k) => Array::of2(
+        .collect()
+}
+
+/// Row `i` as pond-ts `toJSON()` writes it: `[key, ...cells]`.
+fn row(s: &TimeSeries, i: usize) -> Array {
+    let row = Array::new();
+    row.push(&match s.key() {
+        Key::Time(t) => JsValue::from_f64(t[i] as f64),
+        Key::TimeRange(k) => Array::of2(
+            &JsValue::from_f64(k.begin[i] as f64),
+            &JsValue::from_f64(k.end[i] as f64),
+        )
+        .into(),
+        Key::Interval(k) => {
+            let label = match &k.label {
+                Labels::Number(v) => JsValue::from_f64(v[i]),
+                Labels::String(c) => c.get(i).map_or(JsValue::NULL, JsValue::from_str),
+            };
+            Array::of3(
+                &label,
                 &JsValue::from_f64(k.begin[i] as f64),
                 &JsValue::from_f64(k.end[i] as f64),
             )
-            .into(),
-            Key::Interval(k) => {
-                let label = match &k.label {
-                    Labels::Number(v) => JsValue::from_f64(v[i]),
-                    Labels::String(c) => c.get(i).map_or(JsValue::NULL, JsValue::from_str),
-                };
-                Array::of3(
-                    &label,
-                    &JsValue::from_f64(k.begin[i] as f64),
-                    &JsValue::from_f64(k.end[i] as f64),
-                )
-                .into()
-            }
-        });
-        for c in s.columns() {
-            row.push(&literal(&dispatch::cell(c.data(), i)));
+            .into()
         }
-        rows.set(i as u32, row.into());
+    });
+    for c in s.columns() {
+        row.push(&literal(&dispatch::cell(c.data(), i)));
     }
-    set(&o, "rows", &rows);
-    o.into()
+    row
 }
 
 fn record(cells: &[(String, Option<Literal>)]) -> JsValue {
@@ -400,11 +408,15 @@ fn record(cells: &[(String, Option<Literal>)]) -> JsValue {
 }
 
 /// Run a pond-ts method on a series. `args` is the argument list as JSON
-/// (see [`dispatch`]). Returns `{ series: id }`, `{ groups: [[key, id]] }`,
-/// `{ record: {…} }` or `{ records: [{…}] }`.
+/// (see [`dispatch`]); `{"fn": k}` in it is `fns[k]` (see [`callbacks`]).
+/// Returns `{ series: id }`, `{ groups: [[key, id]] }`, `{ record: {…} }`,
+/// `{ records: [{…}] }`, `{ row: [cells…], index }` / `{ row: null }`,
+/// `{ value }` or `{ span: [begin, end] | null }`. A function that throws
+/// rethrows its own exception.
 #[wasm_bindgen]
-pub fn series_call(id: u32, op: &str, args: &str) -> Result<JsValue, JsError> {
-    let args: Value = serde_json::from_str(args).map_err(|e| err(format!("{op}: {e}")))?;
+pub fn series_call(id: u32, op: &str, args: &str, fns: Array) -> Result<JsValue, JsValue> {
+    let args: Value =
+        serde_json::from_str(args).map_err(|e| JsValue::from(err(format!("{op}: {e}"))))?;
     let list = args.as_array().map(Vec::as_slice).unwrap_or(&[]);
     let resolve = |v: &Value| -> Res<TimeSeries> {
         let other = v["series"]
@@ -412,7 +424,17 @@ pub fn series_call(id: u32, op: &str, args: &str) -> Result<JsValue, JsError> {
             .ok_or_else(|| format!("{op}: expected a series, got {v}"))?;
         with(other as u32, |s| Ok(s.clone()))
     };
-    let outcome = with(id, |s| dispatch::call(s, op, list, &resolve)).map_err(err)?;
+    // Taken out of the table first: a function the caller passed may call
+    // back into this module (make or free a series), which needs the table.
+    let input = with(id, |s| Ok(s.clone())).map_err(|e| JsValue::from(err(e)))?;
+    let cb = JsCallbacks {
+        fns,
+        thrown: RefCell::new(None),
+    };
+    let outcome = match dispatch::call(&input, op, list, &resolve, &cb) {
+        Ok(o) => o,
+        Err(e) => return Err(cb.thrown.take().unwrap_or_else(|| err(e).into())),
+    };
     let o = Object::new();
     match outcome {
         Outcome::Series(s) => set(&o, "series", &JsValue::from(store(s))),
@@ -430,14 +452,154 @@ pub fn series_call(id: u32, op: &str, args: &str) -> Result<JsValue, JsError> {
             let list: Array = rows.iter().map(|r| record(r)).collect();
             set(&o, "records", &list);
         }
+        Outcome::Row(None) => set(&o, "row", &JsValue::NULL),
+        Outcome::Row(Some(i)) => {
+            set(&o, "row", &row(&input, i).into());
+            set(&o, "index", &JsValue::from_f64(i as f64));
+        }
+        Outcome::Bool(b) => set(&o, "value", &JsValue::from_bool(b)),
+        Outcome::Number(n) => set(&o, "value", &JsValue::from_f64(n)),
+        Outcome::Span(None) => set(&o, "span", &JsValue::NULL),
+        Outcome::Span(Some((b, e))) => set(
+            &o,
+            "span",
+            &Array::of2(&JsValue::from_f64(b as f64), &JsValue::from_f64(e as f64)).into(),
+        ),
     }
     Ok(o.into())
+}
+
+// The JavaScript functions are not thread-safe, but nothing here runs on
+// another thread: pond-rs is built without `parallel`, and a WebAssembly
+// build without atomics has one thread. This stops a threaded build.
+#[cfg(target_feature = "atomics")]
+compile_error!("pond-wasm calls JavaScript functions from pond-rs closures: one thread only");
+
+/// The functions of one [`series_call`]. The first exception one throws is
+/// kept, to rethrow as it was.
+struct JsCallbacks {
+    fns: Array,
+    thrown: RefCell<Option<JsValue>>,
+}
+
+// SAFETY: one thread only (see the `compile_error!` above).
+unsafe impl Sync for JsCallbacks {}
+
+/// A JavaScript value as a `scan` accumulator.
+#[derive(Clone)]
+struct Shared(JsValue);
+// SAFETY: one thread only (see the `compile_error!` above).
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+impl JsCallbacks {
+    fn get(&self, k: usize) -> Res<js_sys::Function> {
+        self.fns
+            .get(k as u32)
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| format!("argument function {k} is not a function"))
+    }
+    /// Call `fns[k]`, keeping an exception.
+    fn call(&self, k: usize, args: &[JsValue]) -> Res<JsValue> {
+        let f = self.get(k)?;
+        let list: Array = args.iter().collect();
+        f.apply(&JsValue::UNDEFINED, &list).map_err(|e| {
+            self.thrown.borrow_mut().get_or_insert(e);
+            "a function argument threw".to_string()
+        })
+    }
+}
+
+impl callbacks::Callbacks for JsCallbacks {
+    type Acc = Shared;
+    fn test(&self, k: usize, s: &TimeSeries, i: usize) -> Res<bool> {
+        let r = self.call(k, &[row(s, i).into(), JsValue::from_f64(i as f64)])?;
+        Ok(r.is_truthy())
+    }
+    fn map_number(&self, k: usize, v: f64) -> Res<f64> {
+        // As pond-ts: a result of the wrong type is a gap.
+        let r = self.call(k, &[JsValue::from_f64(v)])?;
+        Ok(r.as_f64().unwrap_or(f64::NAN))
+    }
+    fn map_string(&self, k: usize, v: &str) -> Res<Option<String>> {
+        Ok(self.call(k, &[JsValue::from_str(v)])?.as_string())
+    }
+    fn map_boolean(&self, k: usize, v: bool) -> Res<Option<bool>> {
+        Ok(self.call(k, &[JsValue::from_bool(v)])?.as_bool())
+    }
+    fn value(&self, k: usize) -> Res<Shared> {
+        Ok(Shared(self.fns.get(k as u32)))
+    }
+    fn scan(&self, k: usize, acc: Shared, v: f64, i: usize) -> Res<(Shared, f64)> {
+        let r = self.call(
+            k,
+            &[acc.0, JsValue::from_f64(v), JsValue::from_f64(i as f64)],
+        )?;
+        if !Array::is_array(&r) {
+            // pond-ts reads `result[0]` / `result[1]` without checking, so
+            // only null and undefined fail there.
+            if r.is_null() || r.is_undefined() {
+                return Err(
+                    "scan: the step returned nothing; it must return [accumulator, output]".into(),
+                );
+            }
+            let acc = js_sys::Reflect::get_u32(&r, 0).unwrap_or(JsValue::UNDEFINED);
+            let out = js_sys::Reflect::get_u32(&r, 1).unwrap_or(JsValue::UNDEFINED);
+            return Ok((Shared(acc), out.as_f64().unwrap_or(f64::NAN)));
+        }
+        let pair = Array::from(&r);
+        // pond-ts stores a non-number output as missing.
+        let out = pair.get(1).as_f64().unwrap_or(f64::NAN);
+        Ok((Shared(pair.get(0)), out))
+    }
+    fn collapse(&self, k: usize, s: &TimeSeries, i: usize) -> Res<Option<Scalar>> {
+        // As pond-ts: anything but a number, text or true/false is a gap.
+        Ok(js_scalar(self.call(k, &[row(s, i).into()])?).ok())
+    }
+    fn label(&self, k: usize, begin: i64, end: i64, i: usize) -> Res<pond_rs::Label> {
+        let r = self.call(
+            k,
+            &[
+                JsValue::from_f64(begin as f64),
+                JsValue::from_f64(end as f64),
+                JsValue::from_f64(i as f64),
+            ],
+        )?;
+        if let Some(n) = r.as_f64() {
+            Ok(n.into())
+        } else if let Some(t) = r.as_string() {
+            Ok(t.into())
+        } else {
+            Err(format!(
+                "asInterval: interval label at row {i} must be a string or a number, got {}",
+                r.js_typeof().as_string().unwrap_or_default()
+            ))
+        }
+    }
+}
+
+/// The parsed time in ms, as pond-ts `Time.parse(text, { timeZone })`.
+#[wasm_bindgen]
+pub fn time_parse(text: &str, time_zone: &str) -> Result<f64, JsError> {
+    pond_rs::parse_time_in(text, time_zone)
+        .map(|ms| ms as f64)
+        .map_err(|e| err(e.to_string()))
+}
+
+/// The series' schema, as pond-ts `series.schema`.
+#[wasm_bindgen]
+pub fn series_schema(id: u32) -> Result<JsValue, JsError> {
+    with(id, |s| Ok(schema(s).into())).map_err(err)
 }
 
 /// The pond-ts methods `series_call` runs.
 #[wasm_bindgen]
 pub fn supported_methods() -> Array {
-    dispatch::OPS.iter().map(|s| JsValue::from_str(s)).collect()
+    dispatch::OPS
+        .iter()
+        .chain(callbacks::OPS)
+        .map(|s| JsValue::from_str(s))
+        .collect()
 }
 
 /// The pond-ts methods a `partitionBy` step runs.

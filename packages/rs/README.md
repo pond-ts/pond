@@ -2,7 +2,7 @@
 
 pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
 pond-ts's method names and argument shapes. **Not published yet**: this is
-step J1 of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
+steps J1 and J1b of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
 
 ```js
 import { TimeSeries, Sequence } from '@pond-ts/rs';
@@ -36,16 +36,24 @@ cpu.free();
   use `TimeSeries.fromJSON`. Range and interval keys in arguments are
   `{ time: t }`, `{ timeRange: [start, end] }` and
   `{ interval: [label, start, end] }`.
-- **No callbacks yet.** `filter`, `mapColumns`, `scan`, `collapse` and
-  `asInterval` with a function come in step J1b.
-- **Not there yet:** row lookups (`at`, `bisect`, …), the financial studies
-  and `LiveSeries` (step J2), and a browser build (step J3). This build is
-  for Node 20 and later.
+- **Functions work as in pond-ts** (`filter`, `find`, `some`, `every`,
+  `mapColumns`, `scan`, `collapse`, `asInterval`), and may call the bridge
+  themselves. If one throws, the rest of the rows are skipped and that same
+  exception is rethrown. `mapColumns` on an array column is not supported
+  yet.
+- **Row lookups** (`at`, `bisect`, `nearest`, `find`, …) return `Event`s
+  with only part of pond-ts's API: `get`, `data`, `key`, `type`, `begin`,
+  `end`, `timeRange` (no `set`, `merge`, `select`, …). `Time`, `TimeRange`
+  and `Interval` are likewise cut down (no `overlaps`, `contains`,
+  `intersection`); `Time.parse` matches pond-ts.
+- **Not there yet:** the financial studies and `LiveSeries` (step J2), and
+  a browser build (step J3). This build is for Node 20 and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
 - **Error messages differ.** The bridge throws where pond-ts throws, but
-  most messages are pond-rs's and some name its Rust API (for example
+  often a plain `Error` where pond-ts throws a `TypeError` or `RangeError`,
+  and most messages are pond-rs's and some name its Rust API (for example
   `by_column:` or `Column::optional`).
 
 Where pond-rs and pond-ts give different answers on purpose, the list is in
@@ -61,5 +69,5 @@ rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.129
 ./build.sh               # crates/pond-wasm -> pkg/
 node test/parity.mjs     # pond-ts's core parity fixture through this package
-node test/inputs.mjs     # cell checks, -0 and other inputs the fixture misses
+node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
 ```

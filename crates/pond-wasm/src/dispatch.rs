@@ -17,6 +17,8 @@ use pond_rs::{
 };
 use serde_json::Value;
 
+use crate::callbacks::{self, Callbacks};
+
 /// What a call returns.
 pub enum Outcome {
     /// A new series.
@@ -28,12 +30,20 @@ pub enum Outcome {
     Record(Vec<(String, Option<Literal>)>),
     /// Rows of named cells (`byColumn`, `rollingByColumn`).
     Records(Vec<Vec<(String, Option<Literal>)>>),
+    /// A row position, or none (`at`, `find`, `nearest`, …).
+    Row(Option<usize>),
+    /// A yes / no answer (`some`, `includesKey`, …).
+    Bool(bool),
+    /// A number (`bisect`).
+    Number(f64),
+    /// A time span `[begin, end]`, or none (`timeRange`, `intersection`).
+    Span(Option<(i64, i64)>),
 }
 
 /// An error message for JavaScript.
 pub type Res<T> = Result<T, String>;
 
-fn pond<T>(r: pond_rs::Result<T>) -> Res<T> {
+pub(crate) fn pond<T>(r: pond_rs::Result<T>) -> Res<T> {
     r.map_err(|e| e.to_string())
 }
 
@@ -54,10 +64,11 @@ pub const PARTITIONED_OPS: &[&str] = &[
     "baseline",
     "outliers",
     "sample",
+    "scan",
 ];
 
-/// The ops [`call`] runs. Callback ops (`filter`, `mapColumns`, `scan`,
-/// `collapse`, `asInterval` with a function) come in a later step.
+/// The ops [`call`] runs without functions or row lookups; those are
+/// [`crate::callbacks::OPS`].
 pub const OPS: &[&str] = &[
     "rolling",
     "aggregate",
@@ -107,18 +118,18 @@ pub const OPS: &[&str] = &[
 
 /// The arguments of one call, with typed accessors that name the call and
 /// the argument when one is the wrong shape.
-struct Args<'a> {
-    op: &'a str,
-    list: &'a [Value],
+pub(crate) struct Args<'a> {
+    pub(crate) op: &'a str,
+    pub(crate) list: &'a [Value],
 }
 
 const NULL: Value = Value::Null;
 
 impl<'a> Args<'a> {
-    fn get(&self, i: usize) -> &'a Value {
+    pub(crate) fn get(&self, i: usize) -> &'a Value {
         self.list.get(i).unwrap_or(&NULL)
     }
-    fn bad(&self, i: usize, want: &str) -> String {
+    pub(crate) fn bad(&self, i: usize, want: &str) -> String {
         format!(
             "{}: argument {} must be {want}, got {}",
             self.op,
@@ -126,19 +137,19 @@ impl<'a> Args<'a> {
             self.get(i)
         )
     }
-    fn str(&self, i: usize, want: &str) -> Res<&'a str> {
+    pub(crate) fn str(&self, i: usize, want: &str) -> Res<&'a str> {
         self.get(i).as_str().ok_or_else(|| self.bad(i, want))
     }
-    fn names(&self, i: usize) -> Res<Vec<&'a str>> {
+    pub(crate) fn names(&self, i: usize) -> Res<Vec<&'a str>> {
         column_names(self.get(i)).ok_or_else(|| self.bad(i, "a column name or a list of them"))
     }
-    fn options(&self, i: usize) -> Res<&'a Value> {
+    pub(crate) fn options(&self, i: usize) -> Res<&'a Value> {
         match self.get(i) {
             v @ (Value::Null | Value::Object(_)) => Ok(v),
             _ => Err(self.bad(i, "an options object")),
         }
     }
-    fn whole(&self, i: usize, want: &str) -> Res<i64> {
+    pub(crate) fn whole(&self, i: usize, want: &str) -> Res<i64> {
         whole_number(self.get(i)).ok_or_else(|| self.bad(i, want))
     }
 }
@@ -382,7 +393,7 @@ fn join_options(o: &Value) -> Res<Join> {
 
 /// A pond-ts `KeyLike`: a number or `{"time": t}`, `[start, end]` or
 /// `{"timeRange": …}`, `[label, start, end]` or `{"interval": …}`.
-fn event_key(v: &Value) -> Res<pond_rs::EventKey> {
+pub(crate) fn event_key(v: &Value) -> Res<pond_rs::EventKey> {
     let ms =
         |v: &Value| whole_number(v).ok_or_else(|| format!("key times must be whole ms, got {v}"));
     match v {
@@ -655,15 +666,19 @@ macro_rules! shared_op {
 
 /// Run `op` on `input` with pond-ts-shaped `args`. `series` resolves a
 /// `{"series": id}` argument.
-pub fn call(
+pub fn call<C: Callbacks>(
     input: &TimeSeries,
     op: &str,
     args: &[Value],
     series: &dyn Fn(&Value) -> Res<TimeSeries>,
+    cb: &C,
 ) -> Res<Outcome> {
     let a = Args { op, list: args };
     if let Some(r) = shared_op!(input, &a) {
         return r.map(Outcome::Series);
+    }
+    if let Some(r) = callbacks::call(input, &a, cb) {
+        return r;
     }
     let s = Outcome::Series;
     Ok(match op {
@@ -801,7 +816,7 @@ pub fn call(
             let values: Vec<Option<f64>> = list.iter().map(decode_f64).collect();
             s(pond(input.with_column(Column::optional(name, values)))?)
         }
-        "partitionBy" => partition(input, &a)?,
+        "partitionBy" => partition(input, &a, cb)?,
         "groupBy" => {
             let column = a.str(0, "a column name")?;
             let groups = pond(input.group_by(&[column]))?;
@@ -818,7 +833,7 @@ pub fn call(
 
 /// `partitionBy(by, steps, end)`: steps `[[method, ...args]]` run on the
 /// partitioned view, `end` `"collect"` or `"toMap"`.
-fn partition(input: &TimeSeries, a: &Args) -> Res<Outcome> {
+fn partition<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcome> {
     let by = a.names(0)?;
     let Some(steps) = a.get(1).as_array() else {
         return Err(a.bad(1, "a list of steps [method, ...args]"));
@@ -837,6 +852,7 @@ fn partition(input: &TimeSeries, a: &Args) -> Res<Outcome> {
         };
         view = match shared_op!(view, &sa) {
             Some(r) => r?,
+            None if sa.op == "scan" => callbacks::scan(&view, &sa, cb)?,
             None => return Err(format!("partitionBy: no partitioned '{method}'")),
         };
     }
@@ -896,6 +912,7 @@ fn value_axis(input: &TimeSeries, a: &Args) -> Res<Outcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::callbacks::NoCallbacks;
     use pond_rs::JsonOptions;
     use serde_json::json;
 
@@ -917,7 +934,7 @@ mod tests {
         let s = series();
         let step = |op: &str| {
             let args = [json!("host"), json!([[op]]), json!("collect")];
-            match call(&s, "partitionBy", &args, &no_series) {
+            match call(&s, "partitionBy", &args, &no_series, &NoCallbacks) {
                 Err(why) => !why.contains("no partitioned"),
                 Ok(_) => true,
             }
@@ -925,7 +942,8 @@ mod tests {
         for op in PARTITIONED_OPS {
             assert!(step(op), "'{op}' is listed but no step runs it");
         }
-        for op in OPS.iter().filter(|op| !PARTITIONED_OPS.contains(op)) {
+        let all = OPS.iter().chain(callbacks::OPS);
+        for op in all.filter(|op| !PARTITIONED_OPS.contains(op)) {
             assert!(!step(op), "'{op}' runs as a step but is not listed");
         }
     }
