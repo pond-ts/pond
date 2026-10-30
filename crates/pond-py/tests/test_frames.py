@@ -142,7 +142,7 @@ def test_dict_input_takes_its_kinds_from_the_values():
 
 def test_time_range_and_interval_keys_from_a_dict():
     r = TimeSeries({"span": [(0, 10), (10, 20)], "v": [1.0, 2.0]}, key="span", key_kind="time_range")
-    assert r.key_kind == "timeRange"
+    assert r.key_kind == "time_range"
     assert r[1].key == (10, 20)
     i = TimeSeries({"b": [("x", 0, 10), ("y", 10, 20)], "v": [1.0, 2.0]}, key="b", key_kind="interval")
     assert i[0].key == ("x", 0, 10)
@@ -267,6 +267,46 @@ def test_partitions_by_several_columns_key_by_tuples():
     p = s.partition_by(["host", "zone"])
     assert len(p) == 4 and p.by == ["host", "zone"]
     assert list(p.to_dict()) == list(groups)
+
+
+def test_partitioned_scan_gives_each_group_its_own_state():
+    s = TimeSeries(cpu_table())
+
+    def count(seen, v, i):
+        seen.append(v)  # changes the state in place
+        return seen, float(len(seen))
+
+    out = s.partition_by("host").scan("cpu", count, [], output="n").collect()
+    assert out.column("n") == [1.0, 1.0, 2.0, 2.0, 3.0, 3.0]
+
+
+def test_numpy_and_pandas_times():
+    import numpy as np
+
+    s = TimeSeries(cpu_table())
+    assert s.within(np.int64(60_000), np.datetime64("1970-01-01T00:02:00")).column("cpu") == [1.0, 2.0]
+    with pytest.raises(pond_rs.PondError, match="millisecond"):
+        s.within(np.datetime64("1970-01-01T00:00:00.000000001"), 60_000)
+    with pytest.raises(pond_rs.PondError, match="millisecond"):
+        s.within(pd.Timestamp("1970-01-01T00:00:00.000000001Z"), 60_000)
+    assert len(s.within(pd.Timestamp("1970-01-01T00:01:00Z"), 60_000)) == 1
+
+
+def test_bad_option_values_are_pond_errors():
+    s = TimeSeries(cpu_table())
+    with pytest.raises(pond_rs.PondError, match="alignment"):
+        s.rolling("1m", {"x": ("cpu", "avg")}, alignment="middle")
+    with pytest.raises(pond_rs.PondError, match="exactly one of alpha or span"):
+        s.smooth("cpu", "ema")
+    with pytest.raises(TypeError):
+        s.sample(stride=1.5)
+
+
+def test_iterating_rows_is_lazy():
+    s = TimeSeries(cpu_table())
+    it = iter(s)
+    assert next(it).index == 0 and next(it).index == 1
+    assert [r.index for r in it] == [2, 3, 4, 5]
 
 
 # --- threads ------------------------------------------------------------------

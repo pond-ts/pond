@@ -45,7 +45,8 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
   JSON formats are all there.
 - **Times** are whole milliseconds since 1970 inside. Anywhere a time is taken
   you can pass a `datetime` (one without a time zone is read as UTC), a `date`,
-  text such as `"2026-03-08T12:00:00Z"`, or an int of milliseconds. A time
+  text such as `"2026-03-08T12:00:00Z"`, an int of milliseconds, or a numpy
+  `datetime64` / integer. A time
   with a part smaller than a millisecond is refused, not rounded.
 - **Durations** are text (`"500ms"`, `"5s"`, `"5m"`, `"1h"`, `"1d"`) or a
   `timedelta`. In `rolling`, an int is a count of rows instead.
@@ -54,7 +55,8 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
   first, last, median, stdev, difference, keep, unique, samples, `top3`,
   `p95`, …
 - **Errors** are `pond_rs.PondError` (a `ValueError`), naming the call and
-  the column.
+  the column; a value of the wrong type (text where a number is needed) is a
+  `TypeError`.
 - **Python functions** work where a rule is yours: `filter(lambda row: …)`,
   `map(column, f)`, `scan(column, step, init)`, `collapse(...)`,
   `as_interval(lambda row: …)`. An exception inside one comes out as itself.

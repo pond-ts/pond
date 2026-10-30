@@ -521,12 +521,13 @@ impl PyTimeSeries {
         self.inner.key_name()
     }
 
-    /// `"time"`, `"timeRange"` or `"interval"`.
+    /// `"time"`, `"time_range"` or `"interval"`, the words the
+    /// constructor's `key_kind` takes.
     #[getter]
     fn key_kind(&self) -> &'static str {
         match self.inner.key() {
             Key::Time(_) => "time",
-            Key::TimeRange(_) => "timeRange",
+            Key::TimeRange(_) => "time_range",
             Key::Interval(_) => "interval",
         }
     }
@@ -599,17 +600,11 @@ impl PyTimeSeries {
         }
     }
 
-    fn __iter__(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
-        let py = slf.py();
-        let me = slf.get();
-        let rows = (0..me.inner.len())
-            .map(|i| Bound::new(py, me.row(i)))
-            .collect::<PyResult<Vec<_>>>()?;
-        Ok(PyList::new(py, rows)?
-            .as_any()
-            .try_iter()?
-            .into_any()
-            .unbind())
+    fn __iter__(&self) -> RowIter {
+        RowIter {
+            series: Arc::clone(&self.inner),
+            next: 0,
+        }
     }
 
     /// Row `index` (negative counts from the end), or `None`.
@@ -1233,6 +1228,30 @@ impl PyTimeSeries {
 }
 
 shared_methods!(PyTimeSeries);
+
+/// Rows of a series, one at a time (`for row in series`).
+#[pyclass(module = "pond_rs")]
+pub struct RowIter {
+    series: Arc<TimeSeries>,
+    next: usize,
+}
+
+#[pymethods]
+impl RowIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<PyRow> {
+        (self.next < self.series.len()).then(|| {
+            self.next += 1;
+            PyRow {
+                series: Arc::clone(&self.series),
+                index: self.next - 1,
+            }
+        })
+    }
+}
 
 /// Call a Python row test.
 fn row_test(cb: &Callback, me: &Arc<TimeSeries>, r: &pond_rs::Row<'_>) -> pond_rs::Result<bool> {

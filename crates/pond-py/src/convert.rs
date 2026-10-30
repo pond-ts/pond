@@ -5,7 +5,7 @@ use pond_rs::{
     Agg, Alignment, At, ColumnData, Decimal, EventKey, Label, PondError, Reducer, Scalar, Sequence,
     Value,
 };
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -29,8 +29,11 @@ impl<T> IntoPy<T> for pond_rs::Result<T> {
     }
 }
 
+/// A bad value given to the binding (an unknown option word, a time that
+/// is not whole milliseconds): `pond_rs.PondError`, like pond-rs's own
+/// errors. A value of the wrong type is a `TypeError`.
 pub fn value_error(message: impl Into<String>) -> PyErr {
-    PyValueError::new_err(message.into())
+    PondErrorPy::new_err(message.into())
 }
 
 fn datetime_module(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
@@ -92,6 +95,29 @@ pub fn time_ms(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<i64> {
     if obj.is_instance_of::<PyInt>() {
         return obj.extract::<i64>();
     }
+    let type_name = obj.get_type().name()?.to_string();
+    if type_name == "datetime64" {
+        // numpy: through nanoseconds, so a sub-millisecond part is seen.
+        if obj.call_method0("__str__")?.extract::<String>()? == "NaT" {
+            return Err(value_error(format!("{what}: NaT is not a time")));
+        }
+        let ns: i64 = obj
+            .call_method1("astype", ("datetime64[ns]",))?
+            .call_method1("astype", ("int64",))?
+            .extract()?;
+        if ns % 1_000_000 != 0 {
+            return Err(value_error(format!(
+                "{what}: {} has a part smaller than a millisecond; pond-rs times are whole milliseconds",
+                obj.str()?
+            )));
+        }
+        return Ok(ns / 1_000_000);
+    }
+    if obj.hasattr("__index__")? && !obj.is_instance_of::<PyFloat>() {
+        // numpy integers and other int-like objects.
+        let index = obj.py().import("operator")?.call_method1("index", (obj,))?;
+        return index.extract::<i64>();
+    }
     if obj.is_instance_of::<PyFloat>() {
         let v: f64 = obj.extract()?;
         if v.fract() != 0.0 || !v.is_finite() || v.abs() > 9.0e15 {
@@ -114,6 +140,15 @@ pub fn time_ms(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<i64> {
         } else {
             obj.clone()
         };
+        // pandas.Timestamp keeps nanoseconds beyond datetime's microseconds.
+        if let Ok(ns) = obj.getattr("nanosecond")
+            && ns.extract::<i64>().unwrap_or(0) != 0
+        {
+            return Err(value_error(format!(
+                "{what}: {} has a part smaller than a millisecond; pond-rs times are whole milliseconds",
+                obj.str()?
+            )));
+        }
         let delta = aware.call_method1("__sub__", (epoch(py)?,))?;
         return timedelta_ms(&delta, what);
     }

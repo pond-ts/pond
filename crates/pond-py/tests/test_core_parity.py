@@ -184,7 +184,7 @@ def outcome_series(s: TimeSeries):
         cols = [table.column(c).to_pylist() for c in s.columns]
         if s.key_kind == "time":
             keys = ints(key)
-        elif s.key_kind == "timeRange":
+        elif s.key_kind == "time_range":
             keys = [list(p) for p in zip(ints(key), ints(key + "End"))]
         else:
             labels = table.column(key + "Label").to_pylist()
@@ -791,11 +791,30 @@ REFUSED = {"smooth-ema-text", "smooth-ema-unknown", "baseline-text", "partition-
 CASES = {c["id"]: c for c in FIXTURE["cases"]}
 
 
+# Cases where pond-ts throws and Python itself refuses the argument before
+# pond-rs sees it (a fractional count where an int is needed): these may
+# raise TypeError / OverflowError. Every other expected error must be a
+# pond_rs.PondError, so a harness mistake (a wrong keyword, a missing
+# fixture key) cannot pass as a matching error.
+PYTHON_TYPE_ERRORS = {
+    "error-shift-fraction",
+    "smooth-ema-warmup-neg",
+    "smooth-ema-warmup-frac",
+    "smooth-ema-minSamples-frac",
+    "sample-stride-frac",
+    "sample-reservoir-frac",
+}
+
+
 def attempt(case):
     try:
         return run(case)
-    except (pond_rs.PondError, ValueError, TypeError, KeyError, OverflowError) as e:
+    except pond_rs.PondError as e:
         return e
+    except (TypeError, OverflowError) as e:
+        if case["id"] in PYTHON_TYPE_ERRORS:
+            return e
+        raise
 
 
 @pytest.mark.parametrize("case", FIXTURE["cases"], ids=[c["id"] for c in FIXTURE["cases"]])
@@ -867,7 +886,7 @@ def test_row_lookups_match_pond_ts():
         try:
             got = run_query(q)
             err = None
-        except (pond_rs.PondError, ValueError, TypeError, KeyError) as e:
+        except pond_rs.PondError as e:
             got, err = None, e
         want_error = q.get("error") is not None
         want = None if want_error else q.get("expected")

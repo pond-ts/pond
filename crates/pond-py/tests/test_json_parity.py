@@ -50,7 +50,7 @@ def judge(label, refused, expected, got, failures):
 def attempt(f):
     try:
         return f()
-    except (pond_rs.PondError, ValueError, TypeError) as e:
+    except pond_rs.PondError as e:
         return e
 
 

@@ -45,7 +45,9 @@ Columns = Union[str, _Seq[str]]
 
 class PondError(ValueError):
     """Bad input data, an unknown column, a column of the wrong kind, a bad
-    duration or reducer name. The message names the call and the column."""
+    duration, reducer or option word. The message names the call and the
+    column. A value of the wrong type (text where a number is needed) is a
+    TypeError instead."""
 
 def parse_time(text: str, time_zone: Optional[str] = None) -> int:
     """Text to epoch milliseconds, as pond-ts Time.parse. Text without an
@@ -174,7 +176,9 @@ class _Shared:
     def scan(
         self, column: str, step: Callable[[Any, float, int], tuple[Any, Optional[float]]], init: Any, *, output: Optional[str] = None
     ) -> Any:
-        """step(state, value, index) -> (state, output); None output is a gap."""
+        """step(state, value, index) -> (state, output); None output is a gap.
+        On a PartitionedSeries each group starts from its own deep copy of
+        init."""
     def sample(self, *, stride: Optional[int] = None, reservoir: Optional[int] = None, seed: int = 0) -> Any: ...
 
 class TimeSeries(_Shared):
@@ -222,7 +226,7 @@ class TimeSeries(_Shared):
     @property
     def key_name(self) -> str: ...
     @property
-    def key_kind(self) -> Literal["time", "timeRange", "interval"]: ...
+    def key_kind(self) -> Literal["time", "time_range", "interval"]: ...
     @property
     def columns(self) -> list[str]: ...
     @property

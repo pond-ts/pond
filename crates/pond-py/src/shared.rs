@@ -153,12 +153,20 @@ impl_ops!(PartitionedSeries);
 /// on any thread) takes the lock to bump its count.
 pub struct Acc(pub Option<Py<PyAny>>);
 
+/// Each partition starts from its own deep copy of `init`, so a step that
+/// changes its state in place (appends to a list) cannot leak into another
+/// group, which may be running on another thread at the same time. An
+/// object `copy.deepcopy` refuses is shared as it is.
 impl Clone for Acc {
     fn clone(&self) -> Self {
-        Acc(self
-            .0
-            .as_ref()
-            .map(|p| Python::attach(|py| p.clone_ref(py))))
+        Acc(self.0.as_ref().map(|p| {
+            Python::attach(|py| {
+                py.import("copy")
+                    .and_then(|m| m.call_method1("deepcopy", (p.bind(py),)))
+                    .map(|c| c.unbind())
+                    .unwrap_or_else(|_| p.clone_ref(py))
+            })
+        }))
     }
 }
 
