@@ -4023,6 +4023,53 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     needs those keeps using `@pond-ts/process` in TypeScript, or a process
     port becomes its own phase.
 
+- **[PND-RUST-R4]** — bridges to JavaScript (WebAssembly) and Python
+  (planned 2026-10-29; pjm17971 chose "Yes, all" on 2026-10-30: a separate
+  npm package, both bridges at once, same version as pond-ts on every `v*`
+  tag; Python name `pond-rs`, imported as `pond_rs`). Plan doc for review:
+  https://claude.ai/artifact/3RY7ofiG8B21stg3W7nvtf.
+  - Why: pond-rs's speed for JavaScript and Python users without writing
+    Rust. Probes (2026-10-29, 1M rows, outputs bit for bit pond-ts's):
+    - WebAssembly (wasm-bindgen 0.2.129, `default-features = false`):
+      live pushes one at a time 7-12x pond-ts (plain 326 vs 3,539-4,043
+      ms); rolling 5 m 6.1x, `sma` 2.3x, `rsi` 2.0x, aggregate 1.5x,
+      `bollinger` 1.4x, `diff` even (JS arrays in and out, copies
+      included). Size, brotli: core 269 KB, + live 655 KB (the live query
+      path pulls in the ICU collator, ~1.1 MB raw), everything 1,015 KB.
+      ~5 ns per call; 1M numbers in 0.6 ms, out 1.0 ms.
+    - Python (PyO3 0.29 + arrow-pyarrow 59.3.2, abi3 wheel 2.3 MB):
+      pyarrow / polars / pandas frames in and out, gap-free number columns
+      not copied; mimalloc cut a 4-column round trip 44-49 -> 14-17 ms.
+      Against polars, frame in to frame out: rolling, aggregate, `sma`
+      even, `rsi` ~2x faster, `diff` slower (the copy is the whole cost).
+  - Costs (JavaScript): `free()` per series (a finalizer backs it up),
+    out of memory or a panic kills the instance (the binding must return
+    errors, never unwrap), one thread, 3.84 GB memory cap.
+  - Shape (JavaScript): a separate package with pond-rs's API, not
+    WebAssembly inside pond-ts (the RFC's first R4 idea); that stays open
+    for single hot spots.
+  - Steps, each checked against the pond-ts fixtures the crate passes:
+    - J1 `crates/pond-wasm`: series from / to JS typed arrays and Arrow
+      IPC, the batch core, errors as JS exceptions, `free()` + finalizer,
+      size cuts (no collator in the live path; Arrow decompression only).
+      Check: core parity fixture through JS.
+    - J2: studies through the catalog (`study(name, options)` plus named
+      helpers from the catalog table) and `LiveSeries`. Check: study and
+      live parity fixtures through JS.
+    - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
+      docs JavaScript tab, speed table vs pond-ts.
+    - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
+      possible), the batch core with keyword options, `datetime` and
+      duration strings, mimalloc, errors as Python exceptions. Check: core
+      parity fixture through pytest.
+    - P2: studies through the catalog, `LiveSeries`.
+    - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
+      PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
+      pandas.
+  - Found by both probes, handed to the live speed review: pond-rs live
+    filter + aggregate over 1M one-at-a-time pushes took 230-256 ms from
+    Rust; a hand-written Python dict took 110-132 ms.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
