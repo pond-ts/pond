@@ -29,7 +29,9 @@ A live series has a name and a schema: the key column first (`time` for
 moments), then the value columns (numbers, text, true/false or arrays).
 `push(time, cells)` adds one event: the time in epoch milliseconds and one
 cell per value column, `None` for a gap. `push_many` adds a batch;
-`push_json` takes rows written as pond-ts JSON.
+`push_json` takes rows written as pond-ts JSON; `push_series` takes a batch
+`TimeSeries` (data that already comes in columns: an Arrow chunk, a JSON
+read) and is the fastest way in.
 
 ```rust
 use pond_rs::live::LiveSeries;
@@ -78,6 +80,46 @@ pond-ts JSON, and `LiveSeries::from_json` starts one from it.
 the order of the whole batch; if anything is wrong it refuses the batch
 and stores none of it. (pond-ts used to keep the rows before a bad one in
 some modes; that was fixed there to match.)
+
+**Pushing a batch series.** `push_series(&series)` adds every row of a
+`TimeSeries` as one batch, with the same rules and outputs as `push_many`
+of the same rows. The series must be keyed the same way (a `time` key for a
+`time`-keyed live series) and have exactly the live series' value columns
+by name, in any order, each of the same kind; a gap in a required column
+is refused like a bad row, naming the row. When nothing is built on the
+series and nothing watches it, the columns are copied straight into its
+storage without building an event per row, which is what makes it fast:
+one million rows in batches of 1,000 take about half the time of
+`push_many` (and about a third less than pond-ts's `pushMany`, which has
+no column-shaped input; see Speed below). pond-ts has no `push_series`.
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Column, ColumnDef, ColumnKind, Float64Column, StringColumn, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("load", ColumnKind::Number),
+        ],
+    )?;
+    let chunk = TimeSeries::new(
+        "chunk",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::optional("load", Float64Column::from_options([Some(0.25), Some(0.5), None])),
+            Column::optional("host", StringColumn::from_options([Some("a"), Some("b"), Some("a")])),
+        ],
+    )?;
+    live.push_series(&chunk)?;
+    assert_eq!(live.len(), 3);
+    assert_eq!(live.at(1).unwrap().string("host")?, Some("b"));
+    Ok(())
+}
+```
 
 ## Late events and how many to keep
 

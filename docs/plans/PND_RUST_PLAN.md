@@ -4001,6 +4001,33 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
          node does that in its garbage collector, off the clock. Only a
          column-shaped push removes it ([PND-RUSTLIVEBATCH]). Not done:
          a threads-in-library trial (already parked), any API change.
+       - [PND-RUSTLIVEBATCH] done 2026-10-29 (Peter: "work on it").
+         `LiveSeries::push_series(&TimeSeries)`: a batch series pushed as
+         one batch, same rules and outputs as `push_many` of its rows
+         (key kind must match; the live series' value columns by name in
+         any order, same kinds; a gap in a required column or a non-finite
+         number in an array cell is refused naming the row; extra or
+         missing columns refused; all or nothing). With nothing built on
+         or watching the series, `ingest_bare_series` copies each run of
+         in-order rows into storage column by column
+         (`EventBuffer::append_series`, `Cells::extend_from`); a late row
+         under `Drop` is skipped, under `Reorder` inserted on its own,
+         and `Strict` has refused the batch already. Otherwise rows become
+         events as in `push_many`. Measured (callgrind, 200k rows):
+         `push_many` batches 1,158 instructions/row, `push_series` 517
+         (−55%); with filter + 1 m aggregate built on it 3,385/row, the
+         same as pushing rows (the event path). Wall clock, 1M rows,
+         batches of 1,000, same machine same hour: `push_many` 247 ms,
+         `push_series` 126 ms, pond-ts `pushMany` 192 ms. Tests: the same
+         session run twice (rows vs series) in 8 modes × 3 batchings
+         gives the same outputs, rows, stats and errors; shape and row
+         errors pinned. Chosen shape: a `TimeSeries` rather than
+         `push_columns(keys, columns)`, since that is what Arrow and JSON
+         readers hand back and it carries validated, sorted keys. Not
+         built: a column path for a series with nodes (each node still
+         takes one event at a time, as pond-ts); pond-ts has no
+         column-shaped push, so no parity case (the rows-vs-series test
+         stands in).
        - Agent trial (`bench/agent-trial/r3/README.md`): per-host minute
          buckets over late events with a 5 s grace, against plain Rust
          (std only; polars has no push-one-event API). 10/10 right on both

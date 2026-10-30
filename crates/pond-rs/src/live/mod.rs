@@ -147,15 +147,16 @@ pub use rolling::{History, LiveRolling, RollingOptions, RollingStats, RollingWin
 pub use series::SubSeries;
 pub use view::LiveView;
 
-use crate::column::{Scalar, Value};
+use crate::column::{ColumnData, Scalar, Value};
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
 use crate::json::{RowFormat, invalid, parse, read_name, read_schema};
 use crate::query::{EventKey, Label, compare_keys};
 use crate::reducer::Agg;
 use crate::sequence::{CALENDAR_RANGE_MS, Sequence};
-use crate::series::{ColumnDef, ColumnKind, MAX_TIME_MS, TimeSeries};
+use crate::series::{Column, ColumnDef, ColumnKind, Key, Labels, MAX_TIME_MS, TimeSeries};
 
+use buffer::{series_cell, series_key};
 use event::LiveSchema;
 use reduce::Place;
 use rolling::{After, Span};
@@ -793,6 +794,52 @@ impl LiveSeries {
         Ok(out)
     }
 
+    /// Push the rows of a batch [`TimeSeries`] as one batch, the fastest
+    /// way in for data that already comes in columns (an Arrow file, a
+    /// [`TimeSeries::from_json`] read, a chunk from another series). Its key
+    /// must be of this series' kind, and it must have exactly this series'
+    /// value columns by name (in any order), each of the same kind; a gap
+    /// in a required column, or an array cell with a non-finite number, is
+    /// refused like a bad row of [`LiveSeries::push_many`]. All or nothing,
+    /// with the same ordering rules, retention and outputs as `push_many`
+    /// of the same rows. Two things a batch series settles before it gets
+    /// here: a non-finite number is already a gap in its column (where a
+    /// `push_many` cell of `NaN` is refused), and its interval rows are
+    /// ordered by span only, so equal spans whose labels are out of label
+    /// order count as late rows (refused under `Strict`, placed under
+    /// `Reorder`), as the same rows would through `push_many`.
+    ///
+    /// When nothing is built on or watching the series, the columns are
+    /// copied straight into its storage, with no event built per row.
+    pub fn push_series(&mut self, series: &TimeSeries) -> Result<Vec<Output>> {
+        let columns = self.check_series(series)?;
+        let mut out = Vec::new();
+        let n = series.len();
+        if n == 0 {
+            return Ok(out);
+        }
+        let keys: Vec<EventKey> = (0..n).map(|i| series_key(series, i)).collect();
+        self.check_order(keys.iter())?;
+        if self.bare_root() {
+            self.ingest_bare_series(series, &columns, &keys, &mut out);
+            return Ok(out);
+        }
+        let schema = Arc::clone(&self.core().schema);
+        let events: Vec<LiveEvent> = keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| {
+                LiveEvent::new(Arc::clone(&schema), key, series_values(series, &columns, i))
+            })
+            .collect();
+        if !self.partitions.is_empty() {
+            self.check_partitions(&events)?;
+        }
+        self.ingest_series(0, events, &mut out);
+        self.take_failure()?;
+        Ok(out)
+    }
+
     /// Whether nothing takes the root's events: no node built on it (and
     /// so no partition), nothing watched on it.
     fn bare_root(&self) -> bool {
@@ -947,6 +994,117 @@ impl LiveSeries {
         Ok((key, values))
     }
 
+    /// [`LiveSeries::check_row`] for a whole batch series: its shape against
+    /// the schema, then every row. Returns, per value column of the schema,
+    /// the series column that feeds it.
+    fn check_series(&self, series: &TimeSeries) -> Result<Vec<usize>> {
+        const CALL: &str = "LiveSeries::push_series";
+        let bad = |message: String| PondError::InvalidData {
+            call: CALL,
+            message,
+        };
+        let schema = &self.core().schema;
+        let key_kind = schema.columns[0].kind;
+        if series.key().kind() != key_kind {
+            return Err(bad(format!(
+                "the series is keyed by {}, but this live series by {}",
+                series.key().kind().as_str(),
+                key_kind.as_str()
+            )));
+        }
+        let defs = schema.values();
+        let sources = series.columns();
+        let mut columns = Vec::with_capacity(defs.len());
+        for def in defs {
+            let Some(c) = sources.iter().position(|col| col.name() == def.name) else {
+                return Err(bad(format!(
+                    "column '{}' is missing from the series (it has: {})",
+                    def.name,
+                    sources
+                        .iter()
+                        .map(Column::name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            };
+            if sources[c].kind() != def.kind {
+                return Err(bad(format!(
+                    "'{}': the series has a {} column, this live series takes {}",
+                    def.name,
+                    sources[c].kind().as_str(),
+                    def.kind.as_str()
+                )));
+            }
+            columns.push(c);
+        }
+        if sources.len() != defs.len() {
+            let extra: Vec<&str> = sources
+                .iter()
+                .map(Column::name)
+                .filter(|name| !defs.iter().any(|d| d.name == *name))
+                .collect();
+            return Err(bad(format!(
+                "the series has columns this live series does not: {}",
+                extra.join(", ")
+            )));
+        }
+        // The rows, as check_row would see them.
+        let n = series.len();
+        let (begin, end) = (series.key().begin(), series.key().end());
+        for i in 0..n {
+            for t in [begin[i], end.map_or(begin[i], |e| e[i])] {
+                if !(-MAX_TIME_MS..=MAX_TIME_MS).contains(&t) {
+                    return Err(bad(format!(
+                        "row {i}: time {t} ms is outside the supported range ±{MAX_TIME_MS} ms"
+                    )));
+                }
+            }
+        }
+        if self.calendar_aggregations > 0 {
+            let (lo, hi) = CALENDAR_RANGE_MS;
+            if let Some(i) = begin.iter().position(|t| !(lo..hi).contains(t)) {
+                return Err(bad(format!(
+                    "row {i}: time {} ms is outside years -9997 to 9997 (UTC), the range a calendar aggregation takes",
+                    begin[i]
+                )));
+            }
+        }
+        if let (Key::Interval(k), Some(held)) = (series.key(), self.core().buffer.front_label())
+            && n > 0
+            && matches!(k.label, Labels::Number(_)) != matches!(held, Label::Number(_))
+        {
+            return Err(bad(
+                "row 0: interval labels must all be numbers or all text, like the events held"
+                    .into(),
+            ));
+        }
+        for (def, &c) in defs.iter().zip(&columns) {
+            let data = sources[c].data();
+            if def.required
+                && data.missing_count() > 0
+                && let Some(i) = (0..n).find(|&i| !data.is_present(i))
+            {
+                return Err(bad(format!("row {i}: column '{}' is required", def.name)));
+            }
+            if let ColumnData::Array(arrays) = data
+                && let Some(i) = arrays.iter().position(|cell| {
+                    cell.is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|s| matches!(s, Scalar::Number(x) if !x.is_finite()))
+                    })
+                })
+            {
+                return Err(bad(format!(
+                    "row {i}: '{}': expected an array of finite numbers, text or true/false, got {:?}",
+                    def.name,
+                    arrays.get(i).unwrap()
+                )));
+            }
+        }
+        Ok(columns)
+    }
+
     /// The ordering check over a whole batch, as the inserts would run it,
     /// before any of it is stored ([PND-BATCHATOM]).
     fn check_order<'k>(&self, keys: impl Iterator<Item = &'k EventKey>) -> Result<()> {
@@ -1013,10 +1171,60 @@ impl LiveSeries {
             any = true;
             series.buffer.insert_cells(key, values);
         }
-        if !any {
-            return;
+        if any {
+            self.after_bare_store(out);
         }
-        let n = series.retention_count();
+    }
+
+    /// [`LiveSeries::ingest_bare`] for the rows of a batch series (checked,
+    /// `keys` theirs): each run of rows in key order after the tail is
+    /// copied into storage column by column; a late row (only under
+    /// `Drop` or `Reorder`: `Strict` refused the batch) is skipped or
+    /// inserted on its own.
+    fn ingest_bare_series(
+        &mut self,
+        series: &TimeSeries,
+        columns: &[usize],
+        keys: &[EventKey],
+        out: &mut Vec<Output>,
+    ) {
+        let s = self.series_mut(0);
+        let mut any = false;
+        let mut run = 0;
+        for i in 0..keys.len() {
+            let last = if run < i {
+                Some(&keys[i - 1])
+            } else {
+                s.buffer.last_key()
+            };
+            if last.is_none_or(|l| compare_keys(l, &keys[i]) != Ordering::Greater) {
+                continue;
+            }
+            // Flush the run before this late row, then place the row.
+            s.buffer.append_series(series, columns, run, i);
+            s.ingested += (i - run) as u64;
+            any |= run < i;
+            if s.ordering == OrderingMode::Drop {
+                s.rejected += 1;
+            } else {
+                s.ingested += 1;
+                any = true;
+                s.buffer
+                    .insert_cells(keys[i].clone(), series_values(series, columns, i));
+            }
+            run = i + 1;
+        }
+        s.buffer.append_series(series, columns, run, keys.len());
+        s.ingested += (keys.len() - run) as u64;
+        any |= run < keys.len();
+        if any {
+            self.after_bare_store(out);
+        }
+    }
+
+    /// Retention and settle after a bare root stored a push.
+    fn after_bare_store(&mut self, out: &mut Vec<Output>) {
+        let n = self.series(0).retention_count();
         if n > 0 {
             self.evict_series(0, n, out);
         }
@@ -2009,4 +2217,13 @@ fn two_slots(slots: &mut [Slot], a: usize, b: usize) -> Option<(&mut Slot, &mut 
             Some((&mut hi[0], &mut lo[b]))
         }
     }
+}
+
+/// Row `i` of a batch series as live cells, in the schema's value order.
+fn series_values(series: &TimeSeries, columns: &[usize], i: usize) -> Vec<Option<Value>> {
+    let sources = series.columns();
+    columns
+        .iter()
+        .map(|&c| series_cell(sources[c].data(), i))
+        .collect()
 }

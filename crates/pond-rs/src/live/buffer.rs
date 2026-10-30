@@ -97,6 +97,26 @@ impl Cells {
         }
     }
 
+    /// Append rows `from..to` of a batch column of the same kind.
+    fn extend_from(&mut self, data: &ColumnData, from: usize, to: usize) {
+        match (self, data) {
+            (Cells::Number(c), ColumnData::Number(d)) => c.extend(
+                d.iter()
+                    .skip(from)
+                    .take(to - from)
+                    .map(|v| v.unwrap_or(f64::NAN)),
+            ),
+            (Cells::String(c), ColumnData::String(d)) => {
+                c.extend((from..to).map(|i| d.get(i).map(str::to_string)))
+            }
+            (Cells::Boolean(c), ColumnData::Boolean(d)) => c.extend((from..to).map(|i| d.get(i))),
+            (Cells::Array(c), ColumnData::Array(d)) => {
+                c.extend((from..to).map(|i| d.get(i).map(<[Scalar]>::to_vec)))
+            }
+            (_, d) => unreachable!("a column of the wrong kind reached storage: {:?}", d.kind()),
+        }
+    }
+
     pub(crate) fn drop_front(&mut self, n: usize) {
         match self {
             Cells::Number(c) => drop_front(c, n),
@@ -196,6 +216,44 @@ impl EventBuffer {
     /// number copies nothing else).
     pub(crate) fn cell(&self, column: usize, i: usize) -> Option<Value> {
         self.cells[column].get(i)
+    }
+
+    /// Rows `from..to` of a batch series, appended at the tail in bulk (the
+    /// caller has checked they come after it, in key order). `columns[c]`
+    /// is the series column that feeds value column `c`.
+    pub(crate) fn append_series(
+        &mut self,
+        series: &TimeSeries,
+        columns: &[usize],
+        from: usize,
+        to: usize,
+    ) {
+        if from >= to {
+            return;
+        }
+        let (begin, end): (&[i64], Option<&[i64]>) = match series.key() {
+            Key::Time(t) => (t, None),
+            Key::TimeRange(k) => (&k.begin, Some(&k.end)),
+            Key::Interval(k) => (&k.begin, Some(&k.end)),
+        };
+        self.begin.extend(begin[from..to].iter().copied());
+        if let (Some(mine), Some(end)) = (&mut self.end, end) {
+            mine.extend(end[from..to].iter().copied());
+        }
+        if let (Some(mine), Key::Interval(k)) = (&mut self.labels, series.key()) {
+            match &k.label {
+                Labels::Number(v) => mine.extend(v[from..to].iter().map(|&x| Label::Number(x))),
+                Labels::String(c) => mine
+                    .extend((from..to).map(|i| {
+                        Label::String(c.get(i).expect("labels have no gaps").to_string())
+                    })),
+            }
+        }
+        let sources = series.columns();
+        for (cells, &c) in self.cells.iter_mut().zip(columns) {
+            cells.extend_from(sources[c].data(), from, to);
+        }
+        self.tail = Some(series_key(series, to - 1));
     }
 
     fn key_at(&self, i: usize) -> EventKey {
@@ -532,4 +590,34 @@ pub(crate) fn series_of<'a>(
         })
         .collect();
     TimeSeries::with_key(call, name.to_string(), key_def.name.clone(), key, columns)
+}
+
+/// The key of row `i` of a batch series.
+pub(crate) fn series_key(series: &TimeSeries, i: usize) -> EventKey {
+    match series.key() {
+        Key::Time(t) => EventKey::time(t[i]),
+        Key::TimeRange(k) => {
+            EventKey::time_range(k.begin[i], k.end[i]).expect("series keys are valid")
+        }
+        Key::Interval(k) => {
+            let label = match &k.label {
+                Labels::Number(v) => Label::Number(v[i]),
+                Labels::String(c) => {
+                    Label::String(c.get(i).expect("labels have no gaps").to_string())
+                }
+            };
+            EventKey::interval(label, k.begin[i], k.end[i]).expect("series keys are valid")
+        }
+    }
+}
+
+/// The cell at row `i` of a batch column, as a live cell (a copy).
+pub(crate) fn series_cell(data: &ColumnData, i: usize) -> Option<Value> {
+    match data {
+        ColumnData::Number(c) => c.get(i).map(Value::Number),
+        ColumnData::String(c) => c.get(i).map(|s| Value::String(s.to_string())),
+        ColumnData::Boolean(c) => c.get(i).map(Value::Boolean),
+        ColumnData::Array(c) => c.get(i).map(|a| Value::Array(a.to_vec())),
+        ColumnData::Decimal(_) => unreachable!("live series take no decimal columns"),
+    }
 }
