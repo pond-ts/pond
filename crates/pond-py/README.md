@@ -65,29 +65,62 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
 
 Type hints for every method are in the package (`pond_rs.pyi`).
 
+## Finance studies
+
+All 109 studies of `@pond-ts/financial` (moving averages, bands, RSI and
+other momentum oscillators, trend, volatility, volume, statistics, session
+VWAP and pivot points) run on any series of bars, with the same numbers as
+pond-ts to the last bit (one difference: a source column that is missing or
+not numbers is an error here, where pond-ts fills the output with gaps):
+
+```python
+bars = pond_rs.TimeSeries(df)                      # open/high/low/close/volume
+bars.rsi(period=14).bollinger(period=20, std_dev=2).to_polars()
+bars.study("macd", fast_period=12)                 # the same, by name
+bars.partition_by("symbol").atr(period=14).collect()
+
+nyse = pond_rs.TradingCalendar.from_rules(
+    "America/New_York", "09:30", "16:00", "2024-01-02", "2024-12-31",
+    holidays=["2024-07-04"], early_closes={"2024-12-24": "13:00"},
+)
+bars.session_vwap(sessions=nyse)
+```
+
+Each study adds its columns and keeps every row (the first rows are gaps
+until the window fills). Columns it reads default to `close`, `high`, `low`,
+`open` and `volume`; pass `column=` / `high=` … to use others. Options are
+keywords in Python's spelling (`ema_period`, which the type hints list);
+pond-ts's `emaPeriod` also works. An option the study does not have, or one
+given twice, is a `TypeError`, so a typo cannot pass silently.
+`pond_rs.studies()` describes every study: the columns it reads, its
+options with defaults and ranges, and the columns it writes.
+
 ## Speed
 
 One million rows on a shared 4-core Linux VM, starting from a pyarrow table
 and ending with a frame of each library's own kind (so getting data in and
 out is counted). Median of 7 runs, milliseconds; `python bench/bench.py`
-re-runs it.
+re-runs it. Runs on this VM vary by about a third.
 
 | Case                                   | pond_rs | polars 2.1 | pandas 3.1 |
 | -------------------------------------- | ------: | ---------: | ---------: |
-| Round trip (in and out only)           |     7.8 |        0.4 |       10.5 |
-| Rolling 5-minute average               |    35.5 |       39.1 |       85.7 |
-| Aggregate into 1-minute buckets        |    11.6 |       14.7 |       22.9 |
-| Daily buckets in New York              |    11.8 |        7.1 |       17.4 |
-| `diff`                                 |    16.5 |        3.3 |       11.5 |
-| Rolling 5 minutes per host (100 hosts) |   427.5 |      127.0 |      657.7 |
+| Round trip (in and out only)           |     7.4 |        0.4 |       11.7 |
+| Rolling 5-minute average               |    33.5 |       36.3 |       66.7 |
+| Aggregate into 1-minute buckets        |    15.2 |       12.4 |       17.0 |
+| Daily buckets in New York              |     7.4 |        4.8 |       16.0 |
+| `diff`                                 |    17.0 |        2.0 |       11.4 |
+| RSI (14)                               |    21.5 |       36.3 |       58.4 |
+| Bollinger bands (20, 2)                |    22.2 |       34.6 |       70.2 |
+| Rolling 5 minutes per host (100 hosts) |   195.8 |       81.1 |      323.6 |
 
-pond_rs's rolling and bucket results match polars's to within 1e-13. Getting
-data in costs about 7 ms per million rows: the time column is copied and
-checked (in order, in range), and each number column is scanned once for gaps.
-So the cheapest operations (`diff`) are slower than polars. The per-host case
-is slow in pond-rs itself, not in the bridge: putting 100 partitions back
-together in time order takes about 300 ms in plain Rust too. That is logged to
-be fixed in pond-rs.
+polars and pandas have no RSI or Bollinger bands; their columns are the
+usual hand-written versions. pond_rs's rolling, bucket and Bollinger results
+match polars's to within 1e-13. Getting data in costs about 7 ms per million
+rows: the time column is copied and checked (in order, in range), and each
+number column is scanned once for gaps. So the cheapest operations (`diff`)
+are slower than polars. The per-host case is slow in pond-rs itself, not in
+the bridge: putting 100 partitions back together in time order takes most of
+that time in plain Rust too. That is logged to be fixed in pond-rs.
 
 ## Versions
 

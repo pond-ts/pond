@@ -4089,7 +4089,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core
       parity fixture through pytest.
-      - Outcome (2026-10-30, PR pending Peter's OK as a new API): built.
+      - Outcome (2026-10-30, merged #860 after Peter's OK): built.
         PyO3 0.29 abi3-py39 + arrow-pyarrow 59.3.2 + mimalloc; one wheel
         3.4 MB stripped (the probe's 2.3 MB bound far less). In: anything
         with `__arrow_c_stream__` / `__arrow_c_array__` (pyarrow, polars,
@@ -4115,7 +4115,40 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         16.5 vs 3.3 (data in costs ~7 ms: the time key is copied and
         checked), 100-host rolling 428 vs 127, slow in pond-rs itself
         ([PND-RSPARTMERGE]).
-    - P2: studies through the catalog, `LiveSeries`.
+    - P2: studies through the catalog, `LiveSeries`. Split in two PRs:
+      P2a studies (and the trading calendars the session studies need),
+      P2b `LiveSeries` (with `push_series` for Arrow frames, #857).
+      - P2a outcome (2026-10-30): `series.study(name, **options)` runs any
+        catalog study; each study is also a method in Python's spelling
+        (`series.rsi(period=14)`), found by attribute lookup and typed in
+        `pond_rs.pyi` by `scripts/gen_stubs.py` (a pytest checks the stub
+        is current). On a `PartitionedSeries` the study runs per group
+        (`PartitionedSeries::map`). Options take Python or pond-ts
+        spelling. Decision: an option the study does not have is a
+        `TypeError` (Python's rule for an unexpected keyword; pond-ts's
+        types refuse it at compile time, only its runtime ignores it), so a
+        typo such as `peroid=` cannot pass silently. 22 study-parity cases
+        pass such options (volume studies given `high`/`low`); they are
+        checked to raise. `TradingCalendar` (`from_rules`, `from_sessions`,
+        lookups, `tag_sessions`; sessions are dicts, times in epoch ms) and
+        `sessions=` taking a calendar, a list or `session=` a column.
+        `studies()` / `study_info()` give the catalog JSON plus `method`
+        and `output_names`. pytest: study parity 3,680 matched + 22
+        refused options (= the Rust harness's 3,702), 827 errors agree,
+        526 known refusals; a planted 1-ulp change in each of 3,270 cases
+        with a finite value was caught every time (one-off run); oracle
+        220/220 within 5e-10; 109 descriptors equal pond-ts's; every study
+        runs from its method with its defaults; calendar parity 110/110.
+        Decision (review): calendar lookups (`session_on`,
+        `is_trading_day`, `next_session`, `previous_session`) take only
+        `YYYY-MM-DD` text as a date; other text is an error, or a time for
+        next/previous. pond-ts compares any text with session dates as
+        strings, so `""` or `"Jan 12"` quietly found nothing or the wrong
+        neighbour (pond-rs keeps pond-ts's rule; the fixture's 32 such
+        queries are checked to raise here).
+        Speed, 1M rows, frame in to frame out (shared 4-core VM; runs vary
+        by about a third): RSI 21.5 ms vs polars 36.3 / pandas 58.4 (both
+        hand-written, as neither has RSI), Bollinger 22.2 vs 34.6 / 70.2.
     - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
       PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
       pandas.

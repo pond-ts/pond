@@ -96,6 +96,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   covers Python 3.9 and up; the version follows pond-ts. Checked by pytest
   against the same pond-ts parity fixture as the Rust crate (every case
   passes).
+- **pond-rs for Python: financial studies and trading calendars** (bridge
+  step P2a). Every one of the 109 studies runs by name,
+  `series.study("rsi", period=14)`, or as its own method,
+  `series.rsi(period=14)`, `series.anchored_vwap(anchor=...)`; on a
+  `PartitionedSeries` a study runs per group. Options are keywords in
+  Python's spelling (`ema_period`; pond-ts's `emaPeriod` also works); one the
+  study does not have, or one given twice, is a `TypeError`. `pond_rs.studies()` / `study_info(name)`
+  describe each study (inputs, options with defaults and ranges, outputs).
+  `TradingCalendar.from_rules` / `from_sessions` build exchange sessions
+  (time zone, weekdays, holidays, early closes, breaks) with pond-ts's
+  lookups and `tag_sessions`; `session_vwap` / `pivot_points` take
+  `sessions=` a calendar or a list, or `session=` a session-id column. Type
+  hints for every study method are generated from the catalog. Checked by
+  pytest against the pond-ts study, oracle, catalog and calendar fixtures.
 - **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
   batch, for data that already comes in columns (an Arrow chunk, a JSON
   read). Same rules and outputs as `push_many` of the same rows: the series
