@@ -80,6 +80,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **pond-rs for Python** (bridge step P1, `crates/pond-py`; PyPI name
+  `pond-rs`, imported as `pond_rs`; not yet published). `TimeSeries` takes a
+  pyarrow Table or RecordBatch, a polars or pandas DataFrame, anything with
+  `__arrow_c_stream__`, or a dict of columns, and gives frames back with
+  `to_pyarrow()` / `to_polars()` / `to_pandas()` (or straight into
+  `pyarrow.table(s)` / `polars.DataFrame(s)`). A gap-free float column of a
+  one-chunk table crosses in both directions without a copy. The whole batch
+  core is there with keyword options (`rolling`, `aggregate`, calendar
+  `Sequence`s in any time zone, `partition_by`, joins, `smooth`, `fill`,
+  lookups returning `Row`s, …), times as `datetime` / `date` / text /
+  milliseconds, durations as text or `timedelta`, Python functions for
+  `filter` / `map` / `scan` / `collapse`, and errors as `pond_rs.PondError`
+  (a `ValueError`). Work runs with Python's lock released. One abi3 wheel
+  covers Python 3.9 and up; the version follows pond-ts. Checked by pytest
+  against the same pond-ts parity fixture as the Rust crate (every case
+  passes).
 - **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
   batch, for data that already comes in columns (an Arrow chunk, a JSON
   read). Same rules and outputs as `push_many` of the same rows: the series

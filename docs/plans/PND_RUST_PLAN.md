@@ -4089,6 +4089,32 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core
       parity fixture through pytest.
+      - Outcome (2026-10-30, PR pending Peter's OK as a new API): built.
+        PyO3 0.29 abi3-py39 + arrow-pyarrow 59.3.2 + mimalloc; one wheel
+        3.4 MB stripped (the probe's 2.3 MB bound far less). In: anything
+        with `__arrow_c_stream__` / `__arrow_c_array__` (pyarrow, polars,
+        pandas 2.2+), or a dict of columns. Out: the series is itself an
+        Arrow stream, plus `to_pyarrow` / `to_polars` / `to_pandas`. A
+        gap-free float column of a one-chunk table crosses both ways
+        without a copy (pytest checks buffer addresses). Every pond-rs
+        call runs with the GIL released; Python callbacks (`filter`,
+        `map`, `scan`, `collapse`, `as_interval`, `find`) take it back and
+        their first exception is re-raised as itself. Option words are
+        keyword arguments; the shared series / partitioned methods are
+        written once (`shared_methods!`). Lookups return `Row` objects.
+        pytest: all 1,230 core cases, 2,907 lookups, 1,332 time texts,
+        JSON / columns / points, value series and pond-ts's Arrow
+        exports, with the Rust harness's known differences; a planted
+        wrong answer in each of the 990 series cases is caught.
+        Decisions: a naive `datetime` is UTC (as Arrow's naive
+        timestamps); a sub-millisecond time is refused, not rounded; a
+        nullable Arrow field gives an optional column (pyarrow's default
+        is nullable); `rolling(window=int)` counts rows. Speed, 1M rows,
+        frame in to frame out vs polars 2.1: rolling 35.5 vs 39.1 ms,
+        1-minute buckets 11.6 vs 14.7, New York days 11.8 vs 7.1, `diff`
+        16.5 vs 3.3 (data in costs ~7 ms: the time key is copied and
+        checked), 100-host rolling 428 vs 127, slow in pond-rs itself
+        ([PND-RSPARTMERGE]).
     - P2: studies through the catalog, `LiveSeries`.
     - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
       PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
