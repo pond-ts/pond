@@ -25,7 +25,7 @@ The thread pool is [rayon](https://docs.rs/rayon)'s. Set
 `RAYON_NUM_THREADS` to choose its size. To build without threads:
 
 ```toml
-pond-rs = { git = "https://github.com/pond-ts/pond", default-features = false }
+pond-rs = { version = "0.1", default-features = false }
 ```
 
 The limit of this design: a call with a single output column, on a series

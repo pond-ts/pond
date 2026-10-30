@@ -187,10 +187,12 @@ pub struct LiveOptions {
 }
 
 impl LiveOptions {
+    /// The default options: strict ordering, keep everything.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// What to do with an event that starts before the latest one (default: refuse it).
     pub fn ordering(mut self, mode: OrderingMode) -> Self {
         self.ordering = mode;
         self
@@ -239,10 +241,15 @@ pub struct LiveStats {
 /// windows `Event` only); a reduce `Event`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputKind {
+    /// [`Output::Event`].
     Event,
+    /// [`Output::Batch`].
     Batch,
+    /// [`Output::Evict`].
     Evict,
+    /// [`Output::Bucket`].
     Bucket,
+    /// [`Output::Update`].
     Update,
 }
 
@@ -258,30 +265,47 @@ impl OutputKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Output {
     /// The node took an event (an aggregation: closed a bucket).
-    Event { node: NodeId, event: LiveEvent },
+    Event {
+        /// The node.
+        node: NodeId,
+        /// The event it took.
+        event: LiveEvent,
+    },
     /// The root took these events in one push.
     Batch {
+        /// The node.
         node: NodeId,
+        /// The events, in order.
         events: Vec<LiveEvent>,
     },
     /// The node dropped these events.
     Evict {
+        /// The node.
         node: NodeId,
+        /// The events, oldest first.
         events: Vec<LiveEvent>,
     },
     /// An aggregation's bucket as it now stands, after an event joined it.
-    Bucket { node: NodeId, event: LiveEvent },
+    Bucket {
+        /// The node.
+        node: NodeId,
+        /// The bucket so far, as an event.
+        event: LiveEvent,
+    },
     /// An aggregation or a (single) rolling window took an event (an
     /// aggregation: even one too late for any bucket). A rolling window
     /// gives its value columns as they now stand, in schema order (pond-ts
     /// `value()`); an aggregation gives `None`.
     Update {
+        /// The node.
         node: NodeId,
+        /// A rolling window's values; `None` for an aggregation.
         values: Option<Vec<Option<Value>>>,
     },
 }
 
 impl Output {
+    /// The node this output came from.
     pub fn node(&self) -> NodeId {
         match self {
             Output::Event { node, .. }
@@ -292,6 +316,7 @@ impl Output {
         }
     }
 
+    /// Which kind of output this is.
     pub fn kind(&self) -> OutputKind {
         match self {
             Output::Event { .. } => OutputKind::Event,
@@ -321,6 +346,7 @@ pub struct Node<T> {
 }
 
 impl<T> Node<T> {
+    /// The untyped id, as in [`Output::node`].
     pub fn id(self) -> NodeId {
         self.id
     }
@@ -545,6 +571,7 @@ impl LiveSeries {
         Self::with_options(name, schema, LiveOptions::default())
     }
 
+    /// A series with these options for ordering and retention.
     pub fn with_options(
         name: impl Into<String>,
         schema: Vec<ColumnDef>,
@@ -658,6 +685,7 @@ impl LiveSeries {
         }
     }
 
+    /// The series' name.
     pub fn name(&self) -> &str {
         &self.core().name
     }
@@ -740,6 +768,7 @@ impl LiveSeries {
                 return Ok(out);
             }
             self.check_order(checked.iter().map(|(key, _)| key))?;
+            self.check_labels(checked.iter().map(|(key, _)| key))?;
             self.ingest_bare(checked, &mut out);
             return Ok(out);
         }
@@ -756,6 +785,7 @@ impl LiveSeries {
             return Ok(out);
         }
         self.check_order(events.iter().map(LiveEvent::key))?;
+        self.check_labels(events.iter().map(LiveEvent::key))?;
         if !self.partitions.is_empty() {
             self.check_partitions(&events)?;
         }
@@ -852,6 +882,38 @@ impl LiveSeries {
             self.evict_series(0, n, &mut out);
         }
         out
+    }
+
+    /// Interval labels in a batch are all numbers or all text, like the
+    /// events held (each row was checked against those alone): Codex
+    /// review R03, a mixed batch was stored and then failed every snapshot.
+    fn check_labels<'a>(&self, keys: impl Iterator<Item = &'a EventKey>) -> Result<()> {
+        if self.core().schema.columns[0].kind != ColumnKind::Interval {
+            return Ok(());
+        }
+        let mut numbers = self
+            .core()
+            .buffer
+            .front_label()
+            .map(|l| matches!(l, Label::Number(_)));
+        for (row, key) in keys.enumerate() {
+            let Some(label) = key.label() else { continue };
+            let is_number = matches!(label, Label::Number(_));
+            match numbers {
+                None => numbers = Some(is_number),
+                Some(n) if n != is_number => {
+                    return Err(PondError::InvalidData {
+                        call: "LiveSeries::push",
+                        message: format!(
+                            "row {row}: interval labels must all be numbers or all text, \
+                             like the rows before it"
+                        ),
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
     }
 
     fn check_row(
@@ -2037,6 +2099,7 @@ impl LiveSeries {
         self.core().buffer.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.core().buffer.len() == 0
     }
@@ -2047,10 +2110,12 @@ impl LiveSeries {
         self.core().buffer.at(index)
     }
 
+    /// The first event, if any.
     pub fn first(&self) -> Option<LiveEvent> {
         self.core().buffer.at(0)
     }
 
+    /// The latest event, if any.
     pub fn last(&self) -> Option<LiveEvent> {
         self.core().buffer.at(-1)
     }
@@ -2108,6 +2173,7 @@ impl LiveSeries {
         self.core().buffer.event_rate()
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> LiveStats {
         self.core().stats()
     }

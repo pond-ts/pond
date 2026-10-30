@@ -13,19 +13,19 @@ gaps that stay gaps, per-entity work) and gives **the same answers as pond-ts,
 to the last bit**. It is built mainly for AI agents that write Rust, and for
 anyone who wants pond's rules at native speed.
 
-:::caution Early work, not on crates.io yet
+:::note Early versions
 
-pond-rs is being built now. It is not published to crates.io; you depend on
-it straight from GitHub (see [Getting started](./getting-started)). The API
-can still change between commits. These pages describe what exists in the
-repository today, and they grow as more of it is built.
+pond-rs is on [crates.io](https://crates.io/crates/pond-rs), with the full
+API reference on [docs.rs](https://docs.rs/pond-rs). It is at 0.1, so the
+API can still change between minor versions. These pages describe the
+latest version, and they grow as more is built.
 
 :::
 
 ```toml
 # Cargo.toml
 [dependencies]
-pond-rs = { git = "https://github.com/pond-ts/pond" }
+pond-rs = "0.1"
 ```
 
 ## Why a Rust version
@@ -86,6 +86,8 @@ windows on each); see [Live series](./live).
 
 ## Where to go next
 
+- [API reference on docs.rs](https://docs.rs/pond-rs): every type and
+  function, for the published version.
 - [Getting started](./getting-started): add the dependency, build a series,
   bucket it by day.
 - [Series and columns](./series-and-columns): keys, column kinds, gaps, and

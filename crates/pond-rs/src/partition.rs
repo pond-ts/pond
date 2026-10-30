@@ -121,6 +121,7 @@ impl PartitionedSeries {
         self.parts.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }
@@ -180,10 +181,38 @@ impl PartitionedSeries {
         // A step may turn a partition column into an array, which cannot
         // be a key (see `partition_by`).
         refuse_array_keys("PartitionedSeries", &empty, &by_index)?;
-        // With no partitions, any rows `f` made on the empty series have no
-        // key yet, so they are always split.
-        let unchanged =
-            !self.parts.is_empty() && parts.iter().all(|(key, s)| keeps_key(s, &by_index, key));
+        // Every result must give the same columns, and keep the partition
+        // columns (Codex review R06: positions found in the first result
+        // were used unchecked on the rest, and a result missing one
+        // panicked). The kept-key path below skips the merge, so check here.
+        let full: Vec<&TimeSeries> = parts
+            .iter()
+            .map(|p| &p.1)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if full.len() > 1
+            && let Some(why) = mismatch(&full)
+        {
+            return Err(PondError::InvalidData {
+                call: "PartitionedSeries::map",
+                message: format!(
+                    "partitions came back with different columns ({why}); every partition must give the same columns"
+                ),
+            });
+        }
+        let mut unchanged = !self.parts.is_empty();
+        for (key, s) in &parts {
+            let at: Vec<usize> = self
+                .by
+                .iter()
+                .map(|c| s.column_index("PartitionedSeries::map", c))
+                .collect::<Result<_>>()?;
+            // With no partitions, any rows `f` made on the empty series
+            // have no key yet, so they are always split.
+            if unchanged && (at != by_index || !keeps_key(s, &at, key)) {
+                unchanged = false;
+            }
+        }
         if !unchanged {
             // The values moved: split the merged rows again, as pond-ts
             // does, and collect gives those merged rows.
@@ -712,14 +741,14 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                 head.key().kind()
             ));
         }
-        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key()) {
-            if std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label) {
-                return Some(format!(
-                    "series {i} has {} interval labels, series 0 {}",
-                    label_kind(&b.label),
-                    label_kind(&a.label)
-                ));
-            }
+        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key())
+            && std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label)
+        {
+            return Some(format!(
+                "series {i} has {} interval labels, series 0 {}",
+                label_kind(&b.label),
+                label_kind(&a.label)
+            ));
         }
         if s.columns().len() != head.columns().len() {
             return Some(format!(
@@ -738,15 +767,15 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                     a.kind()
                 ));
             }
-            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data()) {
-                if x.scale() != y.scale() {
-                    return Some(format!(
-                        "decimal column '{}' has scale {} in series {i} but {} in series 0",
-                        a.name(),
-                        y.scale(),
-                        x.scale()
-                    ));
-                }
+            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data())
+                && x.scale() != y.scale()
+            {
+                return Some(format!(
+                    "decimal column '{}' has scale {} in series {i} but {} in series 0",
+                    a.name(),
+                    y.scale(),
+                    x.scale()
+                ));
             }
         }
     }
@@ -922,6 +951,23 @@ mod tests {
         );
         // No operation yet: collect gives the input back as it was.
         assert_eq!(p.collect().unwrap(), hosts());
+    }
+
+    #[test]
+    fn map_with_a_missing_partition_column_is_an_error() {
+        // Codex review R06: column positions came from the first result
+        // and were used unchecked on the rest, which panicked.
+        let p = hosts().partition_by(&["host"]).unwrap();
+        let first_keeps = |g: &TimeSeries| {
+            if g.column("host").unwrap().strings().unwrap().get(0) == Some("b") {
+                g.select(&["v", "host"])
+            } else {
+                g.select(&["v"])
+            }
+        };
+        assert!(p.map(first_keeps).is_err());
+        // Dropping the partition column everywhere is refused as before.
+        assert!(p.map(|g| g.select(&["v"])).is_err());
     }
 
     #[test]
@@ -1209,7 +1255,7 @@ mod tests {
         // partition uses `seed` itself, and the second picks other
         // positions (its own seed). The same seed gives the same rows.
         assert!(rows.iter().all(|r| r.len() == 5));
-        assert!(rows[0].iter().all(|v| *v as usize % 2 == 0));
+        assert!(rows[0].iter().all(|v| (*v as usize).is_multiple_of(2)));
         assert!(rows[1].iter().all(|v| *v as usize % 2 == 1));
         let positions = |r: &[f64]| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
         let alone = v_of(&p.get(&key("a")).unwrap().sample(how).unwrap());

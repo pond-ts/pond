@@ -76,11 +76,12 @@ impl SubSeries {
         let len = self.buffer.len();
         let mut n = self.max_events.map_or(0, |m| len.saturating_sub(m));
         if let (Some(age), Some(latest)) = (self.max_age_ms, self.buffer.back_begin()) {
-            n = n.max(self.buffer.count_before(latest - age));
+            n = n.max(self.buffer.count_before(latest.saturating_sub(age)));
         }
         n
     }
 
+    /// The series' name.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -105,6 +106,7 @@ impl SubSeries {
         self.buffer.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.buffer.len() == 0
     }
@@ -115,10 +117,12 @@ impl SubSeries {
         self.buffer.at(index)
     }
 
+    /// The first event, if any.
     pub fn first(&self) -> Option<LiveEvent> {
         self.buffer.at(0)
     }
 
+    /// The latest event, if any.
     pub fn last(&self) -> Option<LiveEvent> {
         self.buffer.at(-1)
     }
@@ -175,6 +179,7 @@ impl SubSeries {
         self.buffer.event_rate()
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> LiveStats {
         LiveStats {
             ingested: self.ingested,

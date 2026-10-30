@@ -95,6 +95,30 @@ jobs:
       - name: Build for WASM
         run: cargo check -p pond-rs --target wasm32-unknown-unknown --lib --examples
 
+      # docs.rs builds the API docs from these comments; a broken link or an
+      # undocumented public item fails here rather than on docs.rs.
+      - name: Build API docs
+        run: cargo doc -p pond-rs --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # What crates.io gets: the crate built from its packaged files alone.
+      - name: Package
+        run: cargo package -p pond-rs
+
+  # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
+  rust-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Build on the oldest supported Rust
+        run: cargo check -p pond-rs --lib --examples --all-features
+
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
   # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used

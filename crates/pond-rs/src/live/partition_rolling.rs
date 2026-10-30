@@ -203,6 +203,7 @@ impl LivePartitionedRolling {
         self.out.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.out.len() == 0
     }
@@ -217,6 +218,7 @@ impl LivePartitionedRolling {
         self.out.iter()
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> PartitionRollingStats {
         PartitionRollingStats {
             partitions: self.keys.len(),

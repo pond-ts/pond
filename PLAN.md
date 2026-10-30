@@ -622,6 +622,12 @@ the study oracle) is done.
   `apply` recipe. An API change in both libraries; needs a decision.
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
+- **[PND-RUSTPUB]** — Publish pond-rs on crates.io with docs.rs API docs.
+  Prep (metadata, README, full rustdoc, MSRV 1.88, `release-rs.yml`) in the
+  publish-prep PR #851. Version 0.1.0, own numbering (Peter, 2026-10-29;
+  settles the old [PND-RUSTRFC] versioning question). First publish via
+  `release-rs.yml` with the `CARGO_REGISTRY_TOKEN` secret. Then switch to trusted
+  publishing. Details in `docs/plans/PND_RUST_PLAN.md`.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
   1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–7 (live series page). Keep them in step as each step lands. Every Rust example is a
@@ -632,9 +638,10 @@ the study oracle) is done.
   "also in Rust" note on the core overview pages; process marked
   TypeScript only (#850). Then 158 more tabs on the per-operator core pages
   (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
-  snippets in all, each checked against pond-ts output. Open: run the script
-  in CI, and link the published crate and `cargo doc` API reference once
-  they exist.
+  snippets in all, each checked against pond-ts output. Install lines now say
+  `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
+  snippets also pass against the published 0.1.0. Open: run the script in
+  CI.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except

@@ -50,6 +50,7 @@ pub struct PartitionOptions {
 }
 
 impl PartitionOptions {
+    /// Options taking everything from the root.
     pub fn new() -> Self {
         Self::default()
     }
@@ -62,11 +63,13 @@ impl PartitionOptions {
         self
     }
 
+    /// Each partition's ordering mode, instead of the root's.
     pub fn ordering(mut self, mode: OrderingMode) -> Self {
         self.ordering = Some(mode);
         self
     }
 
+    /// Each partition's grace window, instead of the root's.
     pub fn grace_window(mut self, duration: &str) -> Self {
         self.grace_window = Some(duration.into());
         self
@@ -100,30 +103,36 @@ pub struct CollectOptions {
 }
 
 impl CollectOptions {
+    /// Options taking ordering from the partitions and keeping everything.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The gathered series' name.
     pub fn name(mut self, name: &str) -> Self {
         self.name = Some(name.into());
         self
     }
 
+    /// The gathered series' ordering mode.
     pub fn ordering(mut self, mode: OrderingMode) -> Self {
         self.ordering = Some(mode);
         self
     }
 
+    /// The gathered series' grace window.
     pub fn grace_window(mut self, duration: &str) -> Self {
         self.grace_window = Some(duration.into());
         self
     }
 
+    /// Keep at most `n` events in the gathered series.
     pub fn max_events(mut self, n: usize) -> Self {
         self.max_events = Some(n);
         self
     }
 
+    /// Keep only events no older than `duration` before the latest.
     pub fn max_age(mut self, duration: &str) -> Self {
         self.max_age = Some(duration.into());
         self
@@ -261,6 +270,7 @@ impl LivePartitioned {
         })
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> PartitionStats {
         PartitionStats {
             partitions: self.keys.len(),
@@ -429,6 +439,26 @@ impl LiveSeries {
             cleared_at: None,
             share_at: Vec::new(),
         };
+        // Codex review R05: the root's history must fit the declared groups
+        // too (as pond-ts, which refuses at construction); checked before
+        // anything is built, so a refusal leaves no half-made node.
+        let history: Vec<LiveEvent> = self.core().buffer.iter().collect();
+        if let Some(groups) = &partitioned.groups {
+            for (i, event) in history.iter().enumerate() {
+                let value = partitioned.key_of(event);
+                if !partitioned.declared.contains(&value) {
+                    let shown = if value == " undefined" {
+                        "no value".to_string()
+                    } else {
+                        format!("{value:?}")
+                    };
+                    return Err(bad(format!(
+                        "held row {i}: partition value {shown} for column '{column}' is not in \
+                         the declared groups {groups:?}"
+                    )));
+                }
+            }
+        }
         // Declared partitions, then the root's history.
         let p = self.slots.len();
         self.slots.push(Slot {
@@ -443,16 +473,21 @@ impl LiveSeries {
                 self.spawn(p, g)?;
             }
         }
-        let history: Vec<LiveEvent> = self.core().buffer.iter().collect();
         let mut out = Vec::new();
         if chunked {
-            // pond-ts groups the history by partition, one push each.
+            // pond-ts groups the history by partition, one push each, in
+            // order of first appearance. Found through a map (Codex review
+            // R10: a scan of the groups per row was O(rows x groups)).
             let mut shares: Vec<(String, Vec<LiveEvent>)> = Vec::new();
+            let mut share_of: HashMap<String, usize> = HashMap::new();
             for event in history {
                 let key = self.partitioned(p).key_of(&event);
-                match shares.iter_mut().find(|(k, _)| *k == key) {
-                    Some((_, evs)) => evs.push(event),
-                    None => shares.push((key, vec![event])),
+                match share_of.get(&key) {
+                    Some(&s) => shares[s].1.push(event),
+                    None => {
+                        share_of.insert(key.clone(), shares.len());
+                        shares.push((key, vec![event]));
+                    }
                 }
             }
             for (key, events) in shares {
@@ -937,7 +972,10 @@ impl LiveSeries {
         let age = pt.max_age_ms.expect("a sweep needs max_age");
         let parts: Vec<usize> = pt.parts.iter().map(|id| id.index as usize).collect();
         for part in parts {
-            let n = self.series(part).buffer.count_before(wm - age);
+            let n = self
+                .series(part)
+                .buffer
+                .count_before(wm.saturating_sub(age));
             if n == 0 {
                 continue;
             }

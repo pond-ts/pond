@@ -71,7 +71,9 @@ impl std::fmt::Debug for LiveAggregation {
 pub struct AggregationStats {
     /// Events added to a bucket (late ones skipped are not counted).
     pub events_observed: u64,
+    /// Buckets closed, ever.
     pub buckets_closed: u64,
+    /// Buckets open now.
     pub open_buckets: usize,
     /// Start of the oldest open bucket.
     pub open_bucket_start: Option<i64>,
@@ -272,6 +274,7 @@ impl LiveAggregation {
         self.closed.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.closed.is_empty()
     }
@@ -321,6 +324,7 @@ impl LiveAggregation {
         )
     }
 
+    /// Its counters (pond-ts `stats()`).
     pub fn stats(&self) -> AggregationStats {
         AggregationStats {
             events_observed: self.events_observed,

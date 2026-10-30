@@ -570,6 +570,38 @@ Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
 partitioned variants); a mutation run (dropping one appended column, renaming
 the output) failed all 10.
 
+## [PND-RUSTPUB] — publish pond-rs on crates.io (2026-10-29)
+
+Peter asked (2026-10-29) for pond-rs to be published with API docs so Rust
+users can find it. Crate name `pond-rs` was free on crates.io (checked
+2026-10-29; `pond` is an unrelated 2017 thread-pool crate).
+
+Done in the publish-prep PR:
+
+- **Metadata.** description, homepage (pond-ts.org), documentation
+  (docs.rs), keywords, categories, `readme`, a copy of the MIT `LICENSE`.
+  `include` packs only `src/`, three user examples (`quickstart`, `rsi`,
+  `live_stream`), README and licence (~385 KB). Tests, benches and the perf
+  examples read fixtures elsewhere in the monorepo, so they stay out.
+- **Minimum Rust is 1.88, not 1.85.** The `icu_*` crates need 1.88, and two
+  `if let` match guards (stable only in newer Rust) were rewritten. Raising
+  `rust-version` turned on two clippy lints (`is_multiple_of`, collapsed
+  `if let` chains), applied with `clippy --fix`. CI now has a `rust-msrv`
+  job on 1.88.
+- **Docs.** Every public item documented; `#![warn(missing_docs)]` plus
+  `RUSTDOCFLAGS=-D warnings` in CI keep it so. The crate front page was
+  rewritten as a landing page (what it is, where to start, feature table).
+  docs.rs builds with all features and `--cfg docsrs`, which marks
+  `live`-only items.
+- **Release workflow** `.github/workflows/release-rs.yml`: dispatch on main
+  (dry run by default) or tag `pond-rs-v<version>`. The first publish needs
+  a `CARGO_REGISTRY_TOKEN` secret (crates.io only offers trusted publishing
+  for a crate that already exists); after it, set up trusted publishing on
+  crates.io and delete the secret.
+
+Version: Peter chose 0.1.0 with its own numbering, not lock-step with
+pond-ts (2026-10-29); this settles [PND-RUSTRFC]'s versioning question.
+
 ## Codex review of the whole crate (2026-10-29)
 
 pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
@@ -581,6 +613,17 @@ pond-ts shares the defect it is fixed there too, under its own tag.
 | --- | ---------------------------------------------------------- | ---------------------------------------------- |
 | R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
 | R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R03 | a batch can mix interval label kinds                       | fixed, both libs, [PND-LIVELABEL]              |
+| R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
+| R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
+| R08 | numeric group names round ties up, JavaScript to even      | fixed: shares the JSON writer's digits         |
+| R09 | catalog refuses `100.0` / `1e2` session milliseconds       | fixed: whole-number floats read                |
+| R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
+| R07 | empty leading/centred time windows admit earlier rows      | fixed, both libs, [PND-ROLLEMPTY]              |
+| R06 | batch partition map panics on a missing partition column   | fixed: error; mismatched results refused too   |
+| R12 | Arrow time value `i64::MIN` panics in `abs()`              | fixed: `unsigned_abs`                          |
+| R13 | huge study periods panic; Ichimoku offsets flip sign       | fixed: gaps (period > rows); offsets error     |
+| R14 | `max_age` near `i64::MAX` overflows the cutoff             | fixed: saturating cutoff                       |
 | R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
 
 Codex also listed four existing limitations, not on the fix list:
@@ -589,6 +632,12 @@ pond-ts, belongs to [PND-CHANGE]), schema-only Arrow IPC files unreadable,
 composition tests (view→reduce, window→reduce, building over history,
 schema after transforms) and ARCHITECTURE.md describing only the
 TypeScript classes.
+
+R13 note: an existing test (`huge_periods_give_gaps`) pins that a period no
+window can fill gives gaps, not an error, so the fix short-circuits those
+studies rather than capping periods at 2^53. A sweep of every catalog bar
+option at usize::MAX, isize::MAX + 1 and 2^53 + 2 (catalog cap lifted for
+the run) found exactly the reviewed studies and no others.
 
 ## Next
 

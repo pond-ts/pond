@@ -296,6 +296,20 @@ no re-keying map). Tests: `test/live/reducetrim.test.ts`, three pond-rs
 unit tests in `live/tests.rs`, live replay case `reduce-on-window`, and the
 `reduce-and-rolling-reorder` case regenerated.
 
+### [PND-LIVELABEL] / [PND-MAPGAP] — live schema checks — **fixed 2026-10-29**
+
+Codex review of pond-rs, R03 and R04, both shared with pond-ts. A live
+interval-keyed series never checked label types (pond-rs checked each row
+only against the events held), so a mixed batch was stored and every later
+snapshot threw; now the whole batch is checked against the held events
+before anything is stored (`#checkLabels`). A live `map` kept its source's
+`required` flags although the mapping may return a gap (a non-finite number
+becomes one), so the push worked and each snapshot threw; now every value
+column of a `map` view is optional. Chosen over refusing the gap at push
+time, which would throw inside a push after the root stored the row.
+Tests: `test/live/livelabel.test.ts`, `test/live/mapgap.test.ts`, pond-rs
+`live/tests.rs`.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)

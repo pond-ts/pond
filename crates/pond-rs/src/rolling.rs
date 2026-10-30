@@ -455,6 +455,7 @@ pub enum Alignment {
 /// default: a trailing window, every row given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rolling {
+    /// Where the window sits around each row (default: trailing).
     pub alignment: Alignment,
     /// A row whose window holds fewer rows than this gets a gap in every
     /// output column (pond-ts `minSamples`). Rows are counted whether or
@@ -473,6 +474,7 @@ pub struct Rolling {
 /// over the series' own time range, every bucket given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RollingOver {
+    /// Where the window sits around each bucket's point (default: trailing).
     pub alignment: Alignment,
     /// As [`Rolling::min_samples`], per bucket.
     pub min_samples: usize,
@@ -629,6 +631,16 @@ pub(crate) fn walk<T: Anchor>(frame: &Frame<T>, w: &mut impl Window) {
                 while start < end && t(start) < lower {
                     w.leave(start);
                     start += 1;
+                }
+                // With the window empty, rows before `lower` never entered:
+                // step past them rather than let them in below (Codex
+                // review R07: a 0 ms window, or one whose f64 edges round
+                // shut, counted earlier rows).
+                if start == end {
+                    while end < rows && t(end) < lower {
+                        end += 1;
+                    }
+                    start = end;
                 }
                 while end < rows && t(end) < upper {
                     w.enter(end);

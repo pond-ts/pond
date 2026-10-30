@@ -94,7 +94,11 @@ macro_rules! study_options {
             @struct
             $(#[$meta])*
             $name, $naming = $default_name, reads [$($src),*],
-            fields { $req : $rty $(, $(#[$field_meta])* $field : $ty )* }
+            fields {
+                #[doc = concat!("Sets `", stringify!($req), "`.")]
+                $req : $rty
+                $(, $(#[$field_meta])* $field : $ty )*
+            }
         }
 
         impl $name {

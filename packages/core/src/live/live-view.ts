@@ -1154,11 +1154,16 @@ export function makeMapView<S extends SeriesSchema>(
       ? out
       : (new Event(out.key(), fixed) as unknown as EventForSchema<S>);
   };
-  return new LiveView(
-    source,
-    process,
-    windowMs !== undefined ? { windowMs } : undefined,
-  );
+  // [PND-MAPGAP] The mapping may return `undefined` for any value column,
+  // and a non-finite number becomes a gap, so no value column of the
+  // output is required (a required one made every snapshot throw).
+  const schema = source.schema.map((c, i) =>
+    i === 0 || !c.required ? c : { ...c, required: false },
+  ) as unknown as S;
+  return new LiveView(source, process, {
+    schema,
+    ...(windowMs !== undefined ? { windowMs } : {}),
+  });
 }
 
 export function makeCumulativeView<

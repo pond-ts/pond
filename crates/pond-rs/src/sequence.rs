@@ -14,10 +14,15 @@ use crate::series::{IntervalKeys, Labels};
 /// A calendar unit for [`Sequence::calendar`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarUnit {
+    /// Calendar days in the zone (23 or 25 hours on clock-change days).
     Day,
+    /// Weeks starting Monday.
     Week,
+    /// Calendar months.
     Month,
+    /// Quarters starting January, April, July and October.
     Quarter,
+    /// Calendar years.
     Year,
 }
 

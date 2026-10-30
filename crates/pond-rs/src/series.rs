@@ -55,8 +55,11 @@ impl ColumnKind {
 /// One schema entry. `required: false` means the column may have gaps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDef {
+    /// The column name.
     pub name: String,
+    /// What the column holds.
     pub kind: ColumnKind,
+    /// `false` when the column may have gaps.
     pub required: bool,
 }
 
@@ -84,7 +87,9 @@ impl ColumnDef {
 /// `end[i]`, epoch milliseconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimeRangeKeys {
+    /// Starts, epoch milliseconds.
     pub begin: Vec<i64>,
+    /// Ends, epoch milliseconds.
     pub end: Vec<i64>,
 }
 
@@ -92,8 +97,11 @@ pub struct TimeRangeKeys {
 /// `label[i]` (for buckets made by a sequence, the label is the start).
 #[derive(Debug, Clone, PartialEq)]
 pub struct IntervalKeys {
+    /// One label per row.
     pub label: Labels,
+    /// Starts, epoch milliseconds (inclusive).
     pub begin: Vec<i64>,
+    /// Ends, epoch milliseconds (exclusive).
     pub end: Vec<i64>,
 }
 
@@ -110,6 +118,7 @@ pub enum Labels {
 }
 
 impl Labels {
+    /// Number of values.
     pub fn len(&self) -> usize {
         match self {
             Labels::Number(v) => v.len(),
@@ -117,6 +126,7 @@ impl Labels {
         }
     }
 
+    /// `true` when there are no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -182,10 +192,12 @@ pub enum Key {
 }
 
 impl Key {
+    /// Number of values.
     pub fn len(&self) -> usize {
         self.begin().len()
     }
 
+    /// `true` when there are no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -375,10 +387,12 @@ impl Column {
         }
     }
 
+    /// The column name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// `true` when the column may not have gaps.
     pub fn is_required(&self) -> bool {
         self.required
     }
@@ -619,6 +633,7 @@ impl TimeSeries {
         })
     }
 
+    /// The series' name.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -628,10 +643,12 @@ impl TimeSeries {
         self.key.len()
     }
 
+    /// `true` when there are no rows.
     pub fn is_empty(&self) -> bool {
         self.key.is_empty()
     }
 
+    /// The key column: times, time ranges or intervals.
     pub fn key(&self) -> &Key {
         &self.key
     }
@@ -705,13 +722,13 @@ impl TimeSeries {
                     column.data.len()
                 )));
             }
-            if let ColumnData::Array(a) = &column.data {
-                if let Some((r, e)) = a.first_bad_element() {
-                    return Err(invalid(format!(
-                        "column '{}' row {r}: array element {e} must be a finite number, string, or boolean",
-                        column.name
-                    )));
-                }
+            if let ColumnData::Array(a) = &column.data
+                && let Some((r, e)) = a.first_bad_element()
+            {
+                return Err(invalid(format!(
+                    "column '{}' row {r}: array element {e} must be a finite number, string, or boolean",
+                    column.name
+                )));
             }
             if column.required && column.data.missing_count() > 0 {
                 let i = (0..rows)
