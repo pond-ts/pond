@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pond-rs"
+description = "Time series analytics over Arrow frames: rolling windows, calendar buckets in any time zone, joins and per-entity work. Same results as pond-ts."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dynamic = ["version"]
+keywords = ["timeseries", "time-series", "analytics", "arrow", "polars", "pandas"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+# None required: frames arrive through Arrow's C interface. pyarrow is
+# needed for to_pyarrow / to_pandas, polars for to_polars.
+dependencies = []
+
+[project.optional-dependencies]
+pyarrow = ["pyarrow>=14"]
+polars = ["polars>=1"]
+pandas = ["pandas>=2.2", "pyarrow>=14"]
+test = ["pytest", "pyarrow>=14", "polars>=1", "pandas>=2.2"]
+
+[project.urls]
+Homepage = "https://pond-ts.org"
+Repository = "https://github.com/pond-ts/pond"
+
+[tool.maturin]
+module-name = "pond_rs"
+# No debug symbols: 3.4 MB wheel instead of 3.8 MB.
+strip = true

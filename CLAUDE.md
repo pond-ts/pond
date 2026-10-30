@@ -672,7 +672,12 @@ To cut a release from `main`:
    deps). If any slipped through unreviewed, open a short follow-up
    to spot-check before releasing.
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
-   them lock-step — the release tag covers the whole monorepo.
+   them lock-step — the release tag covers the whole monorepo. The Python
+   bridge rides the same number: bump `version` in
+   `crates/pond-py/Cargo.toml` too (and run `cargo update -p pond-py` so
+   `Cargo.lock` follows). CI's `python` job fails while the two differ. The
+   Rust crate `crates/pond-rs` keeps its own numbering and is released
+   separately (`release-rs.yml`).
 2. **Widen every inter-package range to the new minor** — on a minor bump this
    is not optional, and it is easy to miss. Most cross-package references are
    **`peerDependencies`** (not `dependencies`), and they live in **five**

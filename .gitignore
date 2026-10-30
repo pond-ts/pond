@@ -35,3 +35,8 @@ __pycache__/
 
 # Rust build output (pond-rs workspace)
 /target/
+
+# Python bridge build/test leftovers
+__pycache__/
+.pytest_cache/
+*.so
