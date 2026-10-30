@@ -1,0 +1,23 @@
+[package]
+name = "pond-wasm"
+version = "0.0.0"
+description = "pond-rs compiled to WebAssembly for the @pond-ts/rs npm package"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# Shipped through npm (packages/rs), never crates.io.
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# No threads in WebAssembly: pond-rs without its `parallel` feature.
+pond-rs = { path = "../pond-rs", default-features = false }
+# preserve_order: a pond-ts mapping's key order sets the output columns
+# order. float_roundtrip: numbers read as the exact f64 JavaScript wrote.
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+# Pinned: the wasm-bindgen CLI that builds packages/rs must be this version.
+wasm-bindgen = "=0.2.129"
+js-sys = "=0.3.106"
