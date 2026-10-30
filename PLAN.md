@@ -613,6 +613,16 @@ the study oracle) is done.
   0 failed runs vs polars' 12. **R2 is
   complete.** Detail in the breakout plan.
 
+- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (WebAssembly, npm
+  `@pond-ts/rs`) and Python (PyO3, PyPI `pond-rs`, `import pond_rs`),
+  planned 2026-10-29; pjm17971 chose "Yes, all" on 2026-10-30: separate
+  npm package, both bridges built at once, same version as pond-ts on every
+  `v*` tag. Steps J1 (`crates/pond-wasm`, batch core, core parity fixture
+  through JS), J2 (studies, `LiveSeries`), J3 (browser build, npm publish,
+  docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
+  pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
+  Detail in the breakout plan.
+
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
   per-host aggregate's closed bucket carries only its interval and reducer
