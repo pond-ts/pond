@@ -787,6 +787,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pond-wasm"
+version = "0.0.0"
+dependencies = [
+ "js-sys",
+ "pond-rs",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

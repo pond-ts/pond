@@ -24,6 +24,7 @@ packages/*/README.md
 !packages/fit/README.md
 !packages/financial/README.md
 !packages/process/README.md
+!packages/rs/README.md
 packages/*/LICENSE
 packages/*/CHANGELOG.md
 packages/*/API.md
@@ -35,6 +36,9 @@ __pycache__/
 
 # Rust build output (pond-rs workspace)
 /target/
+
+# @pond-ts/rs WebAssembly build output (packages/rs/build.sh)
+packages/rs/pkg/
 
 # Python bridge build/test leftovers
 __pycache__/

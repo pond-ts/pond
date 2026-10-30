@@ -1,0 +1,31 @@
+{
+  "name": "@pond-ts/rs",
+  "version": "0.75.0",
+  "private": true,
+  "description": "pond-rs (Rust) compiled to WebAssembly, with pond-ts's method names",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "pkg/package.json",
+    "pkg/pond_wasm.js",
+    "pkg/pond_wasm_bg.wasm",
+    "pkg/pond_wasm.d.ts"
+  ],
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node test/parity.mjs && node test/inputs.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pond-ts/pond.git",
+    "directory": "packages/rs"
+  }
+}

@@ -4119,6 +4119,25 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
       PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
       pandas.
+  - J1 built (2026-10-30, `crates/pond-wasm` + `packages/rs`, private
+    until J3). Shape: pond-ts's method names and argument shapes in JS; each
+    call sends the method name and its arguments as JSON (`{"series": id}`
+    for another series, `{"sequence": …}` for a `Sequence`, `{"f64": …}` for
+    -0 / NaN / infinities) to one Rust dispatcher (`dispatch.rs`, ported
+    from `core_parity.rs`'s runner, errors returned not panicked). Series
+    live in a Rust table addressed by number; `free()` plus a finalizer.
+    Chosen over one wasm-bindgen export per method: one place to keep in
+    step with pond-ts, and the core parity fixture runs through the public
+    JS API unchanged. Check: 1,159 of 1,159 core parity cases match through
+    JS (`node packages/rs/test/parity.mjs`, CI job `js-bridge`), 0 series
+    left after freeing; 71 callback cases (`filter`, `mapColumns`, `scan`,
+    `collapse`, `asInterval` with a function) wait for J1b with row lookups
+    and `Time.parse`. An error case matches any pond-rs error but not a JS
+    `TypeError` or the dispatcher refusing an argument (six listed cases
+    aside); review of #859 found such a slip hiding a `mapColumns` case.
+    `test/inputs.mjs` pins what the fixture misses: the constructor's cell
+    checks (pond-ts's messages), -0 as a whole number, empty lists. Size
+    6.2 MB raw, 1.12 MB brotli before `wasm-opt` and the size cuts (J2).
   - Found by both probes, handed to the live speed review: pond-rs live
     filter + aggregate over 1M one-at-a-time pushes took 230-256 ms from
     Rust; a hand-written Python dict took 110-132 ms.
