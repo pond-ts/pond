@@ -95,6 +95,43 @@ given twice, is a `TypeError`, so a typo cannot pass silently.
 `pond_rs.studies()` describes every study: the columns it reads, its
 options with defaults and ranges, and the columns it writes.
 
+## Live series
+
+`LiveSeries` takes events as they arrive. Nodes built on it (filters,
+fills, buckets, rolling windows, per-host partitions) update with every
+push, and each push returns what the nodes you `watch()` emitted. Results
+match pond-ts's live layer output for output.
+
+```python
+live = pond_rs.LiveSeries({"time": "time", "host": "string", "cpu": "number"},
+                          max_age="10m")
+avg = live.rolling("1m", {"avg": ("cpu", "avg")})
+per_min = live.aggregate("1m", {"max": ("cpu", "max")})
+per_min.watch("event")                        # closed buckets
+
+live.push("2026-03-08T12:00:00Z", host="a", cpu=0.5)
+frame = pl.DataFrame({
+    "time": [dt.datetime(2026, 3, 8, 12, m) for m in range(1, 5)],
+    "host": ["a", "b", "a", "b"],
+    "cpu": [0.7, 0.2, 0.9, 0.4],
+})
+for out in live.push_frame(frame):            # pyarrow / polars / pandas
+    print(out.event.key, out.event["max"])    # each bucket that closed
+avg.value()                                   # {"avg": 0.65}: 12:03 and 12:04
+
+by_host = live.partition_by("host")
+smooth = by_host.fill("hold").rolling("1m", {"cpu": "avg"}).collect()
+smooth.to_polars()
+```
+
+A frame is the fastest way in (`push_frame`); `push_many` takes a batch of
+`(time, values)` rows; `push` takes one event. A function you give a node
+(`filter`, `map`) runs during the push; if it raises, the push has still
+happened and the error is raised when it returns. Such a function must not
+use the series it belongs to (that is an error). Calls from several threads
+are safe: each call takes the series in turn, and waits with Python's lock
+released.
+
 ## Speed
 
 One million rows on a shared 4-core Linux VM, starting from a pyarrow table
@@ -121,6 +158,24 @@ number column is scanned once for gaps. So the cheapest operations (`diff`)
 are slower than polars. The per-host case is slow in pond-rs itself, not in
 the bridge: putting 100 partitions back together in time order takes most of
 that time in plain Rust too. That is logged to be fixed in pond-rs.
+
+Live series, `python bench/bench_live.py 1000000`: one million events 10 ms
+apart into a 1-minute rolling average and 1-minute buckets (avg, max). The
+plain-Python column is the same work hand-written with a deque and a dict.
+
+| How the events go in                     |    ms | events per second |
+| ---------------------------------------- | ----: | ----------------: |
+| `push(t, cpu=c)`, one call per event     | 630.8 |         1,585,000 |
+| `push_many`, 1,000-row batches           | 299.2 |         3,342,000 |
+| `push_frame`, 10,000-row pyarrow tables  | 218.7 |         4,574,000 |
+| `push_frame`, nothing built (store only) |  19.2 |        52,077,000 |
+| plain Python (deque + dict)              | 317.3 |         3,151,000 |
+
+The same pushes in Rust alone take about 0.26 µs per event; one `push` call
+from Python adds about 0.3 µs on top (reading the arguments, taking the
+series' lock, building the result list), so one call per event runs at half
+the speed of the hand-written loop. Batches pay most of that once per
+batch, and a frame skips reading Python values altogether.
 
 ## Versions
 

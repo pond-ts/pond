@@ -4149,6 +4149,48 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         Speed, 1M rows, frame in to frame out (shared 4-core VM; runs vary
         by about a third): RSI 21.5 ms vs polars 36.3 / pandas 58.4 (both
         hand-written, as neither has RSI), Bollinger 22.2 vs 34.6 / 70.2.
+      - P2b outcome (2026-10-30): `pond_rs.LiveSeries` (`src/live.rs`).
+        Schema as `{name: kind}`, tuples or a `TimeSeries.schema`; value
+        columns optional unless marked. `push` / `push_many` / `push_frame`
+        (any frame `TimeSeries()` reads, then `push_series`) /
+        `push_json` / `clear` return the watched nodes' outputs as
+        `LiveOutput` objects. Every node is one `LiveNode` class with a
+        `kind` word; builders are shared by `LiveSeries` and `LiveNode`
+        (`live_builders!`), and on a partitioned node each step is built
+        per partition through `per_partition` (a `Step` value cloned into
+        each partition's chain), so `partition_by(..).fill(..).rolling(..)
+.collect()` reads as in pond-ts. A partitioned `rolling` with a
+        clock trigger (a duration or `Sequence`) or several windows builds
+        the synchronised `partition_rolling` node, as pond-ts does.
+        Decisions: (1) the owner sits behind a `Mutex`; a call takes it
+        with Python's lock released, except short calls (`push`, `len`)
+        which first try it without releasing Python's lock (releasing and
+        retaking it cost more than the call: `len()` 162 -> 64 ns), falling
+        back to waiting released. Safe because a thread holding both runs
+        only Rust, so no other thread can be holding Python's lock while
+        waiting for the series. (2) A node's Python function runs inside
+        the push; its first exception is kept, later calls of such
+        functions are skipped for that push, and it is raised when the
+        push returns (the push has happened: pond-rs has no rollback). (3)
+        A function that calls back into its own series would wait on its
+        own lock; a thread id kept with the lock turns that into an error.
+        (4) A node built over history runs its function at once; if that
+        raises, the node is removed before the error reaches Python (no
+        handle would exist). (5) No Python `apply(fn)`: chaining on a
+        partitioned node then `collect()` builds the same thing without a
+        Python function per partition. pytest: all 70 live parity cases
+        (7,897 outputs and 5,918 final rows compared, with the Rust
+        harness's two refused nodes and one refused push); planted
+        mistakes (map off by 1e-12, filter inverted, -0 read as 0) each
+        fail cases. Speed (`bench/bench_live.py`, 1M events, rolling 1m
+        avg + 1m buckets): `push` one call per event 631 ms, `push_many`
+        1,000-row batches 299 ms, `push_frame` 10,000-row tables 219 ms,
+        frame into a bare series 19 ms; the same two sums hand-written in
+        Python 317 ms. Rust alone does those pushes in ~0.26 us per event;
+        a Python `push` call adds ~0.3 us (argument reading, the lock,
+        the result list), found with callgrind and trimmed from ~0.55 us
+        (float fast path, list fast path, no-release lock, empty-output
+        early return, lazy row labels in `push_many`).
     - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
       PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
       pandas.

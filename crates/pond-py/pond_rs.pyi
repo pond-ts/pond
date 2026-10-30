@@ -1695,3 +1695,217 @@ def studies() -> list[dict[str, Any]]:
 
 def study_info(name: str) -> dict[str, Any]:
     """One study described, by pond-ts's name or Python's."""
+
+# --- live: events as they arrive ---
+
+OutputKind = Literal["event", "batch", "evict", "bucket", "update"]
+NodeKindName = Literal[
+    "series", "view", "aggregation", "rolling", "reduce", "partitioned", "partitioned_view", "partition_rolling"
+]
+# When a rolling window or reduce emits: "event" (after every event), an
+# int n (every n events), a duration or Sequence (when a clock bucket ends).
+_Trigger = Union[Literal["event"], int, Duration, "Sequence"]
+# What a rolling window or reduce keeps of its emissions: True (all),
+# False (none), or {"max_events": n, "max_age": "5m"}.
+_History = Union[bool, Mapping[str, Any]]
+SchemaEntry = Union[tuple[str, str], tuple[str, str, bool], Mapping[str, Any]]
+
+class LiveEvent:
+    """One event of a live node: event["cpu"] reads a cell (None for a gap)."""
+
+    @property
+    def key(self) -> Union[int, tuple[int, int], tuple[Union[float, str], int, int]]: ...
+    @property
+    def begin(self) -> int: ...
+    @property
+    def end(self) -> int: ...
+    def __getitem__(self, column: str) -> Cell: ...
+    def get(self, column: str, default: Any = None) -> Cell: ...
+    def keys(self) -> list[str]: ...
+    def to_dict(self) -> dict[str, Cell]: ...
+    def __len__(self) -> int: ...
+
+class LiveOutput:
+    """Something a push caused at a watched node. kind "event": the node took
+    an event (an aggregation: closed a bucket); "batch": the series took
+    these events in one push; "evict": the node dropped these; "bucket": an
+    aggregation's open bucket as it now stands; "update": a rolling window's
+    values as they now stand (None from an aggregation)."""
+
+    @property
+    def node(self) -> LiveNode: ...
+    @property
+    def kind(self) -> OutputKind: ...
+    @property
+    def event(self) -> Optional[LiveEvent]:
+        """For "event" and "bucket"."""
+    @property
+    def events(self) -> Optional[list[LiveEvent]]:
+        """For "batch" and "evict"."""
+    @property
+    def values(self) -> Optional[dict[str, Cell]]:
+        """For "update"."""
+
+class _LiveBase:
+    """What a LiveSeries and every LiveNode have: building nodes on it, and
+    reading it. A node is built over what its source holds now, then kept
+    up to date by every push. On a partitioned node each step is built on
+    every partition (a partitioned view); collect() gathers the results."""
+
+    def filter(self, f: Callable[[LiveEvent], bool]) -> LiveNode:
+        """The events f accepts. An exception in f leaves the event out and
+        is raised when the push returns (the push has happened). f must not
+        use this LiveSeries."""
+    def map(self, f: Callable[[LiveEvent], Union[Mapping[str, Cell], _Seq[Cell]]]) -> LiveNode:
+        """Each event with new values: f returns {column: cell} for the
+        columns to change, or every cell in schema order. Every value column
+        of the view may have gaps."""
+    def select(self, *columns: str) -> LiveNode: ...
+    def sample(self, stride: int) -> LiveNode:
+        """Every stride-th event, counted from now."""
+    def window(self, size: Union[Duration, int]) -> LiveNode:
+        """The events within a duration of the newest, or the newest n."""
+    def diff(self, columns: Columns, *, drop_first: bool = False) -> LiveNode: ...
+    def rate(self, columns: Columns, *, drop_first: bool = False) -> LiveNode:
+        """diff per second of key time."""
+    def pct_change(self, columns: Columns, *, drop_first: bool = False) -> LiveNode: ...
+    def fill(self, strategy: Union[str, Mapping[str, Any]], *, limit: Optional[int] = None) -> LiveNode:
+        """Fill gaps as events arrive: "hold" or "zero" for every column, or
+        {column: strategy or value}; limit fills at most that many in a row."""
+    def cumulative(self, spec: Mapping[str, Union[str, Callable[[float, float], float]]]) -> LiveNode:
+        """Running totals: {column: "sum" | "max" | "min" | "count"}, or one
+        column with your own f(running, value)."""
+    def aggregate(self, sequence: Grid, aggs: Aggs, *, grace: Optional[Duration] = None) -> LiveNode:
+        """Buckets of the sequence, each bucket's reducers emitted when it
+        closes; grace keeps a bucket open until the latest event is that far
+        past its end."""
+    def rolling(
+        self,
+        window: Union[Duration, int, Mapping[Duration, Any]],
+        aggs: Optional[Aggs] = None,
+        *,
+        min_samples: int = 0,
+        trigger: Optional[_Trigger] = None,
+        history: Optional[_History] = None,
+    ) -> LiveNode:
+        """A rolling window: a duration, a count of events, or several at
+        once as {window: aggs} / {window: {"aggs": aggs, "min_samples": n}}.
+        On a partitioned node a clock trigger (or several windows) makes one
+        node emitting a row per partition at each tick."""
+    def reduce(self, aggs: Aggs, *, trigger: Optional[_Trigger] = None) -> LiveNode:
+        """Reducers over everything this node holds, emitted on trigger
+        (after each event by default)."""
+    def __len__(self) -> int: ...
+    @property
+    def schema(self) -> list[dict[str, Any]]: ...
+    @property
+    def columns(self) -> list[str]: ...
+    @property
+    def kind(self) -> NodeKindName: ...
+    def events(self) -> list[LiveEvent]:
+        """What the node holds (an aggregation: its closed buckets; a
+        rolling window or reduce: its emissions)."""
+    def last(self) -> Optional[LiveEvent]: ...
+    def to_series(self) -> TimeSeries: ...
+    def to_pyarrow(self) -> Any: ...
+    def to_polars(self) -> Any: ...
+    def to_pandas(self) -> Any: ...
+    def stats(self) -> dict[str, Any]: ...
+    def watch(self, *kinds: OutputKind) -> None:
+        """Have each push return this node's outputs of these kinds (all it
+        emits when none are named)."""
+    def unwatch(self, *kinds: OutputKind) -> None: ...
+
+class LiveNode(_LiveBase):
+    """A node of a LiveSeries. Equal to another handle on the same node."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def value(self) -> dict[str, Cell]:
+        """A rolling window's or reduce's values as they stand now."""
+    def snapshot(self) -> TimeSeries:
+        """An aggregation's closed buckets and its open one."""
+    @property
+    def has_open_bucket(self) -> bool: ...
+    def keys(self) -> list[str]:
+        """A partitioned node's partition values, in order of arrival."""
+    def partition(self, key: str) -> Optional[LiveNode]: ...
+    def partitions(self) -> dict[str, LiveNode]:
+        """Each partition (a partitioned series), or the chain's last node
+        on each partition (a partitioned view)."""
+    def collect(
+        self,
+        *,
+        name: Optional[str] = None,
+        ordering: Optional[Literal["strict", "drop", "reorder"]] = None,
+        grace_window: Optional[Duration] = None,
+        max_events: Optional[int] = None,
+        max_age: Optional[Duration] = None,
+    ) -> LiveNode:
+        """One series of everything the partitions take (or their chains
+        emit), as events arrive; it starts with what they hold now."""
+    def remove(self) -> None:
+        """Remove the node: it stops working, and nodes built on it keep
+        what they hold but get no more events. Not the root."""
+
+class LiveSeries(_LiveBase):
+    """A series that takes events as they arrive and owns the nodes built on
+    it. Every push returns what the watched nodes emitted, in order.
+
+        live = pond_rs.LiveSeries({"time": "time", "host": "string", "cpu": "number"})
+        avg = live.rolling("1m", {"avg": ("cpu", "avg")})
+        live.push("2026-01-01T00:00:00Z", host="a", cpu=0.5)
+        live.push_frame(df)       # pyarrow / polars / pandas, the fastest way in
+        avg.value()               # {"avg": ...}
+
+    Calls from several threads are safe: each takes the series in turn,
+    with Python's lock released while it waits."""
+
+    def __init__(
+        self,
+        schema: Union[Mapping[str, str], Iterable[SchemaEntry]],
+        *,
+        name: str = "live",
+        ordering: Literal["strict", "drop", "reorder"] = "strict",
+        grace_window: Optional[Duration] = None,
+        max_events: Optional[int] = None,
+        max_age: Optional[Duration] = None,
+    ) -> None:
+        """schema: the key column ("time", "time_range" or "interval") then
+        the value columns, as {name: kind}, (name, kind[, required]) tuples
+        or a TimeSeries.schema. Value columns may have gaps unless marked
+        required. ordering says what a late event does: refused ("strict"),
+        dropped ("drop") or put in place within grace_window ("reorder").
+        max_events / max_age evict the oldest events."""
+    @property
+    def name(self) -> str: ...
+    @property
+    def root(self) -> LiveNode:
+        """The series itself as a node (its outputs carry this node)."""
+    def push(self, key: Key, values: Optional[Union[Mapping[str, Cell], _Seq[Cell]]] = None, /, **cells: Cell) -> list[LiveOutput]:
+        """One event: values as a dict, a list in schema order, or keywords.
+        A column left out is a gap."""
+    def push_many(self, rows: Iterable[Union[tuple[Key, Union[Mapping[str, Cell], _Seq[Cell]]], Mapping[str, Any]]]) -> list[LiveOutput]:
+        """Many events, all or nothing: (key, values) pairs or dicts with the
+        key column among the values."""
+    def push_frame(self, data: Any) -> list[LiveOutput]:
+        """A frame (TimeSeries, pyarrow, polars, pandas, dict of columns) as
+        one batch, all or nothing. It needs the key column and exactly this
+        series' value columns."""
+    def push_json(self, rows: str) -> list[LiveOutput]:
+        """Rows written as pond-ts JSON (a JSON array of rows)."""
+    def clear(self) -> list[LiveOutput]:
+        """Remove every event; views drop theirs."""
+    def partition_by(
+        self,
+        column: str,
+        *,
+        groups: Optional[_Seq[str]] = None,
+        ordering: Optional[Literal["strict", "drop", "reorder"]] = None,
+        grace_window: Optional[Duration] = None,
+        max_events: Optional[int] = None,
+        max_age: Optional[Duration] = None,
+    ) -> LiveNode:
+        """Split events by a column's value: each value gets its own series
+        (when it first arrives, or now for groups). Build on the result as on
+        the series; each step runs per partition."""
