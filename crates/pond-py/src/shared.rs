@@ -54,6 +54,7 @@ pub trait Ops: Sized + Sync {
         step: &Callback,
     ) -> pond_rs::Result<Self>;
     fn sample(&self, how: Sample) -> pond_rs::Result<Self>;
+    fn study(&self, call: &crate::study::StudyCall) -> pond_rs::Result<Self>;
 }
 
 macro_rules! impl_ops {
@@ -141,6 +142,9 @@ macro_rules! impl_ops {
             }
             fn sample(&self, how: Sample) -> pond_rs::Result<Self> {
                 <$t>::sample(self, how)
+            }
+            fn study(&self, call: &crate::study::StudyCall) -> pond_rs::Result<Self> {
+                call.run_on(self)
             }
         }
     };
@@ -563,6 +567,41 @@ macro_rules! shared_methods {
                 let inner = &*self.inner;
                 py.detach(|| crate::shared::Ops::materialize(inner, &seq, o))
                     .map(Self::wrap).map_err(crate::convert::err)
+            }
+
+            /// Run a financial study by name (`"rsi"`, `"bollinger"`,
+            /// `"anchored_vwap"`) with its options as keywords:
+            /// `study("rsi", period=14)`. Each study also has its own
+            /// method (`series.rsi(period=14)`); `pond_rs.studies()` lists
+            /// them with their options. Columns it reads default to
+            /// `close`, `high`, `low`, `open`, `volume`; a study adds its
+            /// columns and keeps every row.
+            #[pyo3(signature = (name, **options))]
+            fn study(
+                &self,
+                py: Python<'_>,
+                name: &str,
+                options: Option<&Bound<'_, pyo3::types::PyDict>>,
+            ) -> PyResult<Self> {
+                let call = crate::study::StudyCall::new(name, options)?;
+                let inner = &*self.inner;
+                py.detach(|| crate::shared::Ops::study(inner, &call))
+                    .map(Self::wrap).map_err(crate::convert::err)
+            }
+
+            fn __getattr__(
+                slf: &Bound<'_, Self>,
+                name: &str,
+            ) -> PyResult<crate::study::BoundStudy> {
+                crate::study::study_attribute(slf.as_any(), name)
+            }
+
+            fn __dir__(slf: &Bound<'_, Self>) -> PyResult<Vec<String>> {
+                let mut names: Vec<String> = slf.get_type().dir()?.extract()?;
+                names.extend(crate::study::study_methods());
+                names.sort();
+                names.dedup();
+                Ok(names)
             }
 
             /// One row per key: `keep` is `"first"`, `"last"`, `"error"`,

@@ -621,7 +621,8 @@ the study oracle) is done.
   through JS), J2 (studies, `LiveSeries`), J3 (browser build, npm publish,
   docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
   pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
-  P1 built 2026-10-30 (awaiting Peter's OK). Detail in the breakout plan.
+  P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
+  built 2026-10-30; P2b `LiveSeries` next. Detail in the breakout plan.
 
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about

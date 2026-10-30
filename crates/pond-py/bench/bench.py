@@ -101,6 +101,49 @@ cases["diff"] = (
     lambda: pnum.assign(cpu=pnum["cpu"].diff(), mem=pnum["mem"].diff()),
 )
 
+
+def pl_rsi(df, n=14):
+    d = pl.col("cpu").diff()
+    up = d.clip(lower_bound=0).ewm_mean(alpha=1 / n, adjust=False)
+    down = (-d).clip(lower_bound=0).ewm_mean(alpha=1 / n, adjust=False)
+    return df.with_columns((100 - 100 / (1 + up / down)).alias("rsi"))
+
+
+def pd_rsi(df, n=14):
+    d = df["cpu"].diff()
+    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    down = (-d).clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    return df.assign(rsi=100 - 100 / (1 + up / down))
+
+
+# polars and pandas have no RSI; the usual hand-written form (exponential
+# averages of gains and losses) does the same work. Its first rows differ
+# from Wilder's, which starts from a plain average.
+cases["RSI (14)"] = (
+    lambda: pond_series().rsi(column="cpu", period=14).to_polars(),
+    lambda: pl_rsi(pl.from_arrow(numbers)),
+    lambda: pd_rsi(pnum),
+)
+
+
+def pl_bollinger(df, n=20):
+    mid = pl.col("cpu").rolling_mean(n)
+    sd = pl.col("cpu").rolling_std(n, ddof=0)
+    return df.with_columns(mid.alias("bbMiddle"), (mid + 2 * sd).alias("bbUpper"), (mid - 2 * sd).alias("bbLower"))
+
+
+def pd_bollinger(df, n=20):
+    r = df["cpu"].rolling(n)
+    mid, sd = r.mean(), r.std(ddof=0)
+    return df.assign(bbMiddle=mid, bbUpper=mid + 2 * sd, bbLower=mid - 2 * sd)
+
+
+cases["Bollinger bands (20, 2)"] = (
+    lambda: pond_series().bollinger(column="cpu", period=20).to_polars(),
+    lambda: pl_bollinger(pl.from_arrow(numbers)),
+    lambda: pd_bollinger(pnum),
+)
+
 cases[f"Rolling 5m per host ({HOSTS} hosts)"] = (
     lambda: pond_rs.TimeSeries(table)
     .partition_by("host")
@@ -135,7 +178,10 @@ def check():
         .to_numpy()
     )
     day = float(np.max(np.abs(a - b)))
-    return roll, agg, day
+    a = pond_series().bollinger(column="cpu", period=20).to_polars()["bbUpper"].to_numpy()[19:]
+    b = pl_bollinger(pl.from_arrow(numbers))["bbUpper"].to_numpy()[19:]
+    bands = float(np.max(np.abs(a - b)))
+    return roll, agg, day, bands
 
 
 def threads():
@@ -161,7 +207,7 @@ if __name__ == "__main__":
     for name, fs in cases.items():
         cells = [f"{bench(f):.1f}" for f in fs]
         print(f"| {name} | " + " | ".join(cells) + " |")
-    roll, agg, day = check()
-    print(f"\nLargest difference from polars: rolling {roll:.2e}, 1-minute {agg:.2e}, New York days {day:.2e}")
+    roll, agg, day, bands = check()
+    print(f"\nLargest difference from polars: rolling {roll:.2e}, 1-minute {agg:.2e}, New York days {day:.2e}, Bollinger upper {bands:.2e}")
     one, four = threads()
     print(f"One rolling call {one:.1f} ms; four at once from four Python threads {four:.1f} ms")
