@@ -192,9 +192,10 @@ const perSecond = live.rolling(
 
 ## 4. What actually crosses the wire
 
-The dashboard's footer shows the effect. At the dashboard's default
-light load (4 hosts × 8 events/s), it received ~5 frames a second of
-about 2 KB each, ~6 raw events folded into each frame. At 1000 hosts
+The dashboard's footer shows the effect. In my run at a light load
+(4 hosts × 8 events/s, the command in section 9), it received ~5
+frames a second averaging 2.1 KB, with ~6 raw events folded into each
+frame. At 1000 hosts
 the fold is far bigger: 100k raw rows a second become 5 frames of
 1000 rows. The browser does no rolling of its own. It reads columns
 off the frame and draws.
@@ -305,8 +306,8 @@ A script subscribes both aggregators to one producer and compares every
 `/live-agg` row by timestamp and host
 (`packages/aggregator/scripts/compare-agg.ts`). In three runs where
 both started from the same producer event, **7,500 of 7,500 rows were
-identical**. In three runs where Rust joined the stream a producer tick
-earlier, the only differences were that first tick, which held the
+identical**. In three runs where Rust joined the stream one or two producer
+ticks earlier, the only differences were that first tick, which held the
 extra events, and later standard deviations agreeing to within 1e-12.
 That last-digit drift comes from running sums: an event added and then
 removed leaves slightly different rounding behind.
@@ -381,8 +382,9 @@ On a laptop (M1 Pro, 1000 × 1000) the gap was smaller: Rust 434–564k
 rows/s, Node 109–127k (3.4–5.2x).
 
 The Node numbers are on pond-ts 0.75. Partitioned live pipelines got
-15–33% slower in pond-ts 0.20, because partitions took rows one at a
-time. The fix ([PND-PARTBATCH], #838) is on `main` but not in a
+slower in pond-ts 0.20 (about 22% at 1000 × 1000, measured 0.19 against
+0.20), because partitions took rows one at a time. All told, 0.75 was
+15–33% slower than 0.17 at the loads that push it. The fix ([PND-PARTBATCH], #838) is on `main` but not in a
 release yet, so expect Node to do somewhat better on the next one.
 
 ### Measure latency the same way on both sides
@@ -411,8 +413,8 @@ way at 1000 × 100:
 Rust's slowest 1% are the one-in-20 batches that cross a 200 ms
 boundary. Those also emit 1000 per-host rows and build the 1000-row
 tick frame: ~15 ms, against ~5.5 ms for an ordinary batch. A profile
-showed no single hot spot. Most of the time goes to routing rows to
-their host and updating each host's windows. The full write-up is in
+showed no single hot spot. The biggest share (38% of instructions)
+goes to routing rows to their host and updating each host's windows. The full write-up is in
 [`latency-p99.md`](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/latency-p99.md).
 
 The lesson applies to any comparison: before comparing a number from
@@ -459,5 +461,5 @@ Use `pnpm dev` instead to run the all-Node stack. To race the two
 aggregators yourself, run `packages/aggregator/scripts/race.sh [seconds]
 [rounds]`. `pnpm bench:dev --P=1000 --N=100` runs a single load.
 
-For the libraries themselves: [pond-ts live series](../pond-ts/) and
+For the libraries themselves: [pond-ts live series](../pond-ts/live/live-series) and
 the [pond-rs live layer](../pond-rs/live).
