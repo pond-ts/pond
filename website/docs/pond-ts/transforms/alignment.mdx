@@ -159,11 +159,11 @@ sample point; `linear` interpolates across it.
 <TabItem value="ts" label="TypeScript" default>
 
 ```ts
-cpu.align(
-  Sequence.every('5s'),
-  { method: 'hold', sample: 'begin' },
-  { range: new TimeRange({ start: 0, end: 60_000 }) },
-);
+cpu.align(Sequence.every('5s'), {
+  method: 'hold',
+  sample: 'begin',
+  range: new TimeRange({ start: 0, end: 60_000 }),
+});
 ```
 
 </TabItem>
@@ -307,7 +307,8 @@ on each interval the resulting `Time` lands.
 
 ## Compared to `aggregate`
 
-Same parameter shape (sequence + range), same output key shape
+Same inputs (a sequence and an optional range; `range` goes in `align`'s
+options object but is `aggregate`'s third argument), same output key shape
 (`Interval`-keyed grid), different reduction.
 
 | Question                                           | Operator                         |

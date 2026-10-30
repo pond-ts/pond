@@ -645,9 +645,10 @@ the study oracle) is done.
   "also in Rust" note on the core overview pages; process marked
   TypeScript only (#850). Then 158 more tabs on the per-operator core pages
   (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
-  snippets in all, each checked against pond-ts output. Open: run the script
-  in CI, and link the published crate and `cargo doc` API reference once
-  they exist.
+  snippets in all, each checked against pond-ts output. Install lines now say
+  `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
+  snippets also pass against the published 0.1.0. Open: run the script in
+  CI.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
