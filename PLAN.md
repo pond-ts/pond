@@ -624,7 +624,7 @@ the study oracle) is done.
   P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
   merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
   J2 split the same way: J2a studies + trading calendars built 2026-10-31;
-  next J2b `LiveSeries`. Detail in the breakout plan.
+  J2b `LiveSeries` built 2026-10-31. Next J3. Detail in the breakout plan.
 
 - **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
   2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):

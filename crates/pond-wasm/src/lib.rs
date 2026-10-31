@@ -9,6 +9,8 @@
 
 pub mod callbacks;
 pub mod dispatch;
+pub mod live;
+mod live_js;
 pub mod study;
 
 use std::cell::RefCell;
@@ -28,7 +30,7 @@ thread_local! {
     static SERIES: RefCell<Vec<Option<TimeSeries>>> = const { RefCell::new(Vec::new()) };
 }
 
-fn store(s: TimeSeries) -> u32 {
+pub(crate) fn store(s: TimeSeries) -> u32 {
     SERIES.with(|t| {
         let mut t = t.borrow_mut();
         match t.iter().position(Option::is_none) {
@@ -54,7 +56,7 @@ fn with<T>(id: u32, f: impl FnOnce(&TimeSeries) -> Res<T>) -> Res<T> {
     })
 }
 
-fn err(e: String) -> JsError {
+pub(crate) fn err(e: String) -> JsError {
     JsError::new(&e)
 }
 
@@ -225,7 +227,7 @@ fn column(def: &Value, col: JsValue, rows: usize) -> Res<Column> {
     })
 }
 
-fn js_scalar(v: JsValue) -> Res<Scalar> {
+pub(crate) fn js_scalar(v: JsValue) -> Res<Scalar> {
     if let Some(n) = v.as_f64() {
         Ok(Scalar::Number(n))
     } else if let Some(s) = v.as_string() {
@@ -315,11 +317,11 @@ pub fn series_times(id: u32) -> Result<Float64Array, JsError> {
     .map_err(err)
 }
 
-fn set(o: &Object, k: &str, v: &JsValue) {
+pub(crate) fn set(o: &Object, k: &str, v: &JsValue) {
     let _ = Reflect::set(o, &JsValue::from_str(k), v);
 }
 
-fn literal(v: &Option<Literal>) -> JsValue {
+pub(crate) fn literal(v: &Option<Literal>) -> JsValue {
     match v {
         None => JsValue::NULL,
         Some(Literal::Number(x)) => JsValue::from_f64(*x),
@@ -358,8 +360,13 @@ fn to_object(s: &TimeSeries) -> JsValue {
 }
 
 fn schema(s: &TimeSeries) -> Array {
-    s.schema()
-        .into_iter()
+    defs_js(s.schema())
+}
+
+/// Column definitions as pond-ts writes a schema (`required: false` only
+/// on an optional value column).
+pub(crate) fn defs_js(defs: impl IntoIterator<Item = pond_rs::ColumnDef>) -> Array {
+    defs.into_iter()
         .map(|def| {
             let d = Object::new();
             set(&d, "name", &JsValue::from_str(&def.name));

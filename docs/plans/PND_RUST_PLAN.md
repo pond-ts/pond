@@ -4117,6 +4117,54 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         45.7 ms, ema 2.6 vs 13.0, rsi 10.9 vs 40.9, bollinger 24.8 vs
         98.9, macd 18.3 vs 91.8, atr 9.3 vs 31.1, sessionVwap 9.9 vs
         85.4. Size 6.9 MB raw, 1.26 MB brotli. J2b: `LiveSeries`.
+      - J2b outcome (2026-10-31): `LiveSeries`
+        (`crates/pond-wasm/src/live.rs`, plain Rust, and `live_js.rs`, the
+        exports; pond-rs's `live` feature now on in pond-wasm). One owner
+        per root series in a thread-local table; nodes are u32 handles;
+        builders go through one dispatcher (op name + JSON args, functions
+        as `{"fn": k}`) like the batch ops. JS classes carry pond-ts's
+        names (`LiveSeries`, `LiveView`, `LiveAggregation`,
+        `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, the
+        `LivePartitioned*` set). Decisions: (1) listeners run after the
+        Rust push returns, from its list of outputs, not from inside
+        pond-rs's callbacks: a listener can then call the bridge (read,
+        build, push) without re-entering a borrowed series; a push from a
+        listener is queued until the current one is done, and listener
+        errors are isolated with the first rethrown (pond-ts's emit); (2)
+        a node function that throws does not stop the push: outputs are
+        delivered, then its first exception is rethrown; over history the
+        node is removed and the exception rethrown; a function that pushes
+        into its own series gets a "busy" error, never a panic; (3)
+        number-only rows take dedicated exports (`push1/2/3`, a
+        Float64Array batch through `push_series` when ordered and finite)
+        and everything else takes JSON; a random-rows differential checks
+        both paths agree; (4) `apply(factory)` records the chain once and
+        repeats it per partition (no per-partition JS factory, which would
+        need a JS call per new partition inside pond-rs's push); (5) a
+        reduce built over history emits its first value from a microtask,
+        skipped if a push came first, as pond-ts defers it. Differences
+        kept: a disposed node cannot be read; `pushJson` has no
+        `timeZone`; pushes go into the root only; `cumulative` takes one
+        function column (pond-rs's `cumulative_with`); `toTimeSeries`
+        takes no name; partitioned fused rolling stats have no
+        `windowsCount`; a `map` cell of the wrong type is a gap; a fold
+        result that is not a number is NaN. Check (`test/live.mjs`, CI
+        `js-bridge`): pond-ts's own fixture generator
+        (`buildLiveFixture`) run against the bridge, compared with the
+        committed fixture: 71/71 cases, 7,961 outputs and 3,596 final rows
+        bit for bit, 40 errors agree, the Rust harness's 2 refused nodes
+        and 1 refused push; plus 8 checks for throwing functions,
+        re-entrancy, the fast path and leaks. Planted mistakes: map off by
+        1e-12 fails 2 cases + extras, filter inverted fails 16, a -0 to 0
+        change on the fast path fails only the extras (2 fixture cases are
+        number-only). Speed, 1M events, bridge vs pond-ts
+        (`scripts/perf-live.mjs`): push 250 vs 1593 ms, pushMany (1,000 a
+        batch) 39 vs 111, rolling 1m avg + 1m buckets 570 vs 2943 (push) /
+        365 vs 835 (pushMany), plus a listener on every rolling update
+        1338 vs 2647 / 642 vs 875. pond-ts's `push` with
+        `retention: { maxAge }` costs ~25 us an event (100k events 2.4 s),
+        so the bench runs without retention. Size 7.5 MB raw, 1.39 MB
+        brotli (+0.6 MB, +130 KB). Next J3.
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where

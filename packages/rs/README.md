@@ -2,7 +2,7 @@
 
 pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
 pond-ts's method names and argument shapes. **Not published yet**: this is
-steps J1, J1b and J2a of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
+steps J1, J1b, J2a and J2b of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
 
 ```js
 import { TimeSeries, Sequence } from '@pond-ts/rs';
@@ -71,8 +71,8 @@ cpu.free();
 - **Durations** may be text (`'5m'`) or a whole number of ms (`60000`); a
   fractional number of ms, or one past ±8.64e15 ms, which pond-ts takes,
   is refused.
-- **Not there yet:** `LiveSeries` (step J2b), and a browser build (step
-  J3). This build is for Node 20 and later.
+- **Not there yet:** a browser build (step J3). This build is for Node 20
+  and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
@@ -83,6 +83,64 @@ cpu.free();
 
 Where pond-rs and pond-ts give different answers on purpose, the list is in
 `crates/pond-rs/tests/core_parity.rs`.
+
+## LiveSeries
+
+`LiveSeries` and the nodes built on it have pond-ts's class names, methods
+and argument shapes; the work runs inside pond-rs.
+
+```js
+import { LiveSeries, Sequence } from '@pond-ts/rs';
+
+const live = new LiveSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ],
+});
+const avg = live.rolling('1m', { avg: { from: 'cpu', using: 'avg' } });
+const perMinute = live.aggregate(Sequence.every('1m'), { cpu: 'max' });
+const stop = perMinute.on('event', (bucket) => console.log(bucket.get('cpu')));
+
+live.push([0, 0.31]);
+live.pushMany([
+  [30_000, 0.44],
+  [61_000, 0.52],
+]);
+console.log(avg.value());
+
+stop();
+live.free();
+```
+
+- **Built:** `filter` (function or expression), `map`, `select`,
+  `sample`, `window`, `diff` / `rate` / `pctChange`, `fill`, `cumulative`,
+  `aggregate` (`closed`, `snapshot`, `hasOpenBucket`), `rolling` (one
+  window, or several fused), `reduce`, and `partitionBy` with `collect`,
+  `apply`, per-partition `rolling` and `toMap`. `on(type, fn)` returns an
+  unsubscribe function; `dispose()` removes a node.
+- **`free()` the root** `LiveSeries`; that frees every node built on it.
+- **Listeners run after pond-rs has taken the push.** If one throws, the
+  others still run and the first exception is rethrown. A push made from
+  inside a listener waits until the current push is done.
+- **Functions** (`filter`, `map`, `cumulative`, `reduce`) get the same
+  `Event` as elsewhere in the bridge. If one throws, the push still
+  completes, the outputs are delivered and its first exception is
+  rethrown; a node built over history whose function throws is not
+  added. A function that pushes into its own series gets an error.
+- **Fast path.** `push([t, n, …])` and `pushMany` with only numbers (and
+  `undefined` / `null` / `NaN` for gaps) skip JSON; other rows go as JSON.
+  Both give the same result.
+- **Differences:** a disposed node cannot be read (pond-ts leaves it
+  readable); `pushJson` takes no `timeZone`; only the root series takes
+  pushes; `apply(factory)` runs the factory once and repeats its chain for
+  every partition, so it cannot branch on the partition; `cumulative`
+  takes one function column; `toTimeSeries` takes no name.
+- **Speed** (`scripts/perf-live.mjs`, 1M events): `push` about 6x faster
+  than pond-ts, `pushMany` about 3x, a rolling average plus 1-minute
+  buckets 2-5x, and about 1.4-2x with a listener on every rolling update
+  (each output crosses back to JavaScript).
 
 ## Building and testing
 
@@ -96,4 +154,5 @@ cargo install wasm-bindgen-cli --version 0.2.129
 node test/parity.mjs     # pond-ts's core parity fixture through this package
 node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
 node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
+node test/live.mjs       # pond-ts's live parity fixture
 ```

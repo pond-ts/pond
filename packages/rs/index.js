@@ -253,47 +253,102 @@ export class Interval {
 
 // An event's row position in the series it came from (read by the tests).
 const ROW_INDEX = Symbol.for('pond-rs row index');
+const EVENT_PARTS = Symbol('event parts');
+// Each schema's column positions by name, for `Event.get`.
+const COLUMN_INDEX = new WeakMap();
+function columnIndex(schema) {
+  let m = COLUMN_INDEX.get(schema);
+  if (m === undefined) {
+    m = new Map();
+    for (let c = 1; c < schema.length; c++) m.set(schema[c].name, c);
+    COLUMN_INDEX.set(schema, m);
+  }
+  return m;
+}
 
 /** One row, as pond-ts `Event`: `get(column)`, `data()`, `key()`, `begin()`, `end()`. */
 export class Event {
+  // Built lazily from the row: a listener that reads one cell does not pay
+  // for the key object and the data record.
+  #schema;
+  #row;
   #key;
   #data;
   /** @internal Built from a `toJSON()` row and its schema. */
   constructor(schema, row, index) {
-    const k = row[0];
-    const kind = schema[0].kind;
-    this.#key =
-      kind === 'time'
-        ? new Time(k)
-        : kind === 'timeRange'
-          ? new TimeRange(k)
-          : new Interval(k);
-    const data = {};
-    for (let c = 1; c < schema.length; c++)
-      data[schema[c].name] = row[c] ?? undefined;
-    this.#data = Object.freeze(data);
+    if (schema === EVENT_PARTS) {
+      // `set`: a key and frozen data as they are.
+      this.#key = row;
+      this.#data = index;
+      return;
+    }
+    this.#schema = schema;
+    this.#row = row;
     this[ROW_INDEX] = index;
   }
   key() {
+    if (this.#key === undefined) {
+      const k = this.#row[0];
+      const kind = this.#schema[0].kind;
+      this.#key =
+        kind === 'time'
+          ? new Time(k)
+          : kind === 'timeRange'
+            ? new TimeRange(k)
+            : new Interval(k);
+    }
     return this.#key;
   }
   type() {
-    return this.#key.kind;
+    return this.key().kind;
   }
   data() {
+    if (this.#data === undefined) {
+      const data = {};
+      const schema = this.#schema;
+      for (let c = 1; c < schema.length; c++)
+        data[schema[c].name] = this.#row[c] ?? undefined;
+      this.#data = Object.freeze(data);
+    }
     return this.#data;
   }
   get(column) {
-    return this.#data[column];
+    if (this.#data !== undefined) return this.#data[column];
+    const c = columnIndex(this.#schema).get(column);
+    return c === undefined ? undefined : (this.#row[c] ?? undefined);
   }
   begin() {
-    return this.#key.begin();
+    if (this.#key === undefined && this.#schema[0].kind === 'time')
+      return this.#row[0];
+    return this.key().begin();
   }
   end() {
-    return this.#key.end();
+    if (this.#key === undefined && this.#schema[0].kind === 'time')
+      return this.#row[0];
+    return this.key().end();
   }
   timeRange() {
-    return this.#key.timeRange();
+    return this.key().timeRange();
+  }
+  /** A copy with `column` set to `value`, as pond-ts `event.set`. */
+  set(column, value) {
+    return new Event(
+      EVENT_PARTS,
+      this.key(),
+      Object.freeze({ ...this.data(), [column]: value }),
+    );
+  }
+  /** `[key, ...cells]` in `schema` order (`null` for a gap), as pond-ts `toJsonRow`. */
+  toJsonRow(schema) {
+    const k = this.key();
+    const data = this.data();
+    const key =
+      k.kind === 'time'
+        ? k.timestamp
+        : k.kind === 'timeRange'
+          ? [k.start, k.endMs]
+          : [k.value, k.start, k.endMs];
+    return [key, ...schema.slice(1).map((c) => data[c.name] ?? null)];
   }
 }
 
@@ -314,6 +369,7 @@ function encode(v, fns) {
   if (v instanceof Interval) return { interval: [v.value, v.start, v.endMs] };
   if (v instanceof Expr) return { expr: v.node };
   if (v instanceof TradingCalendar) return { calendar: v.id };
+  if (v instanceof Trigger) return v.toJSON();
   if (typeof v === 'function' || v instanceof Given)
     return { fn: fns.push(v instanceof Given ? v.value : v) - 1 };
   if (typeof v === 'number') {
@@ -771,6 +827,674 @@ export class TradingCalendar {
     );
   }
 }
+
+// ---- live series ([PND-RUST-R4] J2b) ---------------------------------------
+
+/** When a rolling window or reduce emits, as pond-ts `Trigger`. */
+export class Trigger {
+  #spec;
+  constructor(spec) {
+    this.#spec = spec;
+    this.kind =
+      spec === 'event' ? 'event' : 'count' in spec ? 'count' : 'clock';
+    Object.freeze(this);
+  }
+  /** After every event (the default). */
+  static event() {
+    return new Trigger('event');
+  }
+  /** When a clock bucket of `duration` ends (`Trigger.every('30s')`). */
+  static every(duration) {
+    return new Trigger({ every: duration });
+  }
+  /** Every `n` events. */
+  static count(n) {
+    return new Trigger({ count: n });
+  }
+  /** When a bucket of `sequence` ends. */
+  static clock(sequence) {
+    return new Trigger({ clock: sequence.toJSON() });
+  }
+  toJSON() {
+    return this.#spec;
+  }
+}
+
+const liveFinalizer = new FinalizationRegistry((id) => wasm.live_free(id));
+const OUTPUT_KINDS = ['event', 'batch', 'evict', 'bucket', 'update'];
+// The output kinds each pond-ts live class emits (its `on(type)` types).
+const KINDS_OF = {
+  LiveSeries: ['event', 'batch', 'evict'],
+  LiveView: ['event', 'evict'],
+  LiveAggregation: ['event', 'bucket', 'update'],
+  LiveRollingAggregation: ['event', 'update'],
+  LiveFusedRolling: ['event'],
+  LiveReduce: ['event'],
+  LivePartitionedFusedRolling: ['event'],
+  LivePartitionedSyncRolling: ['event'],
+  LivePartitionedSeries: [],
+  LivePartitionedView: [],
+};
+const NOT_FAST = Symbol('not fast');
+
+/** One live series and every node built on it, in WebAssembly memory. */
+class LiveOwner {
+  constructor(id, name) {
+    this.id = id;
+    this.name = name;
+    this.freed = false;
+    /** handle -> Map(kind -> Set(listener)) */
+    this.listeners = new Map();
+    /** handle -> node object, so a node is always the same object. */
+    this.nodes = new Map();
+    this.schemas = new Map();
+    this.depth = 0;
+    this.pending = [];
+    this.pushes = 0;
+    // Number-only fast path: a time key and number columns only.
+    this.numeric = wasm.live_numeric(id);
+  }
+  get liveId() {
+    if (this.freed) throw new Error('this LiveSeries was freed');
+    return this.id;
+  }
+  node(h, cls) {
+    let n = this.nodes.get(h);
+    if (!n) {
+      n = new LIVE_CLASSES[cls](TOKEN, this, h);
+      this.nodes.set(h, n);
+    }
+    return n;
+  }
+  schema(h) {
+    let s = this.schemas.get(h);
+    if (!s) {
+      s = Object.freeze(wasm.live_read(this.liveId, h, 'schema', 0));
+      this.schemas.set(h, s);
+    }
+    return s;
+  }
+  read(h, op, arg = 0) {
+    return wasm.live_read(this.liveId, h, op, arg);
+  }
+  /** The listeners of `kind` on node `h`, or undefined. */
+  listening(h, kind) {
+    const set = this.listeners.get(h)?.get(OUTPUT_KINDS[kind]);
+    return set && set.size > 0 ? set : undefined;
+  }
+  emit(set, value, errors) {
+    // The listeners as they were when the output arrived (a listener may
+    // add or remove one); no copy for the common single listener.
+    const fns = set.size === 1 ? [set.values().next().value] : [...set];
+    for (const fn of fns) {
+      try {
+        fn(value);
+      } catch (e) {
+        errors.push(e);
+      }
+    }
+  }
+  /**
+   * Hand a push's outputs to listeners: `[handle, kind, payload, …]`, or
+   * the same as numbers (a `Float64Array`, see `outputs_f64` in Rust).
+   */
+  dispatch(outs, errors) {
+    if (outs instanceof Float64Array) return this.dispatchNumbers(outs, errors);
+    for (let i = 0; i < outs.length; i += 3) {
+      const h = outs[i];
+      const k = outs[i + 1];
+      const set = this.listening(h, k);
+      if (!set) continue;
+      const p = outs[i + 2];
+      let value = p;
+      if (k === 0 || k === 3) value = new Event(this.schema(h), p);
+      else if (k === 1 || k === 2) {
+        const s = this.schema(h);
+        value = p.map((row) => new Event(s, row));
+      }
+      this.emit(set, value, errors);
+    }
+  }
+  dispatchNumbers(v, errors) {
+    const cell = (x) => (x !== x ? undefined : x);
+    let i = 0;
+    while (i < v.length) {
+      const h = v[i];
+      const k = v[i + 1];
+      const n = v[i + 2];
+      i += 3;
+      const s = this.schema(h);
+      const w = s.length - 1;
+      const set = this.listening(h, k);
+      if (k === 4) {
+        let value;
+        if (n === 1) {
+          if (set) {
+            value = {};
+            for (let c = 0; c < w; c++) value[s[c + 1].name] = cell(v[i + c]);
+          }
+          i += w;
+        }
+        if (set) this.emit(set, value, errors);
+        continue;
+      }
+      const kind = s[0].kind;
+      const kw = kind === 'time' ? 1 : kind === 'timeRange' ? 2 : 3;
+      if (!set) {
+        i += n * (kw + w);
+        continue;
+      }
+      const events = new Array(n);
+      for (let e = 0; e < n; e++) {
+        const row = new Array(w + 1);
+        row[0] =
+          kw === 1
+            ? v[i]
+            : kw === 2
+              ? [v[i], v[i + 1]]
+              : [v[i], v[i + 1], v[i + 2]];
+        i += kw;
+        for (let c = 1; c <= w; c++) row[c] = cell(v[i++]);
+        events[e] = new Event(s, row);
+      }
+      this.emit(set, k === 1 || k === 2 ? events : events[0], errors);
+    }
+  }
+  /**
+   * Finish a push: listeners get every output, pushes they made run after
+   * (as pond-ts queues them), then the first exception is rethrown: a node
+   * function's, else a listener's.
+   */
+  settle(r) {
+    this.pushes++;
+    if (r === undefined && this.pending.length === 0) return;
+    const errors = [];
+    let thrown = NOT_FAST;
+    if (r !== undefined) {
+      let outs = r;
+      if (!Array.isArray(r) && !(r instanceof Float64Array)) {
+        outs = r.outputs;
+        thrown = r.thrown;
+      }
+      this.depth++;
+      try {
+        this.dispatch(outs, errors);
+      } finally {
+        this.depth--;
+      }
+    }
+    while (this.depth === 0 && this.pending.length > 0) {
+      try {
+        this.pending.shift()();
+      } catch (e) {
+        errors.push(e);
+      }
+    }
+    if (thrown !== NOT_FAST) throw thrown;
+    if (errors.length > 0) throw errors[0];
+  }
+  /**
+   * A reduce built over history emits its first value at the build; pond-ts
+   * emits it from a microtask, so a listener attached right after the build
+   * gets it. Skipped if a push came first (that push emitted a newer one).
+   */
+  replay(node, h) {
+    const rows = this.read(h, 'replay');
+    if (rows.length === 0) return;
+    const at = this.pushes;
+    queueMicrotask(() => {
+      if (this.freed || this.pushes !== at) return;
+      const outs = [];
+      for (const row of rows) outs.push(h, 0, row);
+      const errors = [];
+      this.dispatch(outs, errors);
+      if (errors.length > 0) throw errors[0];
+    });
+  }
+}
+
+const wrapFilter = (f) => (row, schema) => f(new Event(schema, row));
+const wrapMap = (f) => (row, schema) => {
+  const e = new Event(schema, row);
+  const out = f(e);
+  if (!out || typeof out.get !== 'function' || typeof out.begin !== 'function')
+    throw new TypeError('map: the function must return an event');
+  if (
+    out.begin() !== e.begin() ||
+    out.end() !== e.end() ||
+    out.key().value !== e.key().value
+  )
+    throw new TypeError(
+      "map: the function changed the event's key; @pond-ts/rs keeps each event's key",
+    );
+  return schema.slice(1).map((d) => out.get(d.name) ?? null);
+};
+
+// Live builders take a function for `filter` / `map` (wrapped so it gets an
+// `Event`), an `Expr` for `filter`, functions in `cumulative` (called with
+// numbers as they are).
+function liveArgs(op, args) {
+  const out = [...args];
+  if (op === 'filter' && typeof args[0] === 'function')
+    out[0] = wrapFilter(args[0]);
+  else if (op === 'map' && typeof args[0] === 'function')
+    out[0] = wrapMap(args[0]);
+  return out;
+}
+
+const BUILDERS = [
+  'filter',
+  'map',
+  'select',
+  'sample',
+  'window',
+  'diff',
+  'rate',
+  'pctChange',
+  'fill',
+  'cumulative',
+  'aggregate',
+  'rolling',
+  'reduce',
+];
+
+/** The chain an `apply` factory builds, recorded once. */
+class LiveChain {
+  constructor(steps = []) {
+    this.steps = steps;
+  }
+}
+for (const op of BUILDERS) {
+  LiveChain.prototype[op] = function (...args) {
+    return new LiveChain([...this.steps, [op, ...liveArgs(op, args)]]);
+  };
+}
+
+/** What every live node has: reading, listening, building more nodes. */
+class LiveNode {
+  #o;
+  #h;
+  /** @internal */
+  constructor(token, owner, h) {
+    if (token !== TOKEN)
+      throw new TypeError('build live nodes from a LiveSeries');
+    this.#o = owner;
+    this.#h = h;
+  }
+  /** @internal */
+  get _owner() {
+    return this.#o;
+  }
+  /** @internal */
+  get _handle() {
+    return this.#h;
+  }
+  get name() {
+    return this.#o.name;
+  }
+  /** The node's columns, key first, as pond-ts `schema`. */
+  get schema() {
+    return this.#o.schema(this.#h);
+  }
+  get length() {
+    return this.#o.read(this.#h, 'length');
+  }
+  /** The event at `index` (negative counts from the end), or `undefined`. */
+  at(index) {
+    const row = this.#o.read(this.#h, 'at', index);
+    return row === undefined ? undefined : new Event(this.schema, row);
+  }
+  first() {
+    return this.at(0);
+  }
+  last() {
+    return this.at(-1);
+  }
+  /**
+   * Call `fn` with each output of `type` (`'event'`, `'batch'`, `'evict'`,
+   * `'bucket'`, `'update'`, as the node's pond-ts class has them) during
+   * each push. Returns a function that removes the listener.
+   */
+  on(type, fn) {
+    const kinds = KINDS_OF[this.constructor.name];
+    if (!kinds.includes(type))
+      throw new TypeError(
+        `${this.constructor.name} emits ${kinds.map((k) => `'${k}'`).join(', ') || 'nothing'}, not '${type}'`,
+      );
+    const o = this.#o;
+    const h = this.#h;
+    let byKind = o.listeners.get(h);
+    if (!byKind) o.listeners.set(h, (byKind = new Map()));
+    let set = byKind.get(type);
+    if (!set) byKind.set(type, (set = new Set()));
+    if (set.size === 0) wasm.live_watch(o.liveId, h, type, true);
+    set.add(fn);
+    return () => {
+      if (set.delete(fn) && set.size === 0 && !o.freed)
+        wasm.live_watch(o.id, h, type, false);
+    };
+  }
+  /** Stop this node (pond-ts `dispose`); nodes built on it keep what they hold. */
+  dispose() {
+    wasm.live_remove(this.#o.liveId, this.#h);
+  }
+  /** @internal Build `op(...args)` on this node. */
+  _build(op, args) {
+    const o = this.#o;
+    const fns = [];
+    const json = JSON.stringify(encode(liveArgs(op, args), fns));
+    const [h, cls] = wasm.live_build(o.liveId, this.#h, op, json, fns);
+    const node = o.node(h, cls);
+    if (cls === 'LiveReduce') o.replay(node, h);
+    return node;
+  }
+}
+for (const op of BUILDERS) {
+  LiveNode.prototype[op] = function (...args) {
+    return this._build(op, args);
+  };
+}
+
+function encodeCell(c) {
+  if (c === undefined) return null;
+  if (c === null) return { null: true };
+  return encode(c, []);
+}
+
+/**
+ * A series that takes events as they arrive, as pond-ts `LiveSeries`:
+ * `new LiveSeries({ name, schema, ordering, graceWindow, retention })`. It
+ * owns every node built on it; call `free()` when done (a finalizer frees a
+ * forgotten one eventually).
+ */
+export class LiveSeries extends LiveNode {
+  constructor(options, owner, h) {
+    if (options === TOKEN) {
+      super(TOKEN, owner, h);
+      return;
+    }
+    const { name = '', schema, ...rest } = options ?? {};
+    const id = wasm.live_new(
+      String(name),
+      JSON.stringify(schema),
+      JSON.stringify(encode(rest, [])),
+    );
+    const o = new LiveOwner(id, String(name));
+    liveFinalizer.register(o, id, o);
+    super(TOKEN, o, 0);
+    o.nodes.set(0, this);
+  }
+
+  /** Push rows (`[key, ...values]`, `undefined` for a gap). */
+  push(...rows) {
+    this.pushMany(rows);
+  }
+
+  /** Push rows as one batch: all or nothing. */
+  pushMany(rows) {
+    const o = this._owner;
+    if (this._handle !== 0)
+      throw new TypeError('@pond-ts/rs pushes into the root LiveSeries only');
+    if (rows.length === 0) return;
+    if (o.depth > 0) {
+      // A push from a listener runs after the current push, as pond-ts.
+      o.pending.push(() => this.pushMany(rows));
+      return;
+    }
+    const id = o.liveId;
+    let r = o.numeric ? fastPush(id, rows, this.schema.length) : NOT_FAST;
+    if (r === NOT_FAST) {
+      const encoded = rows.map((row) => {
+        if (!Array.isArray(row))
+          throw new TypeError('push: a row is [key, ...values]');
+        return row.map((c, i) =>
+          i === 0
+            ? encode(c instanceof Date ? c.getTime() : c, [])
+            : encodeCell(c),
+        );
+      });
+      r = wasm.live_push_rows(id, JSON.stringify(encoded));
+    }
+    o.settle(r);
+  }
+
+  /** Push rows written as pond-ts JSON (times as ms or UTC text, `null` for a gap). */
+  pushJson(rows, options = {}) {
+    if (options.timeZone !== undefined && options.timeZone !== 'UTC')
+      throw new TypeError(
+        'pushJson: @pond-ts/rs reads JSON times as ms or UTC text; timeZone is not supported',
+      );
+    if (rows.length === 0) return;
+    const o = this._owner;
+    o.settle(wasm.live_push_json(o.liveId, JSON.stringify(rows)));
+  }
+
+  /** Remove every event (an `'evict'` of them all). */
+  clear() {
+    const o = this._owner;
+    o.settle(wasm.live_clear(o.liveId));
+  }
+
+  /** What the series holds now, as a batch `TimeSeries`. */
+  toTimeSeries() {
+    return new TimeSeries(
+      TOKEN,
+      this._owner.read(this._handle, 'toTimeSeries'),
+    );
+  }
+
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+
+  /** Split by `column`: build on the result (per partition), then `collect()`. */
+  partitionBy(by, options) {
+    return this._build('partitionBy', [by, options]);
+  }
+
+  /** Release the series and all its nodes now (the root only). */
+  free() {
+    const o = this._owner;
+    if (this._handle !== 0 || o.freed) return;
+    liveFinalizer.unregister(o);
+    wasm.live_free(o.id);
+    o.freed = true;
+  }
+}
+
+/** A node that passes events through (filter, map, diff, fill, window, …). */
+export class LiveView extends LiveNode {
+  toTimeSeries() {
+    return new TimeSeries(
+      TOKEN,
+      this._owner.read(this._handle, 'toTimeSeries'),
+    );
+  }
+  count() {
+    return this._owner.read(this._handle, 'count');
+  }
+}
+
+/**
+ * Buckets of a sequence, as pond-ts `LiveAggregation`. `new
+ * LiveAggregation(source, sequence, mapping, { grace })` builds one with
+ * its own grace.
+ */
+export class LiveAggregation extends LiveNode {
+  constructor(source, sequence, mapping, options) {
+    if (source === TOKEN) {
+      super(TOKEN, sequence, mapping);
+      return;
+    }
+    if (!(source instanceof LiveNode))
+      throw new TypeError('LiveAggregation: the source must be a live node');
+    return source._build('aggregate', [sequence, mapping, options ?? {}]);
+  }
+  /** Closed buckets, as a batch `TimeSeries`. */
+  closed() {
+    return new TimeSeries(TOKEN, this._owner.read(this._handle, 'closed'));
+  }
+  /** Closed buckets and the open one, as a batch `TimeSeries`. */
+  snapshot() {
+    return new TimeSeries(TOKEN, this._owner.read(this._handle, 'snapshot'));
+  }
+  get hasOpenBucket() {
+    return this._owner.read(this._handle, 'hasOpenBucket');
+  }
+  get closedCount() {
+    return this.length;
+  }
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+
+class LiveRollingNode extends LiveNode {
+  /** The value columns as they stand now (`undefined` for a gap). */
+  value() {
+    return this._owner.read(this._handle, 'value');
+  }
+  get windowSize() {
+    return this.stats().windowSize;
+  }
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+
+/** A rolling window, as pond-ts `LiveRollingAggregation`. */
+export class LiveRollingAggregation extends LiveRollingNode {}
+/** Several rolling windows at once, as pond-ts `LiveFusedRolling`. */
+export class LiveFusedRolling extends LiveRollingNode {}
+
+/** Reducers over everything the source holds, as pond-ts `LiveReduce`. */
+export class LiveReduce extends LiveNode {
+  value() {
+    return this._owner.read(this._handle, 'value');
+  }
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+
+class LivePartitionedNode extends LiveNode {
+  /** Each partition value with its series (or its chain's last node). */
+  toMap() {
+    const o = this._owner;
+    return new Map(
+      o.read(this._handle, 'toMap').map(([k, h, cls]) => [k, o.node(h, cls)]),
+    );
+  }
+  /** One series of what every partition holds (or its chain emits). */
+  collect(options) {
+    return this._build('collect', options === undefined ? [] : [options]);
+  }
+  /**
+   * `factory(sub)` chained on each partition, gathered into one series.
+   * The factory runs once, on a recorder: it must return the chain built
+   * on its argument (no branching per partition).
+   */
+  apply(factory, options) {
+    const chain = factory(new LiveChain());
+    if (!(chain instanceof LiveChain))
+      throw new TypeError(
+        'apply: the factory must return the chain it built on its argument',
+      );
+    return this._build('apply', [chain.steps, options]);
+  }
+}
+
+/** Events split by a column, as pond-ts `LivePartitionedSeries`. */
+export class LivePartitionedSeries extends LivePartitionedNode {
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+/** A chain built on every partition, as pond-ts `LivePartitionedView`. */
+export class LivePartitionedView extends LivePartitionedNode {}
+/** Rolling windows per partition on a clock, as pond-ts `LivePartitionedFusedRolling`. */
+export class LivePartitionedFusedRolling extends LiveNode {
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+/** A rolling window per partition on a clock, as pond-ts `LivePartitionedSyncRolling`. */
+export class LivePartitionedSyncRolling extends LiveNode {
+  stats() {
+    return this._owner.read(this._handle, 'stats');
+  }
+}
+
+const LIVE_CLASSES = {
+  LiveSeries,
+  LiveView,
+  LiveAggregation,
+  LiveRollingAggregation,
+  LiveFusedRolling,
+  LiveReduce,
+  LivePartitionedSeries,
+  LivePartitionedView,
+  LivePartitionedFusedRolling,
+  LivePartitionedSyncRolling,
+};
+
+/**
+ * Number-only rows (a time in ms, then numbers or `undefined`) go to Rust
+ * without JSON; anything else (a NaN cell, text, `null`) returns `NOT_FAST`
+ * for the JSON path, which checks it as pond-ts does.
+ */
+function fastPush(id, rows, width) {
+  if (rows.length === 1) {
+    const row = rows[0];
+    if (!Array.isArray(row) || row.length !== width) return NOT_FAST;
+    let t = row[0];
+    if (typeof t !== 'number') {
+      if (!(t instanceof Date)) return NOT_FAST;
+      t = t.getTime();
+    }
+    for (let c = 1; c < width; c++) {
+      const v = row[c];
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || v !== v) return NOT_FAST;
+    }
+    const cell = (v) => (v === undefined ? NaN : v);
+    switch (width) {
+      case 2:
+        return wasm.live_push1(id, t, cell(row[1]));
+      case 3:
+        return wasm.live_push2(id, t, cell(row[1]), cell(row[2]));
+      case 4:
+        return wasm.live_push3(id, t, cell(row[1]), cell(row[2]), cell(row[3]));
+      default:
+        return wasm.live_push_numbers(
+          id,
+          t,
+          Float64Array.from(row.slice(1), cell),
+        );
+    }
+  }
+  const flat = new Float64Array(rows.length * width);
+  let j = 0;
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length !== width) return NOT_FAST;
+    let t = row[0];
+    if (typeof t !== 'number') {
+      if (!(t instanceof Date)) return NOT_FAST;
+      t = t.getTime();
+    }
+    flat[j++] = t;
+    for (let c = 1; c < width; c++) {
+      const v = row[c];
+      if (v === undefined) flat[j++] = NaN;
+      else if (typeof v !== 'number' || v !== v) return NOT_FAST;
+      else flat[j++] = v;
+    }
+  }
+  return wasm.live_push_many_numbers(id, flat, width);
+}
+
+/** @internal How many live series are alive in WebAssembly memory. */
+export const livesAlive = () => wasm.lives_alive();
 
 export const version = wasm.pond_rs_version();
 /** @internal How many series are alive in WebAssembly memory. */

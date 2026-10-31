@@ -145,6 +145,9 @@ jobs:
       - name: Financial study and calendar parity through JS
         run: node packages/rs/test/studies.mjs
 
+      - name: Live parity through JS
+        run: node packages/rs/test/live.mjs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest
