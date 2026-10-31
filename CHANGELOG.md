@@ -110,6 +110,25 @@ include new features and type-level changes; patch bumps are strictly additive.
   `sessions=` a calendar or a list, or `session=` a session-id column. Type
   hints for every study method are generated from the catalog. Checked by
   pytest against the pond-ts study, oracle, catalog and calendar fixtures.
+- **pond-rs for Python: live series** (bridge step P2b). `pond_rs.LiveSeries`
+  takes events as they arrive: `push(t, cpu=0.5)` one at a time,
+  `push_many` batches, `push_frame` for a pyarrow / polars / pandas frame or
+  a `TimeSeries` (through pond-rs's `push_series`, so with nothing built on
+  the series the columns go straight into storage), and `push_json`. Nodes
+  built on it update with every push: `filter` / `map` (Python functions),
+  `select`, `sample`, `window`, `diff` / `rate` / `pct_change`, `fill`,
+  `cumulative`, `aggregate`, `rolling` (by time, by count, several windows
+  at once, with triggers and history), `reduce`, and `partition_by` with
+  steps per partition, `collect()` and synchronised per-partition rolling.
+  Each push returns what the watched nodes emitted (`LiveOutput`s carrying
+  `LiveEvent`s). An exception in a node's Python function costs only that
+  event's value from that node; the first one is raised when the push
+  returns, carrying the push's outputs (the push has happened). A function
+  that uses its own series on the push's thread gets an error instead of a
+  deadlock. Calls from several threads
+  are safe and wait with Python's lock released. Checked by pytest against
+  pond-ts's live parity fixture (all 70 cases, every output and final
+  state).
 - **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
   batch, for data that already comes in columns (an Arrow chunk, a JSON
   read). Same rules and outputs as `push_many` of the same rows: the series
