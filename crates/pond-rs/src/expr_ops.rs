@@ -203,7 +203,10 @@ mod tests {
         let s = TimeSeries::new(
             "s",
             (0..n as i64).collect(),
-            vec![Column::required("v", (0..n).map(|i| i as f64).collect::<Vec<_>>())],
+            vec![Column::required(
+                "v",
+                (0..n).map(|i| i as f64).collect::<Vec<_>>(),
+            )],
         )
         .unwrap();
         for at in [0, 1023, 1024, 1025, 3071, 3072, 3073, 70_000, n - 1, n] {
