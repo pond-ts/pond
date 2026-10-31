@@ -860,7 +860,19 @@ export class Trigger {
   }
 }
 
-const liveFinalizer = new FinalizationRegistry((id) => wasm.live_free(id));
+// Live series by id, held weakly: Rust calls node functions back through
+// one shared callback with the series id (as `this`) and the function's
+// index in that series' own `fns`. So the functions are held only by
+// their series (JavaScript), and a function that refers to its own series
+// does not keep it alive (wasm-bindgen's table would hold it for good).
+const LIVE_OWNERS = new Map();
+wasm.live_set_callback(function (k, a, b) {
+  return LIVE_OWNERS.get(this).deref().fns[k](a, b);
+});
+const liveFinalizer = new FinalizationRegistry((id) => {
+  LIVE_OWNERS.delete(id);
+  wasm.live_free(id);
+});
 const OUTPUT_KINDS = ['event', 'batch', 'evict', 'bucket', 'update'];
 // The output kinds each pond-ts live class emits (its `on(type)` types).
 const KINDS_OF = {
@@ -891,6 +903,8 @@ class LiveOwner {
     this.depth = 0;
     this.pending = [];
     this.pushes = 0;
+    /** Every node function, by the index Rust calls it with. */
+    this.fns = [];
     // Number-only fast path: a time key and number columns only.
     this.numeric = wasm.live_numeric(id);
   }
@@ -901,7 +915,7 @@ class LiveOwner {
   node(h, cls) {
     let n = this.nodes.get(h);
     if (!n) {
-      n = new LIVE_CLASSES[cls](TOKEN, this, h);
+      n = new LIVE_CLASSES[cls](TOKEN, this, h, cls);
       this.nodes.set(h, n);
     }
     return n;
@@ -1114,12 +1128,16 @@ for (const op of BUILDERS) {
 class LiveNode {
   #o;
   #h;
+  /** The pond-ts class this node is (kept here, not read off `constructor.name`). */
+  #cls;
+  #disposed = false;
   /** @internal */
-  constructor(token, owner, h) {
+  constructor(token, owner, h, cls) {
     if (token !== TOKEN)
       throw new TypeError('build live nodes from a LiveSeries');
     this.#o = owner;
     this.#h = h;
+    this.#cls = cls;
   }
   /** @internal */
   get _owner() {
@@ -1156,11 +1174,13 @@ class LiveNode {
    * each push. Returns a function that removes the listener.
    */
   on(type, fn) {
-    const kinds = KINDS_OF[this.constructor.name];
+    const kinds = KINDS_OF[this.#cls];
     if (!kinds.includes(type))
       throw new TypeError(
-        `${this.constructor.name} emits ${kinds.map((k) => `'${k}'`).join(', ') || 'nothing'}, not '${type}'`,
+        `${this.#cls} emits ${kinds.map((k) => `'${k}'`).join(', ') || 'nothing'}, not '${type}'`,
       );
+    // As pond-ts: a disposed node takes a listener that is never called.
+    if (this.#disposed) return () => {};
     const o = this.#o;
     const h = this.#h;
     let byKind = o.listeners.get(h);
@@ -1176,14 +1196,25 @@ class LiveNode {
   }
   /** Stop this node (pond-ts `dispose`); nodes built on it keep what they hold. */
   dispose() {
+    // A second dispose (or one after `free()`) does nothing, as pond-ts.
+    if (this.#disposed || this.#o.freed) return;
     wasm.live_remove(this.#o.liveId, this.#h);
+    this.#disposed = true;
   }
   /** @internal Build `op(...args)` on this node. */
   _build(op, args) {
     const o = this.#o;
     const fns = [];
     const json = JSON.stringify(encode(liveArgs(op, args), fns));
-    const [h, cls] = wasm.live_build(o.liveId, this.#h, op, json, fns);
+    const base = o.fns.length;
+    o.fns.push(...fns);
+    let h, cls;
+    try {
+      [h, cls] = wasm.live_build(o.liveId, this.#h, op, json, base, fns.length);
+    } catch (e) {
+      o.fns.length = base;
+      throw e;
+    }
     const node = o.node(h, cls);
     if (cls === 'LiveReduce') o.replay(node, h);
     return node;
@@ -1208,9 +1239,9 @@ function encodeCell(c) {
  * forgotten one eventually).
  */
 export class LiveSeries extends LiveNode {
-  constructor(options, owner, h) {
+  constructor(options, owner, h, cls) {
     if (options === TOKEN) {
-      super(TOKEN, owner, h);
+      super(TOKEN, owner, h, cls);
       return;
     }
     const { name = '', schema, ...rest } = options ?? {};
@@ -1220,8 +1251,9 @@ export class LiveSeries extends LiveNode {
       JSON.stringify(encode(rest, [])),
     );
     const o = new LiveOwner(id, String(name));
+    LIVE_OWNERS.set(id, new WeakRef(o));
     liveFinalizer.register(o, id, o);
-    super(TOKEN, o, 0);
+    super(TOKEN, o, 0, 'LiveSeries');
     o.nodes.set(0, this);
   }
 
@@ -1233,8 +1265,7 @@ export class LiveSeries extends LiveNode {
   /** Push rows as one batch: all or nothing. */
   pushMany(rows) {
     const o = this._owner;
-    if (this._handle !== 0)
-      throw new TypeError('@pond-ts/rs pushes into the root LiveSeries only');
+    this.#rootOnly('pushMany');
     if (rows.length === 0) return;
     if (o.depth > 0) {
       // A push from a listener runs after the current push, as pond-ts.
@@ -1264,15 +1295,35 @@ export class LiveSeries extends LiveNode {
       throw new TypeError(
         'pushJson: @pond-ts/rs reads JSON times as ms or UTC text; timeZone is not supported',
       );
+    this.#rootOnly('pushJson');
     if (rows.length === 0) return;
     const o = this._owner;
+    if (o.depth > 0) {
+      // From a listener: after the current push, as pond-ts (whose
+      // `pushJson` is a `pushMany`).
+      o.pending.push(() => this.pushJson(rows, options));
+      return;
+    }
     o.settle(wasm.live_push_json(o.liveId, JSON.stringify(rows)));
   }
 
-  /** Remove every event (an `'evict'` of them all). */
+  /**
+   * Remove every event (an `'evict'` of them all). From a listener it runs
+   * at once, as pond-ts's does.
+   */
   clear() {
+    this.#rootOnly('clear');
     const o = this._owner;
     o.settle(wasm.live_clear(o.liveId));
+  }
+
+  // A partition's series is fed by the root; pond-ts lets you push into
+  // (or clear) one partition directly, pond-rs does not.
+  #rootOnly(call) {
+    if (this._handle !== 0)
+      throw new TypeError(
+        `${call}: @pond-ts/rs pushes into (and clears) the root LiveSeries only, not one partition`,
+      );
   }
 
   /** What the series holds now, as a batch `TimeSeries`. */
@@ -1297,6 +1348,7 @@ export class LiveSeries extends LiveNode {
     const o = this._owner;
     if (this._handle !== 0 || o.freed) return;
     liveFinalizer.unregister(o);
+    LIVE_OWNERS.delete(o.id);
     wasm.live_free(o.id);
     o.freed = true;
   }
@@ -1323,7 +1375,7 @@ export class LiveView extends LiveNode {
 export class LiveAggregation extends LiveNode {
   constructor(source, sequence, mapping, options) {
     if (source === TOKEN) {
-      super(TOKEN, sequence, mapping);
+      super(TOKEN, sequence, mapping, options);
       return;
     }
     if (!(source instanceof LiveNode))

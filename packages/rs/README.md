@@ -119,24 +119,35 @@ live.free();
   `aggregate` (`closed`, `snapshot`, `hasOpenBucket`), `rolling` (one
   window, or several fused), `reduce`, and `partitionBy` with `collect`,
   `apply`, per-partition `rolling` and `toMap`. `on(type, fn)` returns an
-  unsubscribe function; `dispose()` removes a node.
+  unsubscribe function; `dispose()` removes a node (a second `dispose()`,
+  or `on()` after it, does nothing, as pond-ts).
 - **`free()` the root** `LiveSeries`; that frees every node built on it.
+  A finalizer frees a forgotten one eventually, also when its node
+  functions refer to the series (they are held on the JavaScript side).
 - **Listeners run after pond-rs has taken the push.** If one throws, the
   others still run and the first exception is rethrown. A push made from
   inside a listener waits until the current push is done.
-- **Functions** (`filter`, `map`, `cumulative`, `reduce`) get the same
-  `Event` as elsewhere in the bridge. If one throws, the push still
-  completes, the outputs are delivered and its first exception is
-  rethrown; a node built over history whose function throws is not
-  added. A function that pushes into its own series gets an error.
+- **Functions:** `filter` and `map` get the same `Event` as elsewhere in
+  the bridge; `cumulative` functions get numbers (`(acc, value)`). If one
+  throws, the push still completes, the outputs are delivered and its
+  first exception is rethrown; a node built over history whose function
+  throws is not added. During a push a function cannot use its own series
+  at all, not even to read it (`live.length`): that is an error.
 - **Fast path.** `push([t, n, …])` and `pushMany` with only numbers (and
-  `undefined` / `null` / `NaN` for gaps) skip JSON; other rows go as JSON.
-  Both give the same result.
+  `undefined` for a gap) skip JSON; other rows go as JSON, which refuses
+  `null` and `NaN` cells as pond-ts does. Both give the same result.
 - **Differences:** a disposed node cannot be read (pond-ts leaves it
   readable); `pushJson` takes no `timeZone`; only the root series takes
-  pushes; `apply(factory)` runs the factory once and repeats its chain for
-  every partition, so it cannot branch on the partition; `cumulative`
-  takes one function column; `toTimeSeries` takes no name.
+  `push` / `pushMany` / `pushJson` / `clear` (pond-ts lets you push into
+  or clear one partition's series); a node function cannot read its own
+  series during a push; reducers are names only (pond-ts also takes a
+  function as `using`); keys must be whole ms (pond-ts takes `0.5`);
+  `apply(factory)` runs the factory once and repeats its chain for every
+  partition, so it cannot branch on the partition; `cumulative` takes one
+  function column; `toTimeSeries` takes no name; partitioned fused
+  rolling `stats()` has no `windowsCount`; a `map` result cell of the
+  wrong type is a gap; a `cumulative` result that is not a number is
+  `NaN`.
 - **Speed** (`scripts/perf-live.mjs`, 1M events): `push` about 6x faster
   than pond-ts, `pushMany` about 3x, a rolling average plus 1-minute
   buckets 2-5x, and about 1.4-2x with a listener on every rolling update

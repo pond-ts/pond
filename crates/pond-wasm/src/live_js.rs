@@ -35,6 +35,18 @@ struct Owner {
 thread_local! {
     /// Every live series, by id. A freed slot is `None` and reused.
     static LIVES: RefCell<Vec<Option<Rc<Owner>>>> = const { RefCell::new(Vec::new()) };
+    /// The one JavaScript function node functions are called through:
+    /// `callback.call(seriesId, index, a, b)` runs that series' `fns[index]`.
+    static CALLBACK: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+}
+
+/// Set the function node functions are called through (index.js does,
+/// once). The functions themselves stay in JavaScript, held by their
+/// series: kept here, wasm-bindgen's table would hold them (and any series
+/// they refer to) for good.
+#[wasm_bindgen]
+pub fn live_set_callback(f: js_sys::Function) {
+    CALLBACK.with(|c| *c.borrow_mut() = Some(f));
 }
 
 fn owner(id: u32) -> Result<Rc<Owner>, JsValue> {
@@ -57,10 +69,13 @@ fn with_live<T>(id: u32, f: impl FnOnce(&mut Live) -> Result<T, String>) -> Resu
 // The JavaScript functions are not thread-safe, but nothing here runs on
 // another thread (see the `compile_error!` in lib.rs).
 
-/// The functions one builder call passed (`fns[k]`), each called with the
-/// event's row (`[key, ...cells]`) and its node's schema.
+/// The functions one builder call passed: its `k`th is the series'
+/// function `base + k` on the JavaScript side, called with the event's row
+/// (`[key, ...cells]`) and its node's schema (a fold: with numbers).
 struct JsFns {
-    fns: Array,
+    id: u32,
+    base: u32,
+    count: u32,
     thrown: Rc<RefCell<Option<JsValue>>>,
     /// The last schema seen and its JavaScript form.
     schema: RefCell<Option<(Vec<ColumnDef>, JsValue)>>,
@@ -87,17 +102,22 @@ impl JsFns {
         js
     }
 
-    /// `fns[k](row, schema)`, keeping an exception.
+    /// Function `k` with `a` and `b`; an exception (or a bad `k`) as `Err`.
+    fn invoke(&self, k: usize, a: &JsValue, b: &JsValue) -> Result<JsValue, JsValue> {
+        if k >= self.count as usize {
+            return Err(err(format!("argument function {k} is not a function")).into());
+        }
+        let index = JsValue::from(self.base + k as u32);
+        CALLBACK.with(|c| match c.borrow().as_ref() {
+            Some(f) => f.call3(&JsValue::from(self.id), &index, a, b),
+            None => Err(err("live_set_callback was never called".into()).into()),
+        })
+    }
+
+    /// `fn(row, schema)`, keeping an exception.
     fn call(&self, k: usize, e: &LiveEvent) -> Option<JsValue> {
-        let f = match self.fns.get(k as u32).dyn_into::<js_sys::Function>() {
-            Ok(f) => f,
-            Err(_) => {
-                self.keep(err(format!("argument function {k} is not a function")).into());
-                return None;
-            }
-        };
         let schema = self.schema_of(e);
-        match f.call2(&JsValue::UNDEFINED, &event_row(e).into(), &schema) {
+        match self.invoke(k, &event_row(e).into(), &schema) {
             Ok(v) => Some(v),
             Err(ex) => {
                 self.keep(ex);
@@ -144,11 +164,7 @@ impl LiveFns for JsFns {
             .collect()
     }
     fn fold(&self, k: usize, acc: f64, v: f64) -> f64 {
-        let f = match self.fns.get(k as u32).dyn_into::<js_sys::Function>() {
-            Ok(f) => f,
-            Err(_) => return acc,
-        };
-        match f.call2(&JsValue::UNDEFINED, &acc.into(), &v.into()) {
+        match self.invoke(k, &acc.into(), &v.into()) {
             // As pond-ts stores whatever the function gives: a result that
             // is not a number is a gap.
             Ok(r) => r.as_f64().unwrap_or(f64::NAN),
@@ -402,19 +418,29 @@ pub fn lives_alive() -> u32 {
     LIVES.with(|t| t.borrow().iter().filter(|s| s.is_some()).count() as u32)
 }
 
-/// Build `op(...args)` on node `h` (`args` as JSON, `{"fn": k}` for
-/// `fns[k]`): `[handle, className]`. A node built over history whose
-/// function throws is removed and the exception rethrown.
+/// Build `op(...args)` on node `h` (`args` as JSON, `{"fn": k}` for the
+/// series' JavaScript function `base + k`, `k < count`):
+/// `[handle, className]`. A node built over history whose function throws
+/// is removed and the exception rethrown.
 #[wasm_bindgen]
-pub fn live_build(id: u32, h: u32, op: &str, args: &str, fns: Array) -> Result<Array, JsValue> {
+pub fn live_build(
+    id: u32,
+    h: u32,
+    op: &str,
+    args: &str,
+    base: u32,
+    count: u32,
+) -> Result<Array, JsValue> {
     let args = parse(args, op)?;
     let list = args.as_array().map(Vec::as_slice).unwrap_or(&[]);
     let o = owner(id)?;
-    let f: Arc<dyn LiveFns> = if fns.length() == 0 {
+    let f: Arc<dyn LiveFns> = if count == 0 {
         Arc::new(NoFns)
     } else {
         Arc::new(JsFns {
-            fns,
+            id,
+            base,
+            count,
             thrown: Rc::clone(&o.thrown),
             schema: RefCell::new(None),
         })

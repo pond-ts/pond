@@ -20,6 +20,8 @@
 //
 //   node test/live.mjs           (after ./build.sh)
 import { readFileSync } from 'node:fs';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as rs from '../index.js';
 import { buildLiveFixture } from '../../core/scripts/parity/live.mjs';
@@ -187,6 +189,14 @@ const step = (what, f) => {
     fail(`extra: ${what}: threw ${e?.name}: ${e?.message}`);
   }
 };
+// Series the fixture run left to the finalizer go first, so the counts
+// below see only this half's.
+setFlagsFromString('--expose-gc');
+const gc = runInNewContext('gc');
+for (let k = 0; k < 3; k++) {
+  gc();
+  await new Promise((r) => setTimeout(r, 20));
+}
 const before = livesAlive();
 
 step(
@@ -396,77 +406,96 @@ step('fast and JSON push paths agree; pond-ts cell rules hold', () => {
   other.free();
 });
 
-step('fast push paths equal the JSON path over random rows', () => {
-  // The same rows into a number-only series (fast paths) and into one with
-  // an extra text column (JSON path), with rolling and aggregate nodes on
-  // both: every output must be the same bits.
-  let seed = 7;
-  const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
-  const pick = () => {
-    const r = rand();
-    if (r < 0.1) return undefined;
-    if (r < 0.15) return -0;
-    if (r < 0.2) return (rand() - 0.5) * 1e-300;
-    if (r < 0.25) return (rand() - 0.5) * 1e300;
-    return Math.round((rand() - 0.5) * 2000) / 8;
-  };
-  const fast = new LiveSeries({ name: 'r', schema: SCHEMA });
-  const slow = new LiveSeries({
-    name: 'r',
-    schema: [...SCHEMA, { name: 'tag', kind: 'string', required: false }],
-  });
-  const record = (live, out) => {
-    const nodes = [
-      live,
-      live.rolling('5s', { cpu: 'avg', mem: 'sum' }),
-      live.aggregate(rs.Sequence.every('3s'), {
-        cpu: 'max',
-        n: { from: 'mem', using: 'count' },
-      }),
-    ];
-    nodes.forEach((n, i) => {
-      for (const kind of n === live ? ['event', 'batch'] : ['event']) {
-        n.on(kind, (p) => {
-          const evs = Array.isArray(p) ? p : [p];
-          for (const e of evs)
-            // The root's rows without the text column.
-            out.push(
-              [
-                i,
-                kind,
-                ...e.toJsonRow(n.schema).slice(0, i === 0 ? 3 : undefined),
-              ].map(encodeNum),
-            );
+// Ordered rows take the batch fast path (`push_series`); unordered ones (a
+// `'reorder'` series) take its `push_many` fallback.
+for (const ordered of [true, false])
+  step(
+    `fast push paths equal the JSON path over random ${ordered ? 'ordered' : 'unordered'} rows`,
+    () => {
+      // The same rows into a number-only series (fast paths) and into one with
+      // an extra text column (JSON path), with rolling and aggregate nodes on
+      // both: every output must be the same bits.
+      let seed = ordered ? 7 : 11;
+      const opts = ordered ? {} : { ordering: 'reorder', graceWindow: '1m' };
+      const rand = () =>
+        (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+      const pick = () => {
+        const r = rand();
+        if (r < 0.1) return undefined;
+        if (r < 0.15) return -0;
+        if (r < 0.2) return (rand() - 0.5) * 1e-300;
+        if (r < 0.25) return (rand() - 0.5) * 1e300;
+        return Math.round((rand() - 0.5) * 2000) / 8;
+      };
+      const fast = new LiveSeries({ name: 'r', schema: SCHEMA, ...opts });
+      const slow = new LiveSeries({
+        name: 'r',
+        schema: [...SCHEMA, { name: 'tag', kind: 'string', required: false }],
+        ...opts,
+      });
+      const record = (live, out) => {
+        const nodes = [
+          live,
+          live.rolling('5s', { cpu: 'avg', mem: 'sum' }),
+          live.aggregate(rs.Sequence.every('3s'), {
+            cpu: 'max',
+            n: { from: 'mem', using: 'count' },
+          }),
+        ];
+        nodes.forEach((n, i) => {
+          for (const kind of n === live ? ['event', 'batch'] : ['event']) {
+            n.on(kind, (p) => {
+              const evs = Array.isArray(p) ? p : [p];
+              for (const e of evs)
+                // The root's rows without the text column.
+                out.push(
+                  [
+                    i,
+                    kind,
+                    ...e.toJsonRow(n.schema).slice(0, i === 0 ? 3 : undefined),
+                  ].map(encodeNum),
+                );
+            });
+          }
         });
+      };
+      const encodeNum = (v) => (Object.is(v, -0) ? '-0' : v);
+      const a = [];
+      const b = [];
+      record(fast, a);
+      record(slow, b);
+      let t = 0;
+      let unordered = 0;
+      for (let i = 0; i < 400; i++) {
+        const n = rand() < 0.5 ? 1 : 1 + Math.floor(rand() * 20);
+        const rows = [];
+        for (let j = 0; j < n; j++) {
+          t += Math.floor(rand() * 900);
+          // Up to 5 s back, inside the grace window.
+          const back = !ordered && rand() < 0.3 ? Math.floor(rand() * 5000) : 0;
+          rows.push([Math.max(0, t - back), pick(), pick()]);
+        }
+        if (rows.some((r, j) => j > 0 && r[0] < rows[j - 1][0])) unordered++;
+        if (n === 1 && rand() < 0.5) {
+          fast.push(rows[0]);
+          slow.push([...rows[0], 'x']);
+        } else {
+          fast.pushMany(rows);
+          slow.pushMany(rows.map((r) => [...r, 'x']));
+        }
       }
-    });
-  };
-  const encodeNum = (v) => (Object.is(v, -0) ? '-0' : v);
-  const a = [];
-  const b = [];
-  record(fast, a);
-  record(slow, b);
-  let t = 0;
-  for (let i = 0; i < 400; i++) {
-    const n = rand() < 0.5 ? 1 : 1 + Math.floor(rand() * 20);
-    const rows = [];
-    for (let j = 0; j < n; j++)
-      rows.push([(t += Math.floor(rand() * 900)), pick(), pick()]);
-    if (n === 1 && rand() < 0.5) {
-      fast.push(rows[0]);
-      slow.push([...rows[0], 'x']);
-    } else {
-      fast.pushMany(rows);
-      slow.pushMany(rows.map((r) => [...r, 'x']));
-    }
-  }
-  check(
-    `random rows: ${a.length} outputs equal`,
-    a.length > 1000 && same(a, b),
+      check(
+        `random rows: ${a.length} outputs equal`,
+        a.length > 1000 && same(a, b),
+      );
+      check(
+        `random rows: ${unordered} unordered batches`,
+        ordered ? unordered === 0 : unordered > 20,
+      );
+      fast.free();
+      slow.free();
+    },
   );
-  fast.free();
-  slow.free();
-});
 
 step('expressions, unsubscribe, dispose, toTimeSeries, free', () => {
   const live = new LiveSeries({ name: 'e', schema: SCHEMA });
@@ -492,6 +521,12 @@ step('expressions, unsubscribe, dispose, toTimeSeries, free', () => {
     'a disposed view cannot be read',
     throws(() => f.length),
   );
+  // As pond-ts: a second dispose, and a listener on a disposed node, do
+  // nothing.
+  f.dispose();
+  const offDisposed = f.on('event', () => check('never called', false));
+  live.push([3500, 5, 5]);
+  offDisposed();
   check(
     'the root cannot be disposed',
     throws(() => live.dispose()),
@@ -503,6 +538,101 @@ step('expressions, unsubscribe, dispose, toTimeSeries, free', () => {
     throws(() => live.push([4000, 1, 1])),
   );
 });
+
+step('a partition takes no push or clear (the root feeds it)', () => {
+  const live = new LiveSeries({
+    name: 'p',
+    schema: [...SCHEMA, { name: 'host', kind: 'string' }],
+  });
+  const parts = live.partitionBy('host');
+  live.push([0, 1, 1, 'a'], [1000, 2, 2, 'b']);
+  const a = parts.toMap().get('a');
+  const rootOnly = (e) =>
+    e instanceof TypeError && /root LiveSeries only/.test(e.message);
+  check(
+    'push refused',
+    throws(() => a.push([5000, 3, 3, 'a']), rootOnly),
+  );
+  check(
+    'pushMany refused',
+    throws(() => a.pushMany([[5000, 3, 3, 'a']]), rootOnly),
+  );
+  check(
+    'pushJson refused',
+    throws(() => a.pushJson([[5000, 3, 3, 'a']]), rootOnly),
+  );
+  check(
+    'clear refused',
+    throws(() => a.clear(), rootOnly),
+  );
+  check('root untouched', live.length === 2 && a.length === 1);
+  live.free();
+});
+
+step('pushJson and clear from a listener, in pond-ts order', () => {
+  // The orders are pond-ts's (run against it while writing this test):
+  // a pushJson from a listener waits for the current push, as pushMany
+  // does; a clear runs at once (both rows are stored before any listener).
+  const order = (act) => {
+    const live = new LiveSeries({ name: 'q', schema: SCHEMA.slice(0, 2) });
+    const log = [];
+    live.on('event', (e) => {
+      log.push('ev' + e.begin());
+      act(live, e.begin());
+    });
+    live.on('batch', (b) => log.push('batch' + b.length));
+    live.on('evict', (b) => log.push('evict' + b.length));
+    live.pushMany([
+      [0, 1],
+      [1, 2],
+    ]);
+    live.free();
+    return log.join(' ');
+  };
+  const json = order((live, t) => t === 0 && live.pushJson([[10, 1]]));
+  check(`pushJson queued: ${json}`, json === 'ev0 ev1 batch2 ev10 batch1');
+  const push = order((live, t) => t === 0 && live.push([10, 1]));
+  check(`push queued: ${push}`, push === json);
+  const clear = order((live, t) => t === 0 && live.clear());
+  check(`clear at once: ${clear}`, clear === 'ev0 evict2 ev1 batch2');
+});
+
+step('a subclass of LiveSeries works', () => {
+  class Mine extends LiveSeries {}
+  const live = new Mine({ name: 'm', schema: SCHEMA });
+  let n = 0;
+  live.on('event', () => n++);
+  live.push([0, 1, 1]);
+  check('listened', n === 1);
+  live.free();
+});
+
+// A node function that refers to its own series must not keep it alive:
+// the functions stay on the JavaScript side, so the finalizer still runs.
+{
+  const start = livesAlive();
+  (() => {
+    for (let i = 0; i < 50; i++) {
+      const live = new LiveSeries({ name: 'g', schema: SCHEMA });
+      // Each function holds `live` (reading it during a push is refused).
+      const self = { live };
+      live.filter((e) => self.live !== null && e.get('cpu') > 0);
+      live.map((e) => (self.live ? e : e)).on('event', () => live.length);
+      live.cumulative({ cpu: (acc, v) => (self.live ? acc + v : acc) });
+      live.push([0, 1, 1]);
+    }
+  })();
+  const made = livesAlive() - start;
+  for (let k = 0; k < 10 && livesAlive() > start; k++) {
+    gc();
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  extra++;
+  check(
+    `gc: ${livesAlive() - start} of ${made} unfreed series left`,
+    made === 50 && livesAlive() === start,
+  );
+}
 
 const leaked = livesAlive() - before;
 check(`${leaked} live series left after free()`, leaked === 0);

@@ -4148,13 +4148,33 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         function column (pond-rs's `cumulative_with`); `toTimeSeries`
         takes no name; partitioned fused rolling stats have no
         `windowsCount`; a `map` cell of the wrong type is a gap; a fold
-        result that is not a number is NaN. Check (`test/live.mjs`, CI
+        result that is not a number is NaN. Review (PR #870) fixes: a
+        partition's `clear` / `pushJson` reached the root (now every push
+        and `clear` on a non-root series is refused; pond-ts pushes into
+        the partition itself, which pond-rs's partitions do not take);
+        `pushJson` from a listener was not queued (now as `pushMany`;
+        `clear` runs at once, both as pond-ts); node functions were held
+        in wasm-bindgen's table, so one referring to its series kept it
+        alive for good (now kept in the series' own JS array and called
+        through one shared callback by series id + index; a gc test pins
+        it); node kinds were looked up by `constructor.name` (broke
+        subclasses and minifiers; now a field); a second `dispose()` and
+        `on()` after dispose threw (now no-ops, as pond-ts). Also
+        differences, documented: a node function cannot even read its own
+        series during a push (the series is borrowed); reducers are names
+        only (pond-rs has no function reducer; pond-ts takes one); keys are
+        whole ms. Not changed: the function schema cache compares the
+        column list on each call; a pointer check would need pond-rs to
+        expose the event's `Arc` schema. Check (`test/live.mjs`, CI
         `js-bridge`): pond-ts's own fixture generator
         (`buildLiveFixture`) run against the bridge, compared with the
         committed fixture: 71/71 cases, 7,961 outputs and 3,596 final rows
         bit for bit, 40 errors agree, the Rust harness's 2 refused nodes
-        and 1 refused push; plus 8 checks for throwing functions,
-        re-entrancy, the fast path and leaks. Planted mistakes: map off by
+        and 1 refused push; plus 13 checks for throwing functions,
+        re-entrancy, the fast path (ordered and unordered random rows),
+        partitions, listener order, gc and leaks (a planted strong hold on
+        the functions, an unqueued `pushJson` and an unchecked partition
+        `clear` each fail them). Planted mistakes: map off by
         1e-12 fails 2 cases + extras, filter inverted fails 16, a -0 to 0
         change on the fast path fails only the extras (2 fixture cases are
         number-only). Speed, 1M events, bridge vs pond-ts

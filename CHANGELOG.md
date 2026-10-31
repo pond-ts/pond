@@ -272,9 +272,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   rolling and `toMap`. `on(type, fn)` returns an unsubscribe function, as
   in pond-ts. Every case of pond-ts's live parity fixture gives the same
   outputs and final rows bit for bit (`test/live.mjs`). Differences: a
-  disposed node cannot be read, `pushJson` takes no `timeZone`, pushes go
-  into the root series only, `apply` records its chain once (it cannot
-  branch per partition), and `cumulative` takes one function column. 1M
+  disposed node cannot be read; `pushJson` takes no `timeZone`; pushes and
+  `clear` go to the root series only (not one partition); a node function
+  cannot read its own series during a push; reducers are names only (no
+  function `using`); keys are whole ms; `apply` records its chain once (it
+  cannot branch per partition); `cumulative` takes one function column;
+  `toTimeSeries` takes no name; partitioned fused rolling stats have no
+  `windowsCount`; a `map` cell of the wrong type is a gap. 1M
   events, bridge vs pond-ts: `push` 250 vs 1593 ms, `pushMany` (batches
   of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
   1-minute buckets 570 vs 2943, the same with a listener on every rolling

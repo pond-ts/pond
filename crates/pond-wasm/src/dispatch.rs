@@ -262,6 +262,11 @@ pub(crate) fn mapping(op: &str, v: &Value) -> Res<Vec<Agg>> {
     map.iter()
         .map(|(output, spec)| match spec {
             Value::String(r) => Ok(Agg::of(output, pond(Reducer::parse(r))?)),
+            // pond-ts takes a function as a reducer; pond-rs has named ones only.
+            _ if spec.get("fn").is_some() || spec["using"].get("fn").is_some() => Err(format!(
+                "{op}: mapping entry '{output}': a function reducer is not supported by \
+                 @pond-ts/rs (pond-rs has named reducers only)"
+            )),
             _ => match (spec["from"].as_str(), spec["using"].as_str()) {
                 (Some(from), Some(using)) => {
                     Ok(Agg::new(output, from, pond(Reducer::parse(using))?))
