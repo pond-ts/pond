@@ -21,6 +21,70 @@ the archive: "3C" historically meant both the batch rolling _output_ path
 
 ## Tasks
 
+### [PND-PARTBATCH] — Partition routing one pass per partition per chunk (DONE 2026-10-27)
+
+**Why.** The gRPC experiment revival (2026-10-27) re-benched its aggregator
+across pond-ts versions and found 0.20.0 (#175, column-native partition
+routing) cut throughput ~22% at 1000 hosts x 1000 ev/s, and 15-33% overall vs
+0.17. In-pond repro (`packages/core/scripts/perf-partition-rolling.mjs`): the
+chunked backing was 30-37% slower than `__backing: 'array'` with a fused
+rolling attached, equal with no listener. Cause: `#routeChunk` called
+`part._stageRows(store, [i])` per row, so every row paid an order check, a
+staging call, a re-entrancy guard, a retention pass, a one-row `'batch'` and a
+settle; the staged rows were then re-validated at flush.
+
+**What shipped.** `#routeChunk` buckets the chunk's rows per partition, then
+(1) `_stageRowsOpen` per partition: order check, stage the whole slice, open
+the partition's guard; (2) `_emitStagedEvent` for every row in source order;
+(3) `_stageRowsClose` per partition: retention, one `'batch'`, `'evict'`,
+settle, drain queued pushes (partitions close in the order of their last row in
+the chunk — Layer-2 review on #838 found that closing in first-seen order sent
+a partition `reduce` under `apply()` out of key order into the strict unified
+buffer). All partitions' guards are open during step 2, so
+a push made from a partition listener queues until that partition closes. Per-partition
+scratch slots are reused chunk to chunk (fresh `indices` arrays, not
+`length = 0`, which V8 runs as a slow runtime call; it was the hottest line).
+The pending-tier flush runs `validateAndNormalizeColumnar` with a new internal
+`trusted` option (no per-cell checks, no `Time` per key, no array re-freeze):
+rows there were already validated by the source.
+
+**Decision: source-order `'event'`, batched everything else.** Bucketed
+`'event'` fan-out was rejected again for the same reason #175 rejected it
+(strict `collect()` and the clock-triggered partitioned rolling need source
+order). Batched `'batch'` / retention / settle makes a routed chunk look to a
+partition exactly like a `pushMany` into it — the per-row behaviour was an
+artefact of the routing loop, not a contract (the non-strict per-event path
+still delivers one row per push, because its source fans out one event at a
+time; unchanged). Error handling changed on purpose: a throwing partition
+listener or an undeclared `groups` value no longer aborts routing for the
+rest of the chunk; the first error is thrown after every partition is closed.
+Pinned by the `[PND-PARTBATCH]` tests in
+`test/live/LivePartitionedSeries.columnar-routing.test.ts` (6 of 8 fail on
+the old code) and live-parity case `partition-pushmany` (only partition
+`'batch'` / `'evict'` counts and the partition `reduce`'s output count differ
+from the old build; every `'event'` is identical). An old-vs-new oracle over
+1,500 random strict partitioned sessions (collect, fused rolling, partition
+rolling, diff, per-partition events and evictions, retention variants) was
+identical apart from eviction grouping.
+
+**Numbers** (median of 4 alternating runs, noisy container; the unchanged
+`array` path moved up to ±17% between runs):
+
+| cell (+ fused rolling)     | before  | after   | auto / array before → after |
+| -------------------------- | ------- | ------- | --------------------------- |
+| 1000 hosts x 1 row/batch   | 1406 ms | 1145 ms | 1.47 → 1.21                 |
+| 1000 hosts x 10 rows/batch | 1219 ms | 946 ms  | 1.43 → 1.09                 |
+| 100 hosts x 10 rows/batch  | 1136 ms | 804 ms  | 1.55 → 0.94                 |
+
+No listener: 10 rows/batch 25-37% faster; 1 row/batch unchanged within noise.
+
+**Not closed:** with one row per partition per chunk the chunked path is still
+~20% behind the `Event[]` path when a rolling listens. What's left is the
+columnar design itself (rows are validated into columns, gathered into the
+partition's staging tier, then rebuilt as transient `Event`s for listeners,
+where the `Event[]` path builds one `Event` and shares it). Closing it needs
+[PND-COLOUT] / [PND-LROLL]-style column-native consumers, not routing work.
+
 ### [PND-COLOUT] — Column-native output (§A)
 
 The dominant remaining allocation slice at the live output boundary:
@@ -664,7 +728,49 @@ amortised O(1) whatever the window.
   which may account for it (not verified).
 
 - Rolling over a `Sequence` turned out to scan every row for every point,
-  for every reducer: already logged as [PND-ROLLGRID].
+  for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
+
+### [PND-ROLLGRID] — SHIPPED (two cursors for grid rolling)
+
+`rolling(sequence, window, mapping)` filtered every row for every bucket,
+O(B·N) before any reducing (100k rows, 1-minute grid, 5-minute `avg`: 7.4 s).
+Bucket anchors strictly increase (a `BoundedSequence` is sorted and
+non-overlapping), so each window is a run of begin-sorted rows whose two ends
+only move forward. Now two cursors find each window (O(N + B)), and the result
+is built as typed key/value columns, not through row intake.
+
+**Decision: keep reducing each window afresh, not with sliding states.** The
+event-driven branch uses incremental rolling states (laned sums, double-double
+stdev); the grid branch always used the `aggregate` reducers (`reduce` over
+the window's values). Switching to states would be O(N + B) instead of
+O(N + B·W), but changes last bits (stdev on values near -1e6 moved in the
+12th digit) and broke 2 pond-rs parity cases that pin these bits. So each
+window is still reduced with `reduce`, reading packed number columns straight
+off the buffer. Cost O(N + B·W); a 1-hour window on a 1-minute grid over 100k
+rows (W = 3,600) takes 55 ms.
+
+Checked: 5,400 random cases (time / range / interval keys, repeated times,
+gaps, every alignment and sample point, narrow and wide windows, minSamples,
+15 reducers on numbers plus text reducers) give byte-identical JSON against
+the previous build; flipping one cursor test made 188 differ. Committed test
+`TimeSeries.rolling-sequence.test.ts` checks every window by brute force.
+
+Bench `scripts/perf-rolling-sequence.mjs` (median of 7 after 5 warm-ups,
+3 processes; old build 3 runs after 1 warm-up):
+
+| Case                                    | Before  | After  |
+| --------------------------------------- | ------- | ------ |
+| 100k rows, 1m grid, 5m avg              | 7.45 s  | 5.2 ms |
+| 100k rows, 1m grid, 1h avg              | 8.09 s  | 55 ms  |
+| 4 hosts partitioned, 1m grid, 5m avg    | 2.01 s  | 21 ms  |
+| 1M rows, 1m grid, 5m avg + stdev        | not run | 158 ms |
+| 100k rows, 1s grid, 1s window (W = 1)   | not run | 34 ms  |
+| 10k rows 100 s apart, 1s grid (1M bkts) | not run | 430 ms |
+
+"Not run": the old code needs O(B·N) = 10^10 or more checks there (hours).
+The sparse 1M-bucket case is now mostly making 1M `Interval` objects for the
+sequence and garbage collection; typed grids are part of the align /
+materialize work.
 
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 

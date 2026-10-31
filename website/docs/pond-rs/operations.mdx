@@ -327,20 +327,23 @@ unchanged.
 
 | Call                            | Each row gets                                          |
 | ------------------------------- | ------------------------------------------------------ |
-| `diff(&cols, first)`            | value minus the previous row's                         |
-| `rate(&cols, first)`            | change per second of key time                          |
-| `pct_change(&cols, first)`      | change as a fraction of the previous value (not × 100) |
+| `diff(&cols)`                   | value minus the previous row's                         |
+| `rate(&cols)`                   | change per second of key time                          |
+| `pct_change(&cols)`             | change as a fraction of the previous value (not × 100) |
 | `shift(&cols, n)`               | the value from `n` rows up (negative `n`: rows down)   |
 | `cumulative(&[(col, reducer)])` | running `Sum`, `Min`, `Max` or `Count`                 |
 | `cumulative_with(col, closure)` | a running value of your own                            |
-| `fill(&[(col, Fill)], &limits)` | gaps filled by a rule                                  |
+| `fill(&[(col, Fill)])`          | gaps filled by a rule                                  |
 
-`first` is `FirstRow::Keep` (the first row stays, with a gap) or
-`FirstRow::Drop` (it is removed). "Previous row" means the row directly
-above, not the last row with a value, so a gap on either side gives a gap.
+`diff`, `rate` and `pct_change` keep the first row (with a gap) and replace
+each named column. `diff_with` / `rate_with` / `pct_change_with` take a
+`Change`: `.first(FirstRow::Drop)` removes the first row, and
+`.output("name")` puts the result in a new column and keeps the source (one
+source column only). "Previous row" means the row directly above, not the
+last row with a value, so a gap on either side gives a gap.
 
 ```rust
-use pond_rs::{Column, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Column, Reducer, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     // A counter read every 10 seconds; one reading is missing.
@@ -353,7 +356,7 @@ fn main() -> Result<(), pond_rs::PondError> {
         )],
     )?;
 
-    let per_second = s.rate(&["total"], FirstRow::Keep)?;
+    let per_second = s.rate(&["total"])?;
     let got: Vec<_> = per_second.column("total")?.numbers()?.iter().collect();
     assert_eq!(got, [None, Some(30.0), None, None]);
 
@@ -398,7 +401,7 @@ fn main() -> Result<(), pond_rs::PondError> {
     // Fill straight lines, but only across gaps of at most 2 minutes
     // (measured from the value before to the value after).
     let filled =
-        s.fill(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
+        s.fill_with(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
     let got: Vec<_> = filled.column("c")?.numbers()?.iter().collect();
     assert_eq!(
         got,
@@ -576,34 +579,61 @@ fn main() -> Result<(), pond_rs::PondError> {
 ### One entity at a time
 
 On a series holding several hosts or devices, these five mix their rows
-together, as in pond-ts. To smooth each host on its own, split first and
-use `apply` (see [Partitions](./partitions)):
+together. To run them on each host alone, split first with `partition_by`
+(see [Partitions](./partitions)): the partitioned series has `smooth`,
+`baseline`, `baseline_named`, `outliers`, `scan`, `scan_to` and `sample`
+too, as pond-ts's partitioned series does. Each one sees only its own
+host's rows, and the partitions run on several cores.
+
+- `scan` starts every partition from its own copy of the start value, and
+  the row number counts from 0 in each. The step must be `Fn` (it cannot
+  change outside state), because partitions run at the same time.
+- `sample(Sample::Stride(n))` counts rows within each partition. A
+  `Sample::Reservoir` seeds each partition from your seed and the
+  partition's place in order, so partitions pick separately, and the same
+  input and seed give the same rows every run.
+- `outliers` drops a partition that has no outliers left.
 
 ```rust
-use pond_rs::{Column, Smooth, TimeSeries};
+use pond_rs::{Column, Sample, Smooth, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     let s = TimeSeries::new(
         "cpu",
-        vec![0, 0, 1_000, 1_000],
+        vec![0, 0, 1_000, 1_000, 2_000, 2_000],
         vec![
-            Column::required("host", vec!["a", "b", "a", "b"]),
-            Column::required("v", vec![0.0, 100.0, 10.0, 100.0]),
+            Column::required("host", vec!["a", "b", "a", "b", "a", "b"]),
+            Column::required("v", vec![0.0, 100.0, 10.0, 100.0, 20.0, 100.0]),
         ],
     )?;
+    let hosts = s.partition_by(&["host"])?;
 
-    let per_host = s.partition_by(&["host"])?.apply(|one_host| {
-        one_host.smooth("v", &Smooth::ema(0.5).output("ema"))
-    })?;
     // Host a's EMA never sees host b's 100s.
-    let rows: Vec<_> = per_host
+    let ema = hosts.smooth("v", &Smooth::ema(0.5).output("ema"))?.collect()?;
+    let rows: Vec<_> = ema
         .rows()
         .map(|r| (r.string("host").unwrap(), r.number("ema").unwrap()))
         .collect();
     assert!(rows.contains(&(Some("a"), Some(5.0))));
+
+    // A running total that restarts for each host.
+    let total = hosts
+        .scan_to("v", "total", 0.0, |sum, v, _row| (sum + v, sum + v))?
+        .collect()?;
+    let last: Vec<_> = total.rows().skip(4).map(|r| r.number("total").unwrap()).collect();
+    assert_eq!(last, [Some(30.0), Some(300.0)]);
+
+    // Two rows from each host, the same two every run.
+    let a = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    let b = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    assert_eq!(a.len(), 4);
+    assert_eq!(a.key().begin(), b.key().begin());
     Ok(())
 }
 ```
+
+Smoothing the partition column itself splits the rows again by the new
+values, as `map` does.
 
 ## Picking rows
 
@@ -1394,9 +1424,162 @@ keys match one for one), that side's columns are shared rather than copied.
 To bring across only some columns, [`select`](#changing-columns) them on
 the other side first. `join` is not on `PartitionedSeries`.
 
+## Along a number column instead of time
+
+Some questions are about a value, not about time: how far into a run,
+which power zone, how fast. These two group or slide along a number
+column. Both return a `Table`: plain columns of the same length with no
+key, read by name with `column(name)` as on a series.
+
+### Bins: `by_column`
+
+`by_column(column, &Bins, aggs)` puts each row into a bin by its value in
+`column` and reduces each bin with the same reducers and rules as
+`aggregate`. The result has one row per bin, in order, with columns `start`
+and `end` (the bin's range) and then one per `Agg`. This gives histograms,
+splits per kilometre and time in each heart-rate or power zone.
+
+| Bins                               | Bin `i` holds                                                                                        | Which bins are given                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `Bins::width(w)`                   | `[i * w, (i + 1) * w)`                                                                               | lowest bin with a row to highest, empty ones included |
+| `Bins::width_from(w, origin)`      | `[origin + i * w, origin + (i + 1) * w)`                                                             | the same                                              |
+| `Bins::edges([e0, e1, …])`         | `[e_i, e_i+1)`: a value on an edge goes in the bin above                                             | all of them                                           |
+| `Bins::edges_upper_inclusive([…])` | `(e_i, e_i+1]`: a value on an edge goes in the bin below (and `e0` in bin 0), as zones usually count | all of them                                           |
+
+A row whose value is a gap, or outside the edges, is in no bin.
+
+```rust
+use pond_rs::{Agg, Bins, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a second on a ride.
+    let s = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::required("watts", vec![90.0, 100.0, 150.0, 200.0, 260.0]),
+            Column::required("km", vec![0.2, 0.7, 1.1, 1.6, 3.4]),
+        ],
+    )?;
+
+    // Seconds in each power zone; 100 and 200 W count in the zone below.
+    let zones = s.by_column(
+        "watts",
+        &Bins::edges_upper_inclusive([0.0, 100.0, 200.0, 300.0]),
+        &[Agg::new("seconds", "watts", Reducer::Count)],
+    )?;
+    assert_eq!(zones.column("start")?.numbers()?.values(), &[0.0, 100.0, 200.0]);
+    assert_eq!(zones.column("seconds")?.numbers()?.values(), &[2.0, 2.0, 1.0]);
+
+    // Average power per kilometre; km 2 has no rows but still gets a row.
+    let splits = s.by_column("km", &Bins::width(1.0), &[Agg::new("avg", "watts", Reducer::Avg)])?;
+    assert_eq!(splits.column("start")?.numbers()?.values(), &[0.0, 1.0, 2.0, 3.0]);
+    let avg: Vec<_> = splits.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(avg, [Some(95.0), Some(175.0), None, Some(260.0)]);
+    Ok(())
+}
+```
+
+### A window along a column: `rolling_by_column`
+
+`rolling_by_column(column, radius, aggs)` is a rolling window along a
+number column, such as distance, instead of time. For each row it reduces
+the rows whose value is within `radius` of its own: `[x - radius, x +
+radius]`. The column must never go down (gaps aside); a row whose value is
+a gap gets each reducer's empty value (`count` 0, `sum` 0, a gap otherwise).
+`rolling_by_column_at(column, radius, &centers, aggs)` gives one row per
+point in `centers` instead, such as the points along a chart's axis;
+`centers` must not go down either. Each window is reduced as `rolling`
+reduces a window.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "run",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("km", vec![0.0, 0.4, 1.1, 1.3]),
+            Column::required("pace", vec![300.0, 310.0, 290.0, 280.0]),
+        ],
+    )?;
+
+    // At 0.4 km the window [-0.1, 0.9] holds 0 and 0.4 km.
+    let band = s.rolling_by_column("km", 0.5, &[Agg::new("pace", "pace", Reducer::Avg)])?;
+    assert_eq!(band.len(), 4);
+    assert_eq!(band.column("pace")?.numbers()?.values(), &[305.0, 305.0, 285.0, 285.0]);
+
+    // The same, once at each whole kilometre.
+    let at = s.rolling_by_column_at(
+        "km",
+        0.5,
+        &[0.0, 1.0, 2.0],
+        &[Agg::new("pace", "pace", Reducer::Avg), Agg::new("n", "pace", Reducer::Count)],
+    )?;
+    let pace: Vec<_> = at.column("pace")?.numbers()?.iter().collect();
+    assert_eq!(pace, [Some(305.0), Some(285.0), None]); // nothing within 0.5 km of 2 km
+    assert_eq!(at.column("n")?.numbers()?.values(), &[2.0, 2.0, 0.0]);
+    Ok(())
+}
+```
+
+## Keyed by distance instead of time: `by_value`
+
+`by_value(axis)` turns a series into a `ValueSeries`, keyed by a number
+column instead of time: a run keyed by distance, an option chain keyed by
+strike price. The axis column must have no gaps and never go down (repeats
+are fine). It leaves the value columns, the time key is dropped, and every
+other column is kept without copying. `ValueSeries::new(name, axis_name,
+axis, columns)` builds one directly.
+
+A `ValueSeries` answers two questions, both by binary search:
+
+| Call                     | Gives                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `nearest_index(x)`       | the row whose axis value is closest to `x` (the earlier one on a tie; `None` if empty) |
+| `slice_by_value(lo, hi)` | the rows with axis values from `lo` up to, but not including, `hi`                     |
+
+It also has `axis()`, `axis_name()`, `column(name)`, `columns()` and
+`schema()`, and reads and writes JSON (see
+[Arrow and JSON](./arrow#value-series)). It has no time calls
+(`aggregate`, `rolling`, …), since an axis is not a clock; to bin or roll
+along distance, use [`by_column` / `rolling_by_column`](#along-a-number-column-instead-of-time)
+on the time series.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let run = TimeSeries::new(
+        "run",
+        vec![0, 60_000, 120_000, 180_000],
+        vec![
+            Column::required("km", vec![0.0, 0.2, 0.45, 0.7]),
+            Column::required("hr", vec![120.0, 135.0, 142.0, 150.0]),
+        ],
+    )?;
+
+    let by_km = run.by_value("km")?;
+    assert_eq!(by_km.axis(), &[0.0, 0.2, 0.45, 0.7]);
+    assert!(by_km.column("km").is_err()); // the axis is the key now
+
+    // Heart rate nearest 0.4 km.
+    let i = by_km.nearest_index(0.4).unwrap();
+    assert_eq!(by_km.column("hr")?.numbers()?.get(i), Some(142.0));
+
+    // The first 0.35 km.
+    let start = by_km.slice_by_value(0.0, 0.35);
+    assert_eq!(start.column("hr")?.numbers()?.values(), &[120.0, 135.0]);
+
+    // A distance that goes down cannot be an axis.
+    let back = TimeSeries::new("run", vec![0, 1_000], vec![Column::required("km", vec![1.0, 0.5])])?;
+    assert!(back.by_value("km").is_err());
+    Ok(())
+}
+```
+
 ## What is not here yet
 
-Still to come from pond-ts: `by_column` and `rolling_by_column`
-(histograms), `by_value`, then `smooth`, `baseline`,
-`outliers`, `sample` and `scan` run per partition (for now, use `apply` as
-shown above). Financial studies come after the core.
+Nothing from pond-ts's batch core is missing now. Financial studies come
+next, then the live layer.

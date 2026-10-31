@@ -1,0 +1,56 @@
+You are writing a small Rust program. Work only inside {DIR}.
+
+The task: `data.arrow` (in that folder) is an Arrow IPC file of one-minute
+price bars for one stock over two weeks (2024-03-04 to 2024-03-15,
+weekdays only), including pre-market and after-hours trading: a `time`
+column (UTC timestamps, the start of each bar) and `open`, `high`, `low`,
+`close`, `volume` columns (numbers, none missing). Rows are in time order.
+
+For every bar, compute four indicators:
+
+- `rsi`: the 14-bar Relative Strength Index with Wilder's smoothing, as
+  TA-Lib computes it. Let d = close − previous close; gain = max(d, 0),
+  loss = max(−d, 0). The first average gain (and loss) is the plain mean
+  of the first 14 gains (losses), i.e. rows 1 to 14; after that
+  avg = (previous avg × 13 + this bar's value) / 14.
+  rsi = 100 − 100 / (1 + avgGain / avgLoss), or 100 when avgLoss is 0.
+  Rows 0 to 13 have no value.
+- `bbUpper` and `bbLower`: Bollinger bands over 20 bars: the mean of the
+  last 20 closes (this bar's included) plus / minus 2 standard deviations
+  of those closes, where the standard deviation divides by 20 (population,
+  not sample). Rows 0 to 18 have no value.
+- `vwap`: the session VWAP. A session is one New York trading day's
+  regular hours: bars whose start time is from 09:30 up to but not
+  including 16:00 New York time. For a bar in a session, vwap is
+  Σ(typical × volume) / Σ(volume) over that session's bars up to and
+  including this bar, where typical = (high + low + close) / 3. Bars
+  outside regular hours have no value. Note the US clock change on
+  2024-03-10.
+
+RSI and the bands run over consecutive rows: their windows cross days and
+pre-market / after-hours bars.
+
+Write `out.arrow` (Arrow IPC file format) with one row per input row, in
+the same order, and these columns in this order:
+
+- `time`: as in the input (UTC timestamp, milliseconds);
+- `rsi`, `bbUpper`, `bbLower`, `vwap`: numbers (float64), null where there
+  is no value.
+
+Use the {LIB}. A Cargo project is already set up in {DIR} with that
+dependency in `Cargo.toml` (you may add other dependencies if you need
+them). Write your program in `src/main.rs`. It takes the input and output
+paths as its two arguments.
+
+Rules for this exercise:
+- Build and run ONLY with `{DIR}/attempt.sh` (it runs
+  `cargo run --release -- data.arrow out.arrow`). Do not run `cargo` any
+  other way (no `cargo build`, `cargo check`, `cargo test`, `cargo doc`).
+- You may read the library's source code ({SRC}) and any files in {DIR}.
+  Do not read anything else on this machine, and do not use the web.
+- When you believe out.arrow is correct, stop. You can inspect your output
+  only by having your own program print things.
+
+When finished, reply with: whether you think the output is right, any
+problems you hit with the library (be specific), and anything you were
+unsure about.

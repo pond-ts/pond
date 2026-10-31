@@ -25,7 +25,7 @@ The thread pool is [rayon](https://docs.rs/rayon)'s. Set
 `RAYON_NUM_THREADS` to choose its size. To build without threads:
 
 ```toml
-pond-rs = { git = "https://github.com/pond-ts/pond", default-features = false }
+pond-rs = { version = "0.1", default-features = false }
 ```
 
 The limit of this design: a call with a single output column, on a series
@@ -265,6 +265,54 @@ busy machine (runs varied by about ±30%); both sides give the same answers.
 | `pivot_by_group`, 4 hosts × 250,000 times  | 39      | 751     |
 | `pivot_by_group`, 2 rows per cell, `Avg`   | 72      | 619     |
 
+### Along a number column: 1 million rows
+
+From the step 8i2 pull request ([#803](https://github.com/pond-ts/pond/pull/803)):
+1 million rows. Middle (median) time in milliseconds, 4 cores, on a busy
+machine (runs varied by about ±30%); both sides give the same answers.
+
+| Call                                                  | pond-rs | pond-ts |
+| ----------------------------------------------------- | ------- | ------- |
+| `by_column`, 1,000 bins of width 10                   | 26      | 93      |
+| `by_column`, 6 zones                                  | 20      | 97      |
+| `by_column`, width 10, 5th and 95th percentiles       | 38      | 415     |
+| `rolling_by_column`, ~100 rows a window, `Avg`        | 35      | 265     |
+| `rolling_by_column`, ~100 rows a window, 5th and 95th | 94      | 843     |
+| `rolling_by_column_at`, 1,000 centers                 | 22      | 119     |
+
+### Value series
+
+From the step 8i3 pull request ([#804](https://github.com/pond-ts/pond/pull/804)).
+Middle (median) time in milliseconds, 4 cores, on a busy machine (runs
+varied by about ±30%); both sides give the same answers.
+
+| Call                             | pond-rs | pond-ts |
+| -------------------------------- | ------- | ------- |
+| `by_value`, 1M rows              | 3       | 34      |
+| `nearest_index`, 1M lookups      | 166     | 357     |
+| `slice_by_value`, 100,000 slices | 90      | 401     |
+| `to_json` rows, 300,000 rows     | 59      | 178     |
+| `from_json` rows, 300,000 rows   | 100     | 129     |
+
+`by_value` checks the axis once and copies nothing, which is why it is so
+quick.
+
+Arrow, from the step 8i4 pull request ([#806](https://github.com/pond-ts/pond/pull/806)):
+1 million rows with a number axis, a number column with gaps and a text
+column.
+
+| Call             | pond-rs | pond-ts |
+| ---------------- | ------- | ------- |
+| `to_arrow`       | 1       | 0       |
+| `from_arrow`     | 5       | 420     |
+| `write_ipc`      | 10      | 27      |
+| `from_ipc_bytes` | 13      | 402     |
+
+pond-ts's `toArrow` hands back views of its own memory, so it costs
+nothing; it has no file writer of its own, so its `write_ipc` figure is the
+`apache-arrow` library's. Most of pond-ts's reading time goes on the text
+column, which is logged as a pond-ts issue.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about
@@ -287,5 +335,24 @@ checks. What the pond-rs agents struggled with (no way to rename or drop
 fields on output, and having to add the Arrow crate themselves) has since
 been fixed with `select`, `rename`, `as_time` and the Arrow re-exports.
 
-The trial's setup, task, grader and results are in
+A second trial (2026-10-29) did the same for the live layer. Ten agents
+used pond-rs and ten used plain Rust with no library (polars has no way to
+push one event at a time). The task: CPU readings from 13 hosts, arriving
+out of order, into one-minute buckets per host that wait 5 seconds for
+late events. All 20 got it right first time, matching pond-ts to the last
+bit, with no failed runs on either side. So this task does not separate
+the two: it spelled out every rule, and written out like that the rules
+come to about 60 lines of plain Rust.
+
+The pond-rs agents took longer (69–110 s against 40–62 s) and used more
+tokens. Nine of ten also wrote the rules a second time by hand, to check
+the library against them. What they ran into is now covered on the live
+page ([Per-host buckets over late events](./live#per-host-buckets-over-late-events)):
+
+- closed buckets do not say which host they belong to (all ten);
+- the series' grace window is easy to confuse with the buckets' delay
+  (five);
+- it was not clear whether the gathered series needs `Reorder` (seven).
+
+The trials' setups, tasks, graders and results are in
 `crates/pond-rs/bench/agent-trial/`.

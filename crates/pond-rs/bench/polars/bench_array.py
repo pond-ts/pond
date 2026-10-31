@@ -3,12 +3,18 @@
 
 - contains: `list.contains`, keeping matching rows (as pond's filter).
 - contains any / all: two `list.contains`, or-ed / and-ed.
-- aggregate: `list.len` / `list.mean` / `list.median` / `list.first`.
-- explode: `DataFrame.explode`, dropping empty and missing lists (as pond).
-- JSON: polars `write_json` / `read_json` (an array of row objects; pond's
-  rows are arrays, so the text differs, not the work).
-- Arrow: `to_arrow` / `from_arrow` and IPC bytes, the two list columns
-  alone, as pond-rs's rows.
+- aggregate: `list.len` / `list.mean` / `list.median` / `list.first`; a
+  gap row (no list) gives a gap, as pond.
+- explode: `DataFrame.explode(empty_as_null=False, keep_nulls=False)`, which
+  drops empty and missing lists (as pond) in the one call.
+- JSON: polars `write_json` / `read_json` write and read one object per row,
+  so they are compared with pond's object rows (`toJSON object` /
+  `fromJSON object`), with the time stored as epoch milliseconds (an
+  `Int64` column) so both write and read the same numbers. pond's own array
+  rows (`toJSON` / `fromJSON`) have no polars counterpart.
+- Arrow: `to_arrow` / `from_arrow` and IPC bytes of the time column and the
+  two list columns, as pond-rs's (its `select` keeps the time key).
+- Each case's answer is checked against pond-rs's (`../check_outputs.py`).
 """
 
 import io
@@ -34,7 +40,7 @@ def make(single):
         nums.append([((i * 31 + k * 17) % 1000) / 8 for k in range(n)])
     return pl.DataFrame(
         {
-            "time": pl.Series([i * 1000 for i in range(ROWS)]).cast(pl.Datetime("ms")).set_sorted(),
+            "time": pl.Series([i * 1000 for i in range(ROWS)]).cast(pl.Datetime("ms", "UTC")).set_sorted(),
             "tags": pl.Series(tags, dtype=pl.List(pl.String)),
             "nums": pl.Series(nums, dtype=pl.List(pl.Float64)),
             "v": pl.Series([float(i) for i in range(ROWS)]),
@@ -53,13 +59,14 @@ def ipc_bytes(df):
 
 for name, single in (("typical", False), ("single", True)):
     s = make(single)
-    text = s.write_json()
-    lists = s.select("tags", "nums")
+    js = s.with_columns(pl.col("time").dt.epoch("ms"))  # times as numbers
+    text = js.write_json()
+    lists = s.select("time", "tags", "nums")
     arrow = lists.to_arrow()
     ipc = ipc_bytes(lists)
 
     def explode(c):
-        return s.filter(pl.col(c).list.len() > 0).explode(c)
+        return s.explode(c, empty_as_null=False, keep_nulls=False)
 
     run(
         [
@@ -72,8 +79,8 @@ for name, single in (("typical", False), ("single", True)):
             (f"{name} aggregate first", lambda: s.with_columns(tags.list.first())),
             (f"{name} explode tags", lambda: explode("tags")),
             (f"{name} explode nums", lambda: explode("nums")),
-            (f"{name} toJSON", lambda: s.write_json()),
-            (f"{name} fromJSON", lambda: pl.read_json(io.StringIO(text), schema=s.schema)),
+            (f"{name} toJSON object", lambda: js.write_json()),
+            (f"{name} fromJSON object", lambda: pl.read_json(io.StringIO(text), schema=js.schema)),
             (f"{name} toArrow", lambda: lists.to_arrow()),
             (f"{name} fromArrow", lambda: pl.from_arrow(arrow)),
             (f"{name} writeIpc", lambda: ipc_bytes(lists)),

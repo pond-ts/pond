@@ -13,19 +13,19 @@ gaps that stay gaps, per-entity work) and gives **the same answers as pond-ts,
 to the last bit**. It is built mainly for AI agents that write Rust, and for
 anyone who wants pond's rules at native speed.
 
-:::caution Early work, not on crates.io yet
+:::note Early versions
 
-pond-rs is being built now. It is not published to crates.io; you depend on
-it straight from GitHub (see [Getting started](./getting-started)). The API
-can still change between commits. These pages describe what exists in the
-repository today, and they grow as more of it is built.
+pond-rs is on [crates.io](https://crates.io/crates/pond-rs), with the full
+API reference on [docs.rs](https://docs.rs/pond-rs). It is at 0.1, so the
+API can still change between minor versions. These pages describe the
+latest version, and they grow as more is built.
 
 :::
 
 ```toml
 # Cargo.toml
 [dependencies]
-pond-rs = { git = "https://github.com/pond-ts/pond" }
+pond-rs = "0.1"
 ```
 
 ## Why a Rust version
@@ -56,6 +56,7 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Windows and buckets   | `rolling` over a time window (trailing, leading or centred) or the last N rows, or on a regular grid; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                                                                        |
 | Reducers              | every pond-ts reducer: `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles, `keep`, `difference`, `unique`, `top`, `samples`                                                                                           |
 | Row by row            | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                                                                                                                                             |
+| Along a column        | `by_column` (bins by value: histograms, per-km splits, time in zone), `rolling_by_column` (a window along distance or another rising column); `by_value` (a series keyed by distance or another rising number)                                          |
 | Smoothing and bands   | `smooth` (EMA, moving average, loess), `baseline` / `outliers`, `scan` (a running total of your own), `sample`                                                                                                                                          |
 | Finding rows          | `at`, `bisect`, `at_or_before` / `at_or_after`, `nearest`, `find`, `some` / `every`                                                                                                                                                                     |
 | Time spans            | `within`, `contained_by`, `overlapping`, `trim`, `before` / `after`; `time_range`, `overlaps`, `intersection`                                                                                                                                           |
@@ -65,13 +66,28 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Per entity            | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                                                                                                                                     |
 | Arrow and JSON        | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it. Read and write pond-ts's JSON format                                                                             |
 
-**Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
-layer, and a WASM build that
-pond-ts can call. They come in roughly that order; see the
+**Also built:** financial studies. Moving averages and rolling statistics,
+the moving-average family (MACD, …), bands (Bollinger, Keltner, …),
+momentum (RSI, stochastics, CCI, …), trend (ADX, Ichimoku, …), volatility
+(ATR, …), statistics (linear regression, beta, …), volume (OBV,
+money flow index, VWAP, …), price (typical price, balance of power, …),
+trading calendars and the session studies (session VWAP, pivot points,
+anchored VWAP) are built, all 109 pond-ts studies; see
+[Finance studies](./finance-studies).
+
+**Also built:** the live layer: series that take events as they arrive, with
+live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
+…), `aggregate` by minute or by calendar day in a time zone, rolling
+windows, `reduce`, and partitions (one series per host, with views and
+windows on each); see [Live series](./live).
+
+**Not built yet:** a WASM build that pond-ts can call; see the
 [roadmap](#roadmap) below.
 
 ## Where to go next
 
+- [API reference on docs.rs](https://docs.rs/pond-rs): every type and
+  function, for the published version.
 - [Getting started](./getting-started): add the dependency, build a series,
   bucket it by day.
 - [Series and columns](./series-and-columns): keys, column kinds, gaps, and
@@ -80,6 +96,11 @@ pond-ts can call. They come in roughly that order; see the
   filtering and mapping.
 - [Partitions](./partitions): the same work per host, per symbol, per
   anything.
+- [Finance studies](./finance-studies): moving averages, MACD, bands, RSI
+  and more over price bars, as `@pond-ts/financial`.
+- [Live series](./live): events as they arrive, with live filters,
+  per-minute buckets, rolling windows, running totals and per-host
+  partitions.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
@@ -91,11 +112,11 @@ pond-rs follows a written plan in the repository
 ([`docs/rfcs/pond-rs.md`](https://github.com/pond-ts/pond/blob/main/docs/rfcs/pond-rs.md)
 for the reasoning, `PLAN.md` for the current steps). In order:
 
-1. **Batch core** (in progress). The first slice, R1a, met every target it
-   set itself; the rest of the core, R1b, is being built step by step.
-2. **Financial studies**, checked against the same pandas / TA-Lib test
+1. **Batch core** (done). The first slice, R1a, met every target it set
+   itself; R1b added the rest of pond-ts's batch operations, step by step.
+2. **Financial studies** (done), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
-3. **Live layer**: series that update as data arrives.
+3. **Live layer** (done): series that update as data arrives.
 4. **WASM bridge**: the same Rust code running inside pond-ts where it
    measurably helps.
 

@@ -13,6 +13,8 @@
 //! k = span·N nearest values, so it costs O(N·k), which is O(N²) for a
 //! fixed span, in both libraries; pond-rs spreads the rows over the cores.
 
+mod common;
+
 use std::time::Instant;
 
 use pond_rs::{Alignment, Column, Rolling, Sample, Smooth, TimeRangeKeys, TimeSeries};
@@ -183,6 +185,7 @@ fn main() -> pond_rs::Result<()> {
             continue;
         }
         let (ms, out) = median_ms(f);
+        common::write_dump(name, &out);
         let (n, sum) = checksum(&out, column);
         println!("| {name} | {ms:.1} ms | {n} {sum:.6e} |");
     }

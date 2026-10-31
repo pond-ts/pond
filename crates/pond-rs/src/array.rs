@@ -418,7 +418,7 @@ fn sorted_percentile(mut numeric: Vec<f64>, q: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Agg, Fill, FillLimits, Value};
+    use crate::{Agg, Fill, Value};
 
     fn series() -> TimeSeries {
         TimeSeries::new(
@@ -591,17 +591,14 @@ mod tests {
         assert!(s.reduce(&[Agg::of("tags", Reducer::Sum)]).is_err());
         // Fill: a literal array; a non-finite one is an error.
         let f = s
-            .fill(
-                &[("tags", Fill::Value(Value::Array(vec!["x".into()])))],
-                &FillLimits::none(),
-            )
+            .fill(&[("tags", Fill::Value(Value::Array(vec!["x".into()])))])
             .unwrap();
         assert_eq!(
             f.column("tags").unwrap().arrays().unwrap().get(2),
             Some(&["x".into()][..])
         );
         let nan = Fill::Value(Value::Array(vec![f64::INFINITY.into()]));
-        assert!(s.fill(&[("tags", nan)], &FillLimits::none()).is_err());
+        assert!(s.fill(&[("tags", nan)]).is_err());
         // map_arrays checks what it is given back.
         let e = s
             .map_arrays("tags", |_| vec![f64::NAN.into()])

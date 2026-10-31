@@ -288,6 +288,12 @@ function buildDocsTheme(c: Ramp): ChartTheme {
       color: c.vizMark,
       fillOpacity: 0.09,
       depth: [1, 0.7, 0.4],
+      // The same role vocabulary `defaultTheme` ships (the site inherits it
+      // through `cssVarTheme`): hue from the register, depth from the role.
+      roles: {
+        wash: { fillOpacity: 0.06, depth: [0.7, 0.4, 0.2] },
+        argument: { depth: [1, 0.95, 0.85] },
+      },
     },
   };
 }

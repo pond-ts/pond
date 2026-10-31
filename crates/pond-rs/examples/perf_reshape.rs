@@ -12,6 +12,8 @@
 //! the T × G cells for T times and G groups (O(N + T·G)), and reduces only
 //! the cells with two or more rows.
 
+mod common;
+
 use std::time::Instant;
 
 use pond_rs::{Column, ColumnData, Pivot, Reducer, Scalar, TimeSeries};
@@ -150,6 +152,7 @@ fn main() -> pond_rs::Result<()> {
             continue;
         }
         let (ms, out) = median_ms(f);
+        common::write_dump(name, &out);
         let (n, sum) = checksum(&out);
         println!("| {name} | {ms:.1} ms | {n} {sum:.6e} |");
     }

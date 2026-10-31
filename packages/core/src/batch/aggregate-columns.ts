@@ -319,7 +319,7 @@ function reduceBucket(
  * string branch, matching the row path's behaviour for a zero-bucket
  * result.
  */
-function intervalKeysForBuckets(
+export function intervalKeysForBuckets(
   buckets: ReadonlyArray<Interval>,
 ): IntervalKeyColumn {
   const length = buckets.length;

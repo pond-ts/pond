@@ -51,7 +51,7 @@ impl TimeSeries {
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
-            self.key().clone(),
+            self.shared_key(),
             columns,
         ))
     }
@@ -117,7 +117,7 @@ impl TimeSeries {
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             key_name.to_string(),
-            self.key().clone(),
+            self.shared_key(),
             columns,
         ))
     }
@@ -177,19 +177,19 @@ impl TimeSeries {
                 out
             }
         };
-        if at != At::Begin {
-            if let Some(i) = time.windows(2).position(|w| w[1] < w[0]) {
-                let name = if at == At::End { "End" } else { "Center" };
-                return Err(PondError::InvalidData {
-                    call: CALL,
-                    message: format!(
-                        "At::{name} puts row {} ({} ms) before row {i} ({} ms): the intervals overlap, so the rows would be out of order. Use At::Begin",
-                        i + 1,
-                        time[i + 1],
-                        time[i]
-                    ),
-                });
-            }
+        if at != At::Begin
+            && let Some(i) = time.windows(2).position(|w| w[1] < w[0])
+        {
+            let name = if at == At::End { "End" } else { "Center" };
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: format!(
+                    "At::{name} puts row {} ({} ms) before row {i} ({} ms): the intervals overlap, so the rows would be out of order. Use At::Begin",
+                    i + 1,
+                    time[i + 1],
+                    time[i]
+                ),
+            });
         }
         Ok(TimeSeries::from_parts(
             self.name().to_string(),

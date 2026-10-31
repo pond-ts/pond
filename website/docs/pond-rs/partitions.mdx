@@ -16,8 +16,12 @@ reading from host `a`'s, which means nothing.
 columns. Operations on the result run on each partition separately, and
 `collect()` puts the rows back into one series, in time order.
 
+This page is about a series you already have. For events that arrive one
+at a time, a live series splits the same way; see
+[Live series: partitions](./live#partitions-one-series-per-host).
+
 ```rust
-use pond_rs::{Column, FirstRow, TimeSeries};
+use pond_rs::{Column, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     let s = TimeSeries::new(
@@ -30,14 +34,14 @@ fn main() -> Result<(), pond_rs::PondError> {
     )?;
 
     // Without partitions: each row minus the row directly above it.
-    let mixed = s.diff(&["load"], FirstRow::Keep)?;
+    let mixed = s.diff(&["load"])?;
     // Row 2 is host a minus host b: a meaningless number.
     assert_eq!(mixed.column("load")?.numbers()?.get(2), Some(-7.0));
 
     // With partitions: each host against its own previous reading.
     let per_host = s
         .partition_by(&["host"])?
-        .diff(&["load"], FirstRow::Keep)?
+        .diff(&["load"])?
         .collect()?;
     assert_eq!(per_host.column("load")?.numbers()?.get(2), Some(2.0)); // a: 3 - 1
     assert_eq!(per_host.column("load")?.numbers()?.get(3), Some(30.0)); // b: 40 - 10
@@ -50,7 +54,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 A `PartitionedSeries` has `rolling` (and `rolling_with`, `rolling_rows`,
 `rolling_over`), `aggregate`, `diff`, `rate`,
 `pct_change`, `shift`, `cumulative`, `fill`, `fill_all`, `align`,
-`materialize` and `dedupe`. Each returns
+`materialize`, `dedupe`, `smooth`, `baseline`, `baseline_named`,
+`outliers`, `scan`, `scan_to` and `sample`. Each returns
 another `PartitionedSeries`, so they chain. For anything else, `map` runs
 your own closure on each partition and stays partitioned; `apply` runs it
 and collects in one step.

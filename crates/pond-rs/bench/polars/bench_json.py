@@ -2,8 +2,13 @@
 JSON text and read back.
 
 polars' `write_json` writes an array of row objects (pond's "object" rows)
-and `read_json` reads it, given the schema. polars has no form of pond's
-columns or points JSON, so those columns have no polars number.
+and `read_json` reads it, given the schema, so they are compared with
+pond's `to_json object` and `from_json object` (pond's array rows have no
+polars counterpart). Times are stored as epoch milliseconds (`Int64`), so
+both sides write and read the same numbers (a polars `Datetime` would be
+written as date text). polars has no form of pond's columns or points
+JSON, so those have no polars number. Each case's answer is checked
+against pond-rs's (`../check_outputs.py`).
 """
 
 import io
@@ -17,7 +22,7 @@ SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN"]
 
 
 def make(rows, strings=False, sparse=False):
-    cols = {"time": pl.Series([i * 1000 for i in range(rows)]).cast(pl.Datetime("ms"))}
+    cols = {"time": pl.Series([i * 1000 for i in range(rows)], dtype=pl.Int64)}
     for name in NUMERIC:
         cols[name] = pl.Series([None if sparse and i % 10 == 0 else (i % 100) / 7 for i in range(rows)], dtype=pl.Float64)
     if strings:
@@ -26,7 +31,7 @@ def make(rows, strings=False, sparse=False):
 
 
 wide = pl.DataFrame(
-    {"time": pl.Series([i * 1000 for i in range(10_000)]).cast(pl.Datetime("ms"))}
+    {"time": pl.Series([i * 1000 for i in range(10_000)], dtype=pl.Int64)}
     | {f"c{c}": pl.Series([float((i + c) % 97) for i in range(10_000)]) for c in range(40)}
 )
 for label, s in [
@@ -39,6 +44,6 @@ for label, s in [
     run(
         [
             (f"{label} to_json object", lambda: s.write_json()),
-            (f"{label} from_json", lambda: pl.read_json(io.StringIO(text), schema=s.schema)),
+            (f"{label} from_json object", lambda: pl.read_json(io.StringIO(text), schema=s.schema)),
         ]
     )

@@ -15,6 +15,8 @@
 //! pond-ts scans every row for every bucket there (O(B·N)), so its grid
 //! case runs on 100k rows here, not 1M.
 
+mod common;
+
 use std::time::Instant;
 
 use pond_rs::{Agg, Alignment, Column, Reducer, Rolling, RollingOver, Sequence, TimeSeries};
@@ -63,6 +65,7 @@ fn main() -> pond_rs::Result<()> {
     let at = |alignment, min_samples| Rolling {
         alignment,
         min_samples,
+        ..Rolling::default()
     };
     let minute = Sequence::every("1m")?;
     let second = Sequence::every("1s")?;
@@ -169,6 +172,7 @@ fn main() -> pond_rs::Result<()> {
             continue;
         }
         let (ms, out) = median_ms(f);
+        common::write_dump(name, &out);
         let (n, sum) = checksum(&out);
         println!("| {name} | {ms:.1} ms | {n} {sum:.6e} |");
     }

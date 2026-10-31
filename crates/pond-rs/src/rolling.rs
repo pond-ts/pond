@@ -25,20 +25,21 @@ const CALL: &str = "rolling";
 
 /// pond-ts `SUM_SPLIT`: from this magnitude pond-ts moves a value into an
 /// exact big-integer lane so a running sum cannot get stuck at infinity.
-/// pond-rs does not have that lane yet and refuses such values instead.
-const SUM_SPLIT: f64 = pow2(960);
+/// Batch pond-rs refuses such values instead (the live layer has the lane:
+/// `live/states.rs`).
+pub(crate) const SUM_SPLIT: f64 = pow2(960);
 /// pond-ts `STDEV_SPLIT`, the same idea for stdev.
-const STDEV_SPLIT: f64 = pow2(480);
+pub(crate) const STDEV_SPLIT: f64 = pow2(480);
 
 /// `2^e` exactly, for normal exponents.
-const fn pow2(e: u64) -> f64 {
+pub(crate) const fn pow2(e: u64) -> f64 {
     f64::from_bits((e + 1023) << 52)
 }
 
 /// One column's window state: a value enters with `add`, leaves with
 /// `remove`; `snapshot` is the reducer over what is inside. Only present
 /// (finite) values reach a state.
-trait WindowState {
+pub(crate) trait WindowState {
     fn add(&mut self, row: usize, v: f64);
     fn remove(&mut self, row: usize, v: f64);
     /// `&mut`: the stdev state may move its reference point when read.
@@ -66,19 +67,19 @@ const SPLIT: f64 = 134_217_729.0;
 /// pond-ts `WindowSum`: a running sum held as `hi + lo` (double-double), so
 /// rounding errors are kept rather than piling up. `hi` is the sum rounded
 /// once; `n` resets the empty window to exactly 0.
-#[derive(Default)]
-struct WindowSum {
-    hi: f64,
+#[derive(Default, Clone)]
+pub(crate) struct WindowSum {
+    pub(crate) hi: f64,
     lo: f64,
-    n: i64,
+    pub(crate) n: i64,
 }
 
 impl WindowSum {
-    fn add(&mut self, v: f64) {
+    pub(crate) fn add(&mut self, v: f64) {
         self.n += 1;
         self.acc(v);
     }
-    fn remove(&mut self, v: f64) {
+    pub(crate) fn remove(&mut self, v: f64) {
         self.n -= 1;
         if self.n == 0 {
             self.hi = 0.0;
@@ -133,7 +134,7 @@ impl WindowState for AvgState {
 /// pond-ts `rollingMonotoneDeque`: (row, value) pairs, front is the answer;
 /// the earliest of equal values wins.
 #[derive(Default)]
-struct ExtremeState<const MAX: bool>(VecDeque<(usize, f64)>);
+pub(crate) struct ExtremeState<const MAX: bool>(pub(crate) VecDeque<(usize, f64)>);
 
 impl<const MAX: bool> WindowState for ExtremeState<MAX> {
     fn add(&mut self, row: usize, v: f64) {
@@ -174,9 +175,9 @@ impl<const LAST: bool> WindowState for OrderedState<LAST> {
 }
 
 /// pond-ts `rollingSortedArray` + `percentileOfSorted`.
-struct SortedState {
-    sorted: Vec<f64>,
-    q: f64,
+pub(crate) struct SortedState {
+    pub(crate) sorted: Vec<f64>,
+    pub(crate) q: f64,
 }
 
 impl WindowState for SortedState {
@@ -206,10 +207,22 @@ impl WindowState for SortedState {
 /// the top, which can be `-0`. `zeros` is that stack. Otherwise one end is
 /// not a zero and the sign of the other cannot change the result.
 #[derive(Default)]
-struct DiffState {
+pub(crate) struct DiffState {
     max: ExtremeState<true>,
     min: ExtremeState<false>,
     zeros: VecDeque<f64>,
+}
+
+impl DiffState {
+    /// The snapshot, read without `&mut`.
+    #[cfg(feature = "live")]
+    pub(crate) fn peek(&self) -> Option<f64> {
+        let (hi, lo) = (self.max.0.front()?.1, self.min.0.front()?.1);
+        if hi == 0.0 && lo == 0.0 {
+            return Some(self.zeros.back()? - self.zeros.front()?);
+        }
+        Some(hi - lo)
+    }
 }
 
 impl WindowState for DiffState {
@@ -267,9 +280,9 @@ impl WindowState for KeepState {
 /// `d²` split exactly. The shift moves to the mean (an exact rewrite of the
 /// sums) when the mean drifts about one stdev away. Same operations in the
 /// same order as pond-ts, so the bits match.
-#[derive(Default)]
-struct StdevState {
-    n: f64,
+#[derive(Default, Clone)]
+pub(crate) struct StdevState {
+    pub(crate) n: f64,
     k: f64,
     s1h: f64,
     s1l: f64,
@@ -306,7 +319,17 @@ impl StdevState {
         self.s2h = h;
     }
 
-    fn m2(&mut self) -> f64 {
+    /// pond-ts `WindowStdev.mean()`: the window mean (0 when empty, where
+    /// pond-ts gives `undefined` and its caller `?? 0`).
+    #[cfg(feature = "live")]
+    pub(crate) fn mean(&self) -> f64 {
+        if self.n == 0.0 {
+            return 0.0;
+        }
+        self.k + (self.s1h + self.s1l) / self.n
+    }
+
+    pub(crate) fn m2(&mut self) -> f64 {
         let n = self.n;
         if n <= 1.0 {
             return 0.0;
@@ -399,7 +422,7 @@ impl WindowState for StdevState {
 }
 
 /// First index whose value is not below `v` (pond-ts `bisect`).
-fn lower_bound(sorted: &[f64], v: f64) -> usize {
+pub(crate) fn lower_bound(sorted: &[f64], v: f64) -> usize {
     sorted.partition_point(|&x| x < v)
 }
 
@@ -432,11 +455,18 @@ pub enum Alignment {
 /// default: a trailing window, every row given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rolling {
+    /// Where the window sits around each row (default: trailing).
     pub alignment: Alignment,
     /// A row whose window holds fewer rows than this gets a gap in every
     /// output column (pond-ts `minSamples`). Rows are counted whether or
     /// not their value is a gap. 0 (the default) gives every row a value.
     pub min_samples: usize,
+    /// Keep every column of the series and add the outputs after them
+    /// (pond-ts `{ append: true }`), instead of a result holding only the
+    /// key and the outputs. An output may not take the name of an existing
+    /// column, so [`Agg::of`](crate::Agg::of) (output named after its
+    /// source) is an error here; use [`Agg::new`](crate::Agg::new).
+    pub append: bool,
 }
 
 /// Options for [`TimeSeries::rolling_over`]. `RollingOver::default()` is
@@ -444,6 +474,7 @@ pub struct Rolling {
 /// over the series' own time range, every bucket given a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RollingOver {
+    /// Where the window sits around each bucket's point (default: trailing).
     pub alignment: Alignment,
     /// As [`Rolling::min_samples`], per bucket.
     pub min_samples: usize,
@@ -600,6 +631,16 @@ pub(crate) fn walk<T: Anchor>(frame: &Frame<T>, w: &mut impl Window) {
                 while start < end && t(start) < lower {
                     w.leave(start);
                     start += 1;
+                }
+                // With the window empty, rows before `lower` never entered:
+                // step past them rather than let them in below (Codex
+                // review R07: a 0 ms window, or one whose f64 edges round
+                // shut, counted earlier rows).
+                if start == end {
+                    while end < rows && t(end) < lower {
+                        end += 1;
+                    }
+                    start = end;
                 }
                 while end < rows && t(end) < upper {
                     w.enter(end);
@@ -800,11 +841,31 @@ impl TimeSeries {
             min_samples: options.min_samples,
         };
         let plan = self.rolling_plan(aggs, self.key_name())?;
-        let columns = self.roll_columns(CALL, &frame, &plan)?;
+        if options.append {
+            for agg in aggs {
+                let taken = agg.output == self.key_name()
+                    || self.columns().iter().any(|c| c.name() == agg.output);
+                if taken {
+                    return Err(PondError::InvalidData {
+                        call: CALL,
+                        message: format!(
+                            "output column '{}' already exists; with append, give each output its own name (Agg::new)",
+                            agg.output
+                        ),
+                    });
+                }
+            }
+        }
+        let mut columns = self.roll_columns(CALL, &frame, &plan)?;
+        if options.append {
+            let mut all = self.columns().to_vec();
+            all.append(&mut columns);
+            columns = all;
+        }
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
-            self.key().clone(),
+            self.shared_key(),
             columns,
         ))
     }

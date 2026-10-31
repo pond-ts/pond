@@ -2,6 +2,9 @@
 sidebar_position: 4
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Creating series
 
 ## Introduction
@@ -35,6 +38,9 @@ shape charts hand back).
 
 ### The constructor
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { TimeSeries } from 'pond-ts';
 
@@ -53,6 +59,47 @@ const cpu = new TimeSeries({
   ],
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, RowFormat, TimeSeries, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // The key column is always `time`; the value columns take their kind from
+    // the values, so there is no schema to write.
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![
+            parse_time("2025-01-01T00:00:00Z")?,
+            parse_time("2025-01-01T00:01:00Z")?,
+        ],
+        vec![
+            Column::required("cpu", vec![0.31, 0.44]),
+            Column::required("host", vec!["api-1", "api-1"]),
+        ],
+    )?;
+    assert_eq!(
+        cpu.to_json(RowFormat::Array)?,
+        r#"{"name":"cpu","schema":[{"name":"time","kind":"time"},{"name":"cpu","kind":"number"},{"name":"host","kind":"string"}],"rows":[[1735689600000,0.31,"api-1"],[1735689660000,0.44,"api-1"]]}"#
+    );
+
+    // Times out of order are refused.
+    let backwards = TimeSeries::new(
+        "cpu",
+        vec![2_000, 1_000],
+        vec![Column::required("cpu", vec![0.5, 0.6])],
+    );
+    assert!(backwards.is_err());
+    Ok(())
+}
+```
+
+`TimeSeries::new` has no ordering option: it refuses rows out of order. To sort rows on the way in, read them as JSON with `KeyOrder::Reorder` (below).
+
+</TabItem>
+</Tabs>
 
 The `as const` on the schema is load-bearing — without it, TypeScript widens the
 schema tuple to a regular array and the column kinds widen to `string`, breaking
@@ -81,6 +128,9 @@ For the full schema-as-contract story (kinds, narrowing, `required: false`), see
 When events arrive incrementally rather than as a finished dataset, construct a
 `LiveSeries` with the same schema and push into it:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { LiveSeries } from 'pond-ts';
 
@@ -98,6 +148,46 @@ live.pushMany([
   [Date.now() + 2, 0.45, 'api-2'],
 ]);
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("cpu", ColumnKind::Number),
+            ColumnDef::required("host", ColumnKind::String),
+        ],
+        LiveOptions::new()
+            .max_events(10_000) // bounded buffer
+            .ordering(OrderingMode::Reorder) // accept moderately late events
+            .grace_window("5s"), // ... up to 5s late
+    )?;
+
+    live.push(1_000, [Some(0.42.into()), Some("api-1".into())])?;
+    live.push_many([
+        (1_001, [Some(0.43.into()), Some("api-1".into())]),
+        (1_002, [Some(0.45.into()), Some("api-2".into())]),
+    ])?;
+
+    // A snapshot, independent of later pushes.
+    let batch = live.to_time_series()?;
+    assert_eq!(batch.len(), 3);
+    assert_eq!(batch.key().begin(), &[1_000, 1_001, 1_002]);
+    Ok(())
+}
+```
+
+In Rust the options go in a `LiveOptions`; `max_events` is pond-ts's `retention.maxEvents`.
+
+</TabItem>
+</Tabs>
 
 `live.toTimeSeries()` snapshots to an immutable batch series at any time — the
 snapshot is independent of future pushes, and `live.toJSON()` is shorthand for
@@ -169,6 +259,9 @@ small remap before it round-trips through `TimeSeries.fromJSON`.
 
 Pass the parsed JSON, get back a typed `TimeSeries`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { TimeSeries } from 'pond-ts';
 
@@ -187,6 +280,40 @@ const cpu = TimeSeries.fromJSON({
   ],
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // `from_json` reads JSON text, schema and all.
+    let payload = r#"{
+      "name": "cpu",
+      "schema": [
+        {"name": "time", "kind": "time"},
+        {"name": "cpu", "kind": "number"},
+        {"name": "host", "kind": "string"}
+      ],
+      "rows": [
+        [1735689600000, 0.31, "api-1"],
+        [1735689660000, 0.44, "api-1"]
+      ]
+    }"#;
+    let cpu = TimeSeries::from_json(payload, &JsonOptions::new())?;
+
+    assert_eq!(cpu.len(), 2);
+    assert_eq!(cpu.column("cpu")?.numbers()?.get(1), Some(0.44));
+    assert_eq!(cpu.column("host")?.strings()?.get(0), Some("api-1"));
+    Ok(())
+}
+```
+
+`from_json` takes JSON text. For JSON you have already parsed, `from_json_value` takes a `serde_json::Value`.
+
+</TabItem>
+</Tabs>
 
 In React, when the server emits a full pond-ts payload, the client is one line:
 
@@ -223,6 +350,9 @@ Rows must be in non-decreasing key order, same as the constructor; pass
 The common case for analytics data: timestamps were emitted in local time and
 never carried a zone offset.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const ts = TimeSeries.fromJSON({
   name: 'cpu',
@@ -238,6 +368,40 @@ const ts = TimeSeries.fromJSON({
 ts.at(0)!.begin();
 // 1735718400000 — i.e. 2025-01-01T08:00:00Z
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let text = r#"{
+      "name": "cpu",
+      "schema": [
+        {"name": "time", "kind": "time"},
+        {"name": "cpu", "kind": "number"},
+        {"name": "host", "kind": "string"}
+      ],
+      "rows": [
+        ["2025-01-01T09:00", 0.42, "api-1"],
+        ["2025-01-01T10:00", 0.51, "api-1"]
+      ]
+    }"#;
+
+    // "2025-01-01 at 09:00 Madrid local" → 08:00:00 UTC.
+    let ts = TimeSeries::from_json(text, &JsonOptions::new().time_zone("Europe/Madrid"))?;
+    assert_eq!(ts.key().begin()[0], 1_735_718_400_000);
+
+    // Without a time zone the same text is read as UTC: an hour later.
+    let utc = TimeSeries::from_json(text, &JsonOptions::new())?;
+    assert_eq!(utc.key().begin()[0] - ts.key().begin()[0], 3_600_000);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Does your input need it?
 
@@ -256,6 +420,9 @@ without a zone column, you're almost certainly in the wall-clock row — pass
 
 If your JSON source uses keyed objects instead of positional arrays, `fromJSON`
 accepts that shape too:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const ts = TimeSeries.fromJSON({
@@ -276,6 +443,46 @@ const ts = TimeSeries.fromJSON({
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, Key, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ts = TimeSeries::from_json(
+        r#"{
+          "name": "windows",
+          "schema": [
+            {"name": "interval", "kind": "interval"},
+            {"name": "value", "kind": "number"},
+            {"name": "active", "kind": "boolean"}
+          ],
+          "rows": [
+            {
+              "interval": {"value": "a", "start": "2025-01-01", "end": "2025-01-02"},
+              "value": 1,
+              "active": true
+            }
+          ]
+        }"#,
+        &JsonOptions::new().time_zone("UTC"),
+    )?;
+
+    let Key::Interval(keys) = ts.key() else {
+        panic!("expected an interval key")
+    };
+    assert_eq!(keys.label.strings().unwrap().get(0), Some("a"));
+    assert_eq!(keys.begin, [1_735_689_600_000]);
+    assert_eq!(keys.end, [1_735_776_000_000]);
+    assert_eq!(ts.column("active")?.booleans()?.get(0), Some(true));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Each row is read on its own shape, so a payload that mixes object rows and
 array rows still ingests. Don't lean on that — pick one shape per payload; a
 mix usually means two producers disagree about the contract.
@@ -285,6 +492,9 @@ mix usually means two producers disagree about the contract.
 `null` in a cell becomes `undefined` on the event; a column marked
 `required: false` in the schema accepts both `null` and a missing key (in object
 rows):
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const schema = [
@@ -302,6 +512,44 @@ TimeSeries.fromJSON({
   ],
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ts = TimeSeries::from_json(
+        r#"{
+          "name": "cpu",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "cpu", "kind": "number"},
+            {"name": "status", "kind": "string", "required": false}
+          ],
+          "rows": [
+            ["2025-01-01T00:00Z", 0.42, "ok"],
+            ["2025-01-01T00:01Z", 0.51, null]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+    assert_eq!(ts.column("status")?.strings()?.get(1), None); // a gap
+
+    // `null` in a required column is refused.
+    let required = r#"{
+      "name": "cpu",
+      "schema": [{"name": "time", "kind": "time"}, {"name": "cpu", "kind": "number"}],
+      "rows": [[0, null]]
+    }"#;
+    assert!(TimeSeries::from_json(required, &JsonOptions::new()).is_err());
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Columns without `required: false` reject `null` at validation time — if a cell is
 sometimes-present, make it optional in the schema.
@@ -327,6 +575,9 @@ JSON.stringify(payload);
 Default is array rows (smaller on the wire, faster to parse). Request object rows
 when readability matters more than size:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const compact = series.toJSON();
 // rows: [[1735689600000, 0.31, "api-1"], ...]
@@ -334,6 +585,47 @@ const compact = series.toJSON();
 const keyed = series.toJSON({ rowFormat: 'object' });
 // rows: [{ time: 1735689600000, cpu: 0.31, host: "api-1" }, ...]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, JsonOptions, RowFormat, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![1_735_689_600_000, 1_735_689_660_000],
+        vec![
+            Column::required("cpu", vec![0.31, 0.44]),
+            Column::required("host", vec!["api-1", "api-1"]),
+        ],
+    )?;
+
+    let compact = series.to_json(RowFormat::Array)?;
+    assert!(
+        compact.ends_with(r#""rows":[[1735689600000,0.31,"api-1"],[1735689660000,0.44,"api-1"]]}"#)
+    );
+
+    let keyed = series.to_json(RowFormat::Object)?;
+    assert!(keyed.ends_with(
+        r#""rows":[{"time":1735689600000,"cpu":0.31,"host":"api-1"},{"time":1735689660000,"cpu":0.44,"host":"api-1"}]}"#
+    ));
+
+    // Both read back to the same series.
+    assert_eq!(
+        TimeSeries::from_json(&compact, &JsonOptions::new())?,
+        series
+    );
+    assert_eq!(TimeSeries::from_json(&keyed, &JsonOptions::new())?, series);
+    Ok(())
+}
+```
+
+In Rust both formats come back as a JSON string, ready to send.
+
+</TabItem>
+</Tabs>
 
 Both formats round-trip through `fromJSON` with the same output. The return
 type follows the option, so `compact.rows` is typed as tuples and `keyed.rows`
@@ -354,6 +646,12 @@ It does **not** preserve:
 
 - Comments, whitespace, or any non-payload metadata you might be tempted to
   attach.
+
+One known gap: a series built with `fromColumns` keeps its gaps even in a
+column the schema marks required (the default), so its own `toJSON` does
+not read back: `fromJSON` throws "… is required" at the
+first gap. Mark such columns `required: false` in the schema until this is
+fixed (tracked as [PND-COLSREQ] in PLAN.md).
 
 (`toJSON` emits the schema verbatim, so `required: false` flags do survive.)
 
@@ -379,6 +677,9 @@ const objects = series.toObjects();
 Both are faster than `toJSON` (no JSON-shape conversion) and are the right choice
 for tests, other library code, and React components. They do **not** round-trip
 via `fromJSON` — use `toJSON` for wire-format serialization.
+
+pond-rs has no `toRows` / `toObjects`. Walk the rows with `rows()` (or take one
+with `row(i)`), or read a whole column with `column(name)`.
 
 ## Columnar
 
@@ -423,6 +724,9 @@ place of time. See [ValueSeries](#valueseries) below.
 The plain-array case — exactly what `JSON.parse` gives you for a columnar wire
 payload, with no transpose needed:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { TimeSeries } from 'pond-ts';
 
@@ -444,6 +748,76 @@ const bars = TimeSeries.fromColumns({
   },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Columns JSON, as it comes off the wire.
+    let bars = TimeSeries::from_columns_json(
+        r#"{
+          "name": "AAPL",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "open", "kind": "number"},
+            {"name": "close", "kind": "number"},
+            {"name": "venue", "kind": "string"}
+          ],
+          "columns": {
+            "time": [1735689600000, 1735689660000, 1735689720000],
+            "open": [193.1, 193.4, 193.2],
+            "close": [193.4, 193.2, 193.6],
+            "venue": ["XNAS", "XNAS", "XNAS"]
+          }
+        }"#,
+        KeyOrder::Strict,
+    )?;
+    assert_eq!(bars.column("close")?.numbers()?.get(2), Some(193.6));
+
+    // Already holding one Vec per column in Rust? `TimeSeries::new` is the
+    // columnar door. Each Vec is moved into the series, not copied.
+    let same = TimeSeries::new(
+        "AAPL",
+        vec![1_735_689_600_000, 1_735_689_660_000, 1_735_689_720_000],
+        vec![
+            Column::required("open", vec![193.1, 193.4, 193.2]),
+            Column::required("close", vec![193.4, 193.2, 193.6]),
+            Column::required("venue", vec!["XNAS", "XNAS", "XNAS"]),
+        ],
+    )?;
+    assert_eq!(same, bars);
+
+    // `null` is a gap; a column with gaps comes back optional.
+    let gaps = TimeSeries::from_columns_json(
+        r#"{
+          "name": "AAPL",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "close", "kind": "number"},
+            {"name": "venue", "kind": "string"}
+          ],
+          "columns": {
+            "time": [1735689600000, 1735689660000],
+            "close": [193.4, null],
+            "venue": ["XNAS", null]
+          }
+        }"#,
+        KeyOrder::Strict,
+    )?;
+    assert_eq!(gaps.column("close")?.numbers()?.get(1), None);
+    assert_eq!(gaps.column("venue")?.strings()?.get(1), None);
+    assert!(!gaps.column("close")?.is_required());
+    Ok(())
+}
+```
+
+Columns JSON is read more strictly in pond-rs: a cell of the wrong kind is an error, where pond-ts converts it. See [Arrow and JSON](../pond-rs/arrow#json).
+
+</TabItem>
+</Tabs>
 
 Each entry in `columns` is one column's values, aligned by index; every column
 must be the same length as the key column, and a missing or mismatched column
@@ -510,6 +884,9 @@ caller and a typed-array caller want the same ingest, just with a different
 String columns have no typed-array form — hand them a `string[]`. Passing a typed
 array for a `'string'`-kind column throws rather than stringifying numbers.
 
+In Rust, `Column::required(name, values)` takes a `Vec<f64>` without copying it,
+as in the `TimeSeries::new` call in the Rust tab above.
+
 :::warning[Adopted, not copied]
 Because a `Float64Array` column is adopted by reference, mutating the source
 buffer after construction mutates the series. Hand `fromColumns` a buffer you're
@@ -535,11 +912,43 @@ specifically wants the columnar + typed-array path.
 `series.toColumns()` is the inverse — the same `{ name, schema, columns }`
 envelope, one plain array per column, which `fromColumns` takes straight back:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // In process, the round trip is typed end to end — no cast, and the result
 // is a TimeSeries<typeof schema>, not a widened one.
 const restored = TimeSeries.fromColumns(series.toColumns());
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000],
+        vec![Column::optional("cpu", vec![Some(0.5), None])],
+    )?;
+
+    let wire = series.to_columns_json()?;
+    assert_eq!(
+        wire,
+        r#"{"name":"cpu","schema":[{"name":"time","kind":"time"},{"name":"cpu","kind":"number","required":false}],"columns":{"time":[0,60000],"cpu":[0.5,null]}}"#
+    );
+
+    // … over HTTP / a WebSocket …
+    let restored = TimeSeries::from_columns_json(&wire, KeyOrder::Strict)?;
+    assert_eq!(restored, series);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 That assignability is the contract: `toColumns()`'s return type is typed per
 column (`{ time: number[]; cpu: Array<number | null>; … }`) and is accepted by
@@ -580,6 +989,9 @@ A `timeRange` or `interval` key — what `aggregate` produces — spans two edge
 and JSON has no interval-of-time type. Every columnar door flattens it into
 extra columns named off the key:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const daily = trades.aggregate(Sequence.every('1d'), { price: 'avg' });
 
@@ -596,6 +1008,36 @@ daily.toColumns();
 
 TimeSeries.fromColumns(daily.toColumns()); // round-trips, key and all
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, KeyOrder, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let trades = TimeSeries::new(
+        "trades",
+        vec![0, 3_600_000, 86_400_000, 90_000_000],
+        vec![Column::required("price", vec![10.0, 12.0, 20.0, 30.0])],
+    )?;
+    let daily = trades.aggregate(&Sequence::every("1d")?, &[Agg::of("price", Reducer::Avg)])?;
+
+    let wire = daily.to_columns_json()?;
+    assert!(wire.ends_with(
+        r#""columns":{"interval":[0,86400000],"intervalEnd":[86400000,172800000],"intervalLabel":[0,86400000],"price":[11,25]}}"#
+    ));
+
+    // Round-trips, key and all.
+    let back = TimeSeries::from_columns_json(&wire, KeyOrder::Strict)?;
+    assert_eq!(back.key(), daily.key());
+    assert_eq!(back.to_columns_json()?, wire);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 A `timeRange` key is `timeRange` + `timeRangeEnd`; an `interval` key adds
 `intervalLabel`. **The names are fully determined** — a key column's name always
@@ -633,6 +1075,9 @@ isn't arrow-js).
 
 #### `fromArrow`
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { tableFromIPC } from 'apache-arrow';
 import { TimeSeries } from 'pond-ts';
@@ -643,6 +1088,49 @@ const table = tableFromIPC(
 
 const bars = TimeSeries.fromArrow(table, { name: 'AAPL', time: 'ts' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use std::sync::Arc;
+
+use pond_rs::TimeSeries;
+use pond_rs::arrow_array::{ArrayRef, Float64Array, Int64Array, RecordBatch};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Arrow data from elsewhere, here built by hand: a `ts` field of epoch
+    // milliseconds and a `close` field.
+    let batch = RecordBatch::try_from_iter([
+        (
+            "ts",
+            Arc::new(Int64Array::from(vec![1_735_689_600_000, 1_735_689_660_000])) as ArrayRef,
+        ),
+        (
+            "close",
+            Arc::new(Float64Array::from(vec![193.4, 193.2])) as ArrayRef,
+        ),
+    ])
+    .unwrap();
+
+    // The last argument names the key field.
+    let bars = TimeSeries::from_arrow("AAPL", &[batch], "ts")?;
+    assert_eq!(bars.key().begin(), &[1_735_689_600_000, 1_735_689_660_000]);
+    assert_eq!(bars.column("close")?.numbers()?.get(1), Some(193.2));
+
+    // For an IPC (`.arrow`) file or stream, `read_ipc` takes any reader.
+    let mut bytes = Vec::new();
+    bars.write_ipc(&mut bytes)?;
+    let again = TimeSeries::read_ipc("AAPL", bytes.as_slice(), "ts")?;
+    assert_eq!(again, bars);
+    Ok(())
+}
+```
+
+pond-rs reads Arrow itself, through the Rust Arrow crates it re-exports (`pond_rs::arrow_array` and friends): `from_arrow` for `RecordBatch`es you hold, `read_ipc` or `from_ipc_bytes` for an `.arrow` file or stream. See [Arrow and JSON](../pond-rs/arrow).
+
+</TabItem>
+</Tabs>
 
 The schema is derived from the Arrow fields, so you don't declare one. (You may
 supply `S` as `fromArrow<MySchema>(…)` for downstream typing — pond takes that on
@@ -694,6 +1182,9 @@ It returns `{ length, fields }` rather than an Arrow `Table`, for the same reaso
 be a strange price for interop. The caller assembles per field, narrowing on
 `type` first:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { makeData, makeVector, Float64 } from 'apache-arrow';
 
@@ -711,6 +1202,39 @@ const vec = makeVector(
   }),
 );
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::arrow_array::{Array, Float64Array};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "AAPL",
+        vec![1_735_689_600_000, 1_735_689_660_000],
+        vec![Column::optional("close", vec![Some(193.4), None])],
+    )?;
+
+    // An Arrow `RecordBatch`, ready for any Arrow-based library.
+    let batch = series.to_arrow()?;
+    let close = batch
+        .column_by_name("close")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert_eq!(close.value(0), 193.4);
+    assert!(close.is_null(1)); // a gap is an Arrow null
+    Ok(())
+}
+```
+
+`to_arrow` returns an Arrow `RecordBatch`, so there is nothing to assemble; `write_ipc` writes it as an `.arrow` file or stream.
+
+</TabItem>
+</Tabs>
 
 From there a consumer can reach whatever engine they like — polars, DuckDB,
 arrow-js — for work pond doesn't do well, without pond depending on any of it and
@@ -764,6 +1288,9 @@ sections above and substitute the axis for time. `schema[0]` is a `'value'`-kind
 axis column instead of a `'time'`-kind one; every direct door checks that first
 and names itself in the error if you got it wrong.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { ValueSeries } from 'pond-ts';
 
@@ -777,6 +1304,46 @@ ValueSeries.fromJSON({ name: 'chain', schema, rows });
 ValueSeries.fromColumns({ name: 'chain', schema, columns });
 ValueSeries.fromArrow(table, { axis: 'strike' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{KeyOrder, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // schema[0] is the axis, with kind "value".
+    let rows = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"#;
+    let chain = ValueSeries::from_json(rows, KeyOrder::Strict)?;
+
+    let columns = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"#;
+    assert_eq!(
+        ValueSeries::from_columns_json(columns, KeyOrder::Strict)?,
+        chain
+    );
+
+    // Arrow: name the field to use as the axis.
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    assert_eq!(ValueSeries::from_ipc_bytes("chain", file, "strike")?, chain);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Data that _starts_ time-keyed doesn't use these doors at all — it projects with
 [`byValue(axis)`](./concepts/value-axis), which re-keys a `TimeSeries` onto one
@@ -902,6 +1469,9 @@ arrival order. `'clamp'` is for a _noisy_ feed where a sample's timestamp
 occasionally jitters backwards: the row stays where it arrived, next to the
 samples it was taken among, and lands on its predecessor's timestamp.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const s = TimeSeries.fromColumns({
   name: 'feed',
@@ -911,6 +1481,41 @@ const s = TimeSeries.fromColumns({
 });
 // keys: 0, 10, 10, 20 — values untouched: 1, 2, 3, 4
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{KeyOrder, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let feed = r#"{"name": "feed",
+      "schema": [{"name": "time", "kind": "time"}, {"name": "v", "kind": "number"}],
+      "columns": {"time": [0, 10, 5, 20], "v": [1, 2, 3, 4]}}"#;
+
+    assert!(TimeSeries::from_columns_json(feed, KeyOrder::Strict).is_err());
+
+    let clamped = TimeSeries::from_columns_json(feed, KeyOrder::Clamp)?;
+    assert_eq!(clamped.key().begin(), &[0, 10, 10, 20]);
+    assert_eq!(
+        clamped.column("v")?.numbers()?.values(),
+        &[1.0, 2.0, 3.0, 4.0]
+    );
+
+    let sorted = TimeSeries::from_columns_json(feed, KeyOrder::Reorder)?;
+    assert_eq!(sorted.key().begin(), &[0, 5, 10, 20]);
+    assert_eq!(
+        sorted.column("v")?.numbers()?.values(),
+        &[1.0, 3.0, 2.0, 4.0]
+    );
+    Ok(())
+}
+```
+
+In Rust the setting is `KeyOrder`, passed to `from_columns_json`, `from_json` (through `JsonOptions::order`) and the `ValueSeries` doors.
+
+</TabItem>
+</Tabs>
 
 Know what `'clamp'` costs before reaching for it:
 
@@ -968,6 +1573,9 @@ closes[0] = 0; // bars now reports 0 for the first close
 Hand over a buffer you're done writing to, or pass a copy
 (`new Float64Array(closes)`). The same applies in reverse to `toArrow`'s output.
 `number[]` columns are always copied, so they're never affected.
+
+This can't happen in Rust: the `Vec` moves into the series, and the compiler
+stops you using it afterwards.
 
 ### `boolean` / array columns don't survive a columnar round trip
 

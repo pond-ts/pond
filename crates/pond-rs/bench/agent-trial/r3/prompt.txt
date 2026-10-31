@@ -1,0 +1,49 @@
+You are writing a small Rust program. Work only inside {DIR}.
+
+The task: `events.csv` (in that folder) holds CPU readings from a fleet
+of hosts, in the order they ARRIVED, which is not time order: most
+arrive within a fraction of a second, some several seconds late. The
+header is `time,host,cpu`: `time` is when the reading was taken (UTC,
+milliseconds since 1970), `host` a name, `cpu` a number, or empty when
+the reading is missing.
+
+Process the events one at a time, in file order, as a live system would
+as they arrive, and keep one-minute buckets per host (a bucket covers
+[minute start, minute start + 60 s), minutes aligned to UTC):
+
+- Each host has its own watermark: the latest `time` seen so far from
+  that host (including the event being processed).
+- A host's bucket closes as soon as that host's watermark is at least
+  5 seconds past the bucket's end (watermark >= end + 5000 ms). When one
+  event closes several buckets, they close oldest first.
+- An event goes into its host's bucket for its `time`, even if it is
+  late, unless that bucket has already closed (or would close at once
+  with this event's watermark); then the event is ignored.
+- For each bucket: `avg` and `max` of its cpu values, and `count`, the
+  number of its events that have a cpu value. Missing readings are not
+  counted; a bucket whose events all lack cpu has empty avg and max and
+  a count of 0.
+
+Write `out.csv` with one line per closed bucket, in the order they
+closed, with the header `host,start,avg,max,count,closed_by`:
+`start` is the bucket's start (milliseconds since 1970), and
+`closed_by` the 0-based index of the event (data row, not counting the
+header) whose arrival closed it. Buckets still open after the last
+event are not written.
+
+Use the {LIB}. A Cargo project is already set up in {DIR}{DEP} Write
+your program in `src/main.rs`. It takes the input and output paths as
+its two arguments.
+
+Rules for this exercise:
+- Build and run ONLY with `{DIR}/attempt.sh` (it runs
+  `cargo run --release -- events.csv out.csv`). Do not run `cargo` any
+  other way (no `cargo build`, `cargo check`, `cargo test`, `cargo doc`).
+- You may read {SRC}any files in {DIR}. Do not read anything else on
+  this machine, and do not use the web.
+- When you believe out.csv is correct, stop. You can inspect your output
+  only by having your own program print things.
+
+When finished, reply with: whether you think the output is right, any
+problems you hit with the library or the language (be specific), and
+anything you were unsure about.
