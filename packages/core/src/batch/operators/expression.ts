@@ -38,7 +38,11 @@ export type ColumnValues =
   | { readonly kind: 'boolean'; readonly v: Int8Array }
   | { readonly kind: 'string'; readonly v: (string | undefined)[] };
 
-/** Rows `[start, end)` of `col`, as values in flight. */
+/**
+ * Rows `[start, end)` of `col`, as values in flight. Never marked
+ * {@link fresh}, even when copied: one read serves every use of the
+ * column in a tree, so no step may write over it.
+ */
 function readColumn(
   col: Column,
   kind: CheckedKind,
@@ -68,7 +72,6 @@ function readColumn(
         const x = raw[i]!;
         v[i] = x - x === 0 ? x : NaN;
       }
-      fresh.add(v);
       return { kind, v };
     }
     const v = new Float64Array(n);
@@ -76,7 +79,6 @@ function readColumn(
       const x = col.read(start + i);
       v[i] = typeof x === 'number' && x - x === 0 ? x : NaN;
     }
-    fresh.add(v);
     return { kind, v };
   }
   if (kind === 'boolean') {

@@ -191,6 +191,19 @@ describe('gaps stored as infinities (fromColumns)', () => {
     const abs = inf.withColumn('a', col('v').abs());
     expect(abs.toJSON().rows.map((r) => r[2] ?? null)).toEqual([null, null, 1]);
     expect(abs.reduce({ a: 'count' })).toEqual({ a: 1 });
+    // A copied read serves both uses of `v`; neither may write over it.
+    expect(
+      inf
+        .withColumn('x', col('v').add(1).add(col('v')))
+        .toJSON()
+        .rows.map((r) => r[2] ?? null),
+    ).toEqual([null, null, 3]);
+    expect(
+      inf
+        .withColumn('x', col('v').neg().add(col('v')))
+        .toJSON()
+        .rows.map((r) => r[2] ?? null),
+    ).toEqual([null, null, 0]);
     // The adopted buffer is not rewritten.
     expect([...raw]).toEqual([Infinity, -Infinity, 1]);
   });
