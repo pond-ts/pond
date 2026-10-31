@@ -285,5 +285,22 @@ g.free();
   s.free();
 }
 
+// A number maxGap is milliseconds, as pond-ts: rows are 1000 ms apart, so
+// 500 fills nothing and 2000 fills the gap.
+{
+  const g = gappy();
+  for (const [gap, filled] of [
+    [500, undefined],
+    ['500ms', undefined],
+    [2000, 2],
+    ['2s', 2],
+  ]) {
+    const f = g.fill({ v: 'linear' }, { maxGap: gap });
+    assert.equal(f.at(1).get('v'), filled, `maxGap ${gap}`);
+    f.free();
+  }
+  g.free();
+}
+
 assert.equal(alive(), 0, 'series left in memory');
 console.log('inputs through @pond-ts/rs: all match pond-ts');

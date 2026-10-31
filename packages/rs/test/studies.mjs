@@ -388,7 +388,9 @@ function checkStudy(source, got, expected) {
       f().free();
       extra.push(`${what} should throw`);
     } catch (e) {
-      if (e.name === 'TypeError') extra.push(`${what}: JS ${e.message}`);
+      // An unknown name is the bridge's own refusal, and the right one.
+      if (slip(e) && !/is not a study/.test(e.message))
+        extra.push(`${what}: bridge slip ${e.message}`);
     }
   }
   bars.free();
@@ -441,6 +443,13 @@ function sameColumn(x, y, name) {
   const pivots = bars.pivotPoints({ sessions: nyse, method: 'camarilla' });
   if (!pivots.schema.some((d) => d.name === 'ppR4'))
     fail('pivotPoints camarilla wrote no ppR4');
+  // A study that takes no sessions ignores a calendar, as any option it
+  // does not have.
+  const plain = bars.sma({ period: 2 });
+  const withCal = bars.sma({ period: 2, sessions: nyse });
+  if (!sameColumn(plain, withCal, 'sma'))
+    fail('sma with a calendar differs from sma without');
+  for (const s of [plain, withCal]) s.free();
   for (const s of [byCalendar, byList, tagged, byColumn, pivots, bars])
     s.free();
   nyse.free();

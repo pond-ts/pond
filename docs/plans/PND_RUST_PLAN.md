@@ -4102,8 +4102,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         as the Python bridge (the fixture's 32 other texts are checked to
         throw); (3) instants are whole ms. Fixed on the way: a number as
         a duration (`rolling(60000, …)`, `Sequence.every(60000)`, the
-        `rolling(sequence, window)` window, `tail`, `maxGap`, the smooth
-        window) was refused; `numbers()` returned a non-finite value (a
+        `rolling(sequence, window)` window, `tail`, the smooth window) was
+        refused, and a number `maxGap` was silently ignored (every gap
+        filled); `numbers()` returned a non-finite value (a
         gap to pond-rs) as itself instead of NaN, which hid gaps from
         study output checks. Check (`test/studies.mjs`, CI `js-bridge`):
         study parity 3,702 matched bit for bit + 827 errors agree + 526

@@ -302,9 +302,11 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - **`@pond-ts/rs` takes a number of milliseconds as a duration**, as
   pond-ts does: `rolling(60000, …)`, `rolling(sequence, 60000, …)`,
-  `Sequence.every(60000)`, `tail`, `fill`'s `maxGap` and a moving-average
-  `smooth` window threw "expected a Sequence" or "must be a duration". A
-  fractional number of ms is refused (pond-rs keys are whole ms). Also
+  `Sequence.every(60000)`, `tail` and a moving-average `smooth` window
+  threw "expected a Sequence" or "must be a duration"; worse, a number
+  `maxGap` in `fill` was silently ignored, so every gap was filled. A
+  fractional number of ms, or one past ±8.64e15 ms (pond-rs's time limit),
+  is refused. Also
   `numbers(column)` now gives NaN for every gap: a non-finite value, which
   pond-rs reads as a gap, came back as itself.
 - **pond-rs: numeric group names match JavaScript exactly.** A number

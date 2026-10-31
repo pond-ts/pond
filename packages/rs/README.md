@@ -69,7 +69,8 @@ cpu.free();
   throw on other text, where pond-ts compares any text with session dates
   as text and quietly finds nothing (or the wrong neighbour).
 - **Durations** may be text (`'5m'`) or a whole number of ms (`60000`); a
-  fractional number of ms, which pond-ts takes, is refused.
+  fractional number of ms, or one past ±8.64e15 ms, which pond-ts takes,
+  is refused.
 - **Not there yet:** `LiveSeries` (step J2b), and a browser build (step
   J3). This build is for Node 20 and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory

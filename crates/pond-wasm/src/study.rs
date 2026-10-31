@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use pond_rs::financial::catalog::{STUDIES, StudyDescriptor, study_descriptor};
+use pond_rs::financial::catalog::{STUDIES, StudyAnchor, StudyDescriptor, study_descriptor};
 use pond_rs::financial::{
     DateBound, Session, SessionAnchor, SessionRef, SessionRules, Stamped, TagSessions,
     TradingCalendar, generate_sessions,
@@ -118,9 +118,15 @@ pub(crate) fn study_call(a: &Args) -> Res<StudyCall> {
     if let Some(id) = options.get("sessions").and_then(|s| s.get("calendar")) {
         let id = id
             .as_u64()
+            .and_then(|id| u32::try_from(id).ok())
             .ok_or_else(|| format!("{name}: 'sessions' names no calendar"))?;
-        calendar = Some(self::calendar(id as u32)?);
+        let c = self::calendar(id)?;
         options.remove("sessions");
+        // A study that takes no sessions ignores a calendar, as pond-ts
+        // ignores any option a study does not have.
+        if d.anchor == Some(StudyAnchor::Session) {
+            calendar = Some(c);
+        }
     }
     options.values_mut().for_each(untag);
     Ok(StudyCall {
