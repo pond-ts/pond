@@ -248,6 +248,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   synchronised rolling output is text (the partition value as pond-ts
   writes it, `" undefined"` for a row without one), which pond-ts declares
   with the source column's type but also fills with text.
+- **Financial studies in `@pond-ts/rs`** ([PND-RUST-R4] step J2a, not
+  published yet). Every study in pond-rs's catalog runs as
+  `series.study(name, options)` or as its own method with pond-ts's name and
+  options (`s.sma({ period: 20 })`, `s.bollinger({ period: 20, stdDev: 2 })`,
+  as `@pond-ts/financial/fluent` mounts them), also on a `partitionBy` view
+  (per group). `studies()` and `studyInfo(name)` give pond-ts's catalog
+  descriptors. A cut-down `TradingCalendar` (`fromRules`, `fromSessions`,
+  the lookups, `tagSessions`; times in ms) plus `generateSessions` feed
+  `sessionVwap` / `pivotPoints` as `sessions: calendar`, a `Session[]` list
+  or `session: 'column'`. Options a study does not have are ignored, as in
+  pond-ts; calendar lookups take only `YYYY-MM-DD` text as a date (pond-ts
+  compares any text with session dates as text), as the Python bridge does.
+  1M bars against `@pond-ts/financial`: `sma` 4.5 vs 45.7 ms, `rsi` 10.9 vs
+  40.9, `bollinger` 24.8 vs 98.9, `sessionVwap` 9.9 vs 85.4.
 
 ### Changed
 
@@ -286,6 +300,13 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`@pond-ts/rs` takes a number of milliseconds as a duration**, as
+  pond-ts does: `rolling(60000, …)`, `rolling(sequence, 60000, …)`,
+  `Sequence.every(60000)`, `tail`, `fill`'s `maxGap` and a moving-average
+  `smooth` window threw "expected a Sequence" or "must be a duration". A
+  fractional number of ms is refused (pond-rs keys are whole ms). Also
+  `numbers(column)` now gives NaN for every gap: a non-finite value, which
+  pond-rs reads as a gap, came back as itself.
 - **pond-rs: numeric group names match JavaScript exactly.** A number
   halfway between two shortest spellings (`667962307169479.25`) named its
   pivot column, live partition and array group key by rounding up, where

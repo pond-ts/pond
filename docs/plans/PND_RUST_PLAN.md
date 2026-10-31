@@ -4083,6 +4083,39 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - J2: studies through the catalog (`study(name, options)` plus named
       helpers from the catalog table) and `LiveSeries`. Check: study and
       live parity fixtures through JS.
+      - J2a outcome (2026-10-31): studies and calendars
+        (`crates/pond-wasm/src/study.rs`). `series.study(name, options)`
+        is a dispatcher op (so it also runs as a `partitionBy` step, per
+        group); index.js adds one method per catalog name from
+        `study_names()` on `TimeSeries` and `PartitionedSeries`;
+        `studies()` / `studyInfo()` return the catalog JSON exactly
+        (`undefined` for no such study, as pond-ts `studyDescriptor`).
+        `TradingCalendar` lives in a second Rust table (`free()` +
+        finalizer) and crosses as `{"calendar": id}` in `sessions`;
+        `fromRules(rules, { from, to })`, `fromSessions`, the lookups,
+        `tagSessions`, plus `generateSessions`. Decisions: (1) options a
+        study does not have are ignored, as pond-ts's runtime does
+        (Python refuses them as its rule for an unexpected keyword; in JS
+        a shared `{ high, low, close, volume }` object handed to several
+        studies is an ordinary idiom, and pond-ts's types already refuse
+        a typo); (2) calendar lookups take a date only as `YYYY-MM-DD`,
+        as the Python bridge (the fixture's 32 other texts are checked to
+        throw); (3) instants are whole ms. Fixed on the way: a number as
+        a duration (`rolling(60000, …)`, `Sequence.every(60000)`, the
+        `rolling(sequence, window)` window, `tail`, `maxGap`, the smooth
+        window) was refused; `numbers()` returned a non-finite value (a
+        gap to pond-rs) as itself instead of NaN, which hid gaps from
+        study output checks. Check (`test/studies.mjs`, CI `js-bridge`):
+        study parity 3,702 matched bit for bit + 827 errors agree + 526
+        known refusals (the Rust harness's counts), a planted 1-ulp change
+        fails all but 560 cases (those with no finite non-zero output);
+        oracle 220/220 within 5e-10; 109/109 descriptors equal pond-ts's,
+        109/109 run from their method with defaults; calendar parity
+        110/110. Speed, 1M one-minute bars, series in / out, bridge vs
+        `@pond-ts/financial` (`scripts/perf-studies.mjs`): sma 4.5 vs
+        45.7 ms, ema 2.6 vs 13.0, rsi 10.9 vs 40.9, bollinger 24.8 vs
+        98.9, macd 18.3 vs 91.8, atr 9.3 vs 31.1, sessionVwap 9.9 vs
+        85.4. Size 6.9 MB raw, 1.26 MB brotli. J2b: `LiveSeries`.
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where

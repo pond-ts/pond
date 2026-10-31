@@ -2,7 +2,7 @@
 
 pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
 pond-ts's method names and argument shapes. **Not published yet**: this is
-steps J1 and J1b of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
+steps J1, J1b and J2a of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
 
 ```js
 import { TimeSeries, Sequence } from '@pond-ts/rs';
@@ -51,8 +51,27 @@ cpu.free();
   `end`, `timeRange` (no `set`, `merge`, `select`, …). `Time`, `TimeRange`
   and `Interval` are likewise cut down (no `overlaps`, `contains`,
   `intersection`); `Time.parse` matches pond-ts.
-- **Not there yet:** the financial studies and `LiveSeries` (step J2), and
-  a browser build (step J3). This build is for Node 20 and later.
+- **Financial studies** from pond-rs's catalog, with
+  `@pond-ts/financial`'s names and options: `s.study('rsi', { period: 14 })`
+  or the named method `s.rsi({ period: 14 })` (every study has one, as
+  `@pond-ts/financial/fluent` mounts them), also on a `partitionBy` view.
+  `studies()` / `studyInfo(name)` give pond-ts's catalog descriptors.
+  Options a study does not have are ignored, as in pond-ts. On 1M bars,
+  about 3-10x faster than `@pond-ts/financial` (`scripts/perf-studies.mjs`).
+- **`TradingCalendar`** is cut down: `fromRules(rules, { from, to })`,
+  `fromSessions`, `sessions()`, `length`, `timeZone`, the lookups
+  (`sessionOn`, `isTradingDay`, `sessionContaining`, `isOpen`,
+  `sessionsInRange`, `nextSession`, `previousSession`) and `tagSessions`;
+  no `sessionSequence` / `barSequence`. Times are whole ms. Like a series,
+  it lives in WebAssembly memory: call `free()`. Pass it to a session study
+  as `sessions: calendar` (or a `Session[]` list, or `session: 'column'`
+  after `tagSessions`). Lookups take a date only as `YYYY-MM-DD` text and
+  throw on other text, where pond-ts compares any text with session dates
+  as text and quietly finds nothing (or the wrong neighbour).
+- **Durations** may be text (`'5m'`) or a whole number of ms (`60000`); a
+  fractional number of ms, which pond-ts takes, is refused.
+- **Not there yet:** `LiveSeries` (step J2b), and a browser build (step
+  J3). This build is for Node 20 and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
@@ -75,4 +94,5 @@ cargo install wasm-bindgen-cli --version 0.2.129
 ./build.sh               # crates/pond-wasm -> pkg/
 node test/parity.mjs     # pond-ts's core parity fixture through this package
 node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
+node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
 ```

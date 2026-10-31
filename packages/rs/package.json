@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "./build.sh",
-    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs"
+    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs && node test/studies.mjs"
   },
   "engines": {
     "node": ">=20"
