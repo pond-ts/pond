@@ -44,7 +44,7 @@ const literal = (v, where) => {
   return v;
 };
 const node = (v) =>
-  v instanceof Expr ? v.node : { lit: literal(v, 'lit(value)') };
+  v instanceof Expr ? v.node : { lit: literal(v, 'expression operand') };
 
 /**
  * A per-row rule written as data, as pond-ts `col('v').gt(0)`. It runs
