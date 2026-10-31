@@ -12,13 +12,17 @@
 //! pond-ts's equivalent is the same calls on a `TimeSeries` built with
 //! `fromJSON` (`arrayContains`, `arrayAggregate`, …). pond-ts has no Arrow
 //! form for arrays, so the Arrow rows have nothing to compare with there;
-//! they time the `nums` and `tags` columns alone (`select`).
+//! they time the time key with the `nums` and `tags` columns
+//! (`select` keeps the key). The `object` JSON rows are the form polars
+//! writes and reads (one object per row), for the polars comparison.
 
-use std::time::Instant;
+mod common;
 
 use pond_rs::{ArrayOptions, Column, JsonOptions, Reducer, RowFormat, Scalar, TimeSeries};
 
 const ROWS: usize = 100_000;
+
+type Case<'a> = (&'a str, Box<dyn Fn() -> Box<dyn common::Dump> + 'a>);
 
 fn make(single: bool) -> TimeSeries {
     let time = (0..ROWS as i64).map(|i| i * 1000).collect();
@@ -62,24 +66,6 @@ fn make(single: bool) -> TimeSeries {
     .unwrap()
 }
 
-fn median(mut xs: Vec<f64>) -> f64 {
-    xs.sort_by(f64::total_cmp);
-    xs[xs.len() / 2]
-}
-
-fn time<T>(mut f: impl FnMut() -> T) -> f64 {
-    f();
-    median(
-        (0..9)
-            .map(|_| {
-                let t = Instant::now();
-                std::hint::black_box(f());
-                t.elapsed().as_secs_f64() * 1e3
-            })
-            .collect(),
-    )
-}
-
 fn main() -> pond_rs::Result<()> {
     let keep = ArrayOptions::default();
     let number = ArrayOptions {
@@ -91,67 +77,97 @@ fn main() -> pond_rs::Result<()> {
     for (name, single) in [("typical", false), ("single", true)] {
         let s = make(single);
         let text = s.to_json(RowFormat::Array)?;
+        let objects = s.to_json(RowFormat::Object)?;
+        let time = |op: &str, f: &dyn Fn() -> Box<dyn common::Dump>| {
+            common::time_case(&format!("{name} {op}"), 9, f)
+        };
         let lists = s.select(&["tags", "nums"])?;
         let batch = lists.to_arrow()?;
         let mut ipc = Vec::new();
         lists.write_ipc(&mut ipc)?;
-        let rows = [
-            ("contains", time(|| s.array_contains("tags", "w3").unwrap())),
+        let cases: Vec<Case> = vec![
+            (
+                "contains",
+                Box::new(|| Box::new(s.array_contains("tags", "w3").unwrap())),
+            ),
             (
                 "containsAny",
-                time(|| s.array_contains_any("tags", &pair).unwrap()),
+                Box::new(|| Box::new(s.array_contains_any("tags", &pair).unwrap())),
             ),
             (
                 "containsAll",
-                time(|| s.array_contains_all("tags", &pair).unwrap()),
+                Box::new(|| Box::new(s.array_contains_all("tags", &pair).unwrap())),
             ),
             (
                 "aggregate count",
-                time(|| s.array_aggregate("nums", Reducer::Count, &keep).unwrap()),
+                Box::new(|| Box::new(s.array_aggregate("nums", Reducer::Count, &keep).unwrap())),
             ),
             (
                 "aggregate avg",
-                time(|| s.array_aggregate("nums", Reducer::Avg, &keep).unwrap()),
+                Box::new(|| Box::new(s.array_aggregate("nums", Reducer::Avg, &keep).unwrap())),
             ),
             (
                 "aggregate median",
-                time(|| s.array_aggregate("nums", Reducer::Median, &keep).unwrap()),
+                Box::new(|| Box::new(s.array_aggregate("nums", Reducer::Median, &keep).unwrap())),
             ),
             (
                 "aggregate first",
-                time(|| s.array_aggregate("tags", Reducer::First, &keep).unwrap()),
+                Box::new(|| Box::new(s.array_aggregate("tags", Reducer::First, &keep).unwrap())),
             ),
             (
                 "explode tags",
-                time(|| s.array_explode("tags", &keep).unwrap()),
+                Box::new(|| Box::new(s.array_explode("tags", &keep).unwrap())),
             ),
             (
                 "explode nums",
-                time(|| s.array_explode("nums", &number).unwrap()),
+                Box::new(|| Box::new(s.array_explode("nums", &number).unwrap())),
             ),
-            ("toJSON", time(|| s.to_json(RowFormat::Array).unwrap())),
+            (
+                "toJSON",
+                Box::new(|| Box::new(s.to_json(RowFormat::Array).unwrap())),
+            ),
             (
                 "fromJSON",
-                time(|| TimeSeries::from_json(&text, &JsonOptions::new()).unwrap()),
+                Box::new(|| Box::new(TimeSeries::from_json(&text, &JsonOptions::new()).unwrap())),
             ),
-            ("toArrow", time(|| lists.to_arrow().unwrap())),
+            (
+                "toJSON object",
+                Box::new(|| Box::new(s.to_json(RowFormat::Object).unwrap())),
+            ),
+            (
+                "fromJSON object",
+                Box::new(|| {
+                    Box::new(TimeSeries::from_json(&objects, &JsonOptions::new()).unwrap())
+                }),
+            ),
+            ("toArrow", Box::new(|| Box::new(lists.to_arrow().unwrap()))),
             (
                 "fromArrow",
-                time(|| TimeSeries::from_arrow("b", std::slice::from_ref(&batch), "time").unwrap()),
+                Box::new(|| {
+                    Box::new(
+                        TimeSeries::from_arrow("b", std::slice::from_ref(&batch), "time").unwrap(),
+                    )
+                }),
             ),
             (
                 "writeIpc",
-                time(|| {
+                Box::new(|| {
                     let mut out = Vec::with_capacity(ipc.len());
                     lists.write_ipc(&mut out).unwrap();
-                    out
+                    Box::new(out)
                 }),
             ),
             (
                 "readIpc",
-                time(|| TimeSeries::from_ipc_bytes("b", ipc.clone(), "time").unwrap()),
+                Box::new(|| {
+                    Box::new(TimeSeries::from_ipc_bytes("b", ipc.clone(), "time").unwrap())
+                }),
             ),
         ];
+        let rows: Vec<(&str, f64)> = cases
+            .iter()
+            .map(|(op, f)| (*op, time(op, f.as_ref())))
+            .collect();
         for (op, ms) in rows {
             println!("{name:8} {op:18} {ms:8.2} ms");
             results.push(format!("\"{name} {op}\": {ms:.2}"));

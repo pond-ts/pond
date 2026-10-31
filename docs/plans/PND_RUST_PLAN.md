@@ -537,6 +537,36 @@ The first two are logged as [PND-RUSTOUT] below.
 The one result short of a clean win is one-core B: polars is faster
 (22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
+## Cross-library comparison, all steps re-run (2026-10-21)
+
+Every speed table from R1a and R1b steps 2a–8i4 re-run in one session on one
+machine (3 repeats each), with polars added where it has a matching call:
+[`crates/pond-rs/bench/COMPARISON.md`](../../crates/pond-rs/bench/COMPARISON.md).
+Outcome: pond-rs is faster than pond-ts in 171 of 174 cases (median 5.7×;
+slower on the 1M × 1M outer join and wide-table JSON in); against polars it
+is about even overall (faster in 61 cases, slower in 64 on 4 cores). The
+R1a "≥2× pond-ts single-core" target holds on A but not on B's compute
+(1.8×; 2.2× on total time). R1a A is now a tie with polars on 4 cores
+(compute 128–139 vs 134–166 ms) rather than a pond-rs lead. Two earlier
+numbers did not reproduce: pond-ts `shift` / `fill` (fixed since, #776) and
+pond-rs `from_json` dense (45 ms in step 8d2's table; 75–91 ms at that
+step's own commit on this machine, so not a regression).
+
+**Revised 2026-10-22 after a Codex review** found polars runners doing
+different work or giving different answers (gap handling in cumulative
+sum, an off-by-one centred window, a missing reducer, dropped buckets, tie
+rules, missing time / interval columns, different JSON formats). Every
+pond-rs and polars runner now writes each case's answer (`BENCH_DUMP`) and
+`bench/check_outputs.py` / `check_all.sh` compare them cell by cell; all
+147 compared cases match. Polars cases were added where polars has a
+counterpart the first run missed (leading / centred time windows, minimum
+row counts, rolling list reducers). Re-timed on main with #811: pond-rs vs
+pond-ts faster in 170 of 173 (median 7.5×); vs polars on 4 cores faster in
+73, slower in 59, same in 9 (median 1.08). R1a A compute 117–120 vs polars
+142–177 ms on 4 cores; B's ≥2× single-core target still missed (1.9×).
+Decision: an answer check is now part of the benchmark, so a polars
+"equivalent" that is not equivalent fails rather than reads as a number.
+
 ## [PND-CHAIN] — chain-friendly options, both libraries (2026-10-22)
 
 Peter asked what a fluent chain looks like (study → operators → a final fold
