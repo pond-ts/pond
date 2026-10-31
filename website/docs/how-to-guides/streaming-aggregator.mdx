@@ -218,7 +218,7 @@ The schema is a list of `ColumnDef`s, and reading a column
 
 The series and the watches:
 
-```rust
+```rust ignore
 // [packages/aggregator-rs/src/main.rs]
 let mut live = LiveSeries::with_options(
     "metrics",
@@ -236,7 +236,7 @@ live.watch(root, OutputKind::Batch)?;
 
 The per-host rolling is the same idea in a different spelling:
 
-```rust
+```rust ignore
 // [packages/aggregator-rs/src/agg.rs], trimmed
 let trigger = Trigger::clock(&Sequence::every("200ms")?)?;
 let opts = RollingOptions::new().trigger(trigger).history(History::Off);
@@ -275,7 +275,7 @@ Two details:
 Thinning per host goes through `per_partition` with a closure. That's
 more to write than pond-ts's `.sample({ stride })`, but it works:
 
-```rust
+```rust ignore
 let sampled = live.per_partition(by_host, move |live, part| {
     Ok(live.sample(part, Sample::Stride(stride))?.id())
 })?;
@@ -283,7 +283,7 @@ let sampled = live.per_partition(by_host, move |live, part| {
 
 The gRPC handler pushes a batch and walks what came back:
 
-```rust
+```rust ignore
 // [packages/aggregator-rs/src/main.rs], trimmed
 let out = inner.live.push_many(rows)?;
 inner.agg.observe_main(&out); // totals + per-host rows from `out`

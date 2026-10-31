@@ -188,7 +188,9 @@ series.last(); // EventForSchema<S> | undefined
 
 ### `find(predicate)`
 
-First event matching a predicate, like `Array.prototype.find`.
+First event matching a predicate, like `Array.prototype.find`. It also takes an
+[expression](./expressions), `series.find(col('cpu').gt(0.9))`, and still
+stops at the first match.
 
 ```ts
 const spike = series.find((e) => (e.get('cpu') ?? 0) > 0.9);
@@ -337,7 +339,9 @@ series.nearest(Date.now()); // the closest reading to now
 
 ### `some(predicate)` / `every(predicate)`
 
-`Array`-style predicate scans:
+`Array`-style predicate scans. Like `find`, both also take an
+[expression](./expressions) such as `col('cpu').gt(0.9)`, which runs over
+whole columns:
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
