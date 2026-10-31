@@ -88,7 +88,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   `or` `not`, `add` `sub` `mul` `div` `neg` `abs`, `isMissing` `fill`, and
   `when(cond, then, otherwise)`. They run over whole columns with no per-row
   `Event` (1M rows: `filter` 2.5-4.5x faster, `some` with no match 30x,
-  `withColumn` 9x), are checked against the schema before any row runs
+  `withColumn` 9x; `find` / `some` / `every` still stop early), are checked against the schema before any row runs
   (unknown column, wrong kind), and turn into a plain JSON tree with
   `toJSON()`. Gaps behave as in the function they replace: a comparison
   with a gap is false and `not` flips it; arithmetic with a gap gives a gap.

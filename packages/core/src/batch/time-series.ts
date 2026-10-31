@@ -2104,6 +2104,12 @@ export class TimeSeries<S extends SeriesSchema> {
    * column a mapper result of `NaN` / `±Infinity` is stored as missing
    * (a non-finite number in a number column means missing).
    *
+   * **Expressions** ({@link col}) may replace a function and may read
+   * other columns (`{ w: col('w').add(col('v')) }`), as they were before
+   * mapping. A gap cell stays a gap here too, so `col('v').fill(0)` changes
+   * nothing; use `withColumn('v0', col('v').fill(0))` to fill. The
+   * compiler does not check an expression's kind; a wrong kind throws.
+   *
    * **Multi-entity series:** `mapColumns` is per-cell and stateless, so
    * it is unaffected by entity interleaving (unlike `cumulative` /
    * `diff`); no `partitionBy` scoping is needed.
@@ -5129,11 +5135,45 @@ export class TimeSeries<S extends SeriesSchema> {
     return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
+  /**
+   * First row where the expression's test is `want` (1 holds, 0 fails),
+   * or -1. Evaluates in growing stretches (1,024 rows, doubling to 65,536)
+   * so an early answer costs little, as with a function.
+   */
+  #firstIndex(expr: Expr, where: string, want: 0 | 1): number {
+    const store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const n = store.length;
+    if (n === 0) {
+      // Still check the expression against the schema.
+      this.#matches(expr, where, store);
+      return -1;
+    }
+    let size = 1024;
+    for (
+      let start = 0;
+      start < n;
+      start += size, size = Math.min(size * 2, 65536)
+    ) {
+      const end = Math.min(n, start + size);
+      const i = this.#matches(
+        expr,
+        where,
+        withRowRange(store, start, end),
+      ).indexOf(want);
+      if (i >= 0) return start + i;
+    }
+    return -1;
+  }
+
   /** Per row, 1 where the true/false expression holds, else 0. */
-  #matches(expr: Expr, where: string): Int8Array {
+  #matches(
+    expr: Expr,
+    where: string,
+    store = this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+  ): Int8Array {
     const values = evaluateStoreExpr(
       expr.node,
-      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      store,
       this.schema,
       where,
       'boolean',
@@ -5216,7 +5256,7 @@ export class TimeSeries<S extends SeriesSchema> {
       | Expr<'boolean' | 'any'>,
   ): EventForSchema<S> | undefined {
     if (predicate instanceof Expr) {
-      const i = this.#matches(predicate, 'find').indexOf(1);
+      const i = this.#firstIndex(predicate, 'find', 1);
       return i < 0
         ? undefined
         : (this.#store.eventAt(i) as unknown as EventForSchema<S>);
@@ -5236,7 +5276,7 @@ export class TimeSeries<S extends SeriesSchema> {
       | Expr<'boolean' | 'any'>,
   ): boolean {
     if (predicate instanceof Expr) {
-      return this.#matches(predicate, 'some').includes(1);
+      return this.#firstIndex(predicate, 'some', 1) >= 0;
     }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
@@ -5253,7 +5293,7 @@ export class TimeSeries<S extends SeriesSchema> {
       | Expr<'boolean' | 'any'>,
   ): boolean {
     if (predicate instanceof Expr) {
-      return !this.#matches(predicate, 'every').includes(0);
+      return this.#firstIndex(predicate, 'every', 0) < 0;
     }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {

@@ -91,6 +91,11 @@ const cases = [
     () => s.some(col('v').gt(1e9)),
   ],
   [
+    'find (match near the start)',
+    () => s.find((e) => e.get('v') > 400),
+    () => s.find(col('v').gt(400)),
+  ],
+  [
     'mapColumns v * 1.8 + 32',
     () => s.mapColumns({ v: (x) => x * 1.8 + 32 }),
     () => s.mapColumns({ v: col('v').mul(1.8).add(32) }),

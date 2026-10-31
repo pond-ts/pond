@@ -132,6 +132,51 @@ describe('expressions give the same answer as the function they replace', () => 
   });
 });
 
+describe('long series', () => {
+  const n = 200_000;
+  const big = new TimeSeries({
+    name: 'big',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows: Array.from({ length: n }, (_, i) => [i, i] as [number, number]),
+  });
+  it('find / some / every agree with functions at every stretch edge', () => {
+    for (const at of [0, 1023, 1024, 3071, 3072, 70_000, n - 1]) {
+      expect(big.find(col('v').ge(at))?.get('v')).toBe(at);
+      expect(big.some(col('v').eq(at))).toBe(true);
+      expect(big.every(col('v').ne(at))).toBe(false);
+    }
+    expect(big.find(col('v').ge(n))).toBeUndefined();
+    expect(big.every(col('v').lt(n))).toBe(true);
+  });
+  it('an expression that reuses its own results leaves the source alone', () => {
+    const d = col('v').mul(2);
+    const out = big.withColumn('x', d.add(d).sub(d.mul(d)));
+    out
+      .toJSON()
+      .rows.slice(0, 50)
+      .forEach((r, i) => {
+        expect(r[1]).toBe(i);
+        expect(r[2]).toBe(4 * i - 4 * i * i);
+      });
+    expect(big.at(7)!.get('v')).toBe(7);
+  });
+});
+
+describe('live filter on views and aggregations', () => {
+  it('matches the function form', () => {
+    const live = new LiveSeries({ name: 'l', schema });
+    const view = live.filter(col('w').isMissing().not());
+    const a = view.filter(col('v').gt(0));
+    const b = view.filter((e) => (e.get('v') as number) > 0);
+    live.push(...(rows as never[]));
+    expect(a.length).toBe(b.length);
+    expect(a.length).toBeGreaterThan(0);
+  });
+});
+
 describe('text columns stored without a dictionary', () => {
   // 40 distinct values: stored as a plain list, not dictionary-coded,
   // so these take the general text path.
