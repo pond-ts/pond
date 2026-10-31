@@ -1,5 +1,6 @@
 import type { ColumnValue } from '../schema/index.js';
 import type { ReducerDef } from './types.js';
+import { dictStrings, packedNumbers, reduceCellsByRead } from './cells.js';
 
 export const keep: ReducerDef = {
   outputKind: 'source',
@@ -10,6 +11,43 @@ export const keep: ReducerDef = {
       if (defined[i] !== ref) return undefined;
     }
     return ref;
+  },
+  reduceCellRange(col, start, end) {
+    // Stops at the first value that differs from the first defined one.
+    const values = packedNumbers(col);
+    if (values !== null) {
+      let i = start;
+      while (i < end && values[i]! - values[i]! !== 0) i += 1;
+      if (i === end) return undefined;
+      const ref = values[i]!;
+      for (i += 1; i < end; i += 1) {
+        const v = values[i]!;
+        if (v - v === 0 && v !== ref) return undefined;
+      }
+      return ref;
+    }
+    const strings = dictStrings(col);
+    if (strings !== null) {
+      // Equal codes are equal strings; different codes are compared as
+      // strings (a dictionary may hold one string twice).
+      const dict = strings.dictionary!;
+      const codes = strings.indices!;
+      const validity = strings.validity;
+      let i = start;
+      while (i < end && validity !== undefined && !validity.isDefined(i)) {
+        i += 1;
+      }
+      if (i === end) return undefined;
+      const refCode = codes[i]!;
+      const ref = dict[refCode]!;
+      for (i += 1; i < end; i += 1) {
+        if (validity !== undefined && !validity.isDefined(i)) continue;
+        const code = codes[i]!;
+        if (code !== refCode && dict[code] !== ref) return undefined;
+      }
+      return ref;
+    }
+    return reduceCellsByRead(keep.reduce, col, start, end);
   },
   bucketState() {
     let ref: ColumnValue | undefined;

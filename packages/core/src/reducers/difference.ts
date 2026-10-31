@@ -1,5 +1,6 @@
 import type { ReducerDef, RollingReducerState } from './types.js';
 import { rollingSortedArray } from './rolling.js';
+import { packedNumbers, reduceCellsByRead } from './cells.js';
 
 export const difference: ReducerDef = {
   outputKind: 'number',
@@ -9,6 +10,25 @@ export const difference: ReducerDef = {
     let hi = numeric[0]!;
     for (let i = 1; i < numeric.length; i++) {
       const v = numeric[i]!;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return hi - lo;
+  },
+  reduceCellRange(col, start, end) {
+    // Same scan as `reduce`, over the finite cells of the buffer.
+    const values = packedNumbers(col);
+    if (values === null) {
+      return reduceCellsByRead(difference.reduce, col, start, end);
+    }
+    let i = start;
+    while (i < end && values[i]! - values[i]! !== 0) i += 1;
+    if (i === end) return undefined;
+    let lo = values[i]!;
+    let hi = lo;
+    for (i += 1; i < end; i += 1) {
+      const v = values[i]!;
+      if (v - v !== 0) continue;
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
