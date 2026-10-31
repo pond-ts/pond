@@ -1015,9 +1015,10 @@ consumer signal. Plan:
   Fix: read the stored begin/end times (binary search where the rows are
   sorted by the tested time) and select rows, keeping the result's events
   identical (`===`) to the source's as `filter` does.
-- **[PND-ROWSOUT]** — `toJSON`, `toRows`, `toObjects` and `toPoints` build
-  an `Event` per row: 1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s.
-  Fix: write each row from the columns directly.
+- **[PND-ROWSOUT]** — `toRows` and `toObjects` build an `Event` per row:
+  1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
+  row from the columns, keeping the key objects identical to the events'
+  (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
 - **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
   groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
   1M rows with 8 groups. Fix: group row numbers from the column and gather
