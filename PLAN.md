@@ -631,8 +631,8 @@ the study oracle) is done.
   them over whole columns instead of calling a function per row (bridge
   `filter` with a function is 8x slower than pond-ts today). E1 pond-ts
   (`col` / `lit` / `when`, accepted by `filter`, `find`, `some`, `every`,
-  `mapColumns`, `withColumn`, live `filter`), E2 pond-rs + both bridges;
-  bridge J2 follows. Detail in
+  `mapColumns`, `withColumn`, live `filter`) merged #865; E2a pond-rs crate and
+  E2b both bridges built (PR #867); bridge J2 follows. Detail in
   [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
 
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at

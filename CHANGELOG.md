@@ -98,6 +98,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   column of the expression's kind. Expressions are slower than a plain
   function in `mapColumns` (1M rows: 8.6 vs 4.7 ms); their use there is
   reading other columns.
+- **pond-rs column expressions** ([PND-EXPR] step E2a): `col`, `lit` and
+  `when` build the same rules as pond-ts, with the same JSON tree
+  (`Expr::to_json` / `Expr::from_json`). `TimeSeries::filter_expr`,
+  `find_expr`, `some_expr`, `every_expr`, `map_expr`, `map_exprs`,
+  `with_column_expr` and `LiveSeries::filter_expr` run them over whole
+  columns, with the same answers as pond-ts (checked by the parity
+  fixture). They refuse what pond-ts refuses (unknown column, wrong kind),
+  in pond-rs's own wording, and `map_exprs` refuses an unknown target
+  column where pond-ts skips it, as pond-rs's `map_numbers` does.
+- **Column expressions in both pond-rs bridges** ([PND-EXPR] step E2b).
+  `@pond-ts/rs` exports `col`, `lit` and `when` (same builder as pond-ts);
+  `filter`, `find`, `some`, `every`, `mapColumns` and `withColumn` take
+  them and run them inside pond-rs (1M rows: `filter` 917 ms with a
+  function, 14 ms with an expression; pond-ts 28 ms). `pond_rs` (Python)
+  gets `col`, `lit`, `when` and an `Expr` class with operators
+  (`(col("v") > 0) & (col("host") == "h3")`, `~`, `+ - * /`) and methods
+  (`is_in`, `is_missing`, `fill`, …), taken by `filter`, `find`, `some`,
+  `every`, `map`, `with_column` and live `filter`, plus a new
+  `TimeSeries.map_columns({column: expr_or_function})` (pond-ts
+  `mapColumns`). 1M rows: `filter` 360 ms with a function, 10 ms with an
+  expression. Both pass every expression case of the parity fixture.
 - **pond-rs for Python** (bridge step P1, `crates/pond-py`; PyPI name
   `pond-rs`, imported as `pond_rs`; not yet published). `TimeSeries` takes a
   pyarrow Table or RecordBatch, a polars or pandas DataFrame, anything with

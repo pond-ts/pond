@@ -650,8 +650,13 @@ impl PyTimeSeries {
         Ok(self.rows_of(self.inner.nearest(event_key(key, "nearest")?)))
     }
 
-    /// The first row for which `test(row)` is true, or `None`.
-    fn find(&self, test: &Bound<'_, PyAny>) -> PyResult<Option<PyRow>> {
+    /// The first row for which `test(row)` is true, or `None`. `test` may
+    /// be an `Expr` (`col("v") > 400`).
+    fn find(&self, py: Python<'_>, test: &Bound<'_, PyAny>) -> PyResult<Option<PyRow>> {
+        if let Some(e) = crate::expr::as_expr(test) {
+            let found = py.detach(|| self.inner.find_expr(&e).map(|r| r.map(|r| r.index())));
+            return Ok(found.map_err(err)?.map(|i| self.row(i)));
+        }
         let cb = Callback::new(test)?;
         let me = Arc::clone(&self.inner);
         let found = self
@@ -661,16 +666,22 @@ impl PyTimeSeries {
         Ok(cb.finish(found)?.map(|i| self.row(i)))
     }
 
-    /// Whether `test(row)` is true for some row.
-    fn some(&self, test: &Bound<'_, PyAny>) -> PyResult<bool> {
+    /// Whether `test(row)` is true for some row (`test` may be an `Expr`).
+    fn some(&self, py: Python<'_>, test: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Some(e) = crate::expr::as_expr(test) {
+            return py.detach(|| self.inner.some_expr(&e)).map_err(err);
+        }
         let cb = Callback::new(test)?;
         let me = Arc::clone(&self.inner);
         let out = self.inner.some(|r| row_test(&cb, &me, r));
         cb.finish(out)
     }
 
-    /// Whether `test(row)` is true for every row.
-    fn every(&self, test: &Bound<'_, PyAny>) -> PyResult<bool> {
+    /// Whether `test(row)` is true for every row (`test` may be an `Expr`).
+    fn every(&self, py: Python<'_>, test: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Some(e) = crate::expr::as_expr(test) {
+            return py.detach(|| self.inner.every_expr(&e)).map_err(err);
+        }
         let cb = Callback::new(test)?;
         let me = Arc::clone(&self.inner);
         let out = self.inner.every(|r| row_test(&cb, &me, r));
@@ -757,8 +768,15 @@ impl PyTimeSeries {
     }
 
     /// Add (or replace) a value column from a list, its kind taken from
-    /// the values.
+    /// the values, or from an `Expr` (an optional column of the
+    /// expression's kind; `fill` fills gaps here).
     fn with_column(&self, py: Python<'_>, name: &str, values: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Some(e) = crate::expr::as_expr(values) {
+            return py
+                .detach(|| self.inner.with_column_expr(name, &e))
+                .map(Self::wrap)
+                .map_err(err);
+        }
         let column = column_from_values(name, values)?;
         py.detach(|| self.inner.with_column(column))
             .map(Self::wrap)
@@ -767,7 +785,16 @@ impl PyTimeSeries {
 
     /// Apply `f` to every value of `column` (gaps stay gaps). `f` takes
     /// and returns a float, a str, a bool or a list, as the column holds.
+    ///
+    /// `f` may be an `Expr` of the column's kind, which may read other
+    /// columns: `map("v", col("v") / col("w"))`. A gap stays a gap.
     fn map(&self, py: Python<'_>, column: &str, f: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Some(e) = crate::expr::as_expr(f) {
+            return py
+                .detach(|| self.inner.map_expr(column, &e))
+                .map(Self::wrap)
+                .map_err(err);
+        }
         let cb = Callback::new(f)?;
         let kind = self.inner.column(column).py_err()?.kind();
         let s = &*self.inner;
@@ -879,8 +906,53 @@ impl PyTimeSeries {
         }))
     }
 
-    /// The rows for which `keep(row)` is true.
+    /// Several columns at once (pond-ts `mapColumns`): `{column: f}` where
+    /// each `f` is an `Expr` or a function as for `map`. Every expression
+    /// reads the columns as they were before any mapping, so
+    /// `{"a": col("a") * 2, "b": col("b") / col("a")}` divides by the old
+    /// `a`. A gap stays a gap.
+    fn map_columns(&self, py: Python<'_>, mapping: &Bound<'_, PyDict>) -> PyResult<Self> {
+        let mut exprs = Vec::new();
+        let mut fns = Vec::new();
+        for (k, v) in mapping.iter() {
+            let column: String = k.extract()?;
+            match crate::expr::as_expr(&v) {
+                Some(e) => exprs.push((column, e)),
+                None => fns.push((column, v)),
+            }
+        }
+        let mut out = if exprs.is_empty() {
+            if fns.is_empty() {
+                return Err(crate::PondErrorPy::new_err(
+                    "TimeSeries::map_columns: needs at least one column",
+                ));
+            }
+            PyTimeSeries {
+                inner: Arc::clone(&self.inner),
+            }
+        } else {
+            let pairs: Vec<(&str, &pond_rs::Expr)> =
+                exprs.iter().map(|(c, e)| (c.as_str(), e)).collect();
+            py.detach(|| self.inner.map_exprs(&pairs))
+                .map(Self::wrap)
+                .map_err(err)?
+        };
+        // A function reads only its own column, which no expression wrote.
+        for (column, f) in fns {
+            out = out.map(py, &column, &f)?;
+        }
+        Ok(out)
+    }
+
+    /// The rows for which `keep(row)` is true. `keep` may be an `Expr`
+    /// (`col("v") > 0`), which runs with no Python call per row.
     fn filter(&self, py: Python<'_>, keep: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Some(e) = crate::expr::as_expr(keep) {
+            return py
+                .detach(|| self.inner.filter_expr(&e))
+                .map(Self::wrap)
+                .map_err(err);
+        }
         let cb = Callback::new(keep)?;
         let me = Arc::clone(&self.inner);
         let out = py.detach(|| self.inner.filter(|r| row_test(&cb, &me, r)));

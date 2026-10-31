@@ -36,6 +36,11 @@ cpu.free();
   use `TimeSeries.fromJSON`. Range and interval keys in arguments are
   `{ time: t }`, `{ timeRange: [start, end] }` and
   `{ interval: [label, start, end] }`.
+- **Expressions** (`col`, `lit`, `when`, exported here) work as pond-ts's
+  and run inside pond-rs with no JavaScript call per row:
+  `s.filter(col('v').gt(0))`. Accepted by `filter`, `find`, `some`,
+  `every`, `mapColumns` and `withColumn`. On 1M rows a filter takes about
+  14 ms against about 920 ms with a function (and 28 ms in pond-ts).
 - **Functions work as in pond-ts** (`filter`, `find`, `some`, `every`,
   `mapColumns`, `scan`, `collapse`, `asInterval`), and may call the bridge
   themselves. If one throws, the rest of the rows are skipped and that same

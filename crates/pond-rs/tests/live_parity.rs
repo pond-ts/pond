@@ -948,6 +948,10 @@ mod runner {
             }
         };
         match op {
+            "filter" if args[0]["fn"].get("expr").is_some() => {
+                let e = pond_rs::Expr::from_value(&args[0]["fn"]["expr"]).expect("a tree");
+                live.filter_expr(from, &e)
+            }
             "filter" => live.filter(from, predicate(&args[0])),
             "map" => live.map(from, mapper(&args[0])),
             "select" => {

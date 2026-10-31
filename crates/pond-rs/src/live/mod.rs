@@ -1711,6 +1711,53 @@ impl LiveSeries {
         }
     }
 
+    /// As [`LiveSeries::filter`], with a column expression for the test
+    /// (pond-ts live `filter(expression)`): checked against `from`'s
+    /// columns now, then evaluated on each event. A gap fails any
+    /// comparison.
+    ///
+    /// ```
+    /// # use pond_rs::{col, ColumnDef, ColumnKind};
+    /// # use pond_rs::live::LiveSeries;
+    /// let mut live = LiveSeries::new("cpu", vec![
+    ///     ColumnDef::required("time", ColumnKind::Time),
+    ///     ColumnDef::optional("cpu", ColumnKind::Number),
+    /// ])?;
+    /// let root = live.root();
+    /// let busy = live.filter_expr(root, &col("cpu").gt(0.5))?;
+    /// live.push(0, vec![Some(0.9.into())])?;
+    /// live.push(1000, vec![None])?;
+    /// assert_eq!(live.get(busy)?.len(), 1);
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn filter_expr(
+        &mut self,
+        from: impl Into<NodeId>,
+        test: &crate::Expr,
+    ) -> Result<Node<LiveView>> {
+        const CALL: &str = "LiveSeries::filter_expr";
+        let from = from.into();
+        let source = self.source_of(CALL, from)?;
+        let schema = self.schema_of(source);
+        crate::expr::check_test(test, schema.values(), CALL)?;
+        let names: Vec<(String, usize)> = schema
+            .values()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.name.clone(), i))
+            .collect();
+        let test = test.clone();
+        self.filter(from, move |e: &LiveEvent| {
+            let cells = e.values();
+            crate::expr::evaluate_row(&test, &|name: &str| {
+                names
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .and_then(|&(_, i)| cells[i].as_ref())
+            })
+        })
+    }
+
     /// A view of the events of `from` that `keep` accepts. Built over what
     /// `from` holds now, then kept up to date; it drops what `from` evicts.
     pub fn filter<F>(&mut self, from: impl Into<NodeId>, mut keep: F) -> Result<Node<LiveView>>

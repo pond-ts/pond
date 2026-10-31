@@ -810,6 +810,9 @@ pub fn call<C: Callbacks>(
         }
         "withColumn" => {
             let name = a.str(0, "a column name")?;
+            if let Some(e) = callbacks::expr_ref(a.get(1)) {
+                return Ok(Outcome::Series(pond(input.with_column_expr(name, &e?))?));
+            }
             let Some(list) = a.get(1).as_array() else {
                 return Err(a.bad(1, "a list of values"));
             };

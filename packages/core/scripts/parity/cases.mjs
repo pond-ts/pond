@@ -492,6 +492,15 @@ const QUERY_TESTS = [
   { endAtMost: -1 },
   { missing: 'a' },
   { column: 'a', gt: 3 },
+  // column expressions ([PND-EXPR]): the JSON tree pond-ts's `toJSON` gives
+  { expr: { op: 'gt', args: [{ col: 'a' }, { lit: 3 }] } },
+  { expr: { op: 'not', args: [{ op: 'isMissing', args: [{ col: 'a' }] }] } },
+  {
+    expr: {
+      op: 'ge',
+      args: [{ op: 'div', args: [{ col: 'a' }, { col: 'b' }] }, { lit: 0.25 }],
+    },
+  },
 ];
 
 // Picking a time span: each op below over inputs of every key kind. A
@@ -3618,6 +3627,265 @@ const CASES = [
     [{ host: { fn: 'upper' }, up: { fn: 'not' } }],
   ],
   ['mapColumns-error-empty', 'gappy', 'mapColumns', [{}]],
+  // column expressions ([PND-EXPR]): `{ expr: tree }` is pond-ts's JSON
+  // form of an expression, built back with the public builder
+  ...[
+    ['gt', 'gappy', { op: 'gt', args: [{ col: 'a' }, { lit: 3 }] }],
+    ['lit-left', 'gappy', { op: 'lt', args: [{ lit: 3 }, { col: 'a' }] }],
+    ['lit-left-gt', 'gappy', { op: 'gt', args: [{ lit: 3 }, { col: 'a' }] }],
+    ['lit-left-ge', 'gappy', { op: 'ge', args: [{ lit: 3 }, { col: 'a' }] }],
+    ['lit-left-le', 'gappy', { op: 'le', args: [{ lit: 3 }, { col: 'a' }] }],
+    [
+      'text-columns-ne',
+      'mixed',
+      { op: 'ne', args: [{ col: 'host' }, { col: 'site' }] },
+    ],
+    [
+      'not-keeps-gaps',
+      'gappy',
+      { op: 'not', args: [{ op: 'gt', args: [{ col: 'a' }, { lit: 3 }] }] },
+    ],
+    ['ne-number', 'gappy', { op: 'ne', args: [{ col: 'a' }, { col: 'b' }] }],
+    [
+      'div-by-zero',
+      'mixed',
+      {
+        op: 'gt',
+        args: [
+          {
+            op: 'div',
+            args: [{ lit: 1 }, { op: 'sub', args: [{ col: 'v' }, { lit: 2 }] }],
+          },
+          { lit: 0 },
+        ],
+      },
+    ],
+    [
+      'arith',
+      'gappy',
+      {
+        op: 'le',
+        args: [
+          {
+            op: 'add',
+            args: [
+              { op: 'mul', args: [{ col: 'a' }, { lit: 2 }] },
+              { op: 'neg', args: [{ op: 'abs', args: [{ col: 'b' }] }] },
+            ],
+          },
+          { lit: -5 },
+        ],
+      },
+    ],
+    [
+      'fill',
+      'gappy',
+      {
+        op: 'gt',
+        args: [{ op: 'fill', args: [{ col: 'a' }, { col: 'b' }] }, { lit: 5 }],
+      },
+    ],
+    [
+      'eq-text',
+      'mixed',
+      { op: 'eq', args: [{ col: 'site' }, { lit: 'east' }] },
+    ],
+    [
+      'ne-text-gap',
+      'mixed',
+      { op: 'ne', args: [{ col: 'host' }, { lit: 'h5' }] },
+    ],
+    [
+      'text-order',
+      'mixed',
+      { op: 'gt', args: [{ col: 'host' }, { lit: 'h3' }] },
+    ],
+    [
+      'text-columns',
+      'mixed',
+      { op: 'lt', args: [{ col: 'host' }, { col: 'site' }] },
+    ],
+    ['empty-text', 'mixed', { op: 'eq', args: [{ col: 'host' }, { lit: '' }] }],
+    [
+      'in-text',
+      'mixed',
+      { op: 'in', args: [{ col: 'host' }], values: ['h5', 'h10', ''] },
+    ],
+    [
+      'in-number',
+      'mixed',
+      { op: 'in', args: [{ col: 'v' }], values: [0, 1.5, -0] },
+    ],
+    ['bool-column', 'mixed', { col: 'up' }],
+    ['bool-eq', 'mixed', { op: 'eq', args: [{ col: 'up' }, { lit: false }] }],
+    [
+      'and-or',
+      'mixed',
+      {
+        op: 'or',
+        args: [
+          {
+            op: 'and',
+            args: [
+              { col: 'up' },
+              { op: 'gt', args: [{ col: 'v' }, { lit: 1 }] },
+            ],
+          },
+          { op: 'isMissing', args: [{ col: 'host' }] },
+        ],
+      },
+    ],
+    [
+      'when',
+      'mixed',
+      {
+        op: 'eq',
+        args: [
+          {
+            op: 'when',
+            args: [{ col: 'up' }, { col: 'site' }, { col: 'host' }],
+          },
+          { lit: 'east' },
+        ],
+      },
+    ],
+    [
+      'error-unknown-column',
+      'gappy',
+      { op: 'gt', args: [{ col: 'zz' }, { lit: 0 }] },
+    ],
+    ['error-kind', 'mixed', { op: 'gt', args: [{ col: 'site' }, { lit: 0 }] }],
+    [
+      'error-not-boolean',
+      'gappy',
+      { op: 'add', args: [{ col: 'a' }, { lit: 1 }] },
+    ],
+    [
+      'error-in-kind',
+      'mixed',
+      { op: 'in', args: [{ col: 'host' }], values: ['h5', 1] },
+    ],
+  ].map(([id, input, expr]) => [
+    `filter-expr-${id}`,
+    input,
+    'filter',
+    [{ expr }],
+  ]),
+  [
+    'mapColumns-expr',
+    'gappy',
+    'mapColumns',
+    [
+      {
+        a: {
+          expr: {
+            op: 'add',
+            args: [
+              { op: 'mul', args: [{ col: 'a' }, { lit: 1.8 }] },
+              { lit: 32 },
+            ],
+          },
+        },
+        b: { expr: { op: 'div', args: [{ col: 'b' }, { col: 'a' }] } },
+      },
+    ],
+  ],
+  // A required column stays required when nothing becomes a gap…
+  [
+    'mapColumns-expr-required',
+    'dense',
+    'mapColumns',
+    [{ value: { expr: { op: 'mul', args: [{ col: 'value' }, { lit: 2 }] } } }],
+  ],
+  // …and an overflow turns cells into gaps ([PND-MAPREQ] in pond-ts).
+  [
+    'mapColumns-expr-overflow',
+    'dense',
+    'mapColumns',
+    [
+      {
+        value: {
+          expr: {
+            op: 'add',
+            args: [
+              { op: 'mul', args: [{ col: 'value' }, { lit: 1e308 }] },
+              { lit: 1e308 },
+            ],
+          },
+        },
+      },
+    ],
+  ],
+  [
+    'mapColumns-expr-fill-keeps-gap',
+    'gappy',
+    'mapColumns',
+    [{ a: { expr: { op: 'fill', args: [{ col: 'a' }, { lit: 0 }] } } }],
+  ],
+  [
+    'mapColumns-expr-text-bool',
+    'mixed',
+    'mapColumns',
+    [
+      {
+        host: {
+          expr: {
+            op: 'when',
+            args: [
+              { op: 'eq', args: [{ col: 'host' }, { lit: 'h5' }] },
+              { lit: 'five' },
+              { col: 'host' },
+            ],
+          },
+        },
+        up: { expr: { op: 'not', args: [{ col: 'up' }] } },
+      },
+    ],
+  ],
+  [
+    'mapColumns-expr-error-kind',
+    'mixed',
+    'mapColumns',
+    [{ v: { expr: { col: 'site' } } }],
+  ],
+  [
+    'withColumn-expr-number',
+    'gappy',
+    'withColumn',
+    ['r', { expr: { op: 'div', args: [{ col: 'a' }, { col: 'b' }] } }],
+  ],
+  [
+    'withColumn-expr-fill',
+    'gappy',
+    'withColumn',
+    ['a0', { expr: { op: 'fill', args: [{ col: 'a' }, { lit: 0 }] } }],
+  ],
+  [
+    'withColumn-expr-boolean',
+    'mixed',
+    'withColumn',
+    ['pos', { expr: { op: 'gt', args: [{ col: 'v' }, { lit: 1 }] } }],
+  ],
+  [
+    'withColumn-expr-text',
+    'mixed',
+    'withColumn',
+    [
+      'label',
+      {
+        expr: {
+          op: 'when',
+          args: [{ col: 'up' }, { lit: 'on' }, { lit: 'off' }],
+        },
+      },
+    ],
+  ],
+  [
+    'withColumn-expr-error-name',
+    'gappy',
+    'withColumn',
+    ['a', { expr: { col: 'b' } }],
+  ],
   // withColumn: append a number column; `null` is a gap
   [
     'withColumn-gappy',
@@ -4511,11 +4779,35 @@ const CASES = [
   ...VALUE_AXIS_CASES,
 ];
 
+// The pond-ts module under test, for `exprOf`; set by buildFixture /
+// buildLiveFixture through `usePond`.
+let POND;
+export function usePond(pond) {
+  POND = pond;
+}
+
+/**
+ * A pond-ts column expression from its JSON tree, built with the public
+ * builder (`col`, `lit`, `when` and the methods), so the fixture checks the
+ * builder too.
+ */
+export function exprOf(tree) {
+  if ('col' in tree) return POND.col(tree.col);
+  if ('lit' in tree) return POND.lit(tree.lit);
+  const args = tree.args.map(exprOf);
+  if (tree.op === 'when') return POND.when(...args);
+  if (tree.op === 'in') return args[0].in(tree.values);
+  return args[0][tree.op](...args.slice(1));
+}
+
 /**
  * The closures a case can name, as `{ fn: spec }`. pond-rs's harness builds
  * the same closure from the same spec.
  */
 export function closure(spec) {
+  if (spec && typeof spec === 'object' && 'expr' in spec) {
+    return exprOf(spec.expr);
+  }
   if (spec === 'rangeBegin') return (r) => r.begin();
   if (spec === 'rangeEnd') return (r) => r.end();
   if (spec === 'rowLabel') return (_r, i) => `row${i}`;
@@ -4760,6 +5052,7 @@ export function labelledSeries(pond) {
 }
 
 export function buildFixture(pond) {
+  POND = pond;
   const { TimeSeries, Sequence } = pond;
   const series = (
     name,
@@ -5159,9 +5452,13 @@ export function buildFixture(pond) {
     // withColumn's values: JSON has no `undefined`, so `null` marks a gap.
     if (Array.isArray(arg)) return arg.map((v) => (v === null ? undefined : v));
     if (arg && typeof arg === 'object' && 'fn' in arg) return closure(arg.fn);
-    // mapColumns: { column: { fn } }. Only a mapping whose every value is a
-    // closure spec, so an options object is never touched.
-    const isClosure = (v) => v && typeof v === 'object' && 'fn' in v;
+    if (arg && typeof arg === 'object' && 'expr' in arg)
+      return exprOf(arg.expr);
+    // mapColumns: { column: { fn } } or { column: { expr } }. Only a mapping
+    // whose every value is one of those, so an options object is never
+    // touched.
+    const isClosure = (v) =>
+      v && typeof v === 'object' && ('fn' in v || 'expr' in v);
     if (
       arg &&
       typeof arg === 'object' &&

@@ -139,6 +139,9 @@ jobs:
       - name: Inputs the fixture does not cover
         run: node packages/rs/test/inputs.mjs
 
+      - name: Expressions the fixture does not cover
+        run: node packages/rs/test/expr.mjs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest
