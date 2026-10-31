@@ -33,5 +33,40 @@ jobs:
       - name: Verify package
         run: npm run verify
 
+      # @pond-ts/rs (packages/rs) is not an npm workspace, so contributors
+      # need no Rust for `npm ci` / `npm run verify`. It is built and tested
+      # here, before anything is published, and published after the
+      # workspaces with the same version.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Must match the wasm-bindgen version crates/pond-wasm pins.
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Check @pond-ts/rs has pond-ts's version
+        run: |
+          rs=$(node -p "require('./packages/rs/package.json').version")
+          core=$(node -p "require('./packages/core/package.json').version")
+          if [ "$rs" != "$core" ]; then
+            echo "@pond-ts/rs is $rs but pond-ts is $core; bump them together"
+            exit 1
+          fi
+
+      - name: Build @pond-ts/rs
+        run: packages/rs/build.sh
+
+      - name: Test @pond-ts/rs
+        run: npm test
+        working-directory: packages/rs
+
       - name: Publish to npm
         run: npm publish --access public --provenance --workspaces
+
+      - name: Publish @pond-ts/rs to npm
+        run: npm publish --access public --provenance
+        working-directory: packages/rs

@@ -4,6 +4,9 @@ title: Finance studies
 sidebar_position: 5.5
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Finance studies
 
 A study is a calculation traders run over price bars: a moving average, a
@@ -42,6 +45,9 @@ within 5e-10, all 220 of them.
 You describe a study with `Study::period(n)`, then chain `.column(...)` and
 `.output(...)` if you need them. Calls chain too:
 
+<Tabs groupId="language" queryString>
+<TabItem value="rust" label="Rust" default>
+
 ```rust
 use pond_rs::financial::Study;
 use pond_rs::{Column, TimeSeries};
@@ -66,6 +72,51 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+```js
+import assert from 'node:assert/strict';
+import { TimeSeries } from '@pond-ts/rs';
+
+const minute = 60_000;
+const bars = new TimeSeries({
+  name: 'bars',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'close', kind: 'number' },
+  ],
+  rows: [
+    [0, 10],
+    [minute, 11],
+    [2 * minute, 12],
+    [3 * minute, 14],
+  ],
+});
+
+// @pond-ts/financial's names and options; one method per study.
+const withSma = bars.sma({ period: 2 });
+const out = withSma.ema({ period: 3, output: 'ema3' });
+
+const { rows } = out.toJSON({ rowFormat: 'object' });
+assert.deepEqual(
+  rows.map((r) => r.sma),
+  [null, 10.5, 11.5, 13],
+);
+// Gaps until 3 bars have been read; then 10 → 10.5 → 11.25 → 12.625.
+assert.deepEqual(
+  rows.map((r) => r.ema3),
+  [null, null, 11.25, 12.625],
+);
+
+for (const s of [out, withSma, bars]) s.free();
+```
+
+In JavaScript (`@pond-ts/rs`) every study is a method with `@pond-ts/financial`'s name and options, as `@pond-ts/financial/fluent` mounts them, or `s.study(name, options)`; `studies()` and `studyInfo(name)` give the catalog.
+
+</TabItem>
+</Tabs>
 
 ## Moving averages
 

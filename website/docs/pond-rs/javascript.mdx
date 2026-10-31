@@ -1,0 +1,128 @@
+---
+id: javascript
+title: From JavaScript
+sidebar_position: 7.5
+description: "@pond-ts/rs is pond-rs compiled to WebAssembly, with pond-ts's method names, for Node and browsers. Install it, set up a bundler, and see where it differs from pond-ts."
+---
+
+# From JavaScript: `@pond-ts/rs`
+
+`@pond-ts/rs` is pond-rs compiled to WebAssembly and called with pond-ts's
+method names and argument shapes. Code written for pond-ts mostly runs as
+is; the work happens in Rust, with the same answers as pond-ts, to the bit
+(pond-ts's own test cases run through it in CI). It has pond-ts's version
+number and is released with every pond-ts release.
+
+```sh
+npm install @pond-ts/rs
+```
+
+## In Node
+
+Node 20 or newer. Import it like any ES module; the WebAssembly is loaded
+while the import runs, so there is nothing to wait for:
+
+```js
+import { TimeSeries, Sequence, col } from '@pond-ts/rs';
+
+const cpu = new TimeSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+  ],
+  rows: [
+    [0, 0.31],
+    [60_000, 0.44],
+    [120_000, 0.52],
+  ],
+});
+const busy = cpu.filter(col('value').gt(0.4)); // runs inside pond-rs
+const perTwoMinutes = cpu.aggregate(Sequence.every('2m'), { value: 'avg' });
+console.log(busy.length, perTwoMinutes.toJSON().rows);
+// 2 [ [ [ 0, 0, 120000 ], 0.375 ], [ [ 120000, 120000, 240000 ], 0.52 ] ]
+
+for (const s of [busy, perTwoMinutes, cpu]) s.free();
+```
+
+## In a browser
+
+The same import works in a browser, with the same API. There the package
+fetches and compiles its `.wasm` file with a top-level `await`, so the
+import resolves once it is ready; nothing has to be called first. Which
+loader runs is picked by the `node` export condition: bundlers building
+for the browser take the browser one.
+
+- **Vite**: top-level `await` needs a 2022 target, and the package must
+  not be pre-bundled (pre-bundling loses the `.wasm` file):
+
+  ```js
+  // vite.config.js
+  export default {
+    build: { target: 'es2022' },
+    optimizeDeps: { exclude: ['@pond-ts/rs'] },
+  };
+  ```
+
+  `vite build` then copies the `.wasm` file into `dist/assets`.
+
+- **webpack 5, Parcel, Rollup**: they understand
+  `new URL('./pkg/pond_wasm_bg.wasm', import.meta.url)` and copy the
+  file; webpack 5 has top-level `await` on by default.
+- **esbuild**: bundle with `--format=esm --target=es2022`, then copy
+  `node_modules/@pond-ts/rs/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
+  (esbuild leaves the `new URL` as is, so the file is looked for next to
+  the bundle).
+- **No bundler**: serve `node_modules/@pond-ts/rs` and map two names in
+  an import map, `"@pond-ts/rs"` to its `index.js` and `"#wasm"` to
+  its `wasm.browser.js`.
+
+The `.wasm` file is about 7.5 MB, 1.4 MB with brotli (which most
+servers and CDNs apply to it). Serve it as `application/wasm` so the
+browser compiles it while it downloads.
+
+**Content Security Policy.** Compiling WebAssembly needs
+`'wasm-unsafe-eval'` in `script-src`. `toJSON()` writes its row loop
+with `new Function` where that is allowed; under a policy without
+`'unsafe-eval'` it uses a plain loop instead, with the same output, about
+as fast as pond-ts's. Both are tested in headless Chromium, the second
+under `script-src 'self' 'wasm-unsafe-eval'`.
+
+## How it differs from pond-ts
+
+The full list is in the package's
+[README](https://github.com/pond-ts/pond/tree/main/packages/rs#readme).
+The ones you meet first:
+
+- **Free what you make.** A series lives in WebAssembly memory, which the
+  garbage collector cannot see. Call `free()` when done with it. A
+  finalizer frees forgotten series eventually, but WebAssembly memory never
+  shrinks, so do not rely on it. Freeing a `LiveSeries` frees every view
+  built on it.
+- **Times are milliseconds.** Rows take numbers for times; for times
+  written as text, use `Time.parse` or `TimeSeries.fromJSON`.
+- **Prefer expressions to functions.** `s.filter(col('v').gt(0))` runs
+  inside pond-rs with no JavaScript call per row. A function works too,
+  but each row then crosses into JavaScript and back, which is slower than
+  pond-ts itself (1M rows: a filter with an expression about 11 ms, with a
+  function about 620 ms; pond-ts 25 ms with the expression, 35 ms with the function).
+- **Smaller event and time objects.** Row lookups return `Event`s with
+  `get`, `data`, `key`, `begin`, `end` and `timeRange`, not the
+  rest of pond-ts's `Event` API.
+- **One thread**, and at most about 3.8 GB of memory per page or process.
+- **Error messages** are pond-rs's, so the text differs from pond-ts's,
+  and the error is often a plain `Error` where pond-ts throws a
+  `TypeError` or `RangeError`.
+
+Not included: `@pond-ts/react`, `@pond-ts/charts` and
+`@pond-ts/process`; a series from `@pond-ts/rs` is not a pond-ts
+`TimeSeries`, so pass data between them as JSON: `toJSON()` on one side,
+`TimeSeries.fromJSON` on the other. (`@pond-ts/rs` also reads and writes
+Arrow IPC bytes: `TimeSeries.fromArrow`, `toArrow()`.)
+
+## Speed
+
+Against pond-ts on one million rows, `@pond-ts/rs` is about 3–11× faster
+for studies, 2.6–4.3× for `toJSON`, 2–3.5× for expressions and 1.4–5.5×
+for live series, and much slower wherever a JavaScript function runs once
+per row. The table is on [Performance](./performance#from-javascript).
