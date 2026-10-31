@@ -14,7 +14,8 @@ export interface UseLiveVersionOptions {
    * Minimum interval between React notifications, in ms. The version
    * counter bumps *immediately* on every source change (no buffering);
    * `throttle` only bounds how often React is told to re-render.
-   * `0` notifies synchronously per change. Default 100.
+   * `0` notifies synchronously per change (one push, or one eviction,
+   * is one change). Default 100.
    */
   throttle?: number;
 }
@@ -27,7 +28,8 @@ export interface UseLiveVersionOptions {
  * keyed on the view never re-runs. This hook gives React a
  * monotonically-increasing version that changes (at most once per
  * `throttle`) whenever the source mutates — the missing invalidation
- * trigger. Read columns straight off the live view, keyed on the
+ * trigger. Treat it as an opaque token: compare it, don't count with it
+ * (how far it advances per change is not part of the contract). Read columns straight off the live view, keyed on the
  * returned version:
  *
  * ```tsx
