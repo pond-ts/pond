@@ -1,3 +1,6 @@
+import { Expr } from '../core/expression.js';
+import { livePredicate } from './expression-predicate.js';
+import { onSourceSettle } from './settle.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -213,6 +216,8 @@ export class LiveRollingAggregation<
   readonly #historyMaxEvents: number;
   readonly #historyMaxAgeMs: number;
 
+  readonly #settleSource: unknown;
+
   constructor(
     source: LiveSource<S>,
     window: RollingWindow,
@@ -293,6 +298,7 @@ export class LiveRollingAggregation<
       this.#ingest(source.at(i)!);
     }
 
+    this.#settleSource = source;
     this.#unsubscribe = source.on('event', (event) => {
       this.#ingest(event);
       const val = this.value();
@@ -302,6 +308,23 @@ export class LiveRollingAggregation<
 
   get length(): number {
     return this.#outputEvents.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#settleSource, fn);
+  }
+
+  /**
+   * @internal [PND-REDUCETRIM] Its source's eviction order: a late event
+   * from a `reorder` source comes out keyed in the past, so a view built
+   * on this (and a reduce on that view) can drop a recent arrival.
+   */
+  get _evictionOrder(): 'arrival' | 'sorted' {
+    return (
+      (this.#settleSource as { _evictionOrder?: 'arrival' | 'sorted' })
+        ._evictionOrder ?? 'arrival'
+    );
   }
 
   at(index: number): EventForSchema<Out> | undefined {
@@ -355,7 +378,11 @@ export class LiveRollingAggregation<
 
   // ── View transforms ─────────────────────────────────────────
 
-  filter(predicate: (event: EventForSchema<Out>) => boolean): LiveView<Out> {
+  /** Keeps events that pass `test`: a function, or an expression such as `col('value').gt(0)`. */
+  filter(
+    test: ((event: EventForSchema<Out>) => boolean) | Expr<'boolean' | 'any'>,
+  ): LiveView<Out> {
+    const predicate = livePredicate(test, this.schema);
     return new LiveView(this as any, (event: any) =>
       predicate(event) ? event : undefined,
     );

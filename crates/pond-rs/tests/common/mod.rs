@@ -463,7 +463,11 @@ pub fn cell_number(cell: &Value) -> Option<f64> {
     cell.as_f64()
 }
 
-fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Result<(), String> {
+pub fn compare_cell(
+    expected: &Value,
+    actual: &Value,
+    tolerance: Option<f64>,
+) -> Result<(), String> {
     match (cell_number(expected), cell_number(actual)) {
         (Some(e), Some(a)) => compare_number(e, a, tolerance),
         // An array cell: element by element, so `1` and `1.0` match.

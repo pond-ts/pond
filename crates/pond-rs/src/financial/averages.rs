@@ -7,66 +7,6 @@ use crate::error::{PondError, Result};
 use crate::par;
 use crate::series::TimeSeries;
 
-/// Declares a study's options: a struct whose `Default` is pond-ts's
-/// defaults, one setter per field, `column` for the source and `output` or
-/// `prefix` for the names it writes.
-macro_rules! study_options {
-    (
-        $(#[$meta:meta])*
-        $name:ident, $naming:ident = $default_name:literal {
-            $( $(#[$field_meta:meta])* $field:ident : $ty:ty = $default:expr ),* $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, PartialEq)]
-        pub struct $name {
-            $( $field: $ty, )*
-            column: Option<String>,
-            $naming: Option<String>,
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self {
-                    $( $field: $default, )*
-                    column: None,
-                    $naming: None,
-                }
-            }
-        }
-
-        impl $name {
-            $(
-                $(#[$field_meta])*
-                pub fn $field(mut self, value: $ty) -> Self {
-                    self.$field = value;
-                    self
-                }
-            )*
-
-            /// Read this number column instead of `close`.
-            pub fn column(mut self, name: &str) -> Self {
-                self.column = Some(name.to_string());
-                self
-            }
-
-            #[doc = concat!("Name what the study writes with this ", stringify!($naming), " instead of `", $default_name, "`.")]
-            pub fn $naming(mut self, name: &str) -> Self {
-                self.$naming = Some(name.to_string());
-                self
-            }
-
-            fn source(&self) -> &str {
-                self.column.as_deref().unwrap_or(super::DEFAULT_SOURCE)
-            }
-
-            fn name(&self) -> &str {
-                self.$naming.as_deref().unwrap_or($default_name)
-            }
-        }
-    };
-}
-
 study_options! {
     /// Options for [`TimeSeries::macd`]: EMA spans in bars, fast 12, slow
     /// 26, signal 9; writes `macdLine`, `macdSignal` and `macdHist` (the
@@ -261,7 +201,7 @@ const SPECIAL_K: [(usize, usize, f64); 12] = [
 
 /// The scratch column pond-ts takes the MACD signal over; a series that
 /// already has it is refused, as in pond-ts.
-const MACD_SCRATCH: &str = "__macdLine__";
+pub(super) const MACD_SCRATCH: &str = "__macdLine__";
 
 /// Moving-average studies, as pond-ts's `@pond-ts/financial` functions.
 /// The family's shared rules: averages read from the column are
@@ -324,19 +264,13 @@ impl TimeSeries {
         let output = options.name().to_string();
         self.free_names(CALL, &[&output])?;
         let values = self.study_source(CALL, options.source())?;
-        let (fast, slow) = par::join(
-            || ma_column(&values, options.fast, options.ma),
-            || ma_column(&values, options.slow, options.ma),
+        let out = oscillator_values(
+            &values,
+            options.fast,
+            options.slow,
+            options.ma,
+            options.mode,
         );
-        let out = fast
-            .iter()
-            .zip(&slow)
-            .map(|(&f, &s)| match options.mode {
-                OscillatorMode::Absolute => f - s,
-                OscillatorMode::Percent if s == 0.0 => f64::NAN,
-                OscillatorMode::Percent => (100.0 * (f - s)) / s,
-            })
-            .collect();
         self.study_outputs(CALL, [(output, out)])
     }
 
@@ -724,7 +658,31 @@ fn weighted_rates_chunked(values: &[f64], terms: &[(usize, usize, f64)], chunk: 
     line
 }
 
-fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
+/// The price oscillator's values: the `fast`-bar average less the
+/// `slow`-bar one, in the source's units or as a percent of the slow one
+/// (a gap where that is 0).
+pub(super) fn oscillator_values(
+    values: &[f64],
+    fast: usize,
+    slow: usize,
+    ma: MaType,
+    mode: OscillatorMode,
+) -> Vec<f64> {
+    let (fast, slow) = par::join(
+        || ma_column(values, fast, ma),
+        || ma_column(values, slow, ma),
+    );
+    fast.iter()
+        .zip(&slow)
+        .map(|(&f, &s)| match mode {
+            OscillatorMode::Absolute => f - s,
+            OscillatorMode::Percent if s == 0.0 => f64::NAN,
+            OscillatorMode::Percent => (100.0 * (f - s)) / s,
+        })
+        .collect()
+}
+
+pub(super) fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
     if period == 0 {
         return Err(PondError::InvalidData {
             call,
@@ -734,7 +692,7 @@ fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
     Ok(())
 }
 
-fn shorter(call: &'static str, study: &str, fast: usize, slow: usize) -> Result<()> {
+pub(super) fn shorter(call: &'static str, study: &str, fast: usize, slow: usize) -> Result<()> {
     if fast >= slow {
         return Err(PondError::InvalidData {
             call,

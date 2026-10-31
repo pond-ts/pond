@@ -241,23 +241,38 @@ export interface ChartTheme {
      */
     readonly dash?: readonly number[];
     /**
-     * **Optional per-role overrides** — a small map from a role name to its
-     * `color` (and optionally `fillOpacity` / `dash`), so distinct marks can be
+     * **Optional per-role overrides** — a small map from a role name to any of
+     * `color` / `fillOpacity` / `dash` / `depth`, so distinct marks can be
      * styled at once without splitting the whole register: a `<Baseline
      * role="atm">` green, a `<Marker role="ref">` in another hue, a `<Zone
-     * role="good">` per band of a value-axis scale — each still drawn through
-     * the shared {@link depth} ramp. A mark's `role` resolves
-     * `roles[role] ?? { color, fillOpacity, dash }` (an unknown/unset role is
-     * the base register). Colour stays a **theme** concern — there is no
-     * per-mark colour prop (the one-styling-channel discipline), which is why a
-     * *scale* of bands (AQI categories, HR zones) is a role map and not six
-     * colours at the call site.
+     * role="good">` per band of a value-axis scale. A mark's `role` resolves
+     * each field as `roles[role].field ?? annotation.field` (an unknown/unset
+     * role is the base register). Colour stays a **theme** concern — there is
+     * no per-mark colour prop (the one-styling-channel discipline), which is
+     * why a *scale* of bands (AQI categories, HR zones) is a role map and not
+     * six colours at the call site.
+     *
+     * A role's `depth` replaces the register's ramp for that role — what a
+     * mark is *for* decides how loud it rests, not one alpha for every mark.
+     * The shipped themes define two such roles, named by intent rather than
+     * loudness:
+     *
+     * - **`wash`** — a quiet tint *behind* data (a focus band behind a
+     *   selected lap). Low fill, a faint ramp; it must not compete with the
+     *   trace drawn over it.
+     * - **`argument`** — a mark that *is* the point of the chart (the vaccine
+     *   dates on a measles heat map). A flat ramp, so it stays legible at
+     *   rest while a selected one still steps forward.
+     *
+     * `defaultTheme`'s set no `color`, so both inherit the register hue (and a
+     * theme that recolours the register recolours them too).
      */
     readonly roles?: {
       readonly [role: string]: {
-        readonly color: string;
+        readonly color?: string;
         readonly fillOpacity?: number;
         readonly dash?: readonly number[];
+        readonly depth?: readonly [number, number, number];
       };
     };
   };
@@ -938,6 +953,25 @@ export interface BarStyle {
 }
 
 /**
+ * The annotation role vocabulary the shipped themes carry — see
+ * {@link ChartTheme.annotation | `annotation.roles`}. Named by what the mark is
+ * *for*, so the names stay true when a theme rebalances its levels. No
+ * `color`: each inherits its theme's register hue.
+ *
+ * - `wash` rests at 0.2 (edges) over a 0.06 fill — behind data, never on it.
+ * - `argument` rests at 0.85 — the default 0.4 is right for a mark secondary
+ *   to a line and wrong for one that carries the finding.
+ *
+ * An unrolled mark keeps the register's own `[1, 0.7, 0.4]`.
+ */
+const ANNOTATION_ROLES = {
+  wash: { fillOpacity: 0.06, depth: [0.7, 0.4, 0.2] },
+  argument: { depth: [1, 0.95, 0.85] },
+} as const satisfies NonNullable<
+  NonNullable<ChartTheme['annotation']>['roles']
+>;
+
+/**
  * The neutral default theme. The shared data hue is a cerulean (`#0284c7`)
  * across `line` / `band` / `area` / `scatter` / `box` / candle-rising, chosen
  * to clear the bar palette's *selection* blue (`#3F5BE0`) — the original M1
@@ -1254,6 +1288,7 @@ export const defaultTheme: ChartTheme = {
     spanEdge: '#f0b26b',
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
+    roles: ANNOTATION_ROLES,
   },
   // The in-chart series key: chip-white card, gridline border, axis-label text.
   // The row-chart register — see `ChartTheme.list`. The two band tints are
@@ -1424,6 +1459,12 @@ export const estelaTheme: ChartTheme = {
     color: '#7FE2D2', // --es-reef
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
+    roles: {
+      ...ANNOTATION_ROLES,
+      // estela's focus wash behind a selected lap/split is foam, not reef — a
+      // tint of the data it sits behind, at 7%, rather than a placed mark.
+      wash: { ...ANNOTATION_ROLES.wash, color: '#F1FBF9', fillOpacity: 0.07 },
+    },
   },
   // The in-chart series key on the dark ground: deep panel, abyss-line border.
   legend: {

@@ -325,9 +325,19 @@ pub(crate) fn rolling_deviation_sd(values: &[f64], period: usize) -> (Vec<f64>, 
 /// `avg = (avg * (period - 1) + x) / period`. A later gap makes every value
 /// after it a gap.
 pub(crate) fn wilder_values(values: &[f64], period: usize) -> Vec<f64> {
+    wilder_values_from(values, period, 0)
+}
+
+/// [`wilder_values`] reading from row `start` on (pond-ts `wilderValues`'
+/// `start`): rows before it are skipped like leading gaps.
+pub(crate) fn wilder_values_from(values: &[f64], period: usize, start: usize) -> Vec<f64> {
     let n = values.len();
     let mut out = vec![f64::NAN; n];
-    let first = values.iter().position(|v| !v.is_nan()).unwrap_or(n);
+    let first = values
+        .iter()
+        .skip(start)
+        .position(|v| !v.is_nan())
+        .map_or(n, |k| k + start);
     let seed_at = first.saturating_add(period - 1);
     if seed_at >= n {
         return out;
@@ -823,9 +833,774 @@ pub(crate) fn stochastic_half_smooth(highest: &[f64], lowest: &[f64], values: &[
     out
 }
 
+/// JS `Math.sign(x)`: a NaN gives NaN and a zero keeps its sign (Rust's
+/// `f64::signum` gives 1 for `+0`).
+pub(crate) fn js_sign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
+/// pond-ts `cumulativeValues`: the running total, a gap until the first
+/// value that is not a gap; a gap after that makes every later total a
+/// gap.
+pub(crate) fn cumulative_values(values: &[f64]) -> Vec<f64> {
+    let first = values
+        .iter()
+        .position(|v| !v.is_nan())
+        .unwrap_or(values.len());
+    let mut out = vec![f64::NAN; values.len()];
+    let mut sum = 0.0;
+    for (o, &v) in out[first..].iter_mut().zip(&values[first..]) {
+        sum += v;
+        *o = sum;
+    }
+    out
+}
+
+/// pond-ts `clvValues`: where the close sits in its bar, from -1 (the
+/// low) to +1 (the high); 0 for a bar with no range and a close.
+pub(crate) fn clv_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| clv(high[i], low[i], close[i]))
+        .collect()
+}
+
+/// One row of [`clv_values`].
+#[inline]
+pub(crate) fn clv(high: f64, low: f64, close: f64) -> f64 {
+    let range = high - low;
+    if range == 0.0 {
+        if close.is_nan() { f64::NAN } else { 0.0 }
+    } else {
+        (2.0 * close - high - low) / range
+    }
+}
+
+/// pond-ts `moneyFlowVolumeValues`: [`clv_values`] times the volume.
+pub(crate) fn money_flow_volume_values(
+    high: &[f64],
+    low: &[f64],
+    close: &[f64],
+    volume: &[f64],
+) -> Vec<f64> {
+    let mut clv = clv_values(high, low, close);
+    for (c, v) in clv.iter_mut().zip(volume) {
+        *c *= v;
+    }
+    clv
+}
+
+/// JS `Math.max(a, b)`: a NaN gives NaN, and `+0` beats `-0` (Rust's
+/// `f64::max` drops a NaN and may pick either zero).
+pub(crate) fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a > b || (a == b && b.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// JS `Math.min(a, b)`: a NaN gives NaN, and `-0` beats `+0`.
+pub(crate) fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a < b || (a == b && a.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// JS `Math.log`: V8 computes it with fdlibm's `__ieee754_log` (its
+/// `base::ieee754::log`), which can differ from the system's `f64::ln` in
+/// the last bit. This is that routine, step for step.
+#[allow(clippy::excessive_precision)] // fdlibm's constants, as written there
+pub(crate) fn js_log(x: f64) -> f64 {
+    const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-01;
+    const LN2_LO: f64 = 1.908_214_929_270_587_700_02e-10;
+    const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;
+    const LG1: f64 = 6.666_666_666_666_735_130e-01;
+    const LG2: f64 = 3.999_999_999_940_941_908e-01;
+    const LG3: f64 = 2.857_142_874_366_239_149e-01;
+    const LG4: f64 = 2.222_219_843_214_978_396e-01;
+    const LG5: f64 = 1.818_357_216_161_805_012e-01;
+    const LG6: f64 = 1.531_383_769_920_937_332e-01;
+    const LG7: f64 = 1.479_819_860_511_658_591e-01;
+    let high = |v: f64| (v.to_bits() >> 32) as i32;
+    let mut x = x;
+    let mut hx = high(x);
+    let lx = x.to_bits() as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Below 2^-1022: zero, negative or subnormal.
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= TWO54;
+        hx = high(x);
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000f_ffff;
+    let i = (hx + 0x95f64) & 0x0010_0000;
+    // Normalize x or x / 2: replace the high word.
+    let top = (hx | (i ^ 0x3ff0_0000)) as u32 as u64;
+    x = f64::from_bits((top << 32) | (x.to_bits() & 0xffff_ffff));
+    k += i >> 20;
+    let f = x - 1.0;
+    if (0x000f_ffff & (2 + hx)) < 3 {
+        // |f| < 2^-20.
+        if f == 0.0 {
+            if k == 0 {
+                return 0.0;
+            }
+            let dk = k as f64;
+            return dk * LN2_HI + dk * LN2_LO;
+        }
+        let r = f * f * (0.5 - 0.333_333_333_333_333_33 * f);
+        if k == 0 {
+            return f - r;
+        }
+        let dk = k as f64;
+        return dk * LN2_HI - ((r - dk * LN2_LO) - f);
+    }
+    let s = f / (2.0 + f);
+    let dk = k as f64;
+    let z = s * s;
+    let mut i = hx - 0x6147a;
+    let w = z * z;
+    let j = 0x6b851 - hx;
+    let t1 = w * (LG2 + w * (LG4 + w * LG6));
+    let t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+    i |= j;
+    let r = t2 + t1;
+    if i > 0 {
+        let hfsq = 0.5 * f * f;
+        if k == 0 {
+            f - (hfsq - s * (hfsq + r))
+        } else {
+            dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f)
+        }
+    } else if k == 0 {
+        f - s * (f - r)
+    } else {
+        dk * LN2_HI - ((s * (f - r) - dk * LN2_LO) - f)
+    }
+}
+
+/// JS `Math.log10`: V8's `base::ieee754::log10`, fdlibm's
+/// `__ieee754_log10` (scale to `[1, 2)`, then
+/// `k·log10(2) + log(x)/ln(10)` in split constants), step for step on top
+/// of [`js_log`]. The system `log10` can differ in the last bit.
+// fdlibm's constants, as written there (`IVLN10` is `1 / ln 10`).
+#[allow(clippy::excessive_precision, clippy::approx_constant)]
+pub(crate) fn js_log10(x: f64) -> f64 {
+    const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;
+    const IVLN10: f64 = 4.342_944_819_032_518_166_68e-01;
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-01;
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
+    let high = |v: f64| (v.to_bits() >> 32) as i32;
+    let mut x = x;
+    let mut hx = high(x);
+    let lx = x.to_bits() as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Below 2^-1022: zero, negative or subnormal.
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= TWO54;
+        hx = high(x);
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32) & 0x8000_0000) >> 31;
+    let top = ((hx & 0x000f_ffff) as u32 | ((0x3ff - i) << 20)) as u64;
+    let y = f64::from(k + i as i32);
+    x = f64::from_bits((top << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * js_log(x);
+    z + y * LOG10_2HI
+}
+
+/// JS `Math.atan`: V8's `base::ieee754::atan`, fdlibm's `atan` (reduce to
+/// one of five intervals, then an odd polynomial), step for step. The
+/// system `atan` can differ in the last bit.
+#[allow(clippy::excessive_precision, clippy::approx_constant)] // fdlibm's constants
+pub(crate) fn js_atan(x: f64) -> f64 {
+    const ATANHI: [f64; 4] = [
+        4.636_476_090_008_060_935_15e-01,
+        7.853_981_633_974_482_789_99e-01,
+        9.827_937_232_473_290_540_82e-01,
+        1.570_796_326_794_896_558_00e+00,
+    ];
+    const ATANLO: [f64; 4] = [
+        2.269_877_745_296_168_709_24e-17,
+        3.061_616_997_868_383_017_93e-17,
+        1.390_331_103_123_099_845_16e-17,
+        6.123_233_995_736_766_035_87e-17,
+    ];
+    const AT: [f64; 11] = [
+        3.333_333_333_333_293_180_27e-01,
+        -1.999_999_999_987_648_324_76e-01,
+        1.428_571_427_250_346_637_11e-01,
+        -1.111_111_040_546_235_578_80e-01,
+        9.090_887_133_436_506_561_96e-02,
+        -7.691_876_205_044_829_994_95e-02,
+        6.661_073_137_387_531_206_69e-02,
+        -5.833_570_133_790_573_486_45e-02,
+        4.976_877_994_615_932_360_17e-02,
+        -3.653_157_274_421_691_552_70e-02,
+        1.628_582_011_536_578_236_23e-02,
+    ];
+    let hx = (x.to_bits() >> 32) as i32;
+    let ix = hx & 0x7fff_ffff;
+    let mut x = x;
+    let id: i32;
+    if ix >= 0x4410_0000 {
+        // |x| >= 2^66, or NaN.
+        if x.is_nan() {
+            return x + x;
+        }
+        return if hx > 0 {
+            ATANHI[3] + ATANLO[3]
+        } else {
+            -ATANHI[3] - ATANLO[3]
+        };
+    }
+    if ix < 0x3fdc_0000 {
+        // |x| < 0.4375.
+        if ix < 0x3e40_0000 {
+            // |x| < 2^-27.
+            return x;
+        }
+        id = -1;
+    } else {
+        x = x.abs();
+        if ix < 0x3ff3_0000 {
+            if ix < 0x3fe6_0000 {
+                id = 0;
+                x = (2.0 * x - 1.0) / (2.0 + x);
+            } else {
+                id = 1;
+                x = (x - 1.0) / (x + 1.0);
+            }
+        } else if ix < 0x4003_8000 {
+            id = 2;
+            x = (x - 1.5) / (1.0 + 1.5 * x);
+        } else {
+            id = 3;
+            x = -1.0 / x;
+        }
+    }
+    let z = x * x;
+    let w = z * z;
+    let s1 = z * (AT[0] + w * (AT[2] + w * (AT[4] + w * (AT[6] + w * (AT[8] + w * AT[10])))));
+    let s2 = w * (AT[1] + w * (AT[3] + w * (AT[5] + w * (AT[7] + w * AT[9]))));
+    if id < 0 {
+        return x - x * (s1 + s2);
+    }
+    let id = id as usize;
+    let z = ATANHI[id] - ((x * (s1 + s2) - ATANLO[id]) - x);
+    if hx < 0 { -z } else { z }
+}
+
+/// pond-ts `barRangeValues`: `high - low` for every row.
+pub(crate) fn bar_range_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| h - l).collect()
+}
+
+/// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
+pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| true_range_at(high, low, close, i))
+        .collect()
+}
+
+/// One change split into its rise (`d` when above zero, else 0) and its
+/// fall (`-d` when below zero, else 0); a gap in both where `d` is a gap.
+pub(crate) fn leg(d: f64) -> (f64, f64) {
+    if d.is_nan() {
+        (d, d)
+    } else {
+        (
+            if d > 0.0 { d } else { 0.0 },
+            if d < 0.0 { -d } else { 0.0 },
+        )
+    }
+}
+
+/// pond-ts `upDownLegValues`: [`leg`] for every change, in one pass.
+pub(crate) fn up_down_legs(deltas: impl ExactSizeIterator<Item = f64>) -> (Vec<f64>, Vec<f64>) {
+    let mut up = Vec::with_capacity(deltas.len());
+    let mut down = Vec::with_capacity(deltas.len());
+    for d in deltas {
+        let (u, w) = leg(d);
+        up.push(u);
+        down.push(w);
+    }
+    (up, down)
+}
+
+/// Row-to-row change: a gap on row 0, then `v[i] - v[i - 1]`.
+pub(crate) fn deltas(values: &[f64]) -> impl ExactSizeIterator<Item = f64> + '_ {
+    (0..values.len()).map(|i| {
+        if i == 0 {
+            f64::NAN
+        } else {
+            values[i] - values[i - 1]
+        }
+    })
+}
+
+/// pond-ts `trueRangeValues` at row `i`: the largest of the bar's range
+/// and the gaps from the previous close; `NaN` on row 0 and wherever an
+/// input is missing.
+fn true_range_at(high: &[f64], low: &[f64], close: &[f64], i: usize) -> f64 {
+    if i == 0 {
+        return f64::NAN;
+    }
+    let previous = close[i - 1];
+    js_max(
+        js_max(high[i] - low[i], (high[i] - previous).abs()),
+        (low[i] - previous).abs(),
+    )
+}
+
+/// pond-ts `atrValues`: Wilder's smoothing ([`wilder_values`]) of the
+/// true range, taking each row's true range as it goes rather than
+/// building the column first (same values, one pass).
+pub(crate) fn atr_values(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<f64> {
+    let n = high.len();
+    let mut out = vec![f64::NAN; n];
+    let range = |i: usize| true_range_at(high, low, close, i);
+    let first = (1..n).find(|&i| !range(i).is_nan()).unwrap_or(n);
+    let seed_at = first.saturating_add(period - 1);
+    if seed_at >= n {
+        return out;
+    }
+    let p = period as f64;
+    let mut sum = 0.0;
+    for i in first..=seed_at {
+        sum += range(i);
+    }
+    let mut avg = sum / p;
+    out[seed_at] = avg;
+    for (i, slot) in out.iter_mut().enumerate().skip(seed_at + 1) {
+        avg = (avg * (p - 1.0) + range(i)) / p;
+        *slot = avg;
+    }
+    out
+}
+
+/// pond-ts `typicalPriceValues`: `(high + low + close) / 3`.
+pub(crate) fn typical_price_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| (high[i] + low[i] + close[i]) / 3.0)
+        .collect()
+}
+
+/// pond-ts `medianPriceValues`: `(high + low) / 2`.
+pub(crate) fn median_price_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| (h + l) / 2.0).collect()
+}
+
+/// pond-ts `MAX_PRIME_INPUT` (`Number.MAX_SAFE_INTEGER`).
+const MAX_PRIME_INPUT: u64 = (1 << 53) - 1;
+
+/// pond-ts `isPrime`, for a whole number up to [`MAX_PRIME_INPUT`].
+fn is_prime(n: u64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if n < 4 {
+        return true;
+    }
+    if n.is_multiple_of(2) || n.is_multiple_of(3) {
+        return false;
+    }
+    let mut f = 5u64;
+    while f * f <= n {
+        if n.is_multiple_of(f) || n.is_multiple_of(f + 2) {
+            return false;
+        }
+        f += 6;
+    }
+    true
+}
+
+/// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+#[cfg(test)]
+pub(crate) fn prime_at_or_above(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    prime_from(x.ceil() as u64)
+}
+
+/// The smallest prime `>= n` (`n` at least 2), or `NaN` past
+/// [`MAX_PRIME_INPUT`].
+fn prime_from(n: u64) -> f64 {
+    (n..=MAX_PRIME_INPUT)
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
+/// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]`.
+#[cfg(test)]
+pub(crate) fn prime_at_or_below(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    prime_to(x.floor() as u64)
+}
+
+/// The largest prime `<= n` (`n` at least 2).
+fn prime_to(n: u64) -> f64 {
+    (2..=n)
+        .rev()
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
+/// pond-ts `nearestPrime`: the prime nearest `x`, the lower one on a tie;
+/// a gap outside the prime ladder (both sides are gaps there, and a
+/// comparison with a gap picks the upper one, as in pond-ts).
+#[cfg(test)]
+pub(crate) fn nearest_prime(x: f64) -> f64 {
+    let below = prime_at_or_below(x);
+    let above = prime_at_or_above(x);
+    if x - below <= above - x { below } else { above }
+}
+
+/// Remembers recent prime searches, keyed by the whole number a search
+/// starts from. Prices revisit the same few whole numbers row after row,
+/// so most rows find their prime here rather than by trial division. The
+/// answers are those of pond-ts `primeAtOrAbove`, `primeAtOrBelow` and
+/// `nearestPrime` (the test-only functions above are their line-by-line
+/// port, kept as the reference a test checks the memo against).
+pub(crate) struct PrimeMemo {
+    above: Vec<(u64, f64)>,
+    below: Vec<(u64, f64)>,
+}
+
+/// `x.floor()` for `x` in `[2, MAX_PRIME_INPUT]`, by truncation to a
+/// signed integer: one instruction, where `floor` and `ceil` are library
+/// calls on x86 cores without SSE4.1 (Rust's default target) and a cast
+/// straight to unsigned takes several. Exact, as every whole number in
+/// that range is a double.
+#[inline]
+fn whole_part(x: f64) -> u64 {
+    x as i64 as u64
+}
+
+/// Slots in each [`PrimeMemo`] table (a power of two).
+const PRIME_MEMO_SLOTS: usize = 1024;
+
+impl PrimeMemo {
+    pub(crate) fn new() -> Self {
+        // No search starts below 2, so key 0 marks an empty slot.
+        PrimeMemo {
+            above: vec![(0, 0.0); PRIME_MEMO_SLOTS],
+            below: vec![(0, 0.0); PRIME_MEMO_SLOTS],
+        }
+    }
+
+    /// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
+    /// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+    pub(crate) fn at_or_above(&mut self, x: f64) -> f64 {
+        if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+            return f64::NAN;
+        }
+        let n = whole_part(x);
+        let n = n + u64::from((n as i64 as f64) < x);
+        let slot = &mut self.above[n as usize & (PRIME_MEMO_SLOTS - 1)];
+        if slot.0 != n {
+            *slot = (n, prime_from(n));
+        }
+        slot.1
+    }
+
+    /// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
+    /// `[2, MAX_PRIME_INPUT]`.
+    pub(crate) fn at_or_below(&mut self, x: f64) -> f64 {
+        if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+            return f64::NAN;
+        }
+        let n = whole_part(x);
+        let slot = &mut self.below[n as usize & (PRIME_MEMO_SLOTS - 1)];
+        if slot.0 != n {
+            *slot = (n, prime_to(n));
+        }
+        slot.1
+    }
+
+    /// pond-ts `nearestPrime`: the prime nearest `x`, the lower one on a
+    /// tie; a gap outside the prime ladder.
+    pub(crate) fn nearest(&mut self, x: f64) -> f64 {
+        let below = self.at_or_below(x);
+        let above = self.at_or_above(x);
+        if x - below <= above - x { below } else { above }
+    }
+}
+
+/// pond-ts `rollingMeanAbsDevValues`: each full, gap-free window's mean
+/// distance from its own mean (a gap elsewhere). O(N·period); rows stand
+/// alone once the means are known, so stretches run on separate cores.
+pub(crate) fn rolling_mean_abs_dev_values(values: &[f64], period: usize) -> Vec<f64> {
+    let mean = rolling_mean_values(values, period);
+    let p = period as f64;
+    let mut out = vec![0.0; values.len()];
+    crate::par::fill_chunks(&mut out, &mut [], 1 << 14, |start, out, _| {
+        for (k, o) in out.iter_mut().enumerate() {
+            let i = start + k;
+            let m = mean[i];
+            if m.is_nan() {
+                *o = f64::NAN;
+                continue;
+            }
+            let mut sum = 0.0;
+            for &v in &values[i + 1 - period..=i] {
+                sum += (v - m).abs();
+            }
+            *o = sum / p;
+        }
+    });
+    out
+}
+
+/// pond-ts `symmetricWeightedValues`: the 4-bar symmetric weighted mean
+/// (weights 1, 2, 2, 1 from the current bar back, over 6); a gap for the
+/// first 3 rows, and a gap in the window gives a gap.
+pub(crate) fn symmetric_weighted_values(values: &[f64]) -> Vec<f64> {
+    const WEIGHTS: [f64; 4] = [1.0, 2.0, 2.0, 1.0];
+    (0..values.len())
+        .map(|i| {
+            if i < 3 {
+                return f64::NAN;
+            }
+            let mut sum = 0.0;
+            for (k, w) in WEIGHTS.iter().enumerate() {
+                sum += w * values[i - k];
+            }
+            sum / 6.0
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// JS `Math.max`: NaN wins, `+0` beats `-0` in either order.
+    #[test]
+    fn js_max_matches_math_max() {
+        assert!(js_max(f64::NAN, 1.0).is_nan());
+        assert!(js_max(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_max(a, b);
+            assert!(m == 0.0 && m.is_sign_positive(), "{a:?} {b:?}");
+        }
+        assert!(js_max(-0.0, -0.0).is_sign_negative());
+        assert_eq!(js_max(-1.0, 2.0), 2.0);
+        assert_eq!(js_max(3.0, 2.0), 3.0);
+    }
+
+    /// JS `Math.min`: NaN wins, `-0` beats `+0` in either order.
+    #[test]
+    fn js_min_matches_math_min() {
+        assert!(js_min(f64::NAN, 1.0).is_nan());
+        assert!(js_min(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_min(a, b);
+            assert!(m == 0.0 && m.is_sign_negative(), "{a:?} {b:?}");
+        }
+        assert!(js_min(0.0, 0.0).is_sign_positive());
+        assert_eq!(js_min(-1.0, 2.0), -1.0);
+        assert_eq!(js_min(3.0, 2.0), 2.0);
+    }
+
+    /// A `-0` change is neither a rise nor a fall: both legs are `+0`, as
+    /// pond-ts's `d > 0 ? d : 0` gives.
+    #[test]
+    fn up_down_legs_split_changes() {
+        let (up, down) = up_down_legs([f64::NAN, 2.0, -3.0, -0.0, 0.0].into_iter());
+        assert!(up[0].is_nan() && down[0].is_nan());
+        assert_eq!((up[1], down[1]), (2.0, 0.0));
+        assert_eq!((up[2], down[2]), (0.0, 3.0));
+        for i in 3..5 {
+            assert!(up[i] == 0.0 && up[i].is_sign_positive(), "up {i}");
+            assert!(down[i] == 0.0 && down[i].is_sign_positive(), "down {i}");
+        }
+    }
+
+    /// `js_log` gives V8's `Math.log` bits. Checked against node on 2M
+    /// values (0 differ; the system `ln` differed on 2%); these are inputs
+    /// where the system `ln` is one bit off V8.
+    #[test]
+    fn js_log_matches_v8() {
+        for (x, expected) in [
+            (0x3fe3b61b4e436ffe_u64, 0xbfdf02b8973ca408_u64),
+            (0x40a3452893a2f8c3, 0x401f3e0aa9bcec18),
+            (0x40aa9d835d743864, 0x4020445c3465a0be),
+            (0x4004c8faecb2f9c3, 0x3fee8dabc63fc0b2),
+            (0x3fd804e64e9be505, 0xbfef5c6c4963f868),
+            (0x3fe73b191af10b2e, 0xbfd47f0d84498a5a),
+        ] {
+            assert_eq!(js_log(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        assert_eq!(js_log(1.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(js_log(0.0), f64::NEG_INFINITY);
+        assert_eq!(js_log(-0.0), f64::NEG_INFINITY);
+        assert!(js_log(-1.0).is_nan() && js_log(f64::NAN).is_nan());
+        assert_eq!(js_log(f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_log(5e-324), -744.4400719213812);
+        assert_eq!(js_log(2.0), std::f64::consts::LN_2);
+    }
+
+    /// `js_log10` gives V8's `Math.log10` bits. Checked against node on 2M
+    /// values (0 differ; the system `log10` differed on 4,111); these are
+    /// prices where the system `log10` is one bit off V8, and values below
+    /// 1 where scaling into `[1, 2)` instead would be.
+    #[test]
+    fn js_log10_matches_v8() {
+        for (x, expected) in [
+            (0x404ef9ee80000000_u64, 0x3ffcac468e0d0b52_u64),
+            (0x4064a807be000000, 0x4001bec2419b9366),
+            (0x403b436b40000000, 0x3ff6f82200bcfc2f),
+            (0x405b9defe8000000, 0x4000588be50e726e),
+            (0x4057a2b9f0000000, 0x3fff9c2b9e709c57),
+            (0x405a704df0000000, 0x400031c426e5334b),
+            // Below 1, where fdlibm scales into [0.5, 1) rather than [1, 2).
+            (0x3febbc6400000000, 0xbfafcc94a77f77ce),
+            (0x3fe3d46a80000000, 0xbfca9a435e71c76b),
+            (0x3fe286c600000000, 0xbfce61bb91084ed2),
+        ] {
+            assert_eq!(js_log10(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        for (x, expected) in [(1.0, 0.0), (10.0, 1.0), (1000.0, 3.0), (1e308, 308.0)] {
+            assert_eq!(js_log10(x).to_bits(), f64::to_bits(expected), "{x}");
+        }
+        assert_eq!(js_log10(0.0), f64::NEG_INFINITY);
+        assert_eq!(js_log10(-0.0), f64::NEG_INFINITY);
+        assert!(js_log10(-1.0).is_nan() && js_log10(f64::NAN).is_nan());
+        assert_eq!(js_log10(f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_log10(5e-324), -323.3062153431158);
+    }
+
+    /// `js_atan` gives V8's `Math.atan` bits. Checked against node on 2M
+    /// values (0 differ; the system `atan` differed on 29,361); these are
+    /// inputs in each of fdlibm's intervals where the system `atan` is one
+    /// bit off V8.
+    #[test]
+    fn js_atan_matches_v8() {
+        for (x, expected) in [
+            (0x3fcbab5a00000000_u64, 0x3fcb4003cbbac7f8_u64),
+            (0xbfdeb92200000000, 0xbfdca4d3ef311f1c),
+            (0xbfe70c2380000000, 0xbfe3f93f458db796),
+            (0x4003874940000000, 0x3ff2e96fea2df3ba),
+            (0x4003dd66c0000000, 0x3ff301d3c840404a),
+            (0xc007239c20000000, 0xbff3ce8b7be24ba8),
+        ] {
+            assert_eq!(js_atan(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        assert_eq!(js_atan(0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(js_atan(-0.0).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(js_atan(1.0), std::f64::consts::FRAC_PI_4);
+        assert_eq!(js_atan(f64::INFINITY), std::f64::consts::FRAC_PI_2);
+        assert_eq!(js_atan(f64::NEG_INFINITY), -std::f64::consts::FRAC_PI_2);
+        assert!(js_atan(f64::NAN).is_nan());
+        assert_eq!(js_atan(1e-9), 1e-9);
+    }
+
+    /// The prime ladder against trial division, and its edges.
+    #[test]
+    fn primes_match_trial_division() {
+        let slow = |n: u64| {
+            n >= 2
+                && (2..n)
+                    .take_while(|d| d * d <= n)
+                    .all(|d| !n.is_multiple_of(d))
+        };
+        for n in 0..5_000 {
+            assert_eq!(is_prime(n), slow(n), "{n}");
+        }
+        assert_eq!(prime_at_or_above(2.0), 2.0);
+        assert_eq!(prime_at_or_above(7.5), 11.0);
+        assert_eq!(prime_at_or_below(7.5), 7.0);
+        assert_eq!(prime_at_or_below(2.5), 2.0);
+        assert!(prime_at_or_below(1.99).is_nan());
+        assert!(prime_at_or_above(f64::INFINITY).is_nan());
+        // The largest prime below 2^53 is 2^53 - 111; above it, none qualify.
+        let largest = ((1u64 << 53) - 111) as f64;
+        assert_eq!(prime_at_or_below(((1u64 << 53) - 1) as f64), largest);
+        assert_eq!(prime_at_or_above(largest - 1.0), largest);
+        assert!(prime_at_or_above(largest + 1.0).is_nan());
+        assert!(prime_at_or_above((1u64 << 53) as f64).is_nan());
+    }
+
+    /// The memo gives the plain searches' answers, through slot clashes
+    /// (keys 1024 apart), revisits, large values and off the ladder.
+    #[test]
+    fn prime_memo_matches_the_plain_searches() {
+        let mut memo = PrimeMemo::new();
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let largest = ((1u64 << 53) - 111) as f64;
+        let mut values = vec![
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -0.0,
+            -3.0,
+            100.99999999999999,
+            101.00000000000001,
+            0.0,
+            1.99,
+            2.0,
+            2.5,
+            3.0,
+            4.0,
+            4_294_967_311.0,
+            largest - 1.0,
+            largest,
+            largest + 1.0,
+            ((1u64 << 53) - 1) as f64,
+        ];
+        for _ in 0..5_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let base = [100.0, 1124.0, 2148.0, 65_521.0][(x % 4) as usize];
+            values.push(base + (x >> 40) as f64 % 50.0 / 4.0);
+        }
+        // Twice over, so the second pass reads remembered answers.
+        for &v in values.iter().chain(&values) {
+            let bits = |a: f64| if a.is_nan() { u64::MAX } else { a.to_bits() };
+            assert_eq!(bits(memo.at_or_above(v)), bits(prime_at_or_above(v)), "{v}");
+            assert_eq!(bits(memo.at_or_below(v)), bits(prime_at_or_below(v)), "{v}");
+            assert_eq!(bits(memo.nearest(v)), bits(nearest_prime(v)), "{v}");
+        }
+    }
 
     /// Noisy input with gaps, runs of gaps, signed zeros, stored
     /// infinities (read as gaps) and values near 1e15, where a sum that kept its history would drift.
@@ -839,8 +1614,8 @@ mod tests {
                 let r = (x % 1_000_003) as f64 / 7.0;
                 match i {
                     _ if (300..340).contains(&i) => f64::NAN,
-                    _ if x % 23 == 0 => f64::NAN,
-                    _ if x % 97 == 0 => -0.0,
+                    _ if x.is_multiple_of(23) => f64::NAN,
+                    _ if x.is_multiple_of(97) => -0.0,
                     _ if i % 1000 == 999 => 0.0,
                     _ if i % 701 == 700 => f64::INFINITY,
                     _ if i % 977 == 976 => f64::NEG_INFINITY,

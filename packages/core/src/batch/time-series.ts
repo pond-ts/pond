@@ -45,6 +45,7 @@ import type {
   ColumnDef,
   RenameSchema,
   RollingAlignment,
+  RollingAppendSchema,
   RollingSchema,
   ColumnValue,
   CustomAggregateReducer,
@@ -158,6 +159,12 @@ import {
   withRowSelection,
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
+import { Expr, type ExprKind } from '../core/expression.js';
+import {
+  columnOf,
+  evaluateStoreExpr,
+  prepareStoreExpr,
+} from './operators/expression.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -174,6 +181,11 @@ import {
 import { LanedSum } from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
+/** The column `withColumn(name, expr)` appends: optional, of the expression's kind. */
+type ExprColumnDef<Name extends string, K extends ExprKind> = ColumnDef<
+  Name,
+  K extends 'any' ? 'number' | 'string' | 'boolean' : K
+> & { readonly required: false };
 type BoundaryLike = EventKey | TimestampInput;
 /**
  * Accepted shape for key-position queries (`bisect`, `includesKey`,
@@ -2121,33 +2133,75 @@ export class TimeSeries<S extends SeriesSchema> {
    * column a mapper result of `NaN` / `±Infinity` is stored as missing
    * (a non-finite number in a number column means missing).
    *
+   * **Expressions** ({@link col}) may replace a function and may read
+   * other columns (`{ w: col('w').add(col('v')) }`), as they were before
+   * mapping. A gap cell stays a gap here too, so `col('v').fill(0)` changes
+   * nothing; use `withColumn('v0', col('v').fill(0))` to fill. The
+   * compiler does not check an expression's kind; a wrong kind throws.
+   *
    * **Multi-entity series:** `mapColumns` is per-cell and stateless, so
    * it is unaffected by entity interleaving (unlike `cumulative` /
    * `diff`); no `partitionBy` scoping is needed.
    */
   mapColumns<const Targets extends ValueColumnNameForSchema<S>>(spec: {
-    [K in Targets]: (
-      value: NonNullable<EventDataForSchema<S>[K]>,
-    ) => NonNullable<EventDataForSchema<S>[K]>;
+    [K in Targets]:
+      | ((
+          value: NonNullable<EventDataForSchema<S>[K]>,
+        ) => NonNullable<EventDataForSchema<S>[K]>)
+      | Expr;
   }): TimeSeries<S> {
     // Column-native (Step 4): the per-cell transform is applied straight
     // off the store's columns in the extracted `mapOp` — no `this.events`
     // materialization, no per-row `Event`. Same kind in/out ⇒ schema is
     // unchanged. The method is a thin delegate.
-    const entries = Object.entries(spec) as Array<[string, ColumnMapper]>;
-    if (entries.length === 0) {
+    const all = Object.entries(spec) as Array<[string, ColumnMapper | Expr]>;
+    if (all.length === 0) {
       throw new Error('mapColumns() requires at least one column');
+    }
+    // Expressions ([PND-EXPR]) read the columns as they were before any
+    // mapping, as each function does; a gap cell stays a gap.
+    const source = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const replaced: Array<[string, ColumnarColumn]> = [];
+    const entries: Array<[string, ColumnMapper]> = [];
+    for (const [name, m] of all) {
+      if (!(m instanceof Expr)) {
+        entries.push([name, m]);
+        continue;
+      }
+      const def = this.schema.find((d, i) => i > 0 && d.name === name);
+      if (def === undefined) continue; // as mapOp: unknown names are ignored
+      const kind = def.kind;
+      if (kind !== 'number' && kind !== 'string' && kind !== 'boolean') {
+        throw new TypeError(
+          `mapColumns: column '${name}' is ${kind}; expressions write number, string and boolean columns`,
+        );
+      }
+      const where = `mapColumns '${name}'`;
+      const target = evaluateStoreExpr(
+        { col: name },
+        source,
+        this.schema,
+        where,
+      );
+      const values = evaluateStoreExpr(
+        m.node,
+        source,
+        this.schema,
+        where,
+        kind,
+      );
+      replaced.push([name, columnOf(values, target)]);
     }
     const { store, schema } = mapOp<S>(
       this.#store.store,
       this.schema,
       new Map(entries),
     );
-    return TimeSeries.#fromTrustedStore(
-      this.name,
-      schema,
-      store as unknown as ColumnarStore<ColumnSchema>,
-    );
+    let out = store as unknown as ColumnarStore<ColumnSchema>;
+    for (const [name, column] of replaced) {
+      out = withColumnReplaced(out, name, column);
+    }
+    return TimeSeries.#fromTrustedStore(this.name, schema, out);
   }
 
   /** Example: `series.asTime({ at: "center" })`. Converts the series key type to `"time"` using the supplied anchor within each event extent. */
@@ -3311,6 +3365,11 @@ export class TimeSeries<S extends SeriesSchema> {
    * Example: `series.diff("requests", { drop: true })`.
    * Drops the first event instead of keeping it with undefined values.
    *
+   * Example: `series.diff("rsi", { output: "rsiChange" })`.
+   * With `output`, the result goes in a new optional `number` column of that
+   * name and the source column is kept as it was (one source column only;
+   * the name must not already exist). Same for `rate` and `pctChange`.
+   *
    * **Multi-entity series:** the "previous event" may belong to a
    * different entity, producing meaningless deltas across entity
    * boundaries. On a series carrying multiple entities (host, region,
@@ -3318,11 +3377,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).diff(...).collect()` to scope per entity.
    * See {@link TimeSeries.partitionBy}.
    */
+  diff<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   diff<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'diff', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  diff(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'diff', columns as never, options);
   }
 
   /**
@@ -3345,11 +3415,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).rate(...).collect()` to scope per entity.
    * See {@link TimeSeries.partitionBy}.
    */
+  rate<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   rate<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'rate', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  rate(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'rate', columns as never, options);
   }
 
   /**
@@ -3366,11 +3447,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).pctChange(...).collect()` to scope per
    * entity. See {@link TimeSeries.partitionBy}.
    */
+  pctChange<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   pctChange<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'pctChange', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  pctChange(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'pctChange', columns as never, options);
   }
 
   // Static private — the brand check is on the class itself, which
@@ -3386,7 +3478,7 @@ export class TimeSeries<S extends SeriesSchema> {
     series: TimeSeries<SX>,
     mode: DiffRateMode,
     columns: Target | readonly Target[],
-    options?: { drop?: boolean },
+    options?: { drop?: boolean; output?: string },
   ): TimeSeries<DiffSchema<SX, Target>> {
     type OutSchema = DiffSchema<SX, Target>;
     // Column-native (Step 4): successive differences are folded straight
@@ -3402,6 +3494,7 @@ export class TimeSeries<S extends SeriesSchema> {
       mode,
       cols as readonly string[],
       options?.drop === true,
+      options?.output,
     );
     return TimeSeries.#fromTrustedStore(
       series.name,
@@ -3883,8 +3976,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * Defaults:
    * - `alignment`: `"trailing"`
    * - `minSamples`: `0` (no gate)
+   * - `append`: `false` (the result holds the key and the outputs only)
    * - sequence-driven only: `sample: "begin"`
    * - sequence-driven only: `range: series.timeRange()`
+   *
+   * `append: true` (event-driven form only) keeps every column of this
+   * series and adds the outputs after them, as the financial studies do, so
+   * a chain can keep reading the source columns:
+   * `series.rolling('10m', { rsi10m: { from: 'rsi', using: 'avg' } }, { append: true })`.
+   * An output may not take the name of an existing column, so the shorthand
+   * form (`{ rsi: 'avg' }`, whose output is the source's own name) is an
+   * error with `append`; name each output instead.
    *
    * `minSamples` suppresses output until the window contains at least
    * that many source events: rows where the count is below the threshold
@@ -3913,7 +4015,20 @@ export class TimeSeries<S extends SeriesSchema> {
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput | { count: number },
     mapping: Mapping,
-    options?: { alignment?: RollingAlignment; minSamples?: number },
+    options: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append: true;
+    },
+  ): TimeSeries<RollingAppendSchema<S, Mapping>>;
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+    window: DurationInput | { count: number },
+    mapping: Mapping,
+    options?: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append?: false;
+    },
   ): TimeSeries<RollingSchema<S, Mapping>>;
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
@@ -3926,7 +4041,51 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     },
   ): TimeSeries<AggregateSchema<S, Mapping>>;
-  rolling(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rolling(...args: any[]): TimeSeries<SeriesSchema> {
+    const first = args[0];
+    const sequenceForm =
+      first instanceof Sequence || first instanceof BoundedSequence;
+    const options = (sequenceForm ? args[3] : args[2]) as
+      | { append?: boolean }
+      | undefined;
+    if (options?.append !== true) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (this.#rolling as any)(...args);
+    }
+    if (sequenceForm) {
+      throw new TypeError(
+        "rolling: append is not supported with a sequence (its rows are the sequence's buckets, not this series' rows)",
+      );
+    }
+    // Append: roll as usual, then put the outputs after this series' own
+    // columns. The rolled series has one row per row of this one, in the
+    // same order, so its columns line up.
+    const { append: _append, ...rest } = options as Record<string, unknown>;
+    void _append;
+    const rolled = this.#rolling(args[0], args[1], rest);
+    let store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const outputs = rolled.schema.slice(1);
+    for (const def of outputs) {
+      if (this.schema.some((c) => c.name === def.name)) {
+        throw new RangeError(
+          `rolling: output column '${def.name}' already exists; with append, give each output a new name ({ newName: { from, using } })`,
+        );
+      }
+      store = withColumnAppended(
+        store,
+        def.name,
+        rolled.#store.store.columns.get(def.name)!,
+      );
+    }
+    const schema = Object.freeze([
+      ...this.schema,
+      ...outputs,
+    ]) as unknown as SeriesSchema;
+    return TimeSeries.#fromTrustedStore(this.name, schema, store);
+  }
+
+  #rolling(
     sequenceOrWindow: SequenceLike | DurationInput | { count: number },
     windowOrMapping: DurationInput | AggregateMap<S>,
     mappingOrOptions?:
@@ -4332,6 +4491,15 @@ export class TimeSeries<S extends SeriesSchema> {
           removeEvent(windowStart);
           windowStart += 1;
         }
+        // [PND-ROLLEMPTY] With the window empty, rows before the lower
+        // bound never entered: step past them instead of adding them below
+        // (a 0 ms window, or one whose float edges round shut, counted them).
+        if (windowStart === windowEnd) {
+          while (windowEnd < rowCount && beginTimes[windowEnd]! < lowerBound) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
+        }
 
         const upperBound = anchor + windowMs;
         while (windowEnd < rowCount && beginTimes[windowEnd]! < upperBound) {
@@ -4359,6 +4527,15 @@ export class TimeSeries<S extends SeriesSchema> {
         ) {
           removeEvent(windowStart);
           windowStart += 1;
+        }
+        // [PND-ROLLEMPTY] With the window empty, rows before the lower
+        // bound never entered: step past them instead of adding them below
+        // (a 0 ms window, or one whose float edges round shut, counted them).
+        if (windowStart === windowEnd) {
+          while (windowEnd < rowCount && beginTimes[windowEnd]! < lowerBound) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
         }
 
         const upperBound = anchor + halfWindow;
@@ -4814,6 +4991,16 @@ export class TimeSeries<S extends SeriesSchema> {
           removeEvent(windowStart);
           windowStart += 1;
         }
+        // [PND-ROLLEMPTY] Skip rows that never entered an empty window.
+        if (windowStart === windowEnd) {
+          while (
+            windowEnd < this.events.length &&
+            sorted[windowEnd]! < anchor
+          ) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
+        }
 
         const upperBound = anchor + windowMs;
         while (
@@ -4831,6 +5018,16 @@ export class TimeSeries<S extends SeriesSchema> {
         ) {
           removeEvent(windowStart);
           windowStart += 1;
+        }
+        // [PND-ROLLEMPTY] Skip rows that never entered an empty window.
+        if (windowStart === windowEnd) {
+          while (
+            windowEnd < this.events.length &&
+            sorted[windowEnd]! < anchor - halfWindow
+          ) {
+            windowEnd += 1;
+          }
+          windowStart = windowEnd;
         }
 
         const upperBound = anchor + halfWindow;
@@ -4914,10 +5111,36 @@ export class TimeSeries<S extends SeriesSchema> {
     );
   }
 
-  /** Example: `series.filter(event => event.get("active"))`. Returns a new series containing only events that match the predicate. */
+  /**
+   * Example: `series.filter(event => event.get("active"))`, or with an
+   * expression, `series.filter(col("value").gt(0))`. Returns a new series
+   * containing only events that match the predicate.
+   *
+   * An expression ({@link col}) runs over whole columns with no per-row
+   * `Event`, so it is several times faster; a gap fails any comparison, as
+   * `undefined > 0` does.
+   */
   filter(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): TimeSeries<S> {
+    if (predicate instanceof Expr) {
+      const keep = this.#matches(predicate, 'filter');
+      const rows = new Int32Array(keep.length);
+      let k = 0;
+      for (let i = 0; i < keep.length; i += 1) {
+        if (keep[i] === 1) rows[k++] = i;
+      }
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        this.schema,
+        withRowSelection(
+          this.#store.store,
+          rows.subarray(0, k),
+        ) as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
     // [PND-FILTERTAKE]: the predicate still sees `Event`s, but the result is
     // built by copying the kept rows out of each column (`withRowSelection`)
     // rather than rebuilding every column from the kept `Event` objects. The
@@ -4947,6 +5170,56 @@ export class TimeSeries<S extends SeriesSchema> {
       [TRUSTED_STORE_SENTINEL]: store,
     };
     return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+  }
+
+  /**
+   * First row where the expression's test is `want` (1 holds, 0 fails),
+   * or -1. Evaluates in growing stretches (1,024 rows, doubling to 65,536)
+   * so an early answer costs little, as with a function.
+   */
+  #firstIndex(expr: Expr, where: string, want: 0 | 1): number {
+    const store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const n = store.length;
+    // Checked once (also for an empty series); each stretch reads only
+    // the columns the expression names, and dictionary tables are built
+    // once for all stretches.
+    const evaluate = prepareStoreExpr(
+      expr.node,
+      store,
+      this.schema,
+      where,
+      'boolean',
+    );
+    let size = 1024;
+    for (
+      let start = 0;
+      start < n;
+      start += size, size = Math.min(size * 2, 65536)
+    ) {
+      const end = Math.min(n, start + size);
+      const v = evaluate(start, end).v as Int8Array;
+      // A gap (-1) fails the test, as `undefined` does in a function.
+      for (let i = 0; i < v.length; i += 1) {
+        if ((v[i] === 1 ? 1 : 0) === want) return start + i;
+      }
+    }
+    return -1;
+  }
+
+  /** Per row, 1 where the true/false expression holds, else 0. */
+  #matches(expr: Expr, where: string): Int8Array {
+    const values = evaluateStoreExpr(
+      expr.node,
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      this.schema,
+      where,
+      'boolean',
+    );
+    // A gap (-1) only comes from a bare boolean column; it fails the
+    // test, as `undefined` does in a function.
+    const v = values.v as Int8Array;
+    for (let i = 0; i < v.length; i += 1) if (v[i] === -1) v[i] = 0;
+    return v;
   }
 
   /**
@@ -5015,8 +5288,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * early in a 10M-row series only pays for the rows it touches.
    */
   find(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): EventForSchema<S> | undefined {
+    if (predicate instanceof Expr) {
+      const i = this.#firstIndex(predicate, 'find', 1);
+      return i < 0
+        ? undefined
+        : (this.#store.eventAt(i) as unknown as EventForSchema<S>);
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5027,8 +5308,13 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.some(event => event.get("healthy"))`. Returns `true` when at least one event matches the predicate. */
   some(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): boolean {
+    if (predicate instanceof Expr) {
+      return this.#firstIndex(predicate, 'some', 1) >= 0;
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5039,8 +5325,13 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.every(event => event.get("healthy"))`. Returns `true` when every event matches the predicate. */
   every(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): boolean {
+    if (predicate instanceof Expr) {
+      return this.#firstIndex(predicate, 'every', 0) < 0;
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5417,7 +5708,40 @@ export class TimeSeries<S extends SeriesSchema> {
     values: ReadonlyArray<number | undefined> | Float64Array,
   ): TimeSeries<
     readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
-  > {
+  >;
+  /**
+   * Example: `series.withColumn('load', col('cpu').div(col('cores')))`.
+   * A new optional column computed from an expression ([PND-EXPR]); its
+   * kind is the expression's (number, string or boolean).
+   */
+  withColumn<const Name extends string, K extends ExprKind>(
+    name: Name,
+    expr: Expr<K>,
+  ): TimeSeries<
+    readonly [S[0], ...ValueColumnsForSchema<S>, ExprColumnDef<Name, K>]
+  >;
+  withColumn<const Name extends string>(
+    name: Name,
+    values: ReadonlyArray<number | undefined> | Float64Array | Expr,
+  ): TimeSeries<SeriesSchema> {
+    if (values instanceof Expr) {
+      const out = evaluateStoreExpr(
+        values.node,
+        this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+        this.schema,
+        `withColumn '${String(name)}'`,
+      );
+      const reshaped = withColumnAppended(
+        this.#store.store,
+        name as string,
+        columnOf(out),
+      );
+      const resultSchema = Object.freeze([
+        ...this.schema,
+        { name, kind: out.kind, required: false },
+      ]) as unknown as SeriesSchema;
+      return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
+    }
     if (values.length !== this.length) {
       throw new RangeError(
         `withColumn: values length ${values.length} does not match series length ${this.length}`,
@@ -5461,13 +5785,7 @@ export class TimeSeries<S extends SeriesSchema> {
       ...this.schema,
       { name, kind: 'number', required: false },
     ]) as unknown as SeriesSchema;
-    return TimeSeries.#fromTrustedStore(
-      this.name,
-      resultSchema,
-      reshaped,
-    ) as unknown as TimeSeries<
-      readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
-    >;
+    return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
   }
 
   /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */

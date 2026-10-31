@@ -6,8 +6,9 @@
 
 mod common;
 
-use common::studies::{STUDIES, call_study};
+use common::studies::call_study;
 use common::{cell_number, compare_number, repo_path};
+use pond_rs::financial::catalog::study_descriptor;
 use pond_rs::{Column, ColumnData, TimeSeries};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -96,14 +97,14 @@ fn to_series(json: &InputJson) -> TimeSeries {
 /// as all gaps (except where core `rolling` throws); pond-rs refuses it, as
 /// it refuses smoothing a text column.
 fn refused(series: &TimeSeries, case: &Case) -> bool {
-    let source = case
-        .options
-        .get("column")
-        .map_or("close", |c| c.as_str().unwrap());
-    !matches!(
-        series.column(source).map(|c| c.kind()),
-        Ok(pond_rs::ColumnKind::Number)
-    )
+    common::studies::sources(&case.study, &case.options)
+        .iter()
+        .any(|source| {
+            !matches!(
+                series.column(source).map(|c| c.kind()),
+                Ok(pond_rs::ColumnKind::Number)
+            )
+        })
 }
 
 fn check(case: &Case, input: &TimeSeries, got: &TimeSeries) -> Result<(), String> {
@@ -159,19 +160,11 @@ fn studies_match_pond_ts() {
         .map(|(name, json)| (name.as_str(), to_series(json)))
         .collect();
     let mut failures = Vec::new();
-    let (mut matched, mut errors, mut refusals, mut unexpressible) = (0, 0, 0, 0);
+    let (mut matched, mut errors, mut refusals) = (0, 0, 0);
     for case in &fixture.cases {
         let label = format!("{} {}", case.id, Value::Object(case.options.clone()));
         let input = &inputs[case.input.as_str()];
-        let Some(got) = call_study(input, &case.study, &case.options) else {
-            unexpressible += 1;
-            if case.error.is_none() {
-                failures.push(format!(
-                    "{label}: pond-ts accepts a call Rust cannot express"
-                ));
-            }
-            continue;
-        };
+        let got = call_study(input, &case.study, &case.options);
         match (&case.expected, &got) {
             (Some(_), Ok(_)) if refused(input, case) => {
                 failures.push(format!("{label}: pond-rs should refuse this source column"));
@@ -189,9 +182,7 @@ fn studies_match_pond_ts() {
             )),
         }
     }
-    println!(
-        "study parity: {matched} matched, {errors} errors agree, {refusals} refused (known), {unexpressible} calls Rust cannot express"
-    );
+    println!("study parity: {matched} matched, {errors} errors agree, {refusals} refused (known)");
     assert!(
         failures.is_empty(),
         "{} of {} cases failed:\n{}",
@@ -206,8 +197,8 @@ fn every_study_is_known() {
     let fixture = load();
     for case in &fixture.cases {
         assert!(
-            STUDIES.contains(&case.study.as_str()),
-            "{}: study '{}' has no arm in call_study()",
+            study_descriptor(&case.study).is_some(),
+            "{}: study '{}' is not in the catalog",
             case.id,
             case.study
         );

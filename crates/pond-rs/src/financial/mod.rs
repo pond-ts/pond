@@ -1,8 +1,19 @@
 //! Technical-analysis studies for price bars (pond-ts `@pond-ts/financial`):
 //! moving averages and the studies built on them (MACD, price oscillator,
-//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), rolling statistics and
-//! the z-score so far, each a method on [`TimeSeries`] that adds its
-//! number columns and keeps every row.
+//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), bands (Bollinger,
+//! Keltner, STARC, ATR, Donchian, high-low, prime number, envelope),
+//! momentum (RSI, stochastics, Williams %R, Chande momentum, momentum,
+//! percent change, intraday momentum, awesome and ultimate oscillators,
+//! CCI, Fisher transform, psychological line, pretty good and prime number
+//! oscillators, QStick, relative vigor, centre of gravity, Chande forecast,
+//! true strength), trend (directional movement, Aroon, vortex, vertical
+//! horizontal filter, random walk index, SuperTrend, parabolic SAR, ATR
+//! trailing stop, ZigZag, Ichimoku, Elder impulse and ray, trend
+//! intensity, RAVI, swing index and its running total),
+//! rolling statistics and the z-score so far, each a method on
+//! [`TimeSeries`] that adds its number columns and keeps every row. Also
+//! trading calendars ([`TradingCalendar`], [`SessionRules`]): the sessions
+//! an exchange trades, their lookups, and session tagging.
 //!
 //! Every study follows the same rules, as in pond-ts:
 //!
@@ -13,6 +24,8 @@
 //!   ([`Macd`], [`Trix`], …): `Default` is pond-ts's defaults, with a
 //!   setter per setting, `column`, and `output` (or `prefix`, for a study
 //!   that writes several columns: `macdLine`, `macdSignal`, `macdHist`).
+//!   A study that reads price bars takes `high`, `low`, `close` (and
+//!   `open`) setters instead of `column` ([`Keltner`], [`Donchian`], …).
 //!   No output may take the name of a column the series already has.
 //! - Periods count rows (bars), not time: a 20-bar average spans a weekend
 //!   gap as easily as a minute.
@@ -37,12 +50,58 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 
+#[macro_use]
+mod options;
 mod averages;
+mod bands;
+mod bivariate;
+mod calendar;
+pub mod catalog;
 mod kernels;
+mod momentum;
+mod price;
+mod regression;
+mod session;
+mod statistics;
+mod trend;
+mod volatility;
+mod volume;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
     PriceOscillator, Rainbow, RainbowOscillator, SchaffTrendCycle, SpecialK, Trix,
+};
+pub use bands::{
+    AtrBands, Bollinger, BollingerBandwidth, BollingerPercentB, Donchian, Envelope, HighLowBands,
+    Keltner, PrimeNumberBands, StarcBands,
+};
+pub use calendar::{
+    DateBound, Session, SessionBreak, SessionRef, SessionRules, Stamped, TagSessions,
+    TradingCalendar, generate_sessions, normalize_sessions,
+};
+pub use momentum::{
+    AwesomeOscillator, CommodityChannelIndex, FisherTransform, IntradayMomentumIndex,
+    PercentChange, PrettyGoodOscillator, PrimeNumberOscillator, Qstick, RelativeVigorIndex,
+    Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
+    WilliamsR,
+};
+pub use price::{AveragePrice, BalanceOfPower, MedianPrice, TypicalPrice, WeightedClose};
+pub use session::{AnchoredVwap, PivotMethod, PivotPoints, SessionAnchor, SessionVwap};
+pub use statistics::{Beta, Correlation, LinearRegression, PerformanceIndex, PriceRelative};
+pub use trend::{
+    AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
+    Ichimoku, ParabolicSar, RandomWalkIndex, Ravi, SuperTrend, SwingIndex, TrendIntensityIndex,
+    Vortex, ZigZag,
+};
+pub use volatility::{
+    Atr, ChaikinVolatility, ChoppinessIndex, GopalakrishnanRangeIndex, HistoricalVolatility,
+    MassIndex, RelativeVolatilityIndex,
+};
+pub use volume::{
+    AccumulationDistribution, ChaikinMoneyFlow, ChaikinOscillator, EaseOfMovement, ForceIndex,
+    Klinger, MarketFacilitationIndex, MoneyFlowIndex, NegativeVolumeIndex, Obv,
+    PositiveVolumeIndex, PriceVolumeTrend, ShinoharaIntensityRatio, TradeVolumeIndex,
+    TwiggsMoneyFlow, VolumeOscillator, Vwap,
 };
 
 use std::borrow::Cow;
@@ -337,6 +396,21 @@ impl TimeSeries {
         let output = study.output_or(default).to_string();
         self.free_names(call, &[&output])?;
         Ok((self.study_source(call, study.source())?, output))
+    }
+
+    /// The price columns a study reads, each named by its option or its
+    /// default.
+    fn price_columns<const N: usize>(
+        &self,
+        call: &'static str,
+        names: [&Option<String>; N],
+        defaults: [&str; N],
+    ) -> Result<[std::borrow::Cow<'_, [f64]>; N]> {
+        let mut out = Vec::with_capacity(N);
+        for (name, default) in names.into_iter().zip(defaults) {
+            out.push(self.study_source(call, name.as_deref().unwrap_or(default))?);
+        }
+        Ok(out.try_into().unwrap_or_else(|_| unreachable!()))
     }
 
     /// Refuses a study output named like a column the series already has.

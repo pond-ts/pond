@@ -740,6 +740,7 @@ it should.
 | Declarative graph authoring / remote sources   | `packages/process/src/plan/` (`fluent.ts`, `source.ts`, `host.ts`)                                |
 | Public exports                                 | `packages/core/src/index.ts`                                                                      |
 | Rust implementation (pond-rs) + parity tests   | `crates/pond-rs/` (tests read `packages/*/test/fixtures/{parity,study-oracle}.json`)              |
+| Python bridge (PyPI `pond-rs`)                 | `crates/pond-py/` (PyO3 over pond-rs; Arrow frames in/out; pytest reads `parity.json`)            |
 | Plan / status / roadmap                        | `PLAN.md`                                                                                         |
 | Process / discipline / release                 | `CLAUDE.md`                                                                                       |
 | Release notes                                  | `CHANGELOG.md`                                                                                    |

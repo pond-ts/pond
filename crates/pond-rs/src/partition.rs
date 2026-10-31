@@ -25,7 +25,7 @@ use crate::grid::{Align, Keep, Materialize};
 use crate::par;
 use crate::reducer::{Agg, Reducer};
 use crate::rolling::{Rolling, RollingOver};
-use crate::rowwise::{Fill, FillLimits, FirstRow};
+use crate::rowwise::{Change, Fill, FillLimits};
 use crate::sequence::Sequence;
 use crate::series::{Column, ColumnKind, Key, Labels, TimeSeries};
 use crate::smooth::{Sample, Smooth};
@@ -45,7 +45,7 @@ pub type PartitionKey = Vec<Option<Value>>;
 ///     Column::required("host", vec!["a", "b", "a", "b"]),
 ///     Column::required("load", vec![1.0, 10.0, 3.0, 40.0]),
 /// ])?;
-/// let change = s.partition_by(&["host"])?.diff(&["load"], FirstRow::Keep)?.collect()?;
+/// let change = s.partition_by(&["host"])?.diff(&["load"])?.collect()?;
 /// // Each host against its own previous row, not the row above.
 /// assert_eq!(change.column("load")?.numbers()?.get(2), Some(2.0));
 /// assert_eq!(change.column("load")?.numbers()?.get(3), Some(30.0));
@@ -121,6 +121,7 @@ impl PartitionedSeries {
         self.parts.len()
     }
 
+    /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }
@@ -180,10 +181,38 @@ impl PartitionedSeries {
         // A step may turn a partition column into an array, which cannot
         // be a key (see `partition_by`).
         refuse_array_keys("PartitionedSeries", &empty, &by_index)?;
-        // With no partitions, any rows `f` made on the empty series have no
-        // key yet, so they are always split.
-        let unchanged =
-            !self.parts.is_empty() && parts.iter().all(|(key, s)| keeps_key(s, &by_index, key));
+        // Every result must give the same columns, and keep the partition
+        // columns (Codex review R06: positions found in the first result
+        // were used unchecked on the rest, and a result missing one
+        // panicked). The kept-key path below skips the merge, so check here.
+        let full: Vec<&TimeSeries> = parts
+            .iter()
+            .map(|p| &p.1)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if full.len() > 1
+            && let Some(why) = mismatch(&full)
+        {
+            return Err(PondError::InvalidData {
+                call: "PartitionedSeries::map",
+                message: format!(
+                    "partitions came back with different columns ({why}); every partition must give the same columns"
+                ),
+            });
+        }
+        let mut unchanged = !self.parts.is_empty();
+        for (key, s) in &parts {
+            let at: Vec<usize> = self
+                .by
+                .iter()
+                .map(|c| s.column_index("PartitionedSeries::map", c))
+                .collect::<Result<_>>()?;
+            // With no partitions, any rows `f` made on the empty series
+            // have no key yet, so they are always split.
+            if unchanged && (at != by_index || !keeps_key(s, &at, key)) {
+                unchanged = false;
+            }
+        }
         if !unchanged {
             // The values moved: split the merged rows again, as pond-ts
             // does, and collect gives those merged rows.
@@ -234,18 +263,33 @@ impl PartitionedSeries {
     }
 
     /// [`TimeSeries::diff`] on each partition.
-    pub fn diff(&self, columns: &[&str], first: FirstRow) -> Result<PartitionedSeries> {
-        self.map(|g| g.diff(columns, first))
+    pub fn diff(&self, columns: &[&str]) -> Result<PartitionedSeries> {
+        self.map(|g| g.diff(columns))
+    }
+
+    /// [`TimeSeries::diff_with`] on each partition.
+    pub fn diff_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
+        self.map(|g| g.diff_with(columns, options.clone()))
     }
 
     /// [`TimeSeries::rate`] on each partition.
-    pub fn rate(&self, columns: &[&str], first: FirstRow) -> Result<PartitionedSeries> {
-        self.map(|g| g.rate(columns, first))
+    pub fn rate(&self, columns: &[&str]) -> Result<PartitionedSeries> {
+        self.map(|g| g.rate(columns))
+    }
+
+    /// [`TimeSeries::rate_with`] on each partition.
+    pub fn rate_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
+        self.map(|g| g.rate_with(columns, options.clone()))
     }
 
     /// [`TimeSeries::pct_change`] on each partition.
-    pub fn pct_change(&self, columns: &[&str], first: FirstRow) -> Result<PartitionedSeries> {
-        self.map(|g| g.pct_change(columns, first))
+    pub fn pct_change(&self, columns: &[&str]) -> Result<PartitionedSeries> {
+        self.map(|g| g.pct_change(columns))
+    }
+
+    /// [`TimeSeries::pct_change_with`] on each partition.
+    pub fn pct_change_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
+        self.map(|g| g.pct_change_with(columns, options.clone()))
     }
 
     /// [`TimeSeries::shift`] on each partition.
@@ -259,13 +303,27 @@ impl PartitionedSeries {
     }
 
     /// [`TimeSeries::fill`] on each partition.
-    pub fn fill(&self, spec: &[(&str, Fill)], limits: &FillLimits) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill(spec, limits))
+    pub fn fill(&self, spec: &[(&str, Fill)]) -> Result<PartitionedSeries> {
+        self.map(|g| g.fill(spec))
+    }
+
+    /// [`TimeSeries::fill_with`] on each partition.
+    pub fn fill_with(
+        &self,
+        spec: &[(&str, Fill)],
+        limits: &FillLimits,
+    ) -> Result<PartitionedSeries> {
+        self.map(|g| g.fill_with(spec, limits))
     }
 
     /// [`TimeSeries::fill_all`] on each partition.
-    pub fn fill_all(&self, fill: Fill, limits: &FillLimits) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill_all(fill.clone(), limits))
+    pub fn fill_all(&self, fill: Fill) -> Result<PartitionedSeries> {
+        self.map(|g| g.fill_all(fill.clone()))
+    }
+
+    /// [`TimeSeries::fill_all_with`] on each partition.
+    pub fn fill_all_with(&self, fill: Fill, limits: &FillLimits) -> Result<PartitionedSeries> {
+        self.map(|g| g.fill_all_with(fill.clone(), limits))
     }
 
     /// [`TimeSeries::rolling`] on each partition. Only the outputs are
@@ -281,14 +339,15 @@ impl PartitionedSeries {
     /// partition columns as [`PartitionedSeries::rolling`] does. A row
     /// held back by [`Rolling::min_samples`] gets a gap there too, so, as
     /// in pond-ts, it moves to the partition with no value on the next
-    /// split.
+    /// split. With [`Rolling::append`] every source column is kept, the
+    /// partition columns included, so nothing is carried.
     pub fn rolling_with(
         &self,
         window: &str,
         aggs: &[Agg],
         options: Rolling,
     ) -> Result<PartitionedSeries> {
-        let aggs = self.with_partition_outputs(aggs);
+        let aggs = self.rolling_outputs(aggs, options);
         self.map(|g| g.rolling_with(window, &aggs, options))
     }
 
@@ -300,7 +359,7 @@ impl PartitionedSeries {
         aggs: &[Agg],
         options: Rolling,
     ) -> Result<PartitionedSeries> {
-        let aggs = self.with_partition_outputs(aggs);
+        let aggs = self.rolling_outputs(aggs, options);
         self.map(|g| g.rolling_rows(rows, &aggs, options))
     }
 
@@ -468,6 +527,17 @@ impl PartitionedSeries {
             let seed = seed ^ i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             g.sample(Sample::Reservoir { size, seed })
         })
+    }
+
+    /// The aggs for a rolling call: as given when appending (the partition
+    /// columns are kept anyway), otherwise with the partition columns
+    /// carried as outputs.
+    fn rolling_outputs(&self, aggs: &[Agg], options: Rolling) -> Vec<Agg> {
+        if options.append {
+            aggs.to_vec()
+        } else {
+            self.with_partition_outputs(aggs)
+        }
     }
 
     fn with_partition_outputs(&self, aggs: &[Agg]) -> Vec<Agg> {
@@ -671,14 +741,14 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                 head.key().kind()
             ));
         }
-        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key()) {
-            if std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label) {
-                return Some(format!(
-                    "series {i} has {} interval labels, series 0 {}",
-                    label_kind(&b.label),
-                    label_kind(&a.label)
-                ));
-            }
+        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key())
+            && std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label)
+        {
+            return Some(format!(
+                "series {i} has {} interval labels, series 0 {}",
+                label_kind(&b.label),
+                label_kind(&a.label)
+            ));
         }
         if s.columns().len() != head.columns().len() {
             return Some(format!(
@@ -697,15 +767,15 @@ fn mismatch(series: &[&TimeSeries]) -> Option<String> {
                     a.kind()
                 ));
             }
-            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data()) {
-                if x.scale() != y.scale() {
-                    return Some(format!(
-                        "decimal column '{}' has scale {} in series {i} but {} in series 0",
-                        a.name(),
-                        y.scale(),
-                        x.scale()
-                    ));
-                }
+            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data())
+                && x.scale() != y.scale()
+            {
+                return Some(format!(
+                    "decimal column '{}' has scale {} in series {i} but {} in series 0",
+                    a.name(),
+                    y.scale(),
+                    x.scale()
+                ));
             }
         }
     }
@@ -884,6 +954,23 @@ mod tests {
     }
 
     #[test]
+    fn map_with_a_missing_partition_column_is_an_error() {
+        // Codex review R06: column positions came from the first result
+        // and were used unchecked on the rest, which panicked.
+        let p = hosts().partition_by(&["host"]).unwrap();
+        let first_keeps = |g: &TimeSeries| {
+            if g.column("host").unwrap().strings().unwrap().get(0) == Some("b") {
+                g.select(&["v", "host"])
+            } else {
+                g.select(&["v"])
+            }
+        };
+        assert!(p.map(first_keeps).is_err());
+        // Dropping the partition column everywhere is refused as before.
+        assert!(p.map(|g| g.select(&["v"])).is_err());
+    }
+
+    #[test]
     fn merge_puts_ties_in_partition_order() {
         let p = hosts().partition_by(&["host"]).unwrap();
         let out = p.map(|g| Ok(g.clone())).unwrap().collect().unwrap();
@@ -1031,7 +1118,7 @@ mod tests {
         let s = hosts().row_range(0..0);
         let p = s.partition_by(&["host"]).unwrap();
         assert!(p.is_empty());
-        let out = p.diff(&["v"], FirstRow::Keep).unwrap().collect().unwrap();
+        let out = p.diff(&["v"]).unwrap().collect().unwrap();
         assert!(out.is_empty());
         assert_eq!(out.columns().len(), 2);
     }
@@ -1045,7 +1132,7 @@ mod tests {
         assert_eq!(made.len(), 3);
         let a = made.get(&[Some(Value::String("a".into()))]).unwrap();
         assert_eq!(a.len(), 2);
-        let d = made.diff(&["v"], FirstRow::Keep).unwrap();
+        let d = made.diff(&["v"]).unwrap();
         let a = d.get(&[Some(Value::String("a".into()))]).unwrap();
         assert_eq!(a.column("v").unwrap().numbers().unwrap().get(1), Some(2.0));
     }
@@ -1103,7 +1190,7 @@ mod tests {
                     let p = series.partition_by(&["sym"]).unwrap();
                     let a = p.rolling("10m", &aggs).unwrap().collect().unwrap();
                     let b = p
-                        .fill_all(Fill::Linear, &FillLimits::none())
+                        .fill_all(Fill::Linear)
                         .unwrap()
                         .cumulative(&[("v", Reducer::Sum)])
                         .unwrap()
@@ -1168,7 +1255,7 @@ mod tests {
         // partition uses `seed` itself, and the second picks other
         // positions (its own seed). The same seed gives the same rows.
         assert!(rows.iter().all(|r| r.len() == 5));
-        assert!(rows[0].iter().all(|v| *v as usize % 2 == 0));
+        assert!(rows[0].iter().all(|v| (*v as usize).is_multiple_of(2)));
         assert!(rows[1].iter().all(|v| *v as usize % 2 == 1));
         let positions = |r: &[f64]| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
         let alone = v_of(&p.get(&key("a")).unwrap().sample(how).unwrap());

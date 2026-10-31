@@ -1,4 +1,7 @@
+import { Expr } from '../core/expression.js';
+import { livePredicate } from './expression-predicate.js';
 import { ListenerSet } from './listener-set.js';
+import { onSourceSettle } from './settle.js';
 import { Event } from '../core/event.js';
 import { ValidationError } from '../core/errors.js';
 import { LiveAggregation } from './live-aggregation.js';
@@ -56,6 +59,7 @@ export type LiveFillMapping<S extends SeriesSchema> = {
 
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
+import { dropFront, removeFront } from './array-front.js';
 
 type EventListener<S extends SeriesSchema> = (event: EventForSchema<S>) => void;
 type EvictListener<S extends SeriesSchema> = (
@@ -118,15 +122,6 @@ function dispatchIsolated<T>(set: ListenerSet<(arg: T) => void>, arg: T) {
   if (first) throw first.error;
 }
 
-/** A readable key for error messages — `String(key)` on a key object is `[object Object]`. */
-function describeKey(event: { begin(): number; end?(): number }): string {
-  const begin = new Date(event.begin()).toISOString();
-  const end = event.end?.();
-  return end !== undefined && end !== event.begin()
-    ? `[${begin}, ${new Date(end).toISOString()})`
-    : begin;
-}
-
 export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   /** @internal */
   readonly [EMITS_EVICT] = true as const;
@@ -153,6 +148,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly #windowMs: number | undefined;
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
+  /**
+   * [PND-REDUCETRIM] Internal: what a `window` trims, for a `LiveReduce`
+   * built on this view (a trim is otherwise silent — no `'evict'`).
+   */
+  readonly #onTrim: ListenerSet<EvictListener<S>>;
   readonly #unsubscribe: () => void;
   /** The source this view subscribes to — kept for chain-aware dispose. */
   readonly #source: LiveSource<any>;
@@ -172,6 +172,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#windowMs = options?.windowMs;
     this.#onEvent = new ListenerSet();
     this.#onEvict = new ListenerSet();
+    this.#onTrim = new ListenerSet();
 
     for (let i = 0; i < source.length; i++) {
       const result = this.#process(source.at(i)!);
@@ -183,8 +184,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       const result = this.#process(event);
       if (result !== undefined) {
         this.#appendChecked(result);
-        this.#applyEviction();
+        const trimmed = this.#applyEviction();
         dispatchIsolated(this.#onEvent, result);
+        // After the event, so a reduce removes even the event just taken
+        // (a late one before the window's cutoff) under the index it added.
+        if (trimmed !== undefined) dispatchIsolated(this.#onTrim, trimmed);
       }
     });
 
@@ -206,7 +210,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
         while (i < this.#events.length && this.#events[i]!.begin() <= cutoff)
           i++;
         if (i > 0) {
-          const removed = this.#events.splice(0, i);
+          const removed = removeFront(this.#events, i);
           this.#version += 1;
           dispatchIsolated(this.#onEvict, removed as any);
         }
@@ -221,6 +225,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
   get length(): number {
     return this.#events.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#source, fn);
   }
 
   at(index: number): EventForSchema<S> | undefined {
@@ -239,16 +248,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   // ── Query primitives ─────────────────────────────────────────
   //
   // Mirror `TimeSeries` / `LiveSeries` query parity. Live views
-  // are sorted by key (events flow through in source-order; views
-  // never re-sort). Same binary-search shape as `TimeSeries.bisect`.
-  //
-  // Sort-order assumption: the four binary-search methods below
-  // assume the underlying buffer is sorted by key. This holds for
-  // every built-in view operation (`filter` / `select` / `window` /
-  // `diff` / `rate` / `pctChange` / `cumulative` / `fill`) because
-  // they preserve the source's keys. The exception is
-  // {@link LiveView.map} when the user-supplied function rewrites
-  // the key — see that method's JSDoc.
+  // are sorted by key: an event is appended, or inserted at its key
+  // position when it is older than the tail (a late event from a
+  // `reorder` source, or a `map` that rewrites keys). Same
+  // binary-search shape as `TimeSeries.bisect`.
 
   /** Example: `view.find(e => e.get('value') > 0)`. */
   find(
@@ -315,7 +318,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#events[this.bisect(key)];
   }
 
-  filter(predicate: (event: EventForSchema<S>) => boolean): LiveView<S> {
+  /** Keeps events that pass `test`: a function, or an expression such as `col('value').gt(0)`. */
+  filter(
+    test: ((event: EventForSchema<S>) => boolean) | Expr<'boolean' | 'any'>,
+  ): LiveView<S> {
+    const predicate = livePredicate(test, this.schema);
     return new LiveView(
       this,
       (event: EventForSchema<S>) => (predicate(event) ? event : undefined),
@@ -325,19 +332,13 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
   /**
    * Per-event transform. Each source event is run through `fn` and
-   * the result is appended to the view's buffer. The view does NOT
-   * re-sort by key — events flow through in source order, which
-   * preserves the upstream's sort invariant only if `fn` returns
-   * events with the same key.
-   *
-   * **If `fn` rewrites the event's key** (e.g. shifting timestamps,
-   * changing the interval), the view's buffer is no longer
-   * key-sorted. The Tier 2 query primitives ({@link LiveView.bisect},
-   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
-   * {@link LiveView.atOrAfter}) all assume sorted-by-key and will
-   * return wrong answers on a re-keying map. Use `map` only for
-   * data transforms; use a separate live primitive for time-axis
-   * transforms.
+   * the result is added to the view's buffer at its key position, so a
+   * `fn` that rewrites keys (shifting timestamps, changing the interval)
+   * still leaves the buffer key-sorted and the Tier 2 queries
+   * ({@link LiveView.bisect}, {@link LiveView.includesKey},
+   * {@link LiveView.atOrBefore}, {@link LiveView.atOrAfter}) right. An
+   * event whose new key is older than the tail costs an insert, not an
+   * append.
    */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return makeMapView(this, fn, this.#windowMs);
@@ -716,6 +717,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#unsubscribe();
     this.#onEvent.clear();
     this.#onEvict.clear();
+    this.#onTrim.clear();
     const source = this.#source;
     if (source instanceof LiveView && source._listenerCount === 0) {
       source.dispose();
@@ -727,45 +729,82 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#onEvent.size + this.#onEvict.size;
   }
 
-  #applyEviction(): void {
-    if (!this.#evict) return;
+  /**
+   * Apply the window, if any. Returns what it dropped when a `LiveReduce`
+   * listens for trims ([PND-REDUCETRIM]), `undefined` otherwise.
+   */
+  #applyEviction(): readonly EventForSchema<S>[] | undefined {
+    if (!this.#evict) return undefined;
     const count = this.#evict(this.#events);
-    if (count > 0) {
-      this.#events.splice(0, count);
-      this.#version += 1;
+    if (count <= 0) return undefined;
+    this.#version += 1;
+    if (this.#onTrim.size === 0) {
+      dropFront(this.#events, count);
+      return undefined;
     }
+    return removeFront(this.#events, count);
   }
 
   /**
-   * Append a processed event to the view's buffer, asserting that
-   * the buffer remains key-sorted. Re-keying maps that produce
-   * non-monotonic outputs would silently break the four binary-
-   * search query primitives ({@link LiveView.bisect},
+   * @internal [PND-REDUCETRIM] Listen for what a `window` view trims (it
+   * says nothing on `'evict'`), so a `LiveReduce` built on it removes
+   * those events too. Called after the `'event'` that caused the trim.
+   */
+  _onTrim(fn: EvictListener<S>): () => void {
+    this.#onTrim.add(fn);
+    return () => {
+      this.#onTrim.delete(fn);
+    };
+  }
+
+  /**
+   * @internal [PND-REDUCETRIM] The order this view drops events relative to
+   * arrival, for `LiveReduce`'s choice of reducer states: its source's.
+   * A view keeps the late events of a `reorder` source, so its evictions
+   * and window trims can take a recent arrival too.
+   */
+  get _evictionOrder(): 'arrival' | 'sorted' {
+    return (
+      (this.#source as { _evictionOrder?: 'arrival' | 'sorted' })
+        ._evictionOrder ?? 'arrival'
+    );
+  }
+
+  /**
+   * Add a processed event to the view's buffer, keeping it key-sorted
+   * so the binary-search queries ({@link LiveView.bisect},
    * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
-   * {@link LiveView.atOrAfter}) — Codex caught this on PR #125
-   * review. Throwing at append time turns silent wrong answers
-   * into a clear, debuggable error.
+   * {@link LiveView.atOrAfter}) stay right.
    *
-   * Sane transforms (`map(e => e.set('x', f(x)))`,
-   * `filter(...)`, `select(...)`, etc.) preserve keys and never
-   * trip the check. Time-axis transforms (e.g. shifting all
-   * timestamps by N ms) are also fine — they preserve relative
-   * order. The only failure mode is a re-keying map that produces
-   * out-of-order events.
+   * The common case is an append. An event older than the tail goes in
+   * at its key position, after any events with an equal key: a late
+   * event that an `ordering: 'reorder'` source accepted, or the output of
+   * a re-keying map that is not monotonic. Before [PND-LATE] this threw,
+   * after the source had already stored the event, so the source and its
+   * views disagreed. Stateful views (`diff`, `rate`, `pctChange`,
+   * `fill`, `cumulative`, `sample`) still compute in arrival order: a
+   * late event is compared with the previous arrival, not the previous
+   * time. Recomputing later rows is the rest of [PND-LATE]. A `window`
+   * view trims silently, so a late event older than its cutoff is trimmed
+   * at once but still dispatched to views built on the window, which keep
+   * it.
    */
   #appendChecked(event: EventForSchema<S>): void {
-    const last = this.#events[this.#events.length - 1];
+    const events = this.#events;
+    const last = events[events.length - 1];
     if (last && event.key().compare(last.key()) < 0) {
-      throw new ValidationError(
-        `LiveView: processed event has key ${describeKey(event)} ` +
-          `older than the previous tail ${describeKey(last)}. ` +
-          `Re-keying maps that produce non-monotonic output break the ` +
-          `view's sorted-buffer invariant. Use a transform that ` +
-          `preserves keys, or perform time-axis rewrites on a snapshot ` +
-          `(\`live.toTimeSeries()\`) instead.`,
-      );
+      const key = event.key();
+      let low = 0;
+      let high = events.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (events[mid]!.key().compare(key) <= 0) low = mid + 1;
+        else high = mid;
+      }
+      events.splice(low, 0, event);
+    } else {
+      events.push(event);
     }
-    this.#events.push(event);
     this.#version += 1;
   }
 }
@@ -1028,6 +1067,14 @@ export function makeFillView<S extends SeriesSchema>(
     }
   }
 
+  // `zero` is numeric-only: skip non-number columns, as batch `fill`
+  // does, rather than writing `0` into a text or boolean column.
+  for (const col of source.schema.slice(1)) {
+    if (col.kind !== 'number' && specs.get(col.name)?.mode === 'zero') {
+      specs.delete(col.name);
+    }
+  }
+
   const limit = options?.limit;
   const state = new Map<
     string,
@@ -1113,11 +1160,16 @@ export function makeMapView<S extends SeriesSchema>(
       ? out
       : (new Event(out.key(), fixed) as unknown as EventForSchema<S>);
   };
-  return new LiveView(
-    source,
-    process,
-    windowMs !== undefined ? { windowMs } : undefined,
-  );
+  // [PND-MAPGAP] The mapping may return `undefined` for any value column,
+  // and a non-finite number becomes a gap, so no value column of the
+  // output is required (a required one made every snapshot throw).
+  const schema = source.schema.map((c, i) =>
+    i === 0 || !c.required ? c : { ...c, required: false },
+  ) as unknown as S;
+  return new LiveView(source, process, {
+    schema,
+    ...(windowMs !== undefined ? { windowMs } : {}),
+  });
 }
 
 export function makeCumulativeView<

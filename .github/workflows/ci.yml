@@ -95,6 +95,112 @@ jobs:
       - name: Build for WASM
         run: cargo check -p pond-rs --target wasm32-unknown-unknown --lib --examples
 
+      # docs.rs builds the API docs from these comments; a broken link or an
+      # undocumented public item fails here rather than on docs.rs.
+      - name: Build API docs
+        run: cargo doc -p pond-rs --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # What crates.io gets: the crate built from its packaged files alone.
+      - name: Package
+        run: cargo package -p pond-rs
+
+  # @pond-ts/rs (docs/plans/PND_RUST_PLAN.md, R4): build crates/pond-wasm to
+  # WebAssembly and run pond-ts's core parity fixture through the JS package.
+  js-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Must match the wasm-bindgen version crates/pond-wasm pins.
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build
+        run: packages/rs/build.sh
+
+      - name: Core parity through JS
+        run: node packages/rs/test/parity.mjs
+
+      - name: Inputs the fixture does not cover
+        run: node packages/rs/test/inputs.mjs
+
+      - name: Expressions the fixture does not cover
+        run: node packages/rs/test/expr.mjs
+
+      - name: Financial study and calendar parity through JS
+        run: node packages/rs/test/studies.mjs
+
+      - name: Live parity through JS
+        run: node packages/rs/test/live.mjs
+
+  # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
+  rust-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Build on the oldest supported Rust
+        run: cargo check -p pond-rs --lib --examples --all-features
+
+  # The Python bridge (crates/pond-py, PyPI `pond-rs`, `import pond_rs`):
+  # one abi3 wheel for Python 3.9+, tested on the oldest and newest Python,
+  # through the same core parity fixture the Rust crate passes.
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Releases bump every package together; the wheel carries pond-ts's
+      # version (crates/pond-py/Cargo.toml must match packages/core).
+      - name: Check the version matches pond-ts
+        run: |
+          ts=$(node -p "require('./packages/core/package.json').version")
+          py=$(grep -m1 '^version' crates/pond-py/Cargo.toml | cut -d '"' -f2)
+          echo "pond-ts $ts, pond-py $py"
+          test "$ts" = "$py"
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip maturin
+          maturin build --release -m crates/pond-py/Cargo.toml --out dist
+
+      - name: Install it with the test dependencies
+        run: python -m pip install pytest pyarrow polars pandas numpy dist/*.whl
+
+      - name: Test
+        run: python -m pytest crates/pond-py/tests -q
+
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
   # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used

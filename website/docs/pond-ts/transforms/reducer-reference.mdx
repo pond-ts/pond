@@ -2,6 +2,9 @@
 sidebar_position: 12
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Reducer Reference
 
 pond-ts ships 15 built-in reducers, plus percentile patterns (`p50`,
@@ -41,6 +44,9 @@ lambda you want.
 `TimeSeries.reduce(mapping)` narrows each output field to the reducer's actual value type —
 no `as` casts at the call site:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const result = series.reduce({
   cpu: 'avg', //   -> number | undefined
@@ -54,6 +60,58 @@ const result = series.reduce({
 const avgCpu: number | undefined = result.cpu;
 const hosts: ReadonlyArray<string> | undefined = result.host;
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "requests",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.9, 0.5]),
+            Column::required("latency", vec![120.0, 80.0, 200.0, 90.0, 60.0]),
+            Column::required("host", vec!["b", "a", "b", "c", "a"]),
+            Column::required("values", vec![3.0, 1.0, 3.0, 2.0, 1.0]),
+            Column::required("paths", vec!["/a", "/b", "/a", "/c", "/a"]),
+            Column::required("status", vec!["ok", "ok", "err", "ok", "slow"]),
+        ],
+    )?;
+
+    let result = series.reduce(&[
+        Agg::of("cpu", Reducer::Avg),
+        Agg::of("latency", Reducer::Percentile(95.0)),
+        Agg::of("host", Reducer::Unique),
+        Agg::of("values", Reducer::Unique),
+        Agg::of("paths", Reducer::Top(3)),
+        Agg::of("status", Reducer::Last),
+    ])?;
+
+    // Read each output with the method for its kind.
+    let avg_cpu: Option<f64> = result.number("cpu")?;
+    assert_eq!(avg_cpu, Some(0.52));
+    assert_eq!(result.number("latency")?, Some(184.0));
+    let hosts: Option<&[Scalar]> = result.array("host")?;
+    assert_eq!(hosts.unwrap(), &[Scalar::from("a"), "b".into(), "c".into()]);
+    let values = result.array("values")?.unwrap();
+    assert_eq!(values, &[Scalar::from(1.0), 2.0.into(), 3.0.into()]);
+    let paths = result.array("paths")?.unwrap();
+    assert_eq!(paths, &[Scalar::from("/a"), "/b".into(), "/c".into()]);
+    assert_eq!(result.string("status")?, Some("slow"));
+
+    // The wrong kind is an error when the code runs.
+    assert!(result.number("host").is_err());
+    Ok(())
+}
+```
+
+Rust does not track column kinds in its types, so each output is read with the method for its kind (`number`, `string`, `array`, …), which checks it when the code runs. `unique` and `top(n)` give a list (`&[Scalar]`) on any column kind.
+
+</TabItem>
+</Tabs>
 
 **Array-output reducers thread source column kind through.** `'unique'` and any
 `top${number}` on a `kind: 'string'` column narrow to `ReadonlyArray<string>`, on a
@@ -75,9 +133,50 @@ before the reducer runs.
 
 Total of all numeric values in the bucket.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.aggregate(Sequence.every('5m'), { requests: 'sum' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    // Nothing between 5 and 10 minutes.
+    let series = TimeSeries::new(
+        "web",
+        vec![0, min, 2 * min, 10 * min],
+        vec![Column::required("requests", vec![10.0, 20.0, 30.0, 5.0])],
+    )?;
+
+    let out = series.aggregate(
+        &Sequence::every("5m")?,
+        &[
+            Agg::of("requests", Reducer::Sum),
+            Agg::new("n", "requests", Reducer::Count),
+            Agg::new("avg", "requests", Reducer::Avg),
+        ],
+    )?;
+    let sum: Vec<_> = out.column("requests")?.numbers()?.iter().collect();
+    let n: Vec<_> = out.column("n")?.numbers()?.iter().collect();
+    let avg: Vec<_> = out.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(sum, [Some(60.0), Some(0.0), Some(5.0)]); // the empty bucket sums to 0
+    assert_eq!(n, [Some(3.0), Some(0.0), Some(1.0)]); // and counts 0
+    assert_eq!(avg, [Some(20.0), None, Some(5.0)]); // but has no average
+    Ok(())
+}
+```
+
+This covers `count` below too.
+
+</TabItem>
+</Tabs>
 
 Returns `0` for an empty bucket (there are zero values to sum).
 
@@ -126,9 +225,47 @@ Returns `undefined` for an empty bucket.
 
 Population standard deviation. Measures how spread out the values are around the mean.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.aggregate(Sequence.every('10m'), { latency: 'stdev' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "web",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::required(
+            "latency",
+            vec![100.0, 140.0, 120.0, 130.0],
+        )],
+    )?;
+    let r = |reducer| series.reduce_number("latency", reducer);
+
+    assert_eq!(r(Reducer::Avg)?, Some(122.5));
+    assert_eq!(r(Reducer::Min)?, Some(100.0));
+    assert_eq!(r(Reducer::Max)?, Some(140.0));
+    assert_eq!(r(Reducer::Median)?, Some(125.0)); // between 120 and 130
+    assert_eq!(r(Reducer::Stdev)?, Some(14.79019945774904)); // divides by n
+    assert_eq!(r(Reducer::Difference)?, Some(40.0)); // max - min
+
+    let flat = TimeSeries::new("f", vec![0, 1], vec![Column::required("v", vec![5.0, 5.0])])?;
+    assert_eq!(flat.reduce_number("v", Reducer::Stdev)?, Some(0.0));
+    Ok(())
+}
+```
+
+This covers `avg`, `min`, `max`, `median` and `difference` too.
+
+</TabItem>
+</Tabs>
 
 Returns `0` when all values are identical. Returns `undefined` for an empty bucket.
 
@@ -158,6 +295,9 @@ Returns `0` for an empty bucket.
 The `p` prefix followed by a number (0--100) computes that percentile with linear
 interpolation between adjacent ranks.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.aggregate(Sequence.every('5m'), {
   p50: { from: 'latency', using: 'p50', kind: 'number' },
@@ -165,6 +305,56 @@ series.aggregate(Sequence.every('5m'), {
   p99: { from: 'latency', using: 'p99', kind: 'number' },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let series = TimeSeries::new(
+        "web",
+        vec![0, min, 2 * min, 10 * min],
+        vec![Column::required(
+            "latency",
+            vec![100.0, 140.0, 120.0, 130.0],
+        )],
+    )?;
+
+    let out = series.aggregate(
+        &Sequence::every("5m")?,
+        &[
+            Agg::new("p50", "latency", Reducer::Percentile(50.0)),
+            Agg::new("p95", "latency", Reducer::Percentile(95.0)),
+            Agg::new("p99", "latency", Reducer::Percentile(99.0)),
+        ],
+    )?;
+    let p95: Vec<_> = out.column("p95")?.numbers()?.iter().collect();
+    assert_eq!(p95, [Some(138.0), None, Some(130.0)]); // the empty bucket: a gap
+
+    // One column, and pond-ts's names parsed into a Reducer.
+    assert_eq!(
+        series.reduce_number("latency", Reducer::parse("p95")?)?,
+        Some(138.5)
+    );
+    assert_eq!(
+        series.reduce_number("latency", Reducer::parse("p99.9")?)?,
+        Some(139.97)
+    );
+    assert_eq!(
+        series.reduce_number("latency", Reducer::Percentile(0.0))?,
+        Some(100.0)
+    );
+    Ok(())
+}
+```
+
+`Reducer::Percentile(q)` takes `q` from 0 to 100. `Reducer::parse` reads pond-ts's names (`"p95"`, `"top3"`, …). This covers the one-column form below too.
+
+</TabItem>
+</Tabs>
 
 Shorthand when aggregating a single column:
 
@@ -207,12 +397,57 @@ Returns `undefined` for an empty bucket.
 Returns the value if every value in the bucket is identical; `undefined` otherwise.
 Useful for preserving constant metadata columns (like `host`) through aggregation.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const hourly = series.aggregate(Sequence.every('1h'), {
   cpu: 'avg',
   host: 'keep',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let half_hour = 1_800_000;
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, half_hour, 2 * half_hour, 3 * half_hour],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.6, 0.8]),
+            Column::required("host", vec!["a", "a", "a", "b"]),
+            Column::required("status", vec!["ok", "slow", "ok", "err"]),
+        ],
+    )?;
+
+    let hourly = series.aggregate(
+        &Sequence::every("1h")?,
+        &[
+            Agg::of("cpu", Reducer::Avg),
+            Agg::of("host", Reducer::Keep),
+            Agg::new("first", "status", Reducer::First),
+            Agg::new("last", "status", Reducer::Last),
+        ],
+    )?;
+    let host: Vec<_> = hourly.column("host")?.strings()?.iter().collect();
+    assert_eq!(host, [Some("a"), None]); // the second hour mixes a and b
+    let first: Vec<_> = hourly.column("first")?.strings()?.iter().collect();
+    let last: Vec<_> = hourly.column("last")?.strings()?.iter().collect();
+    assert_eq!(first, [Some("ok"), Some("ok")]);
+    assert_eq!(last, [Some("slow"), Some("err")]);
+    Ok(())
+}
+```
+
+This covers `first` and `last` above too.
+
+</TabItem>
+</Tabs>
 
 If the series was already partitioned by `groupBy('host')`, `keep` will always return the
 host name since all events in each group share the same value.
@@ -232,6 +467,9 @@ Distinct non-`undefined` values, sorted. Works on any column kind.
 **On a scalar source column.** Produces one array per bucket containing every distinct
 value seen, sorted deterministically (numbers &lt; strings &lt; booleans, JS default within
 a kind).
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const hosts = new TimeSeries({
@@ -260,8 +498,39 @@ const agg = hosts.aggregate(Sequence.every('3s'), {
 // agg.at(1)!.get('host')  =>  ['api-1', 'api-3']
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hosts = TimeSeries::new(
+        "hosts",
+        vec![0, 1_000, 2_000, 3_500, 4_000, 5_500],
+        vec![Column::required(
+            "host",
+            vec!["api-1", "api-1", "api-2", "api-3", "api-1", "api-1"],
+        )],
+    )?;
+
+    let agg = hosts.aggregate(&Sequence::every("3s")?, &[Agg::of("host", Reducer::Unique)])?;
+    let lists = agg.column("host")?.arrays()?; // a text column in, a list column out
+    let s = |v: &str| Scalar::from(v);
+    assert_eq!(lists.get(0).unwrap(), &[s("api-1"), s("api-2")]);
+    assert_eq!(lists.get(1).unwrap(), &[s("api-1"), s("api-3")]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 **On an array-kind source column.** `unique` flattens one level and takes the **set union**
 of elements across every array in the bucket.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const tagged = new TimeSeries({
@@ -290,6 +559,40 @@ const agg = tagged.aggregate(Sequence.every('3s'), {
 // agg.at(1)!.get('tags')  =>  ['timeout']
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = |v: &str| Scalar::from(v);
+    let tagged = TimeSeries::new(
+        "tagged",
+        vec![0, 500, 1_000, 3_500, 4_000],
+        vec![Column::required(
+            "tags",
+            vec![
+                vec![s("5xx"), s("timeout")],
+                vec![s("5xx")],
+                vec![s("retry")],
+                vec![s("timeout")],
+                vec![], // an empty list adds nothing
+            ],
+        )],
+    )?;
+
+    let agg = tagged.aggregate(&Sequence::every("3s")?, &[Agg::of("tags", Reducer::Unique)])?;
+    let lists = agg.column("tags")?.arrays()?;
+    assert_eq!(lists.get(0).unwrap(), &[s("5xx"), s("retry"), s("timeout")]);
+    assert_eq!(lists.get(1).unwrap(), &[s("timeout")]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Returns `[]` for an empty bucket.
 
 ### `top(n)` / `` `top${number}` ``
@@ -302,6 +605,9 @@ literal — either form is accepted.
 
 **On a scalar source column.** Counts occurrences in the bucket and keeps the most
 frequent N.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { top } from 'pond-ts';
@@ -337,10 +643,50 @@ const agg = hosts.aggregate(Sequence.every('3s'), {
 //   counts: api-4=2, api-2=1.
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hosts = TimeSeries::new(
+        "hosts",
+        vec![0, 500, 1_000, 1_500, 2_500, 3_500, 4_000, 4_500],
+        vec![Column::required(
+            "host",
+            vec![
+                "api-1", "api-2", "api-1", "api-3", "api-1", "api-4", "api-4", "api-2",
+            ],
+        )],
+    )?;
+
+    let agg = hosts.aggregate(&Sequence::every("3s")?, &[Agg::of("host", Reducer::Top(2))])?;
+    let lists = agg.column("host")?.arrays()?;
+    let s = |v: &str| Scalar::from(v);
+    // api-1 three times; api-2 beats api-3 on the tie-break.
+    assert_eq!(lists.get(0).unwrap(), &[s("api-1"), s("api-2")]);
+    assert_eq!(lists.get(1).unwrap(), &[s("api-4"), s("api-2")]);
+
+    // The string form parses to the same reducer.
+    assert_eq!(Reducer::parse("top2")?, Reducer::Top(2));
+    assert!(Reducer::parse("top0").is_err());
+    Ok(())
+}
+```
+
+`Reducer::Top(n)` is pond-ts's `top(n)`; `Reducer::parse("top2")` gives the same.
+
+</TabItem>
+</Tabs>
+
 The string form is interchangeable: `{ host: 'top2' }` does the same thing.
 
 **On an array-kind source column.** Counts **elements across every array** in the bucket,
 not the arrays themselves.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const tagged = new TimeSeries({
@@ -366,6 +712,39 @@ const agg = tagged.aggregate(Sequence.every('3s'), {
 //   counts: 5xx=3, timeout=2, retry=1 — already three unique, all kept.
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = |v: &str| Scalar::from(v);
+    let tagged = TimeSeries::new(
+        "tagged",
+        vec![0, 500, 1_000, 1_500],
+        vec![Column::required(
+            "tags",
+            vec![
+                vec![s("5xx"), s("timeout")],
+                vec![s("5xx")],
+                vec![s("retry"), s("5xx")],
+                vec![s("timeout")],
+            ],
+        )],
+    )?;
+
+    let agg = tagged.aggregate(&Sequence::every("3s")?, &[Agg::of("tags", Reducer::Top(3))])?;
+    // Counts: 5xx 3, timeout 2, retry 1.
+    let lists = agg.column("tags")?.arrays()?;
+    assert_eq!(lists.get(0).unwrap(), &[s("5xx"), s("timeout"), s("retry")]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Invalid names (`'top0'`, `'top-1'`) throw at resolve time.
 
 Rolling-window complexity is O(1) per add/remove (count map); final sort on snapshot is
@@ -380,6 +759,9 @@ preserved** (this is what distinguishes `samples` from `unique` and `top${N}`). 
 `samples` when a downstream computation needs the raw value list — anomaly density
 against an externally-computed baseline, custom thresholding, histogramming, or feeding
 into a non-pond pipeline.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const cpu = new TimeSeries({
@@ -406,6 +788,55 @@ const agg = cpu.aggregate(Sequence.every('3s'), {
 // agg.at(0)!.get('vals')  =>  [0.4, 0.5, 0.4]   — duplicates preserved
 // agg.at(1)!.get('vals')  =>  [0.6, 0.7]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_500, 4_000],
+        vec![Column::required("cpu", vec![0.4, 0.5, 0.4, 0.6, 0.7])],
+    )?;
+    let every_3s = Sequence::every("3s")?;
+
+    let agg = cpu.aggregate(&every_3s, &[Agg::new("vals", "cpu", Reducer::Samples)])?;
+    let vals = agg.column("vals")?.arrays()?;
+    let n = |v: f64| Scalar::from(v);
+    assert_eq!(vals.get(0).unwrap(), &[n(0.4), n(0.5), n(0.4)]); // duplicates kept
+    assert_eq!(vals.get(1).unwrap(), &[n(0.6), n(0.7)]);
+
+    // On a list column, the lists are joined first.
+    let s = |v: &str| Scalar::from(v);
+    let tagged = TimeSeries::new(
+        "tagged",
+        vec![0, 500, 1_000],
+        vec![Column::required(
+            "tags",
+            vec![
+                vec![s("5xx"), s("timeout")],
+                vec![s("5xx")],
+                vec![s("retry")],
+            ],
+        )],
+    )?;
+    let flat = tagged.aggregate(&every_3s, &[Agg::new("flat", "tags", Reducer::Samples)])?;
+    let lists = flat.column("flat")?.arrays()?;
+    assert_eq!(
+        lists.get(0).unwrap(),
+        &[s("5xx"), s("timeout"), s("5xx"), s("retry")]
+    );
+    Ok(())
+}
+```
+
+This covers the list-column example below too.
+
+</TabItem>
+</Tabs>
 
 Like `unique`, `samples` flattens one level on array-kind source columns:
 
@@ -438,6 +869,9 @@ series.aggregate(Sequence.every('10m'), {
   },
 });
 ```
+
+pond-rs has no custom reducer functions yet. Use a built-in, or
+`Reducer::Samples` to get the values as a list and work on them yourself.
 
 Custom reducers work in `aggregate()`, `reduce()`, `rolling()`, `collapse()`, and (since
 v0.14.1) every live counterpart — `live.aggregate()`, `live.rolling()`, and

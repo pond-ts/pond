@@ -106,21 +106,16 @@ export default function GalleryMeasles({
   const [hit, setHit] = useState<SelectInfo | null>(null);
 
   // The three dates ARE the argument, so they have to survive a field of
-  // saturated blue. Two things were making them recede: the site's annotation
-  // colour is a warm orange that sits close to the ramp's pale end, and the
-  // depth ramp draws a resting mark at 0.4 alpha — sensible when annotations
-  // are secondary to a line, wrong when they carry the finding. A crimson is
-  // the most separable hue available against a yellow-to-blue ramp, and the
-  // flatter ramp keeps a resting marker legible while still letting a
-  // selected one step forward.
+  // saturated blue. The markers take `role="argument"`, whose flatter depth
+  // ramp keeps a resting mark legible (the default 0.4 resting alpha suits
+  // annotations secondary to a line, not ones that carry the finding). The
+  // hue is this chart's own problem: the site's warm orange sits close to the
+  // ramp's pale end, and crimson is the most separable hue against a
+  // yellow-to-blue ramp. The `argument` role sets no colour, so it takes this.
   const theme = useMemo(
     () => ({
       ...siteTheme,
-      annotation: {
-        ...siteTheme.annotation,
-        color: '#d81e5b',
-        depth: [1, 0.95, 0.85] as [number, number, number],
-      },
+      annotation: { ...siteTheme.annotation!, color: '#d81e5b' },
     }),
     [siteTheme],
   );
@@ -203,12 +198,20 @@ export default function GalleryMeasles({
                 axis="state"
                 id="measles"
               />
-              <Marker at={yearTime(1963)} label="1963 · vaccine licensed" />
-              <Marker at={yearTime(1971)} label="1971 · MMR" />
-              <Marker at={yearTime(1980)} label="1980 · school mandates" />
+              <Marker
+                at={yearTime(1963)}
+                label="1963 · vaccine licensed"
+                role="argument"
+              />
+              <Marker at={yearTime(1971)} label="1971 · MMR" role="argument" />
+              <Marker
+                at={yearTime(1980)}
+                label="1980 · school mandates"
+                role="argument"
+              />
               {/* The one moment the record goes the wrong way — and the reason
                   the interventions above were not yet finished. */}
-              <Marker at={yearTime(1989)} label="1989 · rise" />
+              <Marker at={yearTime(1989)} label="1989 · rise" role="argument" />
             </Layers>
           </ChartRow>
         </Selector>

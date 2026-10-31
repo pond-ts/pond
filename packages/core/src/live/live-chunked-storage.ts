@@ -260,18 +260,16 @@ export class ChunkedColumnarLiveStorage<
 
   /**
    * Compact the pending tier into one packed chunk. Rows are trusted
-   * (gathered from a validated source store), but reusing
-   * `validateAndNormalizeColumnar` is fine — it runs once per
-   * `#flushThreshold` rows (amortized O(N)), and avoids re-implementing
-   * per-kind column + validity construction.
+   * (gathered from a validated source store), so the intake runs in
+   * `trusted` mode: no per-cell checks, no `Time` per key, no array
+   * re-freeze — only the column building is shared.
    */
   #flushPending(): void {
     if (this.#pending.length === 0) return;
-    const { keys, columns } = validateAndNormalizeColumnar<S>({
-      name: 'live-chunk',
-      schema: this.#schema,
-      rows: this.#pending,
-    });
+    const { keys, columns } = validateAndNormalizeColumnar<S>(
+      { name: 'live-chunk', schema: this.#schema, rows: this.#pending },
+      { trusted: true },
+    );
     this.#chunks.push(
       ColumnarStore.fromTrustedStore(this.#schema, keys, columns),
     );
@@ -286,6 +284,18 @@ export class ChunkedColumnarLiveStorage<
    */
   #locate(i: number): [number, number] | null {
     if (i < 0 || i >= this.#committed) return null;
+    // Walk from the nearer end. A one-row `push` appends a one-row chunk,
+    // and its order check reads the last row, so a walk from the front
+    // made each push cost O(chunks) — 1M pushes took tens of minutes
+    // ([PND-LIVEPUSHSCAN]). The newest rows are now found from the back.
+    if (i >= this.#committed / 2) {
+      let end = this.#committed;
+      for (let c = this.#chunks.length - 1; c >= 0; c -= 1) {
+        const start = end - this.#chunks[c]!.length;
+        if (i >= start) return [c, i - start];
+        end = start;
+      }
+    }
     let acc = 0;
     for (let c = 0; c < this.#chunks.length; c += 1) {
       const len = this.#chunks[c]!.length;
