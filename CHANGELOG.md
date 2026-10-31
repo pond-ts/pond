@@ -286,6 +286,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
+  `{ rowFormat: 'object' }`.** It used to build each row cell by cell
+  across the WebAssembly boundary, which made it slower than pond-ts's
+  own. Now the series comes across once as whole columns and the rows are
+  built in JavaScript. Output is unchanged (the same tree as pond-ts's,
+  `-0` kept, gaps as `null`), and `rowFormat: 'object'` now gives keyed
+  rows as in pond-ts (it was ignored). 1M rows: one number column 227 →
+  37 ms (pond-ts 220), four number columns 430 → 56 (216), a number, a
+  text and a boolean column 593 → 74 (235), time-range keys 627 → 64
+  (224).
 - **pond-rs: live layer does less work per event.** A top-to-bottom
   instruction-count review (callgrind, 23 `perf_live` cases) found that a
   bare push spent about 45% of its instructions in malloc/free, that a

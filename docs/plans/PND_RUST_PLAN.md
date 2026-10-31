@@ -4185,6 +4185,34 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         `retention: { maxAge }` costs ~25 us an event (100k events 2.4 s),
         so the bench runs without retention. Size 7.5 MB raw, 1.39 MB
         brotli (+0.6 MB, +130 KB). Next J3.
+      - toJSON speed (2026-10-31): `toJSON()` built each row cell by
+        cell across the boundary (1M rows: 227-627 ms, 1.2-2.8x slower
+        than pond-ts, much of it GC). Now `series_columns` sends whole
+        columns once (key times as `Float64Array`, numbers as their raw
+        `Float64Array` with a non-finite value a gap, text as a table of
+        distinct strings + `Uint32Array` places, booleans as `Uint8Array`
+        0/1/2, lists and decimals as cells) and JS builds the rows in one
+        loop, written out per schema with `new Function` so each row is
+        one literal (cached per schema + format). Rejected by numbers
+        (1M rows, no gc between samples, ms for 1 / 4 number columns /
+        number+text+bool): Rust writing JSON text + one `JSON.parse`
+        569 / 1421 / 644 (the old path 171 / 576 / 547; the text writer
+        also drops `-0`); a generic per-cell loop over the columns 738 /
+        428 / 492; column-by-column `push` 170 / 300 / 861; the written-out
+        loop 71 / 181 / 127. Freezing rows as pond-ts does would cost
+        ~2x, so rows stay unfrozen (a known difference). `rowFormat:
+        'object'` now works (it was ignored). Check (`test/tojson.mjs`,
+        CI `js-bridge`, which now builds pond-ts): 300 random series x 3
+        formats deep-equal (Object.is per cell) to pond-ts's `toJSON` and
+        the same JSON text; a planted -0 to 0 and a boolean gap as
+        `undefined` each fail it. Speed (`scripts/perf-tojson.mjs`,
+        `--expose-gc`, bridge before / after / pond-ts): 1 number column
+        227 / 37 / 220 ms, 4 columns 430 / 56 / 216, number + text +
+        boolean 593 / 74 / 235, time-range keys 627 / 64 / 224, object
+        rows of number + text + boolean - / 73 / 200. Size +5 KB.
+        Still differs: the constructor names the key by its kind
+        (`time`, `timeRange`, `interval`) whatever the schema says, so a
+        renamed key comes back under the default name.
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where

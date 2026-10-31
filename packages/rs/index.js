@@ -536,6 +536,81 @@ const numericKeys = (rows) =>
     );
   });
 
+// `toJSON()` rows, built in one loop over the columns `series_columns`
+// returns (see its doc in crates/pond-wasm). The loop is written out per
+// schema so each row is one array (or object) literal: a cell-by-cell loop
+// over the columns ran several times slower. Kept per schema and format.
+const ROW_BUILDERS = new Map();
+const TEXT_GAP = 0xffffffff;
+
+function rowBuilder(schema, parts, object) {
+  // Each column's form, as `series_columns` sent it.
+  const forms = parts
+    .slice(3)
+    .map((p) =>
+      p === null
+        ? '-'
+        : p instanceof Float64Array
+          ? 'n'
+          : p instanceof Uint8Array
+            ? 'b'
+            : p.length === 2 && p[1] instanceof Uint32Array
+              ? 's'
+              : 'a',
+    );
+  const sig = JSON.stringify([object, schema, forms]);
+  let build = ROW_BUILDERS.get(sig);
+  if (build !== undefined) return build;
+
+  const pre = [];
+  // The expression for part `p`'s value at row `i`.
+  const cell = (p) => {
+    const v = `c${p}`;
+    switch (forms[p - 3]) {
+      case 'n': // a non-finite value is a gap; `-0` stays
+        pre.push(`const ${v} = parts[${p}];`);
+        return `(x = ${v}[i]) - x === 0 ? x : null`;
+      case 'b':
+        pre.push(`const ${v} = parts[${p}];`);
+        return `(b = ${v}[i]) === 2 ? null : b === 1`;
+      case 's':
+        pre.push(`const t${p} = parts[${p}][0], ${v} = parts[${p}][1];`);
+        return `(j = ${v}[i]) === ${TEXT_GAP} ? null : t${p}[j]`;
+      default:
+        pre.push(`const ${v} = parts[${p}];`);
+        return `${v}[i]`;
+    }
+  };
+  const kind = schema[0].kind;
+  const names = schema.map((c) => JSON.stringify(c.name));
+  const key =
+    kind === 'time'
+      ? 'c1[i]'
+      : kind === 'timeRange'
+        ? object
+          ? '{ start: c1[i], end: c2[i] }'
+          : '[c1[i], c2[i]]'
+        : object
+          ? `{ value: ${cell(3)}, start: c1[i], end: c2[i] }`
+          : `[${cell(3)}, c1[i], c2[i]]`;
+  pre.push('const c1 = parts[1], c2 = parts[2];');
+  const cells = schema.slice(1).map((_, c) => cell(c + 4));
+  const row = object
+    ? `{ ${[key, ...cells].map((e, c) => `${names[c]}: ${e}`).join(', ')} }`
+    : `[${key}, ${cells.join(', ')}]`;
+  build = new Function(
+    'parts',
+    `${pre.join('\n')}
+    const n = c1.length, rows = new Array(n);
+    let x, b, j;
+    for (let i = 0; i < n; i++) rows[i] = ${row};
+    return rows;`,
+  );
+  if (ROW_BUILDERS.size >= 64) ROW_BUILDERS.clear();
+  ROW_BUILDERS.set(sig, build);
+  return build;
+}
+
 export class TimeSeries {
   #id;
 
@@ -610,8 +685,16 @@ export class TimeSeries {
     this.#id = undefined;
   }
 
-  toJSON() {
-    return wasm.series_to_object(this.id);
+  /** pond-ts `toJSON()`: `{ name, schema, rows }`; `{ rowFormat: 'object' }` for keyed rows. */
+  toJSON(options = {}) {
+    const parts = wasm.series_columns(this.id);
+    const schema = this.schema;
+    const object = options.rowFormat === 'object';
+    return {
+      name: parts[0],
+      schema,
+      rows: rowBuilder(schema, parts, object)(parts),
+    };
   }
 
   /** The series as an Arrow IPC file (bytes). */

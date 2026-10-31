@@ -166,4 +166,5 @@ node test/parity.mjs     # pond-ts's core parity fixture through this package
 node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
 node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
 node test/live.mjs       # pond-ts's live parity fixture
+node test/tojson.mjs     # toJSON against pond-ts's (npm run build --workspace=pond-ts first)
 ```
