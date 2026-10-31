@@ -227,6 +227,41 @@ impl StringColumn {
     }
 }
 
+impl StringColumn {
+    /// Per row, 1 where `keep` holds for the value, 0 where it does not,
+    /// `gap` for a gap. A dictionary column decides once per distinct
+    /// string, then reads its keys (column expressions' text tests).
+    pub(crate) fn test_values(&self, keep: impl Fn(&str) -> bool, gap: i8) -> Vec<i8> {
+        match &self.repr {
+            StringRepr::Plain(a) => (0..a.len())
+                .map(|i| {
+                    if a.is_valid(i) {
+                        keep(a.value(i)) as i8
+                    } else {
+                        gap
+                    }
+                })
+                .collect(),
+            StringRepr::Dictionary(a) => {
+                let values = a.values().as_string::<i32>();
+                let table: Vec<i8> = (0..values.len())
+                    .map(|k| keep(values.value(k)) as i8)
+                    .collect();
+                let keys = a.keys();
+                (0..a.len())
+                    .map(|i| {
+                        if a.is_valid(i) {
+                            table[keys.value(i) as usize]
+                        } else {
+                            gap
+                        }
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
 /// `rows` as Arrow row numbers, `None` as a null.
 pub(crate) fn indices_of(rows: &[Option<usize>]) -> UInt32Array {
     rows.iter()

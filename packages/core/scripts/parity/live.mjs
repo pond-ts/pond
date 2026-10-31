@@ -72,7 +72,7 @@
  * `generate.mjs` (writes the file) and `test/live-parity-fixture.test.ts`
  * (fails if the committed file is stale).
  */
-import { closure, encodeCell } from './cases.mjs';
+import { closure, encodeCell, usePond } from './cases.mjs';
 
 const SCHEMA = [
   { name: 'time', kind: 'time' },
@@ -442,6 +442,37 @@ const CASES = [
     steps: [
       node('f', 'filter', 'root', filterGt('cpu', 1)),
       node('g', 'filter', 'f', filterEq('host', 'a')),
+      ...each(ROWS),
+    ],
+  },
+  {
+    // column expressions ([PND-EXPR]): `{ fn: { expr: tree } }`
+    name: 'filter-expr-chain',
+    schema: SCHEMA,
+    steps: [
+      node('f', 'filter', 'root', {
+        fn: {
+          expr: {
+            op: 'or',
+            args: [
+              {
+                op: 'gt',
+                args: [
+                  { op: 'div', args: [{ col: 'cpu' }, { col: 'mem' }] },
+                  { lit: 0.5 },
+                ],
+              },
+              {
+                op: 'not',
+                args: [{ op: 'ge', args: [{ col: 'cpu' }, { lit: 1 }] }],
+              },
+            ],
+          },
+        },
+      }),
+      node('g', 'filter', 'f', {
+        fn: { expr: { op: 'in', args: [{ col: 'host' }], values: ['a', 'c'] } },
+      }),
       ...each(ROWS),
     ],
   },
@@ -1612,6 +1643,7 @@ async function runCase(pond, spec) {
 }
 
 export async function buildLiveFixture(pond) {
+  usePond(pond);
   const cases = [];
   for (const spec of CASES) cases.push(await runCase(pond, spec));
   return {

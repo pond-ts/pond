@@ -98,6 +98,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   column of the expression's kind. Expressions are slower than a plain
   function in `mapColumns` (1M rows: 8.6 vs 4.7 ms); their use there is
   reading other columns.
+- **pond-rs column expressions** ([PND-EXPR] step E2a): `col`, `lit` and
+  `when` build the same rules as pond-ts, with the same JSON tree
+  (`Expr::to_json` / `Expr::from_json`). `TimeSeries::filter_expr`,
+  `find_expr`, `some_expr`, `every_expr`, `map_expr`, `map_exprs`,
+  `with_column_expr` and `LiveSeries::filter_expr` run them over whole
+  columns, with the same answers as pond-ts (checked by the parity fixture)
+  and pond-ts's error wording for an unknown column or wrong kind.
 - **pond-rs for Python** (bridge step P1, `crates/pond-py`; PyPI name
   `pond-rs`, imported as `pond_rs`; not yet published). `TimeSeries` takes a
   pyarrow Table or RecordBatch, a polars or pandas DataFrame, anything with
