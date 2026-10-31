@@ -5,6 +5,9 @@ sidebar_position: 1
 description: pond-rs is a native Rust implementation of pond's time series core. Same operations, same answers as pond-ts to the bit, with threads and Arrow in and out.
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # pond-rs (Rust)
 
 **pond-rs** is pond written in Rust. It does the same time series work as
@@ -22,11 +25,28 @@ latest version, and they grow as more is built.
 
 :::
 
+<Tabs groupId="language" queryString>
+<TabItem value="rust" label="Rust" default>
+
 ```toml
 # Cargo.toml
 [dependencies]
 pond-rs = "0.1"
 ```
+
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+```sh
+npm install @pond-ts/rs
+```
+
+The same Rust code compiled to WebAssembly, for Node and browsers, with
+pond-ts's method names. It has pond-ts's version number and is released
+with it. See [From JavaScript](./javascript).
+
+</TabItem>
+</Tabs>
 
 ## Why a Rust version
 
@@ -81,8 +101,10 @@ live views (`filter`, `map`, `window`, `diff`, `rate`, `fill`, `cumulative`,
 windows, `reduce`, and partitions (one series per host, with views and
 windows on each); see [Live series](./live).
 
-**Not built yet:** a WASM build that pond-ts can call; see the
-[roadmap](#roadmap) below.
+**Also built:** `@pond-ts/rs`, pond-rs compiled to WebAssembly for
+JavaScript (Node and browsers), with pond-ts's method names and argument
+shapes: the batch core, expressions, the 109 studies, trading calendars
+and live series; see [From JavaScript](./javascript).
 
 ## Where to go next
 
@@ -102,6 +124,8 @@ windows on each); see [Live series](./live).
   per-minute buckets, rolling windows, running totals and per-host
   partitions.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
+- [From JavaScript](./javascript): `@pond-ts/rs` in Node and browsers,
+  and how it differs from pond-ts.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
   different, and why.
@@ -117,7 +141,8 @@ for the reasoning, `PLAN.md` for the current steps). In order:
 2. **Financial studies** (done), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
 3. **Live layer** (done): series that update as data arrives.
-4. **WASM bridge**: the same Rust code running inside pond-ts where it
-   measurably helps.
+4. **JavaScript bridge** (done): `@pond-ts/rs`, the same Rust code as
+   WebAssembly, with pond-ts's method names.
+5. **Python bridge** (in progress): `pond-rs` on PyPI, `import pond_rs`.
 
 Charts, React and `@pond-ts/process` stay TypeScript only.

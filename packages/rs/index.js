@@ -2,10 +2,12 @@
 // method names and argument shapes. A series lives in WebAssembly memory;
 // call `free()` when done with it (a finalizer frees forgotten ones
 // eventually, but WebAssembly memory never shrinks, so do not rely on it).
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const wasm = require('./pkg/pond_wasm.js');
+//
+// `#wasm` is the loaded WebAssembly module: in Node, `wasm.node.js` reads
+// the .wasm file synchronously; elsewhere (browsers, bundlers),
+// `wasm.browser.js` fetches it with a top-level await. Either way it is
+// ready before the code below runs (package.json `imports`).
+import * as wasm from '#wasm';
 
 const finalizer = new FinalizationRegistry((id) => wasm.series_free(id));
 const TOKEN = Symbol('pond-rs series id');

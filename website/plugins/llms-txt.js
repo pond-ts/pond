@@ -93,7 +93,7 @@ const AREAS = [
     key: 'pond-rs',
     title: 'pond-rs (Rust)',
     blurb:
-      'The Rust crate: same operations and answers as pond-ts, with threads and Arrow I/O. Early; not on crates.io.',
+      "The Rust crate (crates.io `pond-rs`): same operations and answers as pond-ts, with threads and Arrow I/O; also as `@pond-ts/rs`, compiled to WebAssembly for Node and browsers with pond-ts's method names.",
     match: (/** @type {string} */ p) => p.startsWith('docs/pond-rs/'),
   },
   {
@@ -209,7 +209,7 @@ function renderIndex(site, docs, areaFiles) {
   const out = [
     `# ${site.title}`,
     '',
-    `> ${site.tagline}. Six npm packages that release together: \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`.`,
+    `> ${site.tagline}. Seven npm packages that release together: \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`, \`@pond-ts/rs\` (pond-rs as WebAssembly).`,
     '',
     'For a coding agent: the shortest route to working code is the agent guide',
     `(\`AGENTS.md\`, also shipped inside every npm tarball) and the export map (\`API.md\`,`,
@@ -243,7 +243,7 @@ function renderIndex(site, docs, areaFiles) {
     '## Optional',
     '',
     `- [AGENTS.md — using pond from a coding agent](${REPO}/docs/agents/USING_POND.md): which package for which task, the five idioms, the mistakes agents make.`,
-    `- [API.md — export map](${REPO}/API.md): every public export across the six packages, one line each, with its source file.`,
+    `- [API.md — export map](${REPO}/API.md): every public export across the packages, one line each, with its source file.`,
     `- [CHANGELOG.md](${REPO}/CHANGELOG.md): what shipped in each release.`,
     `- [Claude Code plugin](${REPO}/plugins/pond-ts/): \`/plugin marketplace add pond-ts/pond\` then \`/plugin install pond-ts@pond-ts\`.`,
     `- [Full docs, one file](${base}/llms-full.txt): every page concatenated (large).`,

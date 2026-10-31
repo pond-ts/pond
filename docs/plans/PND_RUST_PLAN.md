@@ -4230,8 +4230,71 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         the fallback and `__proto__` by assignment in the fallback each
         fail it. Speed after: 37.7 / 48.7 / 75.8 / 62.1 / 69.1 ms
         (unchanged).
+      - J3 outcome (2026-10-31): Node + browser builds, publish, docs.
+        Build: one wasm-bindgen `--target web` glue (ES module, explicit
+        init) for every platform; `index.js` imports `#wasm`, which
+        package.json `imports` maps by the `node` condition to
+        `wasm.node.js` (`initSync` from `readFileSync`, so Node imports
+        need no await) or `wasm.browser.js` (`await init(new URL(...,
+        import.meta.url))`, a top-level await). Public API unchanged, no
+        `init()` to call. Why `imports` and not two `exports` entries:
+        with top-level await a sibling module runs before the awaiting
+        one finishes (checked in Node), so the API module must import the
+        loader itself. Rejected: `--target bundler` (needs wasm ESM
+        integration, not in Node or plain browsers); an explicit
+        `await init()` (would change the API; method installation and
+        `version` run at import); inlining the wasm as base64 (+33%).
+        Cost: Vite needs `build.target: 'es2022'` and
+        `optimizeDeps.exclude` (its default es2020 target refuses
+        top-level await; pre-bundling loses the `.wasm`); esbuild leaves
+        `new URL` as is, so the `.wasm` is copied next to the bundle.
+        Check (`test/browser.mjs`, CI `js-bridge`, Playwright's Chromium):
+        an esbuild bundle (browser conditions) in headless Chromium runs a
+        workload (constructor, rolling, aggregate, expression filter,
+        rsi, bollinger, toJSON both formats, LiveSeries push / pushMany /
+        listener, free) and its JSON must equal the Node build's; run
+        twice, once plain (`new Function` allowed) and once under CSP
+        `script-src 'self' 'wasm-unsafe-eval'` (asserts `new Function` is
+        refused, so toJSON takes the plain-loop fallback). A planted
+        off-by-one in the fallback fails only the CSP run. The workload
+        uses an LCG, not `Math.sin`: Node 22's and Chromium's V8 differ in
+        the last bit of `sin`, which first made the run differ. Also
+        checked by hand from the `npm pack` tarball: Node import, `vite
+        build` + preview and `vite` dev (with the two settings) and a
+        no-bundler page with an import map, all equal to Node; webpack
+        not tried. Size (unchanged by the target): `.wasm` 7,535,229 B
+        raw / 1,393,188 brotli-11 / 2,053,258 gzip-9; glue 36,979 /
+        6,301; `index.js` 51,055 / 12,911; loaders < 600 B. wasm-opt
+        (binaryen 123 via npm, in the scratchpad; no system wasm-opt):
+        -O3 6.12 MB raw / 1.361 MB brotli, -Oz 5.93 / 1.365, i.e. -19%
+        raw but -2.3% brotli, ~3 min a run; not adopted (one more pinned
+        tool in the release job for 30 KB on the wire). Publish:
+        `packages/rs` stays out of the npm workspaces (root `npm ci` /
+        `verify` need no Rust); `release.yml` installs Rust + wasm32 +
+        wasm-bindgen 0.2.129, checks rs version == pond-ts's, builds and
+        runs `npm test` in packages/rs before any publish, then publishes
+        it after `--workspaces` with `--provenance`. `private` removed;
+        `prepack` copies LICENSE / CHANGELOG / API.md and fails if the
+        wasm is not built. CI `js-bridge` adds the browser test, the
+        version check and `npm pack --dry-run`. No peer dependency (it
+        does not import pond-ts), so the release peer-range sweep does
+        not touch it, but its version must be bumped with the others and
+        it is not in package-lock.json. First publish is manual: npm's
+        `npm trust` docs say "The package you're configuring must already
+        exist on the npm registry", so trusted publishing for
+        `@pond-ts/rs` can only be set up after a first publish by hand.
+        Docs: JavaScript tabs on the pond-rs index, getting-started,
+        finance-studies and live pages (examples run against the packed
+        tarball), a new "From JavaScript" page, and a speed table on
+        Performance (1M rows, 4-core Xeon 2.1 GHz, Node 22.22,
+        2026-10-31): expression filter 11 vs 25 ms, sma 4.3 vs 44.6,
+        sessionVwap 7.3 vs 77.4, toJSON 41 vs 175, live push 273 vs 1510,
+        rolling + buckets via pushMany 337 vs 944; a function filter 623
+        vs 35 (pond-ts with a function, timed apart). llms.txt, the
+        versioning page and README now say seven packages.
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
-      docs JavaScript tab, speed table vs pond-ts.
+      docs JavaScript tab, speed table vs pond-ts. Built 2026-10-31 (see
+      the J3 outcome above); waits on the first manual publish.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core

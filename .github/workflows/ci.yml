@@ -160,6 +160,30 @@ jobs:
       - name: toJSON against pond-ts
         run: node packages/rs/test/tojson.mjs
 
+      # The browser build (wasm.browser.js: fetch + top-level await), bundled
+      # with esbuild and run in headless Chromium, with and without a CSP
+      # that refuses `new Function`; results must equal the Node build's.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser build in Chromium
+        run: node packages/rs/test/browser.mjs
+
+      # Published in lock-step with the workspaces on every `v*` tag
+      # (release.yml), so its version must be pond-ts's.
+      - name: Version matches pond-ts
+        run: |
+          rs=$(node -p "require('./packages/rs/package.json').version")
+          core=$(node -p "require('./packages/core/package.json').version")
+          if [ "$rs" != "$core" ]; then
+            echo "@pond-ts/rs is $rs but pond-ts is $core; bump them together"
+            exit 1
+          fi
+
+      - name: Package contents
+        run: npm pack --dry-run
+        working-directory: packages/rs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest

@@ -283,6 +283,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
   1-minute buckets 570 vs 2943, the same with a listener on every rolling
   update 1338 vs 2647.
+- **`@pond-ts/rs` is published, for Node and browsers** ([PND-RUST-R4]
+  step J3). `npm install @pond-ts/rs`: pond-rs compiled to WebAssembly with
+  pond-ts's method names, released with pond-ts on every `v*` tag at the
+  same version. One import for both: Node (20+) reads the `.wasm` file
+  synchronously; browsers and bundlers fetch it with a top-level `await`
+  (picked by the `node` export condition), so the API is the same and
+  nothing has to be initialised. Vite needs `build.target: 'es2022'` and
+  `optimizeDeps.exclude: ['@pond-ts/rs']`; esbuild users copy the `.wasm`
+  next to the bundle. Under a CSP of `script-src 'self'
+'wasm-unsafe-eval'` everything works, `toJSON()` through its plain-loop
+  fallback. Checked in headless Chromium against the Node build, with and
+  without that CSP. 7.5 MB `.wasm`, 1.39 MB with brotli. Docs: a
+  JavaScript tab on the pond-rs pages, a "From JavaScript" page and a
+  speed table against pond-ts.
 
 ### Changed
 

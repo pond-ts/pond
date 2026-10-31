@@ -4,6 +4,9 @@ title: Live series
 sidebar_position: 5.7
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Live series
 
 Everything else in these pages works on a batch: a whole series you
@@ -32,6 +35,9 @@ cell per value column, `None` for a gap. `push_many` adds a batch;
 `push_json` takes rows written as pond-ts JSON; `push_series` takes a batch
 `TimeSeries` (data that already comes in columns: an Arrow chunk, a JSON
 read) and is the fastest way in.
+
+<Tabs groupId="language" queryString>
+<TabItem value="rust" label="Rust" default>
 
 ```rust
 use pond_rs::live::LiveSeries;
@@ -65,6 +71,46 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+```js
+import assert from 'node:assert/strict';
+import { LiveSeries } from '@pond-ts/rs';
+
+const live = new LiveSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string', required: false },
+    { name: 'load', kind: 'number', required: false },
+  ],
+});
+
+live.push([0, 'a', 0.25]);
+live.pushMany([
+  [1_000, 'b', 0.5],
+  [2_000, 'a', undefined],
+]);
+live.pushJson([[3000, 'b', 0.75]]);
+
+assert.equal(live.length, 4);
+assert.equal(live.last().get('load'), 0.75);
+assert.equal(live.at(-2).get('load'), undefined); // the gap
+
+// A copy of what it holds now, as an ordinary batch series.
+const batch = live.toTimeSeries();
+assert.equal(batch.length, 4);
+
+batch.free();
+live.free(); // frees every view built on it too
+```
+
+In JavaScript (`@pond-ts/rs`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
+
+</TabItem>
+</Tabs>
 
 The lookups are the batch ones: `at` (negative counts from the end),
 `first` / `last`, `bisect`, `at_or_before` / `at_or_after`,

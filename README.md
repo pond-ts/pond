@@ -286,7 +286,8 @@ The full guide is at **<https://pond-ts.org/>**.
 
 ## Versioning
 
-All six packages release together under one version — keep them in step.
+All seven npm packages (the six above plus `@pond-ts/rs`, pond-rs compiled
+to WebAssembly) release together under one version — keep them in step.
 
 - **Today (0.x):** a minor release may contain breaking changes; each is
   marked **breaking** in the [CHANGELOG](./CHANGELOG.md) with a migration

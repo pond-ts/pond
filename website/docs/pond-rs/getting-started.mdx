@@ -2,8 +2,11 @@
 id: getting-started
 title: Getting started
 sidebar_position: 2
-description: Add pond-rs to a Rust project, build a series, bucket it by calendar day in New York, and read the result.
+description: Add pond-rs to a Rust project (or @pond-ts/rs to a JavaScript one), build a series, bucket it by calendar day in New York, and read the result.
 ---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Getting started with pond-rs
 
@@ -13,6 +16,9 @@ pond-rs program does: build a series, run an operation, read the values
 back.
 
 ## Add the dependency
+
+<Tabs groupId="language" queryString>
+<TabItem value="rust" label="Rust" default>
 
 pond-rs is on [crates.io](https://crates.io/crates/pond-rs):
 
@@ -30,7 +36,28 @@ the repository instead:
 
 The crate is named `pond-rs`; in code it is `pond_rs`.
 
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+The same Rust code, compiled to WebAssembly, is on npm as
+[`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs), with pond-ts's
+method names and argument shapes:
+
+```sh
+npm install @pond-ts/rs
+```
+
+It runs in Node 20 or newer and in browsers (through a bundler or plain
+ES modules). See [From JavaScript](./javascript) for browser set-up and how
+it differs from pond-ts.
+
+</TabItem>
+</Tabs>
+
 ## Build a series, bucket it by day
+
+<Tabs groupId="language" queryString>
+<TabItem value="rust" label="Rust" default>
 
 ```rust
 use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
@@ -88,6 +115,73 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+```js
+import assert from 'node:assert/strict';
+import { Sequence, Time, TimeSeries } from '@pond-ts/rs';
+
+// One reading an hour for 72 hours, starting at midnight in New York on
+// Saturday 7 March 2026. Times are epoch milliseconds.
+const start = Time.parse('2026-03-07', { timeZone: 'America/New_York' });
+assert.equal(start.timestamp, 1_772_859_600_000); // 05:00 UTC
+const hour = 3_600_000;
+
+// The sensor missed one reading (hour 30). `undefined` marks the gap.
+const rows = [];
+for (let h = 0; h < 72; h++) {
+  rows.push([
+    start.timestamp + h * hour,
+    h === 30 ? undefined : 10 + (h % 24) * 0.5,
+  ]);
+}
+
+const series = new TimeSeries({
+  name: 'weather',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'temp', kind: 'number', required: false },
+  ],
+  rows,
+});
+
+// One row per calendar day in New York.
+const days = series.aggregate(
+  Sequence.calendar('day', { timeZone: 'America/New_York' }),
+  {
+    readings: { from: 'temp', using: 'count' },
+    high: { from: 'temp', using: 'max' },
+  },
+);
+
+// Sunday 8 March is the day the clocks go forward: it is 23 hours long.
+const { rows: out } = days.toJSON({ rowFormat: 'object' });
+assert.deepEqual(
+  out.map((r) => (r.interval.end - r.interval.start) / hour),
+  [24, 23, 24, 24],
+);
+
+// 72 hourly readings cover four New York days, not three, because one
+// day was short. The gap is not counted. `numbers` reads a whole column
+// as a Float64Array (NaN for a gap).
+assert.deepEqual([...days.numbers('readings')], [24, 22, 24, 1]);
+
+console.log(`${days.length} days`);
+
+// A series lives in WebAssembly memory: free it when done.
+days.free();
+series.free();
+```
+
+The calls are pond-ts's: a `TimeSeries` from a schema and rows, and
+`aggregate` with a `Sequence` and a mapping of output columns. The steps
+below name the Rust calls; each has the pond-ts counterpart you would
+expect.
+
+</TabItem>
+</Tabs>
 
 What happened, step by step:
 

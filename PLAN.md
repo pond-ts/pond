@@ -625,7 +625,12 @@ the study oracle) is done.
   merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
   J2 split the same way: J2a studies + trading calendars built 2026-10-31;
   J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
-  columns across, rows built in JS). Next J3. Detail in the breakout plan.
+  columns across, rows built in JS). J3 built 2026-10-31: one glue for Node
+  and browsers (top-level await in browsers), browser test in headless
+  Chromium incl. a strict CSP, `release.yml` publishes `@pond-ts/rs` after
+  the workspaces; first publish needs Peter on npmjs.com (trusted
+  publishing needs the package to exist). Next P3. Detail in the breakout
+  plan.
 
 - **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
   2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):

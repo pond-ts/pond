@@ -261,6 +261,7 @@ const sidebars: SidebarsConfig = {
         'pond-rs/finance-studies',
         'pond-rs/live',
         'pond-rs/arrow',
+        'pond-rs/javascript',
         'pond-rs/performance',
         'pond-rs/coming-from-pond-ts',
       ],

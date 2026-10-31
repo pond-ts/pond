@@ -356,3 +356,47 @@ page ([Per-host buckets over late events](./live#per-host-buckets-over-late-even
 
 The trials' setups, tasks, graders and results are in
 `crates/pond-rs/bench/agent-trial/`.
+
+## From JavaScript: `@pond-ts/rs` \{#from-javascript\}
+
+The same work called from JavaScript through
+[`@pond-ts/rs`](./javascript), against pond-ts (and `@pond-ts/financial`)
+on the same data. Measured on 31 October 2026 on a 4-core Intel Xeon at
+2.10 GHz, Node 22.22, one thread on both sides; each figure is the median
+of several runs after warm-ups, in milliseconds, lower is better. The
+scripts are `packages/rs/scripts/perf-*.mjs`. The operations themselves
+are checked equal to pond-ts's, bit for bit, by the parity tests in CI.
+
+| 1 million rows                                         | `@pond-ts/rs` | pond-ts | Faster |
+| ------------------------------------------------------ | ------------- | ------- | ------ |
+| `filter(col('v').gt(0))` (an expression)               | 11            | 25      | 2.2×   |
+| `filter` of `v / w > 10` and `host = 'h3'`             | 13            | 27      | 2.1×   |
+| `mapColumns` with an expression                        | 5             | 18      | 3.5×   |
+| `withColumn` with an expression                        | 3             | 10      | 3.1×   |
+| `filter` with a JavaScript function                    | 623           | 35¹     | 0.06×  |
+| `sma({ period })`                                      | 4.3           | 44.6    | 10×    |
+| `ema`                                                  | 2.6           | 7.8     | 3×     |
+| `rsi`                                                  | 9.2           | 36.6    | 4×     |
+| `bollinger`                                            | 22.7          | 84.2    | 3.7×   |
+| `macd`                                                 | 17.4          | 87.6    | 5×     |
+| `atr`                                                  | 8.5           | 24.6    | 2.9×   |
+| `sessionVwap` (NYSE sessions)                          | 7.3           | 77.4    | 11×    |
+| `toJSON()`, one number column                          | 41            | 175     | 4.3×   |
+| `toJSON()`, number + text + true/false                 | 70            | 216     | 3.1×   |
+| `toJSON({ rowFormat: 'object' })`, the same columns    | 72            | 189     | 2.6×   |
+| `LiveSeries`: `push` per event, nothing built on it    | 273           | 1510    | 5.5×   |
+| `LiveSeries`: `pushMany` of 1,000, nothing built on it | 42            | 73      | 1.7×   |
+| rolling average + 1-minute buckets, `push`             | 564           | 2830    | 5×     |
+| rolling average + 1-minute buckets, `pushMany`         | 337           | 944     | 2.8×   |
+| the same, plus a listener on every rolling update      | 1329          | 2673    | 2×     |
+| the same with `pushMany`                               | 606           | 829     | 1.4×   |
+
+¹ pond-ts with the same function (`e => e.get('v') > 0`), timed apart
+from the scripts. The function row is the one to avoid: each row crosses
+from WebAssembly into JavaScript and back. Use an expression (`col`,
+`lit`, `when`) wherever the rule can be written as one.
+
+What this shows: `@pond-ts/rs` is faster wherever the work stays inside
+it, and the gain shrinks as more results cross back to JavaScript (a
+listener on every update, many small outputs). The `.wasm` file is about
+7.5 MB, 1.4 MB with brotli.
