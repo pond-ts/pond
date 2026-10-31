@@ -1,5 +1,13 @@
 export { BoundedSequence } from './sequence/bounded-sequence.js';
 export { Event } from './core/event.js';
+export { Expr, col, lit, when } from './core/expression.js';
+export type {
+  ExprInput,
+  ExprKind,
+  ExprLiteral,
+  ExprNode,
+  ExprOp,
+} from './core/expression.js';
 export { Interval } from './core/interval.js';
 export { LiveAggregation } from './live/live-aggregation.js';
 export type { LiveAggregationOptions } from './live/live-aggregation.js';

@@ -80,6 +80,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
+  per-row rules as data instead of functions, e.g.
+  `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
+  `some`, `every`, `mapColumns`, `withColumn` and live `filter` accept them
+  next to functions. Operations: `eq` `ne` `gt` `ge` `lt` `le` `in`, `and`
+  `or` `not`, `add` `sub` `mul` `div` `neg` `abs`, `isMissing` `fill`, and
+  `when(cond, then, otherwise)`. They run over whole columns with no per-row
+  `Event` (1M rows: `filter` 2.5-4.5x faster, `some` with no match 30x,
+  `withColumn` 9x; `find` / `some` / `every` still stop early), are checked against the schema before any row runs
+  (unknown column, wrong kind), and turn into a plain JSON tree with
+  `toJSON()`. Gaps behave as in the function they replace: a comparison
+  with a gap is false and `not` flips it; arithmetic with a gap gives a gap.
+  Two deliberate differences: `eq` with a gap on either side is false (use
+  `isMissing()`), and a non-finite result such as `x / 0` is a gap at once.
+  In `mapColumns` a gap cell stays a gap; `withColumn` adds an optional
+  column of the expression's kind. Expressions are slower than a plain
+  function in `mapColumns` (1M rows: 8.6 vs 4.7 ms); their use there is
+  reading other columns.
 - **pond-rs for Python** (bridge step P1, `crates/pond-py`; PyPI name
   `pond-rs`, imported as `pond_rs`; not yet published). `TimeSeries` takes a
   pyarrow Table or RecordBatch, a polars or pandas DataFrame, anything with

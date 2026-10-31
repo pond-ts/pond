@@ -1,3 +1,5 @@
+import { Expr } from '../core/expression.js';
+import { livePredicate } from './expression-predicate.js';
 import { ListenerSet } from './listener-set.js';
 import { onSourceSettle } from './settle.js';
 import { Event } from '../core/event.js';
@@ -316,7 +318,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#events[this.bisect(key)];
   }
 
-  filter(predicate: (event: EventForSchema<S>) => boolean): LiveView<S> {
+  /** Keeps events that pass `test`: a function, or an expression such as `col('value').gt(0)`. */
+  filter(
+    test: ((event: EventForSchema<S>) => boolean) | Expr<'boolean' | 'any'>,
+  ): LiveView<S> {
+    const predicate = livePredicate(test, this.schema);
     return new LiveView(
       this,
       (event: EventForSchema<S>) => (predicate(event) ? event : undefined),

@@ -1,3 +1,5 @@
+import { Expr } from '../core/expression.js';
+import { livePredicate } from './expression-predicate.js';
 import { Event } from '../core/event.js';
 import { Interval } from '../core/interval.js';
 import { LiveAggregation } from './live-aggregation.js';
@@ -1154,7 +1156,11 @@ export class LiveSeries<S extends SeriesSchema> {
     return live;
   }
 
-  filter(predicate: (event: EventForSchema<S>) => boolean): LiveView<S> {
+  /** Keeps events that pass `test`: a function, or an expression such as `col('value').gt(0)`. */
+  filter(
+    test: ((event: EventForSchema<S>) => boolean) | Expr<'boolean' | 'any'>,
+  ): LiveView<S> {
+    const predicate = livePredicate(test, this.schema);
     return new LiveView(this, (event: EventForSchema<S>) =>
       predicate(event) ? event : undefined,
     );

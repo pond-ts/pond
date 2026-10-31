@@ -625,6 +625,16 @@ the study oracle) is done.
   merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
   Detail in the breakout plan.
 
+- **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
+  2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
+  per-row rules written as data so pond-ts, pond-rs and both bridges run
+  them over whole columns instead of calling a function per row (bridge
+  `filter` with a function is 8x slower than pond-ts today). E1 pond-ts
+  (`col` / `lit` / `when`, accepted by `filter`, `find`, `some`, `every`,
+  `mapColumns`, `withColumn`, live `filter`), E2 pond-rs + both bridges;
+  bridge J2 follows. Detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
+
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
   300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`

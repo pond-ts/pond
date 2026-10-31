@@ -159,6 +159,8 @@ import {
   withRowSelection,
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
+import { Expr, type ExprKind } from '../core/expression.js';
+import { columnOf, evaluateStoreExpr } from './operators/expression.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -175,6 +177,11 @@ import {
 import { LanedSum } from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
+/** The column `withColumn(name, expr)` appends: optional, of the expression's kind. */
+type ExprColumnDef<Name extends string, K extends ExprKind> = ColumnDef<
+  Name,
+  K extends 'any' ? 'number' | 'string' | 'boolean' : K
+> & { readonly required: false };
 type BoundaryLike = EventKey | TimestampInput;
 /**
  * Accepted shape for key-position queries (`bisect`, `includesKey`,
@@ -2097,33 +2104,75 @@ export class TimeSeries<S extends SeriesSchema> {
    * column a mapper result of `NaN` / `±Infinity` is stored as missing
    * (a non-finite number in a number column means missing).
    *
+   * **Expressions** ({@link col}) may replace a function and may read
+   * other columns (`{ w: col('w').add(col('v')) }`), as they were before
+   * mapping. A gap cell stays a gap here too, so `col('v').fill(0)` changes
+   * nothing; use `withColumn('v0', col('v').fill(0))` to fill. The
+   * compiler does not check an expression's kind; a wrong kind throws.
+   *
    * **Multi-entity series:** `mapColumns` is per-cell and stateless, so
    * it is unaffected by entity interleaving (unlike `cumulative` /
    * `diff`); no `partitionBy` scoping is needed.
    */
   mapColumns<const Targets extends ValueColumnNameForSchema<S>>(spec: {
-    [K in Targets]: (
-      value: NonNullable<EventDataForSchema<S>[K]>,
-    ) => NonNullable<EventDataForSchema<S>[K]>;
+    [K in Targets]:
+      | ((
+          value: NonNullable<EventDataForSchema<S>[K]>,
+        ) => NonNullable<EventDataForSchema<S>[K]>)
+      | Expr;
   }): TimeSeries<S> {
     // Column-native (Step 4): the per-cell transform is applied straight
     // off the store's columns in the extracted `mapOp` — no `this.events`
     // materialization, no per-row `Event`. Same kind in/out ⇒ schema is
     // unchanged. The method is a thin delegate.
-    const entries = Object.entries(spec) as Array<[string, ColumnMapper]>;
-    if (entries.length === 0) {
+    const all = Object.entries(spec) as Array<[string, ColumnMapper | Expr]>;
+    if (all.length === 0) {
       throw new Error('mapColumns() requires at least one column');
+    }
+    // Expressions ([PND-EXPR]) read the columns as they were before any
+    // mapping, as each function does; a gap cell stays a gap.
+    const source = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const replaced: Array<[string, ColumnarColumn]> = [];
+    const entries: Array<[string, ColumnMapper]> = [];
+    for (const [name, m] of all) {
+      if (!(m instanceof Expr)) {
+        entries.push([name, m]);
+        continue;
+      }
+      const def = this.schema.find((d, i) => i > 0 && d.name === name);
+      if (def === undefined) continue; // as mapOp: unknown names are ignored
+      const kind = def.kind;
+      if (kind !== 'number' && kind !== 'string' && kind !== 'boolean') {
+        throw new TypeError(
+          `mapColumns: column '${name}' is ${kind}; expressions write number, string and boolean columns`,
+        );
+      }
+      const where = `mapColumns '${name}'`;
+      const target = evaluateStoreExpr(
+        { col: name },
+        source,
+        this.schema,
+        where,
+      );
+      const values = evaluateStoreExpr(
+        m.node,
+        source,
+        this.schema,
+        where,
+        kind,
+      );
+      replaced.push([name, columnOf(values, target)]);
     }
     const { store, schema } = mapOp<S>(
       this.#store.store,
       this.schema,
       new Map(entries),
     );
-    return TimeSeries.#fromTrustedStore(
-      this.name,
-      schema,
-      store as unknown as ColumnarStore<ColumnSchema>,
-    );
+    let out = store as unknown as ColumnarStore<ColumnSchema>;
+    for (const [name, column] of replaced) {
+      out = withColumnReplaced(out, name, column);
+    }
+    return TimeSeries.#fromTrustedStore(this.name, schema, out);
   }
 
   /** Example: `series.asTime({ at: "center" })`. Converts the series key type to `"time"` using the supplied anchor within each event extent. */
@@ -5025,10 +5074,36 @@ export class TimeSeries<S extends SeriesSchema> {
     );
   }
 
-  /** Example: `series.filter(event => event.get("active"))`. Returns a new series containing only events that match the predicate. */
+  /**
+   * Example: `series.filter(event => event.get("active"))`, or with an
+   * expression, `series.filter(col("value").gt(0))`. Returns a new series
+   * containing only events that match the predicate.
+   *
+   * An expression ({@link col}) runs over whole columns with no per-row
+   * `Event`, so it is several times faster; a gap fails any comparison, as
+   * `undefined > 0` does.
+   */
   filter(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): TimeSeries<S> {
+    if (predicate instanceof Expr) {
+      const keep = this.#matches(predicate, 'filter');
+      const rows = new Int32Array(keep.length);
+      let k = 0;
+      for (let i = 0; i < keep.length; i += 1) {
+        if (keep[i] === 1) rows[k++] = i;
+      }
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        this.schema,
+        withRowSelection(
+          this.#store.store,
+          rows.subarray(0, k),
+        ) as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
     // [PND-FILTERTAKE]: the predicate still sees `Event`s, but the result is
     // built by copying the kept rows out of each column (`withRowSelection`)
     // rather than rebuilding every column from the kept `Event` objects. The
@@ -5058,6 +5133,56 @@ export class TimeSeries<S extends SeriesSchema> {
       [TRUSTED_STORE_SENTINEL]: store,
     };
     return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+  }
+
+  /**
+   * First row where the expression's test is `want` (1 holds, 0 fails),
+   * or -1. Evaluates in growing stretches (1,024 rows, doubling to 65,536)
+   * so an early answer costs little, as with a function.
+   */
+  #firstIndex(expr: Expr, where: string, want: 0 | 1): number {
+    const store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const n = store.length;
+    if (n === 0) {
+      // Still check the expression against the schema.
+      this.#matches(expr, where, store);
+      return -1;
+    }
+    let size = 1024;
+    for (
+      let start = 0;
+      start < n;
+      start += size, size = Math.min(size * 2, 65536)
+    ) {
+      const end = Math.min(n, start + size);
+      const i = this.#matches(
+        expr,
+        where,
+        withRowRange(store, start, end),
+      ).indexOf(want);
+      if (i >= 0) return start + i;
+    }
+    return -1;
+  }
+
+  /** Per row, 1 where the true/false expression holds, else 0. */
+  #matches(
+    expr: Expr,
+    where: string,
+    store = this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+  ): Int8Array {
+    const values = evaluateStoreExpr(
+      expr.node,
+      store,
+      this.schema,
+      where,
+      'boolean',
+    );
+    // A gap (-1) only comes from a bare boolean column; it fails the
+    // test, as `undefined` does in a function.
+    const v = values.v as Int8Array;
+    for (let i = 0; i < v.length; i += 1) if (v[i] === -1) v[i] = 0;
+    return v;
   }
 
   /**
@@ -5126,8 +5251,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * early in a 10M-row series only pays for the rows it touches.
    */
   find(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): EventForSchema<S> | undefined {
+    if (predicate instanceof Expr) {
+      const i = this.#firstIndex(predicate, 'find', 1);
+      return i < 0
+        ? undefined
+        : (this.#store.eventAt(i) as unknown as EventForSchema<S>);
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5138,8 +5271,13 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.some(event => event.get("healthy"))`. Returns `true` when at least one event matches the predicate. */
   some(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): boolean {
+    if (predicate instanceof Expr) {
+      return this.#firstIndex(predicate, 'some', 1) >= 0;
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5150,8 +5288,13 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.every(event => event.get("healthy"))`. Returns `true` when every event matches the predicate. */
   every(
-    predicate: (event: EventForSchema<S>, index: number) => boolean,
+    predicate:
+      | ((event: EventForSchema<S>, index: number) => boolean)
+      | Expr<'boolean' | 'any'>,
   ): boolean {
+    if (predicate instanceof Expr) {
+      return this.#firstIndex(predicate, 'every', 0) < 0;
+    }
     const n = this.#store.length;
     for (let i = 0; i < n; i += 1) {
       const event = this.#store.eventAt(i) as unknown as EventForSchema<S>;
@@ -5528,7 +5671,40 @@ export class TimeSeries<S extends SeriesSchema> {
     values: ReadonlyArray<number | undefined> | Float64Array,
   ): TimeSeries<
     readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
-  > {
+  >;
+  /**
+   * Example: `series.withColumn('load', col('cpu').div(col('cores')))`.
+   * A new optional column computed from an expression ([PND-EXPR]); its
+   * kind is the expression's (number, string or boolean).
+   */
+  withColumn<const Name extends string, K extends ExprKind>(
+    name: Name,
+    expr: Expr<K>,
+  ): TimeSeries<
+    readonly [S[0], ...ValueColumnsForSchema<S>, ExprColumnDef<Name, K>]
+  >;
+  withColumn<const Name extends string>(
+    name: Name,
+    values: ReadonlyArray<number | undefined> | Float64Array | Expr,
+  ): TimeSeries<SeriesSchema> {
+    if (values instanceof Expr) {
+      const out = evaluateStoreExpr(
+        values.node,
+        this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+        this.schema,
+        `withColumn '${String(name)}'`,
+      );
+      const reshaped = withColumnAppended(
+        this.#store.store,
+        name as string,
+        columnOf(out),
+      );
+      const resultSchema = Object.freeze([
+        ...this.schema,
+        { name, kind: out.kind, required: false },
+      ]) as unknown as SeriesSchema;
+      return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
+    }
     if (values.length !== this.length) {
       throw new RangeError(
         `withColumn: values length ${values.length} does not match series length ${this.length}`,
@@ -5572,13 +5748,7 @@ export class TimeSeries<S extends SeriesSchema> {
       ...this.schema,
       { name, kind: 'number', required: false },
     ]) as unknown as SeriesSchema;
-    return TimeSeries.#fromTrustedStore(
-      this.name,
-      resultSchema,
-      reshaped,
-    ) as unknown as TimeSeries<
-      readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
-    >;
+    return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
   }
 
   /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */
