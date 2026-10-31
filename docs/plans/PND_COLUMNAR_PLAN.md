@@ -730,6 +730,71 @@ amortised O(1) whatever the window.
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
 
+### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
+
+From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,
+built a frozen row per event and re-read the rows; `arrayExplode` built one
+row per element and went through strict `new TimeSeries` intake. Now:
+
+- `arrayAggregate` reads the array column, reduces each cell, and shares the
+  key and every other column. For built-in reducers a cell is passed as
+  `defined` directly (an array cell can hold only finite numbers, strings and
+  booleans, so the row path's filtering removed nothing). One visible
+  difference from the row path: with `as:`, the untouched array column is
+  the input's own column, so `out.at(i).get('tags') === src.at(i).get('tags')`
+  (before: an equal copy). Within one series every row still has its own
+  array; `select` / `rename` already shared columns this way.
+- `arrayExplode` numbers the output rows, gathers the key and the other
+  columns once (`withRowSelection`; replace mode drops the array column
+  first), and builds the element column directly.
+- Kind errors keep their exact text (`row N col C: expected …`) via
+  `assertCellKind` per output cell — the pond-rs parity fixture pins these
+  messages. An `as:` naming an existing column keeps the old row path, so
+  its error is unchanged too.
+- `arrayColumnFromOwnedCells` builds an `ArrayColumn` from cells the caller
+  owns, skipping the constructor's element validation and copy. Gathers
+  (`sliceByRange` / `sliceByIndices`, chunked gather and compaction) still
+  give **every result row its own copy** of the array, with a plain element
+  loop (on V8 `slice()` of a frozen array is ~4x slower: 250k small cells
+  236 vs 53 ms). `aggregate` uses it for its already-copied array results.
+- `median` / percentile `reduce` and bucket snapshots sort lists of up to 32
+  numbers by insertion (`sortedNumbers`): stable like the comparator sort, so
+  `-0` / `0` order is unchanged (test compares 2,000 random lists).
+
+**Decision: keep one array per row.** Sharing the source's frozen cell
+between gathered rows (what Codex's prototype did) would make explode and
+gathers ~2x faster again, but `keep` (and other by-reference comparisons,
+[PND-ARRAYKEY]) would then see two rows holding the same array. Planting
+that sharing made 22 of 300 oracle series differ. Left for Peter: either
+accept sharing, or first make array comparison by value ([PND-ARRAYKEY]),
+after which sharing is invisible.
+
+Checked: 300 random series (time / range / interval keys, number / text /
+mixed lists, empty and missing cells, signed zeros) give identical JSON —
+values, schema and error text — against the previous build for 17 reducers
+(incl. custom) × 3 columns × both modes, 12 explode variants each, plus
+aggregates of `keep` / `unique` over exploded and filtered array columns.
+
+Bench `scripts/perf-array-ops.mjs`, 100k rows (median of 7 after 5 warm-ups,
+middle of 3 processes; busy machine):
+
+| Case                            | Before | After  |
+| ------------------------------- | ------ | ------ |
+| arrayAggregate nums count       | 637 ms | 8.3 ms |
+| arrayAggregate nums avg         | 663 ms | 16 ms  |
+| arrayAggregate nums median      | 734 ms | 16 ms  |
+| arrayAggregate nums unique      | 1.08 s | 137 ms |
+| arrayAggregate nums first       | 654 ms | 11 ms  |
+| arrayAggregate tags count       | 471 ms | 20 ms  |
+| arrayExplode tags               | 792 ms | 68 ms  |
+| arrayExplode nums               | 879 ms | 114 ms |
+| arrayExplode tags (keep array)  | 1.24 s | 127 ms |
+| aggregate 1s unique (array out) | 127 ms | 85 ms  |
+| filter half (array gather)      | 96 ms  | 17 ms  |
+
+Not done: `arrayContains*` (identity, see PLAN.md), and the packed list
+layout (offsets + one value buffer) Codex measured — a storage decision.
+
 ### [PND-REDUCECELLS] — SHIPPED (column kernels for keep / difference / unique / top / samples)
 
 From the Codex PR #810 investigation: these five reducers had no column

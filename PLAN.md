@@ -797,11 +797,11 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   reference, so two equal arrays give a gap (the live store's
   `valuesEqual` compares them element by element). pond-rs refuses array
   partition keys. Found 2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ARRAYSLOW]** — pond-ts's array calls go row by row through
-  `Event` objects: on 100k rows `arrayAggregate` takes 220–370 ms and
-  `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
-  ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
-  and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYSLOW]** — `arrayAggregate` / `arrayExplode` now work on the
+  column (see PND_COLUMNAR_PLAN). Still open: `arrayContains` / `All` /
+  `Any` filter through `Event`s (9–71 ms on 100k rows, pond-rs 1–6 ms),
+  because they return the source's own `Event` objects, like `filter`;
+  changing that is the same identity question as [PND-FILTERTAKE].
 - **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
   number outputs, but it is all-or-nothing per call: one text output (a
   `first` of a name column) sends every column to the slow general sweep.
