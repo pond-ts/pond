@@ -1,0 +1,1091 @@
+//! Reducers (`avg`, `sum`, …) and the mapping entries that use them.
+//!
+//! The kernels here are ports of pond-ts's, step for step, because parity
+//! with pond-ts is checked bit for bit: the order values are added in decides
+//! the last bits of a sum. Each kernel names the pond-ts function it follows.
+
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use crate::column::ColumnData;
+use crate::error::PondError;
+use crate::series::Column;
+
+/// A built-in reducer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reducer {
+    /// Number of present (non-missing) values.
+    Count,
+    /// Sum of present values; 0 when there are none.
+    Sum,
+    /// Mean of present values; missing when there are none. `"mean"` parses
+    /// to this too.
+    Avg,
+    /// Smallest present value.
+    Min,
+    /// Largest present value.
+    Max,
+    /// First present value.
+    First,
+    /// Last present value.
+    Last,
+    /// 50th percentile, interpolated.
+    Median,
+    /// Population standard deviation (divides by n).
+    Stdev,
+    /// Percentile `q` in `[0, 100]`, linear interpolation between ranks
+    /// (`"p95"`).
+    Percentile(f64),
+    /// Largest present value minus smallest (the spread); missing when
+    /// there are none. Number and decimal columns only. In `rolling` it
+    /// can be `-0` (see [`crate::TimeSeries::rolling`]).
+    Difference,
+    /// The value when every present value is equal, otherwise missing
+    /// (also missing when there are none). Any column kind; the output
+    /// has the source's kind. Numbers compare as JavaScript's `===` does,
+    /// so `0` equals `-0`: `aggregate` and `reduce` give the first one,
+    /// `rolling` gives `0`. Array cells compare by their elements bit for
+    /// bit (so `[0]` and `[-0]` differ), where pond-ts compares the array
+    /// objects (so two equal arrays in different rows are kept here and
+    /// give a gap in pond-ts).
+    Keep,
+    /// The distinct present values as a list (an array column), sorted:
+    /// numbers, then text, then true/false; text in JavaScript's order (by
+    /// UTF-16 code units). An array column's lists are flattened one level
+    /// first. `0` and `-0` are one value, written `0`. Nothing present
+    /// gives an empty list, not a gap. Any column kind; decimals are read
+    /// as their nearest `f64`.
+    Unique,
+    /// The N most frequent present values (`"top3"`) as a list, most
+    /// frequent first, ties in [`Reducer::Unique`]'s order; flattening,
+    /// zeros and empty lists as there. N is at least 1.
+    Top(usize),
+    /// Every present value as a list in arrival order, duplicates and `-0`
+    /// kept; flattening and empty lists as [`Reducer::Unique`].
+    Samples,
+}
+
+impl Reducer {
+    /// Refuse a reducer no result can come from: a percentile outside
+    /// `[0, 100]` (or NaN). [`Reducer::parse`] never builds one, but the
+    /// variant is public.
+    pub(crate) fn check(self, call: &'static str) -> crate::error::Result<()> {
+        match self {
+            Reducer::Percentile(q) if !(0.0..=100.0).contains(&q) => Err(PondError::InvalidData {
+                call,
+                message: format!("percentile must be in [0, 100], got {q}"),
+            }),
+            Reducer::Top(0) => Err(PondError::InvalidData {
+                call,
+                message: "top needs N of at least 1".into(),
+            }),
+            _ => Ok(()),
+        }
+    }
+    /// Parse a pond-ts reducer name: `count`, `sum`, `avg`, `mean`, `min`,
+    /// `max`, `first`, `last`, `median`, `stdev`, `p<q>`, `difference`,
+    /// `keep`, `unique`, `samples`, `top<N>`.
+    pub fn parse(name: &str) -> Result<Self, PondError> {
+        name.parse()
+    }
+
+    /// `unique`, `top<N>` and `samples`: the result is a list.
+    pub(crate) fn gives_list(self) -> bool {
+        matches!(self, Reducer::Unique | Reducer::Top(_) | Reducer::Samples)
+    }
+}
+
+impl FromStr for Reducer {
+    type Err = PondError;
+
+    fn from_str(name: &str) -> Result<Self, PondError> {
+        Ok(match name {
+            "count" => Reducer::Count,
+            "sum" => Reducer::Sum,
+            "avg" | "mean" => Reducer::Avg,
+            "min" => Reducer::Min,
+            "max" => Reducer::Max,
+            "first" => Reducer::First,
+            "last" => Reducer::Last,
+            "median" => Reducer::Median,
+            "stdev" => Reducer::Stdev,
+            "difference" => Reducer::Difference,
+            "keep" => Reducer::Keep,
+            "unique" => Reducer::Unique,
+            "samples" => Reducer::Samples,
+            _ => {
+                if let Some(q) = parse_percentile(name) {
+                    Reducer::Percentile(q)
+                } else if let Some(n) = parse_top_n(name) {
+                    Reducer::Top(n)
+                } else {
+                    return Err(PondError::UnknownReducer {
+                        name: name.to_string(),
+                    });
+                }
+            }
+        })
+    }
+}
+
+/// JS `Math.max(0, x)`: a NaN stays NaN (Rust's `f64::max` would drop it and
+/// give 0), and `-0` becomes `+0`. A NaN variance then becomes a gap, as in
+/// pond-ts.
+pub(crate) fn clamp_at_zero(x: f64) -> f64 {
+    if x.is_nan() || x > 0.0 { x } else { 0.0 }
+}
+
+/// pond-ts `parsePercentile`: `p` then a number in `[0, 100]`. pond-ts reads
+/// the number with JS `Number`, which also takes surrounding spaces and hex;
+/// those spellings are rejected here.
+fn parse_percentile(name: &str) -> Option<f64> {
+    let rest = name.strip_prefix('p')?;
+    if rest.is_empty() {
+        return None;
+    }
+    let q: f64 = rest.parse().ok()?;
+    (0.0..=100.0).contains(&q).then_some(q)
+}
+
+/// pond-ts `parseTopN`: `top` then digits, not all zero (`top007` is 7).
+/// A count too large for `usize` keeps every value, as pond-ts's would.
+fn parse_top_n(name: &str) -> Option<usize> {
+    let digits = name.strip_prefix("top")?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return None;
+    }
+    Some(digits.parse().unwrap_or(usize::MAX))
+}
+
+/// One mapping entry: write `reducer(source)` to the output column `output`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Agg {
+    pub(crate) output: String,
+    pub(crate) source: String,
+    pub(crate) reducer: Reducer,
+    /// Built with [`Agg::of`] (output named after its source). Decides
+    /// column order in `rolling`; see [`crate::TimeSeries::rolling`].
+    pub(crate) shorthand: bool,
+}
+
+impl Agg {
+    /// Reduce `source` into a column of the same name: pond-ts's shorthand
+    /// mapping `{ cpu: 'avg' }`.
+    ///
+    /// In `rolling`, a list made only of `Agg::of` entries is put into schema
+    /// order, as pond-ts does; a single [`Agg::new`] entry in the list keeps
+    /// the whole list in the order given.
+    pub fn of(source: impl Into<String>, reducer: Reducer) -> Self {
+        let source = source.into();
+        Self {
+            output: source.clone(),
+            source,
+            reducer,
+            shorthand: true,
+        }
+    }
+
+    /// Reduce `source` into a column named `output`: pond-ts's
+    /// `{ cpu_avg: { from: 'cpu', using: 'avg' } }`.
+    pub fn new(output: impl Into<String>, source: impl Into<String>, reducer: Reducer) -> Self {
+        Self {
+            output: output.into(),
+            source: source.into(),
+            reducer,
+            shorthand: false,
+        }
+    }
+
+    /// The output column's name.
+    pub fn output(&self) -> &str {
+        &self.output
+    }
+
+    /// The column read.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// The reducer applied.
+    pub fn reducer(&self) -> Reducer {
+        self.reducer
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Range kernels: reduce `values[start..end]`, skipping gaps. These are the
+// `reduceColumnRange` kernels pond-ts's columnar `aggregate` uses.
+// ---------------------------------------------------------------------------
+
+/// pond-ts `BLOCKED_MIN`: from this many values, sums use eight lanes.
+const BLOCKED_MIN: usize = 32;
+
+#[inline]
+fn finite(v: f64) -> bool {
+    v.is_finite()
+}
+
+/// pond-ts `blockedSumFinite`: eight running sums, combined in order, then
+/// the tail. A gap adds `+0` to its lane (which turns a `-0` lane into `+0`,
+/// exactly as in pond-ts).
+fn blocked_sum_finite(values: &[f64]) -> f64 {
+    let mut a = [0.0f64; 8];
+    let lim = values.len() / 8 * 8;
+    for chunk in values.as_chunks::<8>().0 {
+        for (lane, &v) in a.iter_mut().zip(chunk) {
+            *lane += if finite(v) { v } else { 0.0 };
+        }
+    }
+    let mut s = a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7];
+    for &v in &values[lim..] {
+        if finite(v) {
+            s += v;
+        }
+    }
+    s
+}
+
+/// pond-ts `sumRange` (the gap-skipping form; with no gaps it gives the same
+/// bits as the plain form).
+pub(crate) fn sum_range(values: &[f64]) -> f64 {
+    if values.len() >= BLOCKED_MIN {
+        return blocked_sum_finite(values);
+    }
+    let mut s = 0.0;
+    for &v in values {
+        if finite(v) {
+            s += v;
+        }
+    }
+    s
+}
+
+fn count_finite(values: &[f64]) -> usize {
+    values.iter().filter(|v| v.is_finite()).count()
+}
+
+/// pond-ts `avgRange`.
+pub(crate) fn avg_range(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    if values.len() >= BLOCKED_MIN {
+        let n = count_finite(values);
+        return (n != 0).then(|| blocked_sum_finite(values) / n as f64);
+    }
+    let mut s = 0.0;
+    let mut n = 0usize;
+    for &v in values {
+        if finite(v) {
+            s += v;
+            n += 1;
+        }
+    }
+    (n != 0).then(|| s / n as f64)
+}
+
+/// pond-ts `minRange`: the first of equal values wins (`v < lo`).
+pub(crate) fn min_range(values: &[f64]) -> Option<f64> {
+    let mut lo: Option<f64> = None;
+    for &v in values {
+        if finite(v) && lo.is_none_or(|lo| v < lo) {
+            lo = Some(v);
+        }
+    }
+    lo
+}
+
+/// pond-ts `maxRange`.
+pub(crate) fn max_range(values: &[f64]) -> Option<f64> {
+    let mut hi: Option<f64> = None;
+    for &v in values {
+        if finite(v) && hi.is_none_or(|hi| v > hi) {
+            hi = Some(v);
+        }
+    }
+    hi
+}
+
+/// pond-ts `stdevRange`: Welford's recurrence over present values.
+pub(crate) fn stdev_range(values: &[f64]) -> Option<f64> {
+    let mut n = 0.0f64;
+    let mut mean = 0.0f64;
+    let mut m2 = 0.0f64;
+    for &v in values {
+        if !finite(v) {
+            continue;
+        }
+        n += 1.0;
+        let delta = v - mean;
+        mean += delta / n;
+        m2 += delta * (v - mean);
+    }
+    (n != 0.0).then(|| clamp_at_zero(m2 / n).sqrt())
+}
+
+/// pond-ts `percentileOfSorted`.
+pub(crate) fn percentile_of_sorted(sorted: &[f64], q: f64) -> f64 {
+    let rank = (q / 100.0) * (sorted.len() - 1) as f64;
+    let lo = rank.floor();
+    let hi = rank.ceil();
+    let (l, h) = (sorted[lo as usize], sorted[hi as usize]);
+    if lo == hi {
+        return l;
+    }
+    l + (h - l) * (rank - lo)
+}
+
+/// pond-ts `SELECT_INSERTION_THRESHOLD`.
+const SELECT_INSERTION_THRESHOLD: usize = 16;
+
+/// pond-ts `quickselect`, line for line: which of two equal values (`0` and
+/// `-0`) ends up at rank `k` depends on the exact swaps.
+fn quickselect(a: &mut [f64], k: usize, lo: usize, hi: usize) -> f64 {
+    // Indices can step one below `left` (j -= 1 past 0), so work in isize.
+    let mut left = lo as isize;
+    let mut right = hi as isize;
+    let k = k as isize;
+    let at = |a: &[f64], i: isize| a[i as usize];
+    while left < right {
+        if ((right - left) as usize) < SELECT_INSERTION_THRESHOLD {
+            for i in (left + 1)..=right {
+                let v = at(a, i);
+                let mut j = i - 1;
+                while j >= left && at(a, j) > v {
+                    a[(j + 1) as usize] = at(a, j);
+                    j -= 1;
+                }
+                a[(j + 1) as usize] = v;
+            }
+            return at(a, k);
+        }
+        let mid = (left + right) >> 1;
+        if at(a, mid) < at(a, left) {
+            a.swap(mid as usize, left as usize);
+        }
+        if at(a, right) < at(a, left) {
+            a.swap(right as usize, left as usize);
+        }
+        if at(a, right) < at(a, mid) {
+            a.swap(right as usize, mid as usize);
+        }
+        let pivot = at(a, mid);
+        let mut i = left;
+        let mut j = right;
+        while i <= j {
+            while at(a, i) < pivot {
+                i += 1;
+            }
+            while at(a, j) > pivot {
+                j -= 1;
+            }
+            if i <= j {
+                a.swap(i as usize, j as usize);
+                i += 1;
+                j -= 1;
+            }
+        }
+        if k <= j {
+            right = j;
+        } else if k >= i {
+            left = i;
+        } else {
+            return at(a, k);
+        }
+    }
+    at(a, k)
+}
+
+/// pond-ts `reducePercentileColumnRange` / `percentileOfUnsorted`.
+pub(crate) fn percentile_range(values: &[f64], q: f64) -> Option<f64> {
+    let mut dense: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    let k = dense.len();
+    if k == 0 {
+        return None;
+    }
+    let rank = (q / 100.0) * (k - 1) as f64;
+    let lo = rank.floor();
+    let hi = rank.ceil();
+    if lo == hi {
+        return Some(quickselect(&mut dense, lo as usize, 0, k - 1));
+    }
+    let v_hi = quickselect(&mut dense, hi as usize, 0, k - 1);
+    let v_lo = quickselect(&mut dense, lo as usize, 0, hi as usize);
+    Some(v_lo + (v_hi - v_lo) * (rank - lo))
+}
+
+/// First present value (pond-ts aggregate's boundary scan).
+pub(crate) fn first_range(values: &[f64]) -> Option<f64> {
+    values.iter().copied().find(|v| v.is_finite())
+}
+
+/// Last present value.
+pub(crate) fn last_range(values: &[f64]) -> Option<f64> {
+    values.iter().rev().copied().find(|v| v.is_finite())
+}
+
+/// pond-ts `keep`: the first present value when every present value equals
+/// it (`===`, so `0` and `-0` are equal and the first one's sign is kept).
+pub(crate) fn keep_range(values: &[f64]) -> Option<f64> {
+    let mut present = values.iter().copied().filter(|v| v.is_finite());
+    let first = present.next()?;
+    present.all(|v| v == first).then_some(first)
+}
+
+/// pond-ts `difference`: the largest value minus the smallest, each the
+/// first of equals (so the result is never `-0`).
+pub(crate) fn difference_range(values: &[f64]) -> Option<f64> {
+    Some(max_range(values)? - min_range(values)?)
+}
+
+/// Reduce one range. A non-finite result (an overflowing sum) is a gap, as
+/// in pond-ts (`finiteOrMissing`).
+pub(crate) fn reduce_range(reducer: Reducer, values: &[f64]) -> Option<f64> {
+    let out = match reducer {
+        Reducer::Count => Some(count_finite(values) as f64),
+        Reducer::Sum => Some(sum_range(values)),
+        Reducer::Avg => avg_range(values),
+        Reducer::Min => min_range(values),
+        Reducer::Max => max_range(values),
+        Reducer::First => first_range(values),
+        Reducer::Last => last_range(values),
+        Reducer::Median => percentile_range(values, 50.0),
+        Reducer::Stdev => stdev_range(values),
+        Reducer::Percentile(q) => percentile_range(values, q),
+        Reducer::Difference => difference_range(values),
+        Reducer::Keep => keep_range(values),
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => {
+            unreachable!("list reducers run in elements.rs")
+        }
+    };
+    out.filter(|v| v.is_finite())
+}
+
+// ---------------------------------------------------------------------------
+// Text and true/false sources. They take `count`, `first`, `last` and
+// `keep` here, and `unique` / `top<N>` / `samples` in elements.rs (the set
+// pond-ts's types allow). The kernels above run over each row's number where the row has
+// a value and NaN where it has none (`keep`: an id per distinct value);
+// `first` / `last` / `keep` then give the row whose value to take.
+// ---------------------------------------------------------------------------
+
+/// Refuse a reducer that needs numbers on a text, true/false or array
+/// column. pond-ts's types refuse it too; at run time pond-ts answers anyway
+/// (`sum` gives 0, `avg` and `max` give gaps), where pond-rs returns this
+/// error. On an array column each cell is one value: `count` counts cells,
+/// not elements, and `first` / `last` take whole cells.
+pub(crate) fn check_source_kind(
+    call: &'static str,
+    column: &Column,
+    reducer: Reducer,
+) -> Result<(), PondError> {
+    match (column.data(), reducer) {
+        (ColumnData::Number(_) | ColumnData::Decimal(_), _)
+        | (_, Reducer::Count | Reducer::First | Reducer::Last | Reducer::Keep) => Ok(()),
+        (_, r) if r.gives_list() => Ok(()),
+        (data, _) => Err(PondError::WrongKind {
+            call,
+            column: column.name().to_string(),
+            kind: data.kind().as_str(),
+            reason: format!(
+                "{} needs a number or decimal column; string, boolean and array columns take count, first, last, keep, unique, top<N> or samples",
+                reducer_name(reducer)
+            ),
+        }),
+    }
+}
+
+/// pond-ts's name for a reducer.
+fn reducer_name(reducer: Reducer) -> String {
+    match reducer {
+        Reducer::Count => "count".into(),
+        Reducer::Sum => "sum".into(),
+        Reducer::Avg => "avg".into(),
+        Reducer::Min => "min".into(),
+        Reducer::Max => "max".into(),
+        Reducer::First => "first".into(),
+        Reducer::Last => "last".into(),
+        Reducer::Median => "median".into(),
+        Reducer::Stdev => "stdev".into(),
+        Reducer::Percentile(q) => format!("p{q}"),
+        Reducer::Difference => "difference".into(),
+        Reducer::Keep => "keep".into(),
+        Reducer::Unique => "unique".into(),
+        Reducer::Top(n) => format!("top{n}"),
+        Reducer::Samples => "samples".into(),
+    }
+}
+
+/// What the `f64` kernels run over for one source column and reducer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum InputKind {
+    /// A number column's own values.
+    Values,
+    /// Each row's index where it has a value, NaN where not: `count`,
+    /// `first` and `last` on decimal, text and true/false columns, whose
+    /// results then pick rows.
+    Rows,
+    /// `min`, `max`, `difference` and `keep` on decimals, kept exact: each
+    /// raw whole number as
+    /// an `f64` when all fit within 2^53 (so the conversion is exact),
+    /// otherwise each value's rank among the column's distinct values.
+    /// Either way they compare as the decimals do.
+    Ranks,
+    /// Each decimal as its nearest `f64`: `avg`, `stdev`, `median`,
+    /// percentiles.
+    Floats,
+    /// `sum` of decimals: no kernel, summed exactly (see `decimal.rs`).
+    ExactSum,
+    /// `keep` on text, true/false and array columns: an id per distinct
+    /// value (equal values share one), NaN for a gap.
+    Ids,
+}
+
+pub(crate) fn input_kind(data: &ColumnData, reducer: Reducer) -> InputKind {
+    match (data, reducer) {
+        (ColumnData::Number(_), _) => InputKind::Values,
+        (_, Reducer::Count | Reducer::First | Reducer::Last) => InputKind::Rows,
+        (
+            ColumnData::Decimal(_),
+            Reducer::Min | Reducer::Max | Reducer::Difference | Reducer::Keep,
+        ) => InputKind::Ranks,
+        (ColumnData::Decimal(_), Reducer::Sum) => InputKind::ExactSum,
+        (ColumnData::Decimal(_), _) => InputKind::Floats,
+        (_, Reducer::Keep) => InputKind::Ids,
+        // check_source_kind refused the rest.
+        (_, _) => InputKind::Rows,
+    }
+}
+
+/// One kernel input, and for [`InputKind::Ranks`] the distinct values the
+/// ranks index (`None` when the values are the raw numbers themselves), for
+/// [`InputKind::Ids`] the first row holding each id.
+pub(crate) struct Input<'a> {
+    pub(crate) values: Cow<'a, [f64]>,
+    distinct: Option<Vec<i128>>,
+    id_rows: Vec<usize>,
+}
+
+impl Input<'_> {
+    /// The raw decimal a [`InputKind::Ranks`] value stands for.
+    pub(crate) fn raw_decimal(&self, v: f64) -> i128 {
+        match &self.distinct {
+            Some(distinct) => distinct[v as usize],
+            None => v as i128,
+        }
+    }
+}
+
+/// The kernel inputs for a set of (source column, reducer) pairs, each
+/// built once (a mapping often reduces one column several ways).
+pub(crate) struct Inputs<'a>(HashMap<(usize, InputKind), Input<'a>>);
+
+impl<'a> Inputs<'a> {
+    pub(crate) fn build(columns: &'a [Column], used: &[(usize, Reducer)]) -> Self {
+        let mut map = HashMap::new();
+        for &(c, reducer) in used {
+            if reducer.gives_list() {
+                continue;
+            }
+            let data = columns[c].data();
+            let kind = input_kind(data, reducer);
+            map.entry((c, kind))
+                .or_insert_with(|| build_input(data, kind));
+        }
+        Self(map)
+    }
+
+    pub(crate) fn get(&self, column: usize, kind: InputKind) -> &Input<'a> {
+        &self.0[&(column, kind)]
+    }
+}
+
+fn build_input(data: &ColumnData, kind: InputKind) -> Input<'_> {
+    let plain = |values| Input {
+        values,
+        distinct: None,
+        id_rows: Vec::new(),
+    };
+    match (data, kind) {
+        (ColumnData::Number(c), _) => plain(Cow::Borrowed(c.values())),
+        (ColumnData::Decimal(c), InputKind::Floats) => plain(Cow::Owned(c.to_f64s())),
+        (ColumnData::Decimal(c), InputKind::Ranks) => {
+            let present = |i: usize| c.nulls().is_none_or(|n| n.is_valid(i));
+            let raw = c.raw();
+            const EXACT: u128 = 1 << 53;
+            // Only present rows count: a gap's raw value can be anything.
+            if (0..raw.len()).all(|i| !present(i) || raw[i].unsigned_abs() <= EXACT) {
+                return plain(Cow::Owned(
+                    (0..raw.len())
+                        .map(|i| if present(i) { raw[i] as f64 } else { f64::NAN })
+                        .collect(),
+                ));
+            }
+            let mut distinct: Vec<i128> = (0..raw.len())
+                .filter(|&i| present(i))
+                .map(|i| raw[i])
+                .collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let values = (0..raw.len())
+                .map(|i| {
+                    if present(i) {
+                        distinct.binary_search(&raw[i]).expect("listed") as f64
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect();
+            Input {
+                values: Cow::Owned(values),
+                distinct: Some(distinct),
+                id_rows: Vec::new(),
+            }
+        }
+        (ColumnData::Decimal(_), InputKind::ExactSum) => plain(Cow::Borrowed(&[])),
+        (other, InputKind::Ids) => {
+            let (values, id_rows) = ids(other);
+            Input {
+                values: Cow::Owned(values),
+                distinct: None,
+                id_rows,
+            }
+        }
+        (other, _) => plain(Cow::Owned(match other.arrow_nulls() {
+            None => (0..other.len()).map(|i| i as f64).collect(),
+            Some(nulls) => nulls
+                .iter()
+                .enumerate()
+                .map(|(i, valid)| if valid { i as f64 } else { f64::NAN })
+                .collect(),
+        })),
+    }
+}
+
+/// An id per distinct value of a text, true/false or array column (NaN for
+/// a gap), and the first row holding each id. Array cells are equal when
+/// their elements are, bit for bit (`[0]` and `[-0]` differ), so the row
+/// an id names holds exactly the cell of every row with that id; pond-ts
+/// compares the array objects themselves.
+fn ids(data: &ColumnData) -> (Vec<f64>, Vec<usize>) {
+    fn dense<K: Eq + std::hash::Hash + Clone>(
+        cells: impl Iterator<Item = Option<K>>,
+    ) -> (Vec<f64>, Vec<usize>) {
+        let mut seen: HashMap<K, usize> = HashMap::new();
+        let mut id_rows = Vec::new();
+        // Runs of one value are common (a host name, a status): compare with
+        // the last value before hashing.
+        let mut last: Option<(K, f64)> = None;
+        let values = cells
+            .enumerate()
+            .map(|(row, cell)| {
+                let Some(k) = cell else { return f64::NAN };
+                if let Some((prev, id)) = &last
+                    && *prev == k
+                {
+                    return *id;
+                }
+                let id = *seen.entry(k.clone()).or_insert_with(|| {
+                    id_rows.push(row);
+                    id_rows.len() - 1
+                }) as f64;
+                last = Some((k, id));
+                id
+            })
+            .collect();
+        (values, id_rows)
+    }
+    match data {
+        ColumnData::String(c) => dense(c.iter()),
+        ColumnData::Boolean(c) => dense(c.iter()),
+        ColumnData::Array(c) => dense(c.iter().map(|cell| cell.map(CellKey))),
+        ColumnData::Number(_) | ColumnData::Decimal(_) => unreachable!("read as values"),
+    }
+}
+
+/// An array cell as a map key: equal when the elements are the same bit
+/// for bit ([`Scalar::same`](crate::column::Scalar), so `0` and `-0`
+/// differ).
+#[derive(Clone)]
+struct CellKey<'a>(&'a [crate::column::Scalar]);
+
+impl PartialEq for CellKey<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().zip(other.0).all(|(a, b)| a.same(b))
+    }
+}
+
+impl Eq for CellKey<'_> {}
+
+impl std::hash::Hash for CellKey<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use crate::column::Scalar;
+        state.write_usize(self.0.len());
+        for e in self.0 {
+            match e {
+                Scalar::Number(v) => (0u8, v.to_bits()).hash(state),
+                Scalar::String(s) => (1u8, s).hash(state),
+                Scalar::Boolean(b) => (2u8, b).hash(state),
+            }
+        }
+    }
+}
+
+/// The output column for `out`, the kernel results for a `source` column
+/// read through `input`. Always optional (an empty window or bucket is a
+/// gap).
+pub(crate) fn output_column(
+    name: String,
+    source: &ColumnData,
+    reducer: Reducer,
+    input: &Input<'_>,
+    out: Vec<f64>,
+) -> Column {
+    let picked = || -> Vec<Option<usize>> {
+        out.iter()
+            .map(|&v| v.is_finite().then_some(v as usize))
+            .collect()
+    };
+    match (source, input_kind(source, reducer)) {
+        (ColumnData::Number(_), _) | (_, InputKind::Floats) => Column::optional_raw(name, out),
+        (_, _) if reducer == Reducer::Count => Column::optional_raw(name, out),
+        (ColumnData::Decimal(c), InputKind::Ranks) => {
+            let values = out
+                .iter()
+                .map(|&v| v.is_finite().then(|| input.raw_decimal(v)));
+            Column::from_data(name, c.rebuild(values, c.precision()), false)
+        }
+        (data, InputKind::Ids) => {
+            let rows: Vec<Option<usize>> = out
+                .iter()
+                .map(|&v| v.is_finite().then(|| input.id_rows[v as usize]))
+                .collect();
+            Column::from_data(name, data.take(&rows), false)
+        }
+        (ColumnData::Decimal(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::String(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::Boolean(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::Array(c), _) => Column::from_data(name, c.take(&picked()), false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn clamp_at_zero_is_js_math_max() {
+        assert!(clamp_at_zero(f64::NAN).is_nan());
+        assert_eq!(clamp_at_zero(-0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(clamp_at_zero(-1.0), 0.0);
+        assert_eq!(clamp_at_zero(2.0), 2.0);
+    }
+
+    #[test]
+    fn percentile_out_of_range_is_an_error_not_a_panic() {
+        use crate::{Agg, Column, Sequence, TimeSeries};
+        let s =
+            TimeSeries::new("s", vec![0, 1], vec![Column::required("a", vec![1.0, 2.0])]).unwrap();
+        for q in [150.0, -10.0, f64::NAN] {
+            let aggs = [Agg::of("a", Reducer::Percentile(q))];
+            assert!(s.rolling("1s", &aggs).is_err(), "rolling p{q}");
+            assert!(
+                s.aggregate(&Sequence::every("1s").unwrap(), &aggs).is_err(),
+                "aggregate p{q}"
+            );
+        }
+    }
+
+    use super::*;
+
+    #[test]
+    fn parses_names() {
+        assert_eq!(Reducer::parse("mean"), Ok(Reducer::Avg));
+        assert_eq!(Reducer::parse("p95"), Ok(Reducer::Percentile(95.0)));
+        assert_eq!(Reducer::parse("p0"), Ok(Reducer::Percentile(0.0)));
+        assert!(matches!(
+            Reducer::parse("p101"),
+            Err(PondError::UnknownReducer { .. })
+        ));
+        assert!(matches!(
+            Reducer::parse("p"),
+            Err(PondError::UnknownReducer { .. })
+        ));
+        assert!(matches!(
+            Reducer::parse("bogus"),
+            Err(PondError::UnknownReducer { .. })
+        ));
+        assert_eq!(Reducer::parse("top3"), Ok(Reducer::Top(3)));
+        assert_eq!(Reducer::parse("top007"), Ok(Reducer::Top(7)));
+        assert_eq!(
+            Reducer::parse("top99999999999999999999999"),
+            Ok(Reducer::Top(usize::MAX))
+        );
+        for bad in ["top0", "top", "top-1", "top1.5", "top 2"] {
+            assert!(
+                matches!(Reducer::parse(bad), Err(PondError::UnknownReducer { .. })),
+                "{bad}"
+            );
+        }
+        assert_eq!(Reducer::parse("unique"), Ok(Reducer::Unique));
+        assert_eq!(Reducer::parse("samples"), Ok(Reducer::Samples));
+        assert_eq!(Reducer::parse("keep"), Ok(Reducer::Keep));
+        assert_eq!(Reducer::parse("difference"), Ok(Reducer::Difference));
+    }
+
+    fn col<'a>(s: &'a crate::TimeSeries, name: &str) -> &'a crate::ColumnData {
+        s.column(name).unwrap().data()
+    }
+
+    #[test]
+    fn keep_and_difference_on_decimals_are_exact() {
+        use crate::{Agg, Column, Decimal, DecimalColumn, Sequence, TimeSeries};
+        // Past 2^53, so ranks stand in for the raw values.
+        let big = 10i128.pow(30);
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000, 2000, 3000, 4000],
+            vec![Column::optional(
+                "d",
+                DecimalColumn::from_options(
+                    vec![Some(big + 1), Some(big + 1), None, Some(-big), Some(7)],
+                    2,
+                )
+                .unwrap(),
+            )],
+        )
+        .unwrap();
+        let aggs = [
+            Agg::new("keep", "d", Reducer::Keep),
+            Agg::new("diff", "d", Reducer::Difference),
+        ];
+        let m = s.aggregate(&Sequence::every("2s").unwrap(), &aggs).unwrap();
+        let dec = |v| Some(Decimal { value: v, scale: 2 });
+        let get = |s: &TimeSeries, name: &str| -> Vec<Option<Decimal>> {
+            s.column(name).unwrap().decimals().unwrap().iter().collect()
+        };
+        assert_eq!(get(&m, "keep"), [dec(big + 1), dec(-big), dec(7)]);
+        assert_eq!(get(&m, "diff"), [dec(0), dec(0), dec(0)]);
+        let r = s.rolling("4s", &aggs).unwrap();
+        assert_eq!(
+            get(&r, "keep"),
+            [dec(big + 1), dec(big + 1), dec(big + 1), None, None]
+        );
+        assert_eq!(
+            get(&r, "diff"),
+            [dec(0), dec(0), dec(0), dec(2 * big + 1), dec(2 * big + 1)]
+        );
+        let all = s.reduce(&aggs).unwrap();
+        assert_eq!(all.decimal("keep").unwrap(), None);
+        assert_eq!(all.decimal("diff").unwrap(), dec(2 * big + 1));
+        // A spread past 38 digits is an error naming the row.
+        let wide = TimeSeries::new(
+            "s",
+            vec![0, 1],
+            vec![Column::required(
+                "d",
+                DecimalColumn::from_values(vec![10i128.pow(38) - 1, 1 - 10i128.pow(38)], 0)
+                    .unwrap(),
+            )],
+        )
+        .unwrap();
+        let e = wide.rolling("1s", &aggs[1..]).unwrap_err().to_string();
+        assert!(e.contains("decimal difference 'diff' at row 1"), "{e}");
+    }
+
+    #[test]
+    fn list_reducers_take_any_kind() {
+        use crate::{Agg, ArrayOptions, Column, ColumnKind, DecimalColumn, Scalar, TimeSeries};
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000, 2000],
+            vec![
+                Column::optional(
+                    "d",
+                    DecimalColumn::from_options(vec![Some(150), None, Some(-25)], 2).unwrap(),
+                ),
+                Column::required(
+                    "tags",
+                    vec![
+                        vec![Scalar::from("b"), "a".into(), "b".into()],
+                        vec![],
+                        vec![Scalar::from(1.0)],
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+        // Decimals as their nearest f64.
+        let r = s
+            .reduce(&[
+                Agg::new("u", "d", Reducer::Unique),
+                Agg::new("t", "tags", Reducer::Top(1)),
+            ])
+            .unwrap();
+        let n = |v: f64| Scalar::Number(v);
+        assert_eq!(r.array("u").unwrap(), Some(&[n(-0.25), n(1.5)][..]));
+        assert_eq!(r.array("t").unwrap(), Some(&[Scalar::from("b")][..]));
+        // An empty list is a value, not a gap; a gap stays a gap.
+        let a = s
+            .array_aggregate("tags", Reducer::Samples, &ArrayOptions::default())
+            .unwrap();
+        let col = a.column("tags").unwrap().arrays().unwrap();
+        assert_eq!(col.get(1), Some(&[][..]));
+        let wrong = ArrayOptions {
+            kind: Some(ColumnKind::String),
+            ..ArrayOptions::default()
+        };
+        let e = s
+            .array_aggregate("tags", Reducer::Unique, &wrong)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("output kind must be array"), "{e}");
+        let e = s
+            .reduce(&[Agg::of("d", Reducer::Top(0))])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("at least 1"), "{e}");
+    }
+
+    #[test]
+    fn keep_takes_any_kind_and_difference_numbers_only() {
+        use crate::{Agg, Column, Scalar, Sequence, TimeSeries};
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000, 2000, 3000],
+            vec![
+                Column::optional("t", [Some("a"), Some("a"), None, Some("b")]),
+                Column::optional("b", [Some(true), None, Some(true), Some(false)]),
+                // Equal content in separate cells: kept (pond-ts compares
+                // the array objects, so it would give a gap).
+                Column::optional(
+                    "arr",
+                    [
+                        Some(vec![Scalar::from(0.0), "x".into()]),
+                        Some(vec![Scalar::from(0.0), "x".into()]),
+                        None,
+                        Some(vec![Scalar::from(1.0)]),
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+        let aggs = [
+            Agg::of("t", Reducer::Keep),
+            Agg::of("b", Reducer::Keep),
+            Agg::of("arr", Reducer::Keep),
+        ];
+        let m = s.aggregate(&Sequence::every("2s").unwrap(), &aggs).unwrap();
+        assert_eq!(
+            m.column("t")
+                .unwrap()
+                .strings()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            [Some("a"), Some("b")]
+        );
+        assert_eq!(
+            m.column("b")
+                .unwrap()
+                .booleans()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            [Some(true), None]
+        );
+        let arr = m.column("arr").unwrap().arrays().unwrap();
+        assert_eq!(arr.get(0), Some(&[Scalar::from(0.0), "x".into()][..]));
+        assert_eq!(arr.get(1), Some(&[Scalar::from(1.0)][..]));
+        // Each one-row bucket keeps its own cell: `[-0]` is not the `[0]`
+        // of an earlier row (#797 review), and the two differ.
+        let zeros = TimeSeries::new(
+            "z",
+            vec![0, 1000, 2000, 3000],
+            vec![Column::required(
+                "a",
+                vec![
+                    vec![Scalar::from(0.0)],
+                    vec![Scalar::from("x")],
+                    vec![Scalar::from(-0.0)],
+                    vec![Scalar::from(0.0)],
+                ],
+            )],
+        )
+        .unwrap();
+        let one = [Agg::of("a", Reducer::Keep)];
+        let by_second = zeros
+            .aggregate(&Sequence::every("1s").unwrap(), &one)
+            .unwrap();
+        let cell =
+            |s: &TimeSeries, i| s.column("a").unwrap().arrays().unwrap().get(i).unwrap()[0].clone();
+        assert!(cell(&by_second, 2).same(&Scalar::from(-0.0)));
+        let rolled = zeros.rolling("1s", &one).unwrap();
+        assert!(cell(&rolled, 2).same(&Scalar::from(-0.0)));
+        let pair = zeros.rolling("2s", &one).unwrap();
+        assert_eq!(pair.column("a").unwrap().arrays().unwrap().get(3), None);
+        let r = s.rolling("2s", &aggs).unwrap();
+        assert_eq!(
+            r.column("t")
+                .unwrap()
+                .strings()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            [Some("a"), Some("a"), Some("a"), Some("b")]
+        );
+        assert!(matches!(col(&r, "arr"), crate::ColumnData::Array(_)));
+        for result in [
+            s.reduce(&[Agg::of("t", Reducer::Difference)]).map(|_| ()),
+            s.rolling("1s", &[Agg::of("b", Reducer::Difference)])
+                .map(|_| ()),
+        ] {
+            let e = result.unwrap_err().to_string();
+            assert!(e.contains("count, first, last, keep"), "{e}");
+        }
+    }
+
+    #[test]
+    fn percentile_matches_a_full_sort() {
+        // Many sizes, both sides of the insertion-sort threshold.
+        let mut seed = 7u64;
+        for n in 1..80usize {
+            let values: Vec<f64> = (0..n)
+                .map(|_| {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    ((seed >> 33) % 50) as f64 - 25.0
+                })
+                .collect();
+            let mut sorted = values.clone();
+            sorted.sort_by(f64::total_cmp);
+            for q in [0.0, 10.0, 50.0, 90.0, 95.0, 100.0] {
+                assert_eq!(
+                    percentile_range(&values, q),
+                    Some(percentile_of_sorted(&sorted, q)),
+                    "n={n} q={q}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocked_sum_adds_lanes_in_order() {
+        // 40 values: 5 rounds of 8 lanes. The lanes see 1e16 then 1s; a
+        // straight left-to-right sum would lose the 1s differently.
+        let mut values = vec![1.0; 40];
+        values[0] = 1e16;
+        let lanes: f64 = {
+            let mut a = [0.0f64; 8];
+            for (i, v) in values.iter().enumerate() {
+                a[i % 8] += v;
+            }
+            a.iter().sum()
+        };
+        assert_eq!(sum_range(&values), lanes);
+    }
+}

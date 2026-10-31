@@ -64,8 +64,10 @@ export {
   boundsOf,
   bestEffortsByDistance,
   segmentsInRange,
+  lineDistanceAt,
+  lineRange,
 } from './geo/index.js';
-export type { Segment } from './geo/index.js';
+export type { Segment, GpsSpan } from './geo/index.js';
 export { computePower, powerBestEfforts } from './power/index.js';
 export type {
   PowerBin,

@@ -211,6 +211,16 @@ describe('LiveSeries.fill', () => {
     expect(f.at(1)!.get('value')).toBe(10);
   });
 
+  it('zero skips non-number columns, as batch fill does', () => {
+    const live = makeLiveOptional();
+    live.push([1000, undefined, undefined, undefined]);
+    const bare = live.fill('zero');
+    expect(bare.at(0)!.get('value')).toBe(0);
+    expect(bare.at(0)!.get('host')).toBeUndefined();
+    const mapped = live.fill({ host: 'zero' } as never);
+    expect(mapped.at(0)!.get('host')).toBeUndefined();
+  });
+
   it('per-column mapping with literal values', () => {
     const live = makeLiveOptional();
     live.push([1000, undefined, undefined, undefined]);
@@ -443,5 +453,36 @@ describe('LiveView chaining', () => {
     live.push([2000, 25, 2, 'b']);
     expect(pipeline.length).toBe(2);
     expect(pipeline.at(1)!.get('value')).toBe(15);
+  });
+});
+
+// ── late events from a reorder source ([PND-LATE]) ─────────────────
+
+describe('views on a reorder source', () => {
+  it('insert a late event at its key position instead of throwing', () => {
+    const live = new LiveSeries({
+      name: 'test',
+      schema: optionalSchema,
+      ordering: 'reorder',
+    });
+    const all = live.filter(() => true);
+    const held = live.fill('hold');
+    const d = live.diff('value');
+    const total = live.cumulative({ value: 'sum' });
+    const last2 = live.window(2);
+    live.push([1000, 10, 1, 'a'], [5000, 50, 5, 'e']);
+    expect(() => live.push([2600, 26, 2, 'c'])).not.toThrow();
+    const begins = (v: { length: number; at(i: number): any }) =>
+      Array.from({ length: v.length }, (_, i) => v.at(i)!.begin());
+    expect(live.length).toBe(3);
+    for (const view of [all, held, d, total]) {
+      expect(begins(view)).toEqual([1000, 2600, 5000]);
+    }
+    // Stateful views compute in arrival order: the late event is compared
+    // with the previous arrival (5000), not the previous time (1000).
+    expect(d.at(1)!.get('value')).toBe(26 - 50);
+    expect(total.at(1)!.get('value')).toBe(10 + 50 + 26);
+    // A count window keeps the newest two by key.
+    expect(begins(last2)).toEqual([2600, 5000]);
   });
 });

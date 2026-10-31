@@ -1,9 +1,11 @@
 import {
+  bucketStateFor,
   finiteOrMissing,
   resolveReducer,
   rollingStateFor,
 } from '../reducers/index.js';
 import { plainRollingSum } from '../reducers/sum.js';
+import { WindowStdev, WindowSum } from '../reducers/window-accumulators.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
   BooleanColumn,
@@ -170,24 +172,46 @@ type ColumnarAggregatePlan =
         end: number,
       ) => ColumnValue | undefined;
     }
-  | { kind: 'boundary'; column: Column; which: 'first' | 'last' };
+  | { kind: 'boundary'; column: Column; which: 'first' | 'last' }
+  | {
+      /**
+       * Everything else — `unique` / `top` / `samples` / `keep` /
+       * `difference`, a reducer over a non-number or chunked column, or a
+       * custom function: the reducer's own bucket state, fed this
+       * column's cells in order. The same values in the same order the
+       * row path feeds it, so the answer is what this column alone gets.
+       */
+      kind: 'state';
+      column: Column;
+      reducer: AggregateReducer;
+    };
 
 /**
  * Resolves each mapped column to a per-bucket execution plan.
  *
- * Returns `null` — caller takes the unchanged row path — when any column
- * doesn't qualify: a custom-function reducer; a reducer that is neither a
- * numeric `reduceColumn` kernel nor a `first`/`last` boundary selector
- * (`unique` / `top` / `samples` / `keep`); or a numeric reducer over a
- * non-numeric / chunked / missing source column. All-or-nothing per call
- * keeps the bucket walk single-pass; mixed mappings fall back wholesale.
+ * Each column is planned **on its own**, so a column's answer never
+ * depends on which other columns share the call ([PND-AGGSIBLING]):
  *
- * `first` / `last` qualify on **any** column kind / storage, via a
- * boundary scan (the first/last *defined* cell in the bucket — see
- * `ReducerDef.definedBoundary`). That is what lets a partitioned
- * `aggregate` take the fast path: its auto-injected partition-column
- * reducer is `'first'`, which previously tripped the gate for every
- * partitioned call.
+ * - a built-in numeric reducer with a range kernel over a packed number
+ *   column reduces the bucket's index range off the typed array;
+ * - `first` / `last` take a boundary scan, on **any** column kind /
+ *   storage (the first/last *defined* cell in the bucket — see
+ *   `ReducerDef.definedBoundary`). That is what lets a partitioned
+ *   `aggregate`, whose auto-injected partition-column reducer is
+ *   `'first'`, take this path;
+ * - every other column (`unique` / `top` / `samples` / `keep` /
+ *   `difference`, a reducer over a non-number or chunked column, a
+ *   custom function) feeds its reducer's bucket state, as the row path
+ *   does.
+ *
+ * This used to be all-or-nothing: one column of the third kind sent the
+ * whole call to the row path, where `sum` / `avg` lose the blocked
+ * summation (last-ulp differences on buckets of 32+ values) and `median`
+ * can pick the other sign of zero. So adding `host: 'count'` to a call
+ * could change `v: 'sum'`.
+ *
+ * Returns `null` — caller takes the row path — only when a source column
+ * is missing.
  */
 function planColumnarAggregate(
   getColumn: (name: string) => Column | undefined,
@@ -195,17 +219,12 @@ function planColumnarAggregate(
 ): ColumnarAggregatePlan[] | null {
   const plans: ColumnarAggregatePlan[] = [];
   for (const spec of columns) {
-    if (typeof spec.reducer !== 'string') return null; // custom function
-    const def = resolveReducer(spec.reducer);
     const source = getColumn(spec.source);
     if (source === undefined) return null; // missing source
+    const def =
+      typeof spec.reducer === 'string' ? resolveReducer(spec.reducer) : null;
 
-    if (def.definedBoundary !== undefined) {
-      // `first` / `last`: pick the first/last *defined* cell in the bucket
-      // via a boundary scan over any column kind / storage (`col.read(i)`).
-      // This is what lets a partitioned `aggregate` — whose auto-injected
-      // partition-column reducer is `'first'` — take the fast path instead
-      // of bailing the whole call for lack of a numeric `reduceColumn`.
+    if (def?.definedBoundary !== undefined) {
       plans.push({
         kind: 'boundary',
         column: source,
@@ -214,23 +233,20 @@ function planColumnarAggregate(
       continue;
     }
 
-    // Gate on the **range-scoped** kernel, not `reduceColumn`. Every
-    // built-in that has one has the other (they are declared together),
-    // so this excludes exactly the same reducers as before: `unique` /
-    // `top` / `samples` / `keep`. Gating here rather than falling back to
-    // `reduceColumn(sliceByRange(...))` avoids carrying a second bucket
-    // path that nothing exercises — a reducer that somehow had only the
-    // whole-column form would take the row path, which is correct, just
-    // slower.
-    if (def.reduceColumnRange === undefined) return null;
-    if (source.kind !== 'number' || source.storage !== 'packed') {
-      return null; // non-numeric / chunked numeric source
+    if (
+      def?.reduceColumnRange !== undefined &&
+      source.kind === 'number' &&
+      source.storage === 'packed'
+    ) {
+      plans.push({
+        kind: 'reduce',
+        column: source,
+        reduce: def.reduceColumnRange,
+      });
+      continue;
     }
-    plans.push({
-      kind: 'reduce',
-      column: source,
-      reduce: def.reduceColumnRange,
-    });
+
+    plans.push({ kind: 'state', column: source, reducer: spec.reducer });
   }
   return plans;
 }
@@ -257,6 +273,11 @@ function reduceBucket(
       // A non-finite result (an overflow) is missing — same as every
       // reducer result path (`finiteOrMissing`, [PND-NANREP]).
       out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
+    } else if (plan.kind === 'state') {
+      // `bucketStateFor` applies the non-finite policy in and out.
+      const state = bucketStateFor(plan.reducer);
+      for (let i = start; i < scan; i += 1) state.add(plan.column.read(i));
+      out[p] = state.snapshot();
     } else if (plan.which === 'first') {
       // First defined cell in [start, scan); scans past missing cells and
       // past non-finite numeric cells (reducer non-finite policy,
@@ -298,7 +319,7 @@ function reduceBucket(
  * string branch, matching the row path's behaviour for a zero-bucket
  * result.
  */
-function intervalKeysForBuckets(
+export function intervalKeysForBuckets(
   buckets: ReadonlyArray<Interval>,
 ): IntervalKeyColumn {
   const length = buckets.length;
@@ -375,8 +396,8 @@ function intervalKeysForBuckets(
  * non-overlapping, and positive-duration at construction, so re-deriving
  * it per bucket would be checking the same fact twice.
  *
- * Returns `null` for the same disqualifying mappings as before; the
- * caller falls back to the unchanged row path.
+ * Returns `null` only when a source column is missing; the caller then
+ * takes the row path.
  */
 export function tryAggregateColumnarStore(
   begins: Float64Array,
@@ -542,7 +563,9 @@ export function tryAggregateColumnarStore(
  * qualify: a custom-function reducer, a non-`'number'` output kind
  * (`unique` / `samples` / `keep` over a non-number source / an explicit
  * `kind` override), or a non-numeric / chunked / missing source column.
- * All-or-nothing per call, matching {@link tryAggregateColumnarStore}.
+ * All-or-nothing per call. Unlike `aggregate` ([PND-AGGSIBLING]) that
+ * cannot change a column's answer: this sweep drives the same rolling
+ * states as the generic one, so both give the same bits.
  *
  * Window shape replicates the generic count sweep exactly: rows are the unit
  * (`count` is a bar count — no equal-key grouping), `lo` / `hi` are monotonic
@@ -607,13 +630,12 @@ export function tryRollingCountColumnarNumeric(
 /**
  * One column's trailing / leading / centred count-window sweep.
  *
- * `avg` is specialised inline; everything else drives its reducer state,
- * which is now monomorphic at this call site. `laned` is the overflow
- * re-run — every reducer through its (laned) state; see the note below. `avg` earns the special
- * case because it is what `sma` and the centre line of `bollinger` /
- * `zScore` reduce to, and its recurrence is a running sum — no accuracy
- * argument to preserve, unlike `stdev`, whose order-independent Welford
- * delete has exact `n <= 1` cases that are not worth duplicating.
+ * `avg` and `stdev` drive their accumulators directly; everything else
+ * drives its reducer state, which is now monomorphic at this call site.
+ * `laned` is the overflow re-run — every reducer through its (laned) state;
+ * see the note below. `avg` and `stdev` earn the special case because they
+ * are what `sma` and the centre line / band width of `bollinger` / `zScore`
+ * reduce to.
  */
 function sweepRollingColumn(
   spec: AggregateColumnSpec,
@@ -648,15 +670,15 @@ function sweepRollingColumn(
   // OHLCV bar series, the common case here — the whole predicate folds to
   // `true` and the test disappears.
 
-  // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
-  // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
-  // its reducer state, which is monomorphic here now.
+  // `avg` and `stdev` skip the reducer state's closure and its per-cell
+  // `typeof` / lane checks by calling the plain accumulators directly;
+  // everything else keeps its reducer state, which is monomorphic here now.
   //
   // **Overflow** ([PND-NANREP]). The reducer states split their running
-  // sum / Welford accumulator by magnitude (`reducers/overflow-lanes.ts`) so
+  // sums by magnitude (`reducers/overflow-lanes.ts`) so
   // an overflow can't stick after the huge values leave the window — at the
   // price of a compare per cell. This sweep doesn't pay it: it runs the plain
-  // single-accumulator recurrences (inline `avg` / `stdev`, `plainRollingSum`
+  // single-lane accumulators (`WindowSum` / `WindowStdev`, `plainRollingSum`
   // for `sum`), and on the first non-finite answer from one of them — which
   // ordinary data never produces — abandons the pass and re-runs the column
   // with `laned` set, driving the laned reducer states instead. The re-run's
@@ -678,21 +700,13 @@ function sweepRollingColumn(
           ? resolveReducer(spec.reducer as string).rollingState()
           : rollingStateFor(spec.reducer);
 
-  // `avg`
-  let runningSum = 0;
-  let runningCount = 0;
-  // `stdev` — Welford with an order-independent delete. Transcribed from
-  // `reducers/stdev.ts`'s `rollingState` **verbatim**, including the two
-  // exact-reset cases, because the value of that recurrence is entirely in
-  // its numerical behaviour: the deviation-space mean update avoids the
-  // `n·mean − v` product that loses precision at large magnitudes, and the
-  // `n → 1` case is set directly because the reverse step alone leaves
-  // rounding residue (~0.016 on 1e10 offsets). A "simplification" here would
-  // be a silent accuracy regression, so the test asserts bit-equality against
-  // the state object rather than closeness.
-  let wN = 0;
-  let wMean = 0;
-  let wM2 = 0;
+  // `avg` / `stdev` — the same drift-free accumulators the reducer states
+  // use below their overflow split (`reducers/window-accumulators.ts`,
+  // [PND-ROLLSTD]). Calling their methods from here is a monomorphic call
+  // V8 inlines, so the arithmetic is shared rather than transcribed, and the
+  // answers match the state path bit for bit (the tests assert `Object.is`).
+  const wSum = new WindowSum();
+  const wStdev = new WindowStdev();
 
   const leftSpan = Math.floor((count - 1) / 2);
   const rightSpan = count - 1 - leftSpan;
@@ -716,51 +730,26 @@ function sweepRollingColumn(
     if (kind === 'avg') {
       while (windowEnd <= hi) {
         if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
-          runningSum += values[windowEnd]!;
-          runningCount += 1;
+          wSum.add(values[windowEnd]!);
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
         if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
-          runningSum -= values[windowStart]!;
-          runningCount -= 1;
+          wSum.remove(values[windowStart]!);
         }
         windowStart += 1;
       }
     } else if (kind === 'stdev') {
       while (windowEnd <= hi) {
         if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
-          const v = values[windowEnd]!;
-          wN += 1;
-          const delta = v - wMean;
-          wMean += delta / wN;
-          wM2 += delta * (v - wMean);
+          wStdev.add(values[windowEnd]!);
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
         if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
-          const v = values[windowStart]!;
-          if (wN <= 1) {
-            // Removing the final contributor — reset exactly (no 0/0, no drift).
-            wN = 0;
-            wMean = 0;
-            wM2 = 0;
-          } else {
-            const meanWith = wMean;
-            wN -= 1;
-            if (wN === 1) {
-              // A single remaining element has population variance exactly 0.
-              wMean = meanWith * 2 - v; // the survivor: 2·mean₂ − removed
-              wM2 = 0;
-            } else {
-              // Deviation-space mean update, then reverse Welford.
-              wMean = meanWith - (v - meanWith) / wN;
-              wM2 -= (v - wMean) * (v - meanWith);
-              if (wM2 < 0) wM2 = 0;
-            }
-          }
+          wStdev.remove(values[windowStart]!);
         }
         windowStart += 1;
       }
@@ -789,16 +778,11 @@ function sweepRollingColumn(
 
     const v =
       kind === 'avg'
-        ? runningCount === 0
+        ? wSum.n === 0
           ? undefined
-          : runningSum / runningCount
+          : wSum.total() / wSum.n
         : kind === 'stdev'
-          ? wN === 0
-            ? undefined
-            : // `+ (wMean − wMean)` is `+ 0` — unless a delta overflow left
-              // the mean non-finite with `m2` clamped back to a finite value,
-              // which must not read as a defined stdev (it re-runs laned).
-              Math.sqrt(Math.max(0, wM2 / wN) + (wMean - wMean))
+          ? wStdev.stdev()
           : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
     // A non-finite result (e.g. a `sum` overflow to Infinity) is a missing

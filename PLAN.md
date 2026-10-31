@@ -570,6 +570,335 @@ unstable on `main` today from blocked summation alone, with no workers involved.
 
 Not a commitment. Red-team it before anything commits to it.
 
+### pond-rs — native Rust core
+
+[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) — a native Rust implementation
+of pond's core and financial studies, for agents writing Rust, with a WASM
+bridge back into pond-ts later where it measurably pays. Building started
+2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
+shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
+(workspace, CI incl. a wasm32 build, parity harness over the core fixture and
+the study oracle) is done.
+
+- **[PND-RUST-R1B]** — Rest of batch core, adopted 2026-10-18 after R1a met
+  every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
+  Steps, each bit-for-bit against pond-ts:
+  1. ~~Reshape and output layout~~ — done (#770).
+  2. ~~Column kinds: (a) text and true/false columns (#771); (b)
+     `TimeRange` keys and text interval labels (#772); (c) more Arrow
+     input (#773); (d) exact decimals~~ — done.
+  3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
+     `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
+     `with_column` / `map`~~ — done.
+  4. ~~Groups: (a) `partition_by` / `group_by`, threaded across
+     partitions (#778); (b) agent trial on the partitioned workload
+     ([PND-AGENTBENCH] Q11)~~ — done.
+  5. ~~`align` / `materialize` / `dedupe`~~ — done.
+  6. ~~`join`~~ — done.
+  7. The rest, as friction asks: (a) ~~reading times written as text
+     ([PND-RUSTTIME], `parse_time`)~~ — done; (b) ~~the step 4b agent-trial
+     fixes ([PND-RUSTQ11]: `tail` / `reduce` / `first` / `last`, partition
+     key helpers, docs)~~ — done.
+  8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
+     2026-10-20 by pjm17971 as core work that needs no further case:
+     (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
+     (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
+     columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) ~~reducers `unique` / `top` /
+     `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
+     samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
+     `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
+     `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
+     (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) ~~`ValueSeries` Arrow
+     in and out~~ — done; (j) ~~the (h) operations per group~~ — done.
+     Same rules as steps 1–7. **R1b is complete** with (j).
+
+  Detail in the breakout plan.
+
+- **[PND-RUST-R2]** — The financial studies in pond-rs, planned 2026-10-21.
+  Every study must match pond-ts bit for bit (a new pond-ts study fixture)
+  AND the pandas / TA-Lib oracle within 5e-10 (pjm17971 chose both). Studies
+  are methods on `TimeSeries` in a `pond_rs::financial` module of the same
+  crate; no worker pool (kernels that restart every `period` rows split
+  rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
+  shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
+  `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
+  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. ~~the
+  catalog~~ — done; 5. ~~perf check and an agent trial~~ — done
+  (2026-10-23): all 109 studies same bits, 2.3–32.5x pond-ts on 4 cores;
+  trial pond-rs 9/10 right (one wrong column order) vs polars 10/10,
+  0 failed runs vs polars' 12. **R2 is
+  complete.** Detail in the breakout plan.
+
+- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (WebAssembly, npm
+  `@pond-ts/rs`) and Python (PyO3, PyPI `pond-rs`, `import pond_rs`),
+  planned 2026-10-29; pjm17971 chose "Yes, all" on 2026-10-30: separate
+  npm package, both bridges built at once, same version as pond-ts on every
+  `v*` tag. Steps J1 (`crates/pond-wasm`, batch core, core parity fixture
+  through JS), J2 (studies, `LiveSeries`), J3 (browser build, npm publish,
+  docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
+  pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
+  P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
+  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
+  J2 split the same way: J2a studies + trading calendars built 2026-10-31;
+  J2b `LiveSeries` built 2026-10-31. Next J3. Detail in the breakout plan.
+
+- **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
+  2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
+  per-row rules written as data so pond-ts, pond-rs and both bridges run
+  them over whole columns instead of calling a function per row (bridge
+  `filter` with a function is 8x slower than pond-ts today). E1 pond-ts
+  (`col` / `lit` / `when`, accepted by `filter`, `find`, `some`, `every`,
+  `mapColumns`, `withColumn`, live `filter`) merged #865; E2a pond-rs crate and
+  E2b both bridges built (PR #867); bridge J2 follows. Detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
+
+- **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
+  scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
+  300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
+  about 70 ms. Found by the Python bridge benchmark (per-host rolling 428 ms
+  against polars' 127 ms) and reproduced from plain Rust. The instruction
+  count grows in step with the rows (callgrind), so it is memory access, most
+  likely the 16-bit radix sort's 65,536-bucket scatter in `merge_order`;
+  partitions are already sorted, so a k-way merge is the obvious candidate.
+  No API change.
+
+- **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
+  `apply`, both libraries) don't say which partition they came from: a
+  per-host aggregate's closed bucket carries only its interval and reducer
+  columns. In the R3 step 7 agent trial all 10 pond-rs agents worked around
+  it (9 with a `first` / `keep` reducer on the key column). Options: write
+  the partition column into gathered outputs, or pass the key to the
+  `apply` recipe. An API change in both libraries; needs a decision.
+- **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
+  independent).
+- **[PND-RUSTPUB]** — Publish pond-rs on crates.io with docs.rs API docs.
+  Prep (metadata, README, full rustdoc, MSRV 1.88, `release-rs.yml`) in the
+  publish-prep PR #851. Version 0.1.0, own numbering (Peter, 2026-10-29;
+  settles the old [PND-RUSTRFC] versioning question). First publish via
+  `release-rs.yml` with the `CARGO_REGISTRY_TOKEN` secret. Then switch to trusted
+  publishing. Details in `docs/plans/PND_RUST_PLAN.md`.
+- **[PND-RUSTDOCS]** — pond-rs pages on the docs site
+  (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
+  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–7 (live series page). Keep them in step as each step lands. Every Rust example is a
+  whole program checked by `website/scripts/check-rust-snippets.sh` (now every
+  docs page, not only `pond-rs/`); not yet run in CI. Rust-beside-TypeScript
+  sweep (Peter, 2026-10-29): TypeScript / Rust tabs (`groupId="language"`)
+  on the introduction, getting started, financial overview, and an
+  "also in Rust" note on the core overview pages; process marked
+  TypeScript only (#850). Then 158 more tabs on the per-operator core pages
+  (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
+  snippets in all, each checked against pond-ts output. Install lines now say
+  `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
+  snippets also pass against the published 0.1.0. Open: run the script in
+  CI.
+- **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
+  column that is missing (a typo) or not a number column return an output of
+  all gaps instead of an error, so a mistake looks like "no data". Except
+  `rollingMin` / `rollingMax` / `rollingPercentile`, which throw on a missing
+  column (core `rolling` checks the name) but still give gaps for a text
+  column. Found building pond-rs R2 step 1, which refuses both. Fix: check
+  the source in the shared study helpers (a behaviour change, so it needs a
+  CHANGELOG entry); the study parity fixture's `name` / `flag` / `nope` cases
+  pin today's behaviour.
+- **[PND-CALGEN]** — `TradingCalendar.fromRules` / `generateSessions` are
+  slow: a 30-year New York calendar with a lunch break takes ~1.3 s in
+  pond-ts (pond-rs: 3.4 ms). Measured: ~43 µs per Temporal-polyfill
+  `ZonedDateTime.from` call, one per open, close and break edge (four a
+  day here; dropping the break halves the time), plus ~0.24 s walking the
+  dates. Found building pond-rs R2 step 3a. Fix idea: resolve each day's
+  offset once and add the wall-clock minutes, falling back to Temporal only
+  on the days the zone's offset changes.
+- **[PND-RWIBIG]** — `randomWalkIndex` takes time in proportion to its
+  `period`, even past the row count: it walks every horizon from 2 to
+  `period`, and any horizon longer than the series already makes every row
+  a gap. On 120 bars, period 1e4 takes 42 ms, 1e5 0.3 s, 1e6 5.2 s
+  (measured). A picker's slider or an agent can reach that. Fix: return all
+  gaps when `period >= length` (pond-rs does, same output). Found by the
+  pond-rs catalog's huge-option sweep (R2 step 4).
+- **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
+  few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
+  take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra
+  time in writing results out and in garbage collection; the cause is not yet
+  found. Repro: `crates/pond-rs/bench/` with and without the outages.
+- **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
+  error cases: `diff('nope')` throws a raw `Cannot read properties of
+undefined`; `rolling` with an unknown column says "aggregate mapping".
+  Agents act on error text, so both should name the column and the call.
+  More from the pond-rs R1b step 3a survey (2026-10-19; each reproduced
+  against the built package): an unknown or key column in `rate` /
+  `pctChange` / `cumulative` / `shift` is a raw V8 `TypeError` too;
+  `cumulative({ a: 'avg' })` throws `apply is not a function` (and only
+  when the column has a value); `fill('bogus')` silently does nothing;
+  `fill({ nope: 'hold' })` silently ignores the unknown column; `fill`'s
+  `limit` is never checked (`NaN` means no limit); `parseDuration` rejects
+  the number `0` but accepts `'0s'`; `fill` on an empty series skips all
+  checks; the `maxGap` doc says "prior known value to next known value",
+  but gaps at either end are measured to their own first or last row.
+- **[PND-ARROWTSVAL]** — pond-ts `fromArrow` reads a `Timestamp` value
+  column (not the key) as raw counts in its own unit: a microsecond column
+  holding 1 comes in as `1`, not `0.001` ms. `Date32` value columns are
+  converted to ms, and the key is scaled, so the value path is the odd one
+  out. Found 2026-10-18 by the pond-rs Arrow probe.
+- **[PND-KINDREDUCE]** — pond-ts runs number reducers on text and
+  true/false columns at run time instead of refusing them: `aggregate` with
+  `sum` on a string column gives 0 per bucket, `avg` / `max` give gaps. Its
+  types already refuse these, so only untyped callers (JSON-driven mappings,
+  agents) reach it. pond-rs returns an error naming the column; pond-ts
+  should throw the same. Found 2026-10-18 while adding text columns to
+  pond-rs (R1b step 2a).
+- **[PND-ARROWTYPE]** — pond-ts `TimeSeries.fromArrow(table, { time: 'ts' })`
+  can't be typed truthfully: without a schema type argument a chain fails to
+  type-check at `rolling` (mapping becomes `never`), and the schema type's key
+  must be named `'time'` (`FirstColumn`), so a file keyed `ts` has to be
+  described as `time` while the series really calls it `ts`. The docs
+  (`creating.mdx`) suggest exactly that pair. Found 2026-10-22 writing a whole
+  read-Arrow-then-chain program (thread "Chaining studies and operators").
+- **[PND-ARROWREQ]** — pond-ts `fromArrow` declares every value column
+  required, even one with nulls, so its own `toJSON` → `fromJSON` round trip
+  then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a
+  nullable Float64 column `[1, null]`. Proposed fix: take `required` from the
+  Arrow field's nullability, as pond-rs now does (Codex review of pond-rs,
+  finding 5), so both read the same file to the same schema. Until then they
+  differ on every pyarrow / polars file (both mark fields nullable by
+  default): pond-rs reads such columns as optional, pond-ts as required.
+- **[PND-ARROWTEXT]** — pond-ts `fromArrow` is slow on text columns: a
+  1M-row `Utf8` column takes ~500 ms to read (`ValueSeries.fromArrow`, the
+  axis alone ~8 ms). 345 ms of that is apache-arrow's own `toArray()`
+  turning each string into a JS string; the rest is pond's `readStrings`.
+  Reading the offsets and bytes directly (decoding each distinct string
+  once) may avoid most of it; not tried. A nullable number column adds
+  ~60 ms per 1M rows, cause not looked into. Found 2026-10-21 by the
+  pond-rs step 8i4 bench (pond-rs: 5 ms for the same table).
+- **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
+  even when the mapping leaves a gap (a non-finite result is stored as a
+  gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
+  1 (value) is required"). Repro: parity case `mapColumns-overflow`
+  (`v => v * 1e308 + 1e308` on a required column). Same class as
+  [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
+  pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
+- **[PND-COLSREQ]** — pond-ts `fromColumns` ignores `required`: a column
+  the schema marks required (the default) is read with its gaps and stays
+  marked required, so the series' own `toJSON` → `fromJSON` round trip
+  then throws. Same class as [PND-ARROWREQ] / [PND-MAPREQ]. pond-rs marks
+  such a column optional. Found 2026-10-20 (pond-rs R1b step 8d2).
+- **[PND-POINTSTS]** — a value column named `ts` collides with the time
+  in pond-ts's points: `toPoints` writes the column's value over the time
+  (and `JSON.stringify` then drops the time where the column has a gap),
+  and `fromPoints` reads the time into the column too. pond-rs refuses
+  such a column in both directions; pond-ts should throw, as `toColumns`
+  does for its own name collisions. Found 2026-10-20 (pond-rs R1b step
+  8d2).
+- **[PND-ARRAYCHECK]** — pond-ts's array calls never check the column
+  they are given. `arrayContains('v', 1)` on a number column, or on a
+  column that does not exist, gives an empty series; `arrayAggregate` with
+  `count` on a number column replaces it with a column of gaps marked
+  optional; `arrayExplode('nope')` gives no rows. `mapColumns` and `fill`
+  with an array holding `NaN` silently leave a gap, where `map` and
+  `new TimeSeries` throw; `shift` / `diff` on an array column throw an
+  internal `withColumnReplaced` message. pond-rs returns errors naming the
+  column. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYKIND]** — pond-ts `arrayAggregate` writes `first` / `last` /
+  custom results as `string` unless `kind` is given, and `arrayExplode`
+  defaults to `string` too, so both throw ("expected string") on number or
+  true/false arrays; `aggregate` on the same column takes the source kind.
+  `collapse` with an array result infers `string` and silently stores
+  gaps. pond-rs takes the elements' kind when none is given. Found
+  2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYKEY]** — pond-ts compares arrays as text or by reference
+  where it needs a key or an order: `groupBy` / `partitionBy` /
+  `pivotByGroup` on an array column key by `String(arr)`, so `['a,b']` and
+  `['a', 'b']` share a group and `[]` is `''`; `dedupe({ max })` on arrays
+  compares their text (`[9]` beats `[10]`); `keep` compares arrays by
+  reference, so two equal arrays give a gap (the live store's
+  `valuesEqual` compares them element by element). pond-rs refuses array
+  partition keys. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYSLOW]** — pond-ts's array calls go row by row through
+  `Event` objects: on 100k rows `arrayAggregate` takes 220–370 ms and
+  `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
+  ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
+  and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
+  number outputs, but it is all-or-nothing per call: one text output (a
+  `first` of a name column) sends every column to the slow general sweep.
+  On 1M rows a 20-row `avg` takes 51 ms alone and 920 ms beside
+  `host: first`. Partitioned rolling always adds such an output for the
+  partition column, so a 20-row `avg` per host takes 3.1 s (pond-rs:
+  169 ms). Proposed fix: decide per column, as [PND-AGGSIBLING] did for
+  `aggregate`; the fast path already drives the same window states, so
+  answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
+  Found 2026-10-20 (pond-rs R1b step 8g).
+- **[PND-SMOOTHSLOW]** — pond-ts `smooth` (`movingAverage`, `loess`) and
+  `baseline` build one `Event` per row and rebuild the series from rows. On
+  1M rows `movingAverage` over 5 minutes takes ~2 s and `baseline` ~3.9 s,
+  where `rolling` with the same `avg` and `stdev` takes ~0.3 s; making the
+  `Event`s alone takes ~1.2 s. `outliers` ~2 s, `scan` 80 ms, `sample({
+stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
+  the column and write the result column directly, as `ema`'s fast path
+  already does. Repro: `crates/pond-rs/bench/smooth_pond_ts.mjs`. Found
+  2026-10-21 (pond-rs R1b step 8h).
+- **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
+  unknown name gives the series back unchanged, and a text column gives a
+  gap in every row (`baseline` on a text column also gives gaps). pond-rs
+  refuses both. Proposed fix: the `RangeError` `scan` already gives.
+  Found 2026-10-21 (pond-rs R1b step 8h).
+- **[PND-COLLAPSEREQ]** — pond-ts `collapse` marks its output column
+  required, but a non-finite result (`0 / 0`) or a reducer returning
+  `undefined` leaves gaps in it, and the series then fails to reload
+  through `fromJSON`. The reducer's type returns `ScalarValue` (no
+  `undefined`), so the fix (output `required: false`, typed `R |
+undefined`, or required only when it has no gaps) changes a public
+  type and needs a yes. pond-rs marks it required only when it has no
+  gaps. Found 2026-10-21 (pond-rs R1b step 8i).
+- **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
+  500 partitions × 1000 rows back together, and every partitioned
+  operation calls it (`partitionBy('symbol').diff('close').collect()`:
+  ~640 ms, of which `diff` itself is ~4 ms; pond-rs: 45 ms). A CPU profile:
+  30% rebuilding the column store from `Event` objects
+  (`buildSeriesStoreFromEvents`, as in [PND-FILTERTAKE]), ~30% the sort of
+  events and its comparator, 11% `#fromTrustedEvents`, 11% garbage
+  collection. Proposed fix: every input is already sorted, so merge the
+  key columns by row number (a stable merge keeps partition order on
+  ties) and copy each column by those row numbers, as pond-rs does.
+  Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
+  (pond-rs R1b step 4a).
+- **[PND-ALIGNHOLD]** — pond-ts `align` with `method: 'hold'` (the
+  default) is ~4× slower than `'linear'` on the same grid: 4.6 s vs 1.2 s
+  for 1M rows onto a 1 s grid (pond-rs: 64 ms). Hold does, per bucket, a
+  `new Time`, a binary search through `atOrBefore` (each probe goes through
+  the store's key cache), builds the whole `Event` and its data object, then
+  `resultSchema.slice(1).map(...)` and an array spread. Linear walks a
+  cursor and reuses the column list. CPU profile: ~20% in the hold closure
+  itself, ~10% `bisect`, a third garbage collection. Proposed fix: walk a
+  cursor as linear does (the sample points rise) and read values straight
+  from the columns. Repro: `crates/pond-rs/bench/grid_pond_ts.mjs`. Found
+  2026-10-19 (pond-rs R1b step 5).
+- **[PND-DEDUPEMAP]** — pond-ts `dedupe` takes ~2.3 s on 1M rows with 10%
+  repeated times (pond-rs: 30–40 ms). CPU profile: a third in `dedupe`
+  itself, which builds a string key per row (`${event.begin()}`) and an
+  array per key in a `Map`; a third garbage collection; ~10% rebuilding the
+  column store from `Event` objects (as in [PND-FILTERTAKE]). Proposed fix:
+  rows are sorted by key, so equal keys are next to each other (except
+  interval labels on equal spans): compare neighbours, keep row numbers,
+  and take columns by row number. `materialize` (~1 s on the same size)
+  also goes through `Event` objects. Repro: as above. Found 2026-10-19
+  (pond-rs R1b step 5).
+- **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
+  bits) over a window of identical values is not exactly 0 once different
+  values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
+  window at 0.1, `1.7e-10` at 123456.789). The running sums carry rounding
+  from the values that left. Callers that divide by it (z-scores) or test
+  `sd > 0` get a meaningless value instead of a skip. Options: return exactly 0
+  when the window is flat (needs a cheap flatness check), or document it.
+  Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
+  guarded against it).
+- **[PND-DEQUEALLOC]** — pond-ts rolling `min` / `max` (`rollingMonotoneDeque`)
+  allocate an object per row and, on small windows, copy the deque's array
+  on almost every row (it compacts whenever half of it is used up): rolling
+  `min` on 1M rows takes ~280 ms with a 1-row window against ~210 ms with 5
+  minutes. The [PND-ROLLDIFF] state avoids both (plain number arrays,
+  compacts only past 1,024 used entries) and runs a 1-row window in ~125
+  ms. Proposed fix: give `min` / `max` the same deque. Found 2026-10-20.
+
 ### `@pond-ts/financial`
 
 Calendar engine + trading-time axis + the first studies batch (10 studies,
@@ -610,7 +939,15 @@ Robustness debt plus the queued composition workstreams. Plan:
 [PND_LIVE_PLAN.md](docs/plans/PND_LIVE_PLAN.md).
 
 - **[PND-LATE]** — Late-event propagation through stateful live transforms
-  (needs a reorder-aware event payload; overlaps [PND-CHANGE]).
+  (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
+  longer throw on a late event (2026-10-28, they insert it in order); the
+  recompute of later rows is what remains.
+- **[PND-EVICTDEQUE]** — Live per-event buffers (`LiveView`, the
+  `drop` / `reorder` row backing, rolling history) past ~16k events still
+  copy the whole array on each eviction (~150 µs at 100k events), because
+  V8 cannot move a large array's start in place. Needs a start index with
+  occasional compaction behind every reader. Found 2026-10-28 reviewing
+  [PND-EVICTSPLICE].
 - **[PND-LJOIN]** — Live merge / join across sources.
 - **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
   prerequisite-or-sibling of [PND-LJOIN].
@@ -646,6 +983,18 @@ Robustness debt plus the queued composition workstreams. Plan:
   per 1,600-row push in Node. The view only reads the last dropped timestamp,
   but any `'evict'` listener switches the source off its skip-the-Events
   path. Found while benchmarking [PND-LVWIN] (#761).
+- **[PND-LIVEONEPUSH]** — A one-event `push` on a default (strict,
+  in-order) `LiveSeries` builds a whole one-row column chunk
+  (`validateAndNormalizeColumnar` + `ColumnarStore.fromTrustedStore`), so
+  1M one-at-a-time in-order pushes take 3.9-4.4 s against 0.76-0.8 s for
+  the same rows into a `Reorder` series (2 s grace); ~60% of the time is garbage collection.
+  Measured 2026-10-29 in pond-rs R3 step 7. Fix idea: route small pushes
+  into the chunked backing's coalescing tier (as partition routing's `_stageRowsOpen` does)
+  instead of building a store per push.
+- **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
+  take the batch `{ append: true }` / `{ output }` options added in
+  [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
+  now.
 
 ### Streaming semantics (Phase 4.5)
 
@@ -746,19 +1095,6 @@ consumer signal. Plan:
   `smooth` rather than the rolling kernel; and re-asking the Rust question
   against this new baseline (`spikes/columnar-wasm/REPORT.md` §10).
 
-- **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
-  `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
-  `mapColumns` remain.** They are column-native only in the
-  sense of not materialising `Event`s: they still read each cell through the
-  polymorphic `read(i)` into a `ReadonlyArray<number | undefined>` and rebuild
-  via `float64ColumnFromArray`. Measured **~10–20× slower per column than a
-  plain typed-array walk** (exact `diff` control: 9.9× on gappy data, 17.1×
-  dense; `rate`/`fill`/`shift` fitted at 16–27×). At 1M rows × 4 columns
-  `diff` costs ~294 ms against ~16 ms for the same work unboxed. This is the
-  largest single performance finding from the Rust/WASM spike and has nothing
-  to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
-  needs its own validity write, since the boxed array is currently how
-  validity gets derived; [PND-IVLCOL] is the worked example of that shape.
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + `hasAnyDefined()`.
   Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
@@ -909,7 +1245,7 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 | Tidal (financial)   | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
 | estela (geo/power)  | Claude | Waiting on [PND-FITPUB]'s export decision (fit is already on npm); then adopts fit + charts from npm, deletes local copy     |
 | Dashboard           | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts                                                    |
-| gRPC pipeline       | Claude | M3.5 realized; remaining: writeup + M5 extraction sweep (3 RFCs → [PND-SERVER])                                              |
+| gRPC pipeline       | Claude | Revived 2026-10 on pond-rs; Node vs Rust race + writeup done; remaining: M5 extraction sweep → [PND-SERVER]                  |
 | Webapp telemetry    | Codex  | In production; watch for friction reports                                                                                    |
 | Charts experiment   | Claude | First `@pond-ts/charts` package consumer; annotation dogfood, ongoing                                                        |
 | Robustness audits   | fresh  | Re-run as the available model improves; residue → [PND-AUDIT] ([PND-LIVFIX] shipped 2026-09-06)                              |

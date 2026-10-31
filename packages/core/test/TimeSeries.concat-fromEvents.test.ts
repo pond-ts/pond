@@ -112,6 +112,29 @@ describe('TimeSeries.fromEvents', () => {
 });
 
 describe('TimeSeries.concat', () => {
+  it('marks a column optional when any input has it optional [PND-CONCATREQ]', () => {
+    const required = makeSeries('a', [[0, 0.5, 'a']]);
+    const optional = new TimeSeries({
+      name: 'b',
+      schema: requiredFalseSchema,
+      rows: [[1000, undefined, 'b']],
+    });
+    for (const merged of [
+      TimeSeries.concat([required, optional] as never),
+      TimeSeries.concat([optional, required] as never),
+    ]) {
+      const s = merged as TimeSeries<typeof requiredFalseSchema>;
+      expect(s.schema[1]).toEqual({
+        name: 'cpu',
+        kind: 'number',
+        required: false,
+      });
+      expect(s.schema[2]).toEqual({ name: 'host', kind: 'string' });
+      // Reloads: a gap no longer sits in a column marked required.
+      expect(TimeSeries.fromJSON(s.toJSON()).length).toBe(2);
+    }
+  });
+
   it('concatenates events from multiple same-schema series', () => {
     const a = makeSeries('a', [
       [0, 0.5, 'a'],

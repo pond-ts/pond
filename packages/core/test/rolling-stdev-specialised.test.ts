@@ -3,26 +3,21 @@ import { TimeSeries } from '../src/index.js';
 import { resolveReducer, rollingStateFor } from '../src/reducers/index.js';
 
 /* -------------------------------------------------------------------------- */
-/* [PND-ROLLKERN] — the inlined `stdev` must be BIT-identical to the state.    */
+/* [PND-ROLLKERN] — the count-window sweep's `stdev` must be BIT-identical to  */
+/* the reducer state.                                                          */
 /*                                                                             */
-/* `rolling(count, 'stdev')` now runs Welford inline in the sweep instead of   */
-/* calling the reducer state's add / remove / snapshot per row. The recurrence  */
-/* was transcribed verbatim, and the whole value of that recurrence is its     */
-/* numerical behaviour:                                                        */
-/*                                                                             */
-/*   - the deviation-space mean update avoids the `n·mean − v` product, which  */
-/*     loses precision at large magnitudes                                     */
-/*   - the `n → 1` case is SET directly rather than reached by the reverse     */
-/*     step, which leaves rounding residue (~0.016 on 1e10 offsets)            */
-/*   - `m2 < 0` is clamped, absorbing round-off and gross-outlier cancellation */
-/*                                                                             */
-/* So the assertion here is `Object.is`, not `toBeCloseTo`. A "close enough"   */
-/* test would pass for a transcription that quietly dropped one of those       */
-/* cases — which is exactly the regression worth catching, because it would    */
-/* only show up on data with large offsets that no ordinary fixture has.       */
+/* `rolling(count, 'stdev')` drives the plain `WindowStdev` accumulator        */
+/* directly instead of calling the reducer state's add / remove / snapshot     */
+/* per row. Since [PND-ROLLSTD] both share that class, but the sweep skips the */
+/* state's `typeof` and overflow-lane checks and has its own re-run-on-        */
+/* overflow logic, and the value of the accumulator is entirely in its         */
+/* numerical behaviour (exact `n ≤ 1` cases, the shift, the double-double      */
+/* sums). So the assertion here is `Object.is`, not `toBeCloseTo`: a "close    */
+/* enough" test would pass for a path that quietly diverged — a regression     */
+/* that only shows on data with large offsets no ordinary fixture has.         */
 /*                                                                             */
 /* The reference drives the REAL `rollingState()` object through the same      */
-/* window walk, so any drift between the two implementations fails here.       */
+/* window walk, so any drift between the two paths fails here.                 */
 /* -------------------------------------------------------------------------- */
 
 const schema = [
@@ -101,20 +96,20 @@ const rnd = mulberry32(0x57de);
 
 const SHAPES: Record<string, Cell[]> = {
   random: Array.from({ length: 300 }, () => rnd() * 200 - 100),
-  // The case the deviation-space update exists for: near-equal values at a
-  // large offset, where a naive `n·mean − v` cancels catastrophically.
+  // Near-equal values at a large offset, where a naive `Σv² − (Σv)²/n`
+  // cancels catastrophically.
   'large offset, near-equal': Array.from(
     { length: 300 },
     (_, i) => 1e10 + (i % 7) * 0.25,
   ),
   'very large offset': Array.from({ length: 200 }, () => 1e12 + rnd() * 3),
-  // Exercises the `n → 1` exact-reset branch on every eviction.
+  // Exercises the `n → 1` / constant-window exact cases on every eviction.
   'flat then spike': [
     ...Array.from({ length: 50 }, () => 42),
     1e6,
     ...Array.from({ length: 50 }, () => 42),
   ],
-  // The gross-outlier eviction the doc warns about: `m2 -= huge` cancels.
+  // Gross-outlier eviction (the old Welford delete cancelled here).
   'outlier evicted': [
     ...Array.from({ length: 20 }, () => 0.01 * rnd()),
     1e6,
@@ -134,10 +129,10 @@ const SHAPES: Record<string, Cell[]> = {
     -2e300,
     ...Array.from({ length: 30 }, () => rnd() * 10),
   ],
-  // −0.9·MAX → 0.9·MAX overflows Welford's *delta* from a one-element
-  // window: the plain recurrence is left with a non-finite mean and m2 at
-  // −Infinity, which clamps to a defined 0. Ending the series there means no
-  // later NaN would trigger the re-run — the mean check must.
+  // −0.9·MAX → 0.9·MAX overflows the shifted value `v − k` from a
+  // one-element window. Ending the series there means the very read that
+  // overflowed must come out non-finite (not a clamped, defined 0) or no
+  // later NaN would trigger the re-run.
   'delta overflow at the end': [
     -0.9 * Number.MAX_VALUE,
     0.9 * Number.MAX_VALUE,

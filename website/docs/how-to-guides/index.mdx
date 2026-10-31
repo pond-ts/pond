@@ -53,10 +53,14 @@ Available:
   turns a value axis into a scale you can read a verdict off. Generalises to
   heart-rate zones, SLO bands, and control-chart spec limits.
 
-In flight:
-
-- A gRPC stream-processor guide once that experimental work surfaces
-  something worth writing up.
+- [**A streaming aggregator, in TypeScript and Rust**](./streaming-aggregator)
+  — adapted from the [gRPC experiment](https://github.com/pjm17971/pond-grpc-experiment):
+  a gRPC firehose of per-host metrics into one `LiveSeries`, per-host
+  1-minute baselines and 200 ms slices on a shared clock trigger, and
+  frames out to a browser dashboard. Built twice, on pond-ts and on
+  pond-rs, with a side-by-side check that both give the same rows,
+  bounded producer queues, and a race of the two (and the latency
+  measuring mistake it caught).
 
 For shorter, primitive-focused docs, see the
 [pond-ts core reference](../pond-ts/) and

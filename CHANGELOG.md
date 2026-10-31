@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/pond-ts/pond/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/pond-ts/pond/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/pond-ts/pond/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/pond-ts/pond/compare/v0.71.0...v0.72.0
@@ -95,6 +96,575 @@ include new features and type-level changes; patch bumps are strictly additive.
   window holds 20.5 MB, against 19.3 MB before. Reading the view
   (`keyColumn()`, `column()`, `toTimeSeries()`) still visits every event in
   the window. [PND-LVWIN]
+
+### Added
+
+- **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
+  per-row rules as data instead of functions, e.g.
+  `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
+  `some`, `every`, `mapColumns`, `withColumn` and live `filter` accept them
+  next to functions. Operations: `eq` `ne` `gt` `ge` `lt` `le` `in`, `and`
+  `or` `not`, `add` `sub` `mul` `div` `neg` `abs`, `isMissing` `fill`, and
+  `when(cond, then, otherwise)`. They run over whole columns with no per-row
+  `Event` (1M rows: `filter` 2.5-4.5x faster, `some` with no match 30x,
+  `withColumn` 9x; `find` / `some` / `every` still stop early), are checked against the schema before any row runs
+  (unknown column, wrong kind), and turn into a plain JSON tree with
+  `toJSON()`. Gaps behave as in the function they replace: a comparison
+  with a gap is false and `not` flips it; arithmetic with a gap gives a gap.
+  Two deliberate differences: `eq` with a gap on either side is false (use
+  `isMissing()`), and a non-finite result such as `x / 0` is a gap at once.
+  In `mapColumns` a gap cell stays a gap; `withColumn` adds an optional
+  column of the expression's kind. Expressions are slower than a plain
+  function in `mapColumns` (1M rows: 8.6 vs 4.7 ms); their use there is
+  reading other columns.
+- **pond-rs column expressions** ([PND-EXPR] step E2a): `col`, `lit` and
+  `when` build the same rules as pond-ts, with the same JSON tree
+  (`Expr::to_json` / `Expr::from_json`). `TimeSeries::filter_expr`,
+  `find_expr`, `some_expr`, `every_expr`, `map_expr`, `map_exprs`,
+  `with_column_expr` and `LiveSeries::filter_expr` run them over whole
+  columns, with the same answers as pond-ts (checked by the parity
+  fixture). They refuse what pond-ts refuses (unknown column, wrong kind),
+  in pond-rs's own wording, and `map_exprs` refuses an unknown target
+  column where pond-ts skips it, as pond-rs's `map_numbers` does.
+- **Column expressions in both pond-rs bridges** ([PND-EXPR] step E2b).
+  `@pond-ts/rs` exports `col`, `lit` and `when` (same builder as pond-ts);
+  `filter`, `find`, `some`, `every`, `mapColumns` and `withColumn` take
+  them and run them inside pond-rs (1M rows: `filter` 917 ms with a
+  function, 14 ms with an expression; pond-ts 28 ms). `pond_rs` (Python)
+  gets `col`, `lit`, `when` and an `Expr` class with operators
+  (`(col("v") > 0) & (col("host") == "h3")`, `~`, `+ - * /`) and methods
+  (`is_in`, `is_missing`, `fill`, …), taken by `filter`, `find`, `some`,
+  `every`, `map`, `with_column` and live `filter`, plus a new
+  `TimeSeries.map_columns({column: expr_or_function})` (pond-ts
+  `mapColumns`). 1M rows: `filter` 360 ms with a function, 10 ms with an
+  expression. Both pass every expression case of the parity fixture.
+- **pond-rs for Python** (bridge step P1, `crates/pond-py`; PyPI name
+  `pond-rs`, imported as `pond_rs`; not yet published). `TimeSeries` takes a
+  pyarrow Table or RecordBatch, a polars or pandas DataFrame, anything with
+  `__arrow_c_stream__`, or a dict of columns, and gives frames back with
+  `to_pyarrow()` / `to_polars()` / `to_pandas()` (or straight into
+  `pyarrow.table(s)` / `polars.DataFrame(s)`). A gap-free float column of a
+  one-chunk table crosses in both directions without a copy. The whole batch
+  core is there with keyword options (`rolling`, `aggregate`, calendar
+  `Sequence`s in any time zone, `partition_by`, joins, `smooth`, `fill`,
+  lookups returning `Row`s, …), times as `datetime` / `date` / text /
+  milliseconds, durations as text or `timedelta`, Python functions for
+  `filter` / `map` / `scan` / `collapse`, and errors as `pond_rs.PondError`
+  (a `ValueError`). Work runs with Python's lock released. One abi3 wheel
+  covers Python 3.9 and up; the version follows pond-ts. Checked by pytest
+  against the same pond-ts parity fixture as the Rust crate (every case
+  passes).
+- **pond-rs for Python: financial studies and trading calendars** (bridge
+  step P2a). Every one of the 109 studies runs by name,
+  `series.study("rsi", period=14)`, or as its own method,
+  `series.rsi(period=14)`, `series.anchored_vwap(anchor=...)`; on a
+  `PartitionedSeries` a study runs per group. Options are keywords in
+  Python's spelling (`ema_period`; pond-ts's `emaPeriod` also works); one the
+  study does not have, or one given twice, is a `TypeError`. `pond_rs.studies()` / `study_info(name)`
+  describe each study (inputs, options with defaults and ranges, outputs).
+  `TradingCalendar.from_rules` / `from_sessions` build exchange sessions
+  (time zone, weekdays, holidays, early closes, breaks) with pond-ts's
+  lookups and `tag_sessions`; `session_vwap` / `pivot_points` take
+  `sessions=` a calendar or a list, or `session=` a session-id column. Type
+  hints for every study method are generated from the catalog. Checked by
+  pytest against the pond-ts study, oracle, catalog and calendar fixtures.
+- **pond-rs for Python: live series** (bridge step P2b). `pond_rs.LiveSeries`
+  takes events as they arrive: `push(t, cpu=0.5)` one at a time,
+  `push_many` batches, `push_frame` for a pyarrow / polars / pandas frame or
+  a `TimeSeries` (through pond-rs's `push_series`, so with nothing built on
+  the series the columns go straight into storage), and `push_json`. Nodes
+  built on it update with every push: `filter` / `map` (Python functions),
+  `select`, `sample`, `window`, `diff` / `rate` / `pct_change`, `fill`,
+  `cumulative`, `aggregate`, `rolling` (by time, by count, several windows
+  at once, with triggers and history), `reduce`, and `partition_by` with
+  steps per partition, `collect()` and synchronised per-partition rolling.
+  Each push returns what the watched nodes emitted (`LiveOutput`s carrying
+  `LiveEvent`s). An exception in a node's Python function costs only that
+  event's value from that node; the first one is raised when the push
+  returns, carrying the push's outputs (the push has happened). A function
+  that uses its own series on the push's thread gets an error instead of a
+  deadlock. Calls from several threads
+  are safe and wait with Python's lock released. Checked by pytest against
+  pond-ts's live parity fixture (all 70 cases, every output and final
+  state).
+- **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
+  batch, for data that already comes in columns (an Arrow chunk, a JSON
+  read). Same rules and outputs as `push_many` of the same rows: the series
+  must be keyed the same way and have the live series' value columns by name
+  (any order) and kind; a gap in a required column is refused, naming the
+  row; all or nothing. When nothing is built on the series and nothing
+  watches it, the columns are copied straight into storage with no event
+  built per row ([PND-RUSTLIVEBATCH]): one million rows in batches of 1,000
+  take about half the time of `push_many` and about a third less than
+  pond-ts's `pushMany` on the same machine. pond-ts has no column-shaped
+  push.
+- **pond-rs: ready for crates.io.** The crate has package metadata, a
+  README, three runnable examples (`quickstart`, `rsi`, `live_stream`) and
+  API docs for every public item, with a docs.rs front page and the `live`
+  feature marked. Minimum Rust is now stated correctly as 1.88 (1.85 never
+  built). A `Publish pond-rs` workflow publishes it on its own, apart from
+  the npm release.
+- **pond-rs: live series** (R3 step 2, `pond_rs::live`, cargo feature `live`,
+  on by default). `LiveSeries` takes events one at a time or in batches
+  (`push` / `push_many` / `push_json`), with pond-ts's ordering modes
+  (strict, drop, reorder with a grace window), retention by count or age,
+  key lookups, stats, `to_json` / `from_json` and batch snapshots. `filter`
+  and fixed-bucket `aggregate` build nodes on it, reached through copyable
+  `Node` handles; `watch` picks which outputs a push returns, and `remove`
+  drops a node. Results match pond-ts event for event on 31 of the 51 live
+  replay cases (the rest need later steps).
+- **pond-rs: live views** (R3 step 3). `map`, `select`, `sample` (by stride),
+  `window` (by time or rows), `diff` / `rate` / `pct_change`, `fill` and
+  `cumulative` on a `LiveSeries` or on another view, plus `count` /
+  `event_rate` on a view. Results match pond-ts event for event on 39 of
+  the 52 live replay cases. Where pond-ts takes a bad argument silently
+  (an unknown column, `diff` on a text column, a fill value of the wrong
+  kind), pond-rs refuses it when the view is built.
+- **pond-rs: live rolling windows and reduce** (R3 step 4). `rolling`
+  (over a duration), `rolling_rows` (over a count of events) and
+  `rolling_windows` (several windows sharing one buffer) keep reducers over
+  a trailing window and emit per event or on a `Trigger` (every n events,
+  or when a clock bucket ends), keeping what they emit up to a `History`
+  limit. `reduce` keeps reducers over everything its source holds now and
+  emits once per push. Every built-in pond-ts reducer works in both, including
+  huge values summed exactly. Results match pond-ts event for event on 52 of the
+  57 live replay cases (the 5 left are partitioned, a later step). Reading
+  `value()` changes nothing in pond-rs, where in pond-ts it can move the
+  last bit of a later `stdev`; a clock trigger on interval-keyed events is
+  refused (pond-ts emits time keys under the interval schema); a reduce
+  built over existing events emits for them during the build, where
+  pond-ts waits for a microtask.
+- **Live `aggregate` takes calendar sequences.**
+  `live.aggregate(Sequence.calendar('day', { timeZone }), mapping)` buckets
+  events by day, week, month, quarter or year in that time zone, so a day
+  across a clock change is 23 or 25 hours. It used to throw ("calendar
+  sequences do not have a fixed millisecond step size"). Clock triggers
+  still take fixed sequences only.
+- **pond-rs: calendar buckets and `aggregate_with` for live aggregation**
+  (R3 step 5). `LiveSeries::aggregate` takes `Sequence::calendar`, as
+  pond-ts now does; while one exists the series refuses times outside
+  years -9997 to 9997 (UTC). `aggregate_with` gives an aggregation its own
+  grace, as the pond-ts constructor's `{ grace }` option. Results match
+  pond-ts on 55 of the 60 live replay cases.
+- **pond-rs: live partitions** (R3 step 6). `partition_by` splits the root's
+  events by a column into one series per value, each with its own ordering
+  and retention (`PartitionOptions`, inherited from the root by default, and
+  `groups` to declare the values up front). `per_partition` describes a
+  chain of nodes to build on every partition, including ones that appear
+  later; `collect` and `apply` gather what the partitions (or their chains)
+  emit into one series; `partition_rolling`, `partition_rolling_rows` and
+  `partition_rolling_windows` keep a rolling window per partition and emit
+  one row per partition, all together, each time a clock bucket ends.
+  `LiveSeries::node` turns a node id (say, a chain's output) into a typed
+  handle. Results match pond-ts on all 65 live replay cases, including the
+  batch routing order from #838. Where pond-rs differs: a push that a
+  partition would refuse (a value outside the declared groups, or an event
+  a partition's ordering refuses, as after a `clear`, which empties the
+  root but not the partitions) is refused whole before anything is stored,
+  where pond-ts stores it in the root and then throws; partitions are
+  built on the root only; removing a partitioned node also removes the
+  `per_partition` chains described on it; and the partition column of
+  synchronised rolling output is text (the partition value as pond-ts
+  writes it, `" undefined"` for a row without one), which pond-ts declares
+  with the source column's type but also fills with text.
+- **Financial studies in `@pond-ts/rs`** ([PND-RUST-R4] step J2a, not
+  published yet). Every study in pond-rs's catalog runs as
+  `series.study(name, options)` or as its own method with pond-ts's name and
+  options (`s.sma({ period: 20 })`, `s.bollinger({ period: 20, stdDev: 2 })`,
+  as `@pond-ts/financial/fluent` mounts them), also on a `partitionBy` view
+  (per group). `studies()` and `studyInfo(name)` give pond-ts's catalog
+  descriptors. A cut-down `TradingCalendar` (`fromRules`, `fromSessions`,
+  the lookups, `tagSessions`; times in ms) plus `generateSessions` feed
+  `sessionVwap` / `pivotPoints` as `sessions: calendar`, a `Session[]` list
+  or `session: 'column'`. Options a study does not have are ignored, as in
+  pond-ts; calendar lookups take only `YYYY-MM-DD` text as a date (pond-ts
+  compares any text with session dates as text), as the Python bridge does.
+  1M bars against `@pond-ts/financial`: `sma` 4.5 vs 45.7 ms, `rsi` 10.9 vs
+  40.9, `bollinger` 24.8 vs 98.9, `sessionVwap` 9.9 vs 85.4.
+- **`LiveSeries` in `@pond-ts/rs`** ([PND-RUST-R4] step J2b): pond-rs's
+  live layer through WebAssembly, with pond-ts's class and method names —
+  `LiveSeries` (`push`, `pushMany`, `pushJson`, `clear`, `on`), `filter`
+  (function or expression), `map`, `select`, `sample`, `window`, `diff` /
+  `rate` / `pctChange`, `fill`, `cumulative`, `aggregate` (`closed`,
+  `snapshot`, `hasOpenBucket`), `rolling` (one window or several fused),
+  `reduce`, and `partitionBy` with `collect`, `apply`, per-partition
+  rolling and `toMap`. `on(type, fn)` returns an unsubscribe function, as
+  in pond-ts. Every case of pond-ts's live parity fixture gives the same
+  outputs and final rows bit for bit (`test/live.mjs`). Differences: a
+  disposed node cannot be read; `pushJson` takes no `timeZone`; pushes and
+  `clear` go to the root series only (not one partition); a node function
+  cannot read its own series during a push; reducers are names only (no
+  function `using`); keys are whole ms; `apply` records its chain once (it
+  cannot branch per partition); `cumulative` takes one function column;
+  `toTimeSeries` takes no name; partitioned fused rolling stats have no
+  `windowsCount`; a `map` cell of the wrong type is a gap. 1M
+  events, bridge vs pond-ts: `push` 250 vs 1593 ms, `pushMany` (batches
+  of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
+  1-minute buckets 570 vs 2943, the same with a listener on every rolling
+  update 1338 vs 2647.
+
+### Changed
+
+- **pond-rs: live layer does less work per event.** A top-to-bottom
+  instruction-count review (callgrind, 23 `perf_live` cases) found that a
+  bare push spent about 45% of its instructions in malloc/free, that a
+  `reduce` rebuilt every evicted event just to subtract its cells, that
+  chunked partition routing built a hash map and a row list per partition
+  on every push, and that rolling, reduce and partition-rolling rows went
+  through a throwaway `Vec` before storage. Now a push into a series with
+  nothing built on it stores cells without building an event; a `reduce`
+  reads the cells it must remove before the source drops them; routing
+  keeps one small table per partitioned node across pushes; output rows are
+  written straight into storage; and a `diff` / `map` / `select` /
+  `cumulative` / `fill` view with nothing built on it stores its cells
+  directly. Every case runs fewer instructions per event, from 7% to 42%
+  (push alone −41%, `reduce` −31%, 1,000-host synchronised rolling −27%).
+  Results are unchanged (all 69 live replay cases match pond-ts; four new cases push into a series nothing listens to, the path the batch fix takes, under strict retention, drop, reorder and a view added later).
+- **pond-rs: live series and views store events by column**, not as one
+  shared object per event: 5 to 7 times less memory for number columns,
+  about 5 times with a text column (1M events with three number columns:
+  249 MB before, 34 MB now). A view now holds its own copy of the events it
+  keeps instead of sharing the series' events. Reads (`at`, `first`,
+  `last`, `events`, `at_or_before`, `at_or_after`, `find`) now return a
+  `LiveEvent` built from the stored cells instead of a reference.
+- **Live views take a late event instead of throwing** ([PND-LATE]). On an
+  `ordering: 'reorder'` series, a late event the series accepted made every
+  `LiveView` on it throw ("processed event has key … older than the previous
+  tail"), after the series had already stored it, so the series and its
+  views disagreed. A view now stores the event at its key position (after
+  any events with the same key), as the series does. Views that carry state
+  (`diff`, `rate`, `pctChange`, `fill`, `cumulative`, `sample`) still work
+  in arrival order: a late event is compared with the event that arrived
+  before it, not the one before it in time. The same applies to a `map`
+  whose new keys go backwards, which used to throw too.
+
+### Fixed
+
+- **`@pond-ts/rs` takes a number of milliseconds as a duration**, as
+  pond-ts does: `rolling(60000, …)`, `rolling(sequence, 60000, …)`,
+  `Sequence.every(60000)`, `tail` and a moving-average `smooth` window
+  threw "expected a Sequence" or "must be a duration"; worse, a number
+  `maxGap` in `fill` was silently ignored, so every gap was filled. A
+  fractional number of ms, or one past ±8.64e15 ms (pond-rs's time limit),
+  is refused. Also
+  `numbers(column)` now gives NaN for every gap: a non-finite value, which
+  pond-rs reads as a gap, came back as itself.
+- **pond-rs: numeric group names match JavaScript exactly.** A number
+  halfway between two shortest spellings (`667962307169479.25`) named its
+  pivot column, live partition and array group key by rounding up, where
+  JavaScript rounds to even (`667962307169479.2`), so a declared group could
+  be refused. 78 of 300,000 sampled doubles differed; none now.
+- **pond-rs: the study catalog reads session times however JSON spells a
+  whole number.** `sessionVwap` / `pivotPoints` session opens, closes and
+  breaks accept `100.0` and `1e2` as well as `100` (fractions are still
+  refused).
+- **Empty leading / centred rolling windows count nothing**
+  ([PND-ROLLEMPTY]). A time window that holds no rows (`'0ms'`, or a
+  centred `'1ms'` window whose edges round to the same millisecond past
+  2^52 ms) let earlier rows in: a leading `'0ms'` count on three rows gave
+  0, 1, 1. Same fix in `smooth`'s moving average. Both pond-ts and pond-rs;
+  found by a Codex review of pond-rs.
+- **pond-rs: four panics are now errors or gaps** (Codex review).
+  `PartitionedSeries::map` returns an error, not a panic, when one
+  partition's result drops a partition column (and refuses results with
+  different columns, which used to come back as mismatched partitions);
+  reading an Arrow time value of `i64::MIN` is refused instead of panicking;
+  a `max_age` near `i64::MAX` no longer overflows its cutoff; and
+  `linear_regression` / `time_series_forecast` /
+  `chande_forecast_oscillator` / `aroon` with a period no window can fill
+  give gaps instead of panicking for periods past `isize::MAX`.
+  `Ichimoku::offsets` refuses a displacement past `i64::MAX` (it flipped
+  the offsets' signs).
+- **Live interval-keyed series keep one label type** ([PND-LIVELABEL]).
+  A `pushMany` mixing number and text interval labels is refused whole
+  (pond-ts never checked live labels; pond-rs only checked each row
+  against the events held), instead of being stored and failing every
+  later `toTimeSeries()`.
+- **Live `map` views no longer claim required columns** ([PND-MAPGAP]).
+  A mapping may return a gap, and a non-finite number becomes one, so every
+  value column of a `map` view is now optional; a gap used to make each
+  snapshot throw. Both pond-ts and pond-rs.
+- **pond-rs: `partition_by` with declared groups checks rows already
+  held**, as pond-ts does, and refuses before building anything. Building
+  partitions over a long history with many groups is no longer quadratic
+  (64,000 rows each with its own host: 7.6 s → 0.19 s).
+- **`live.reduce` over a view now tracks what the view holds**
+  ([PND-REDUCETRIM]). A reduce on a `window` view removes what the window
+  trims (it used to keep every value the window had ever taken), and a
+  reduce on a view of a `reorder` series removes late arrivals correctly
+  (`min` / `max` / `first` / `last` could go stale or empty). Fixed in both
+  pond-ts and pond-rs; found by a Codex review of pond-rs.
+- **pond-rs: live partitions with declared groups are no longer slow per
+  row.** With `PartitionOptions::groups`, every row of a push was checked
+  against the declared values one by one, and a map of each partition's
+  latest event was built even when no ordering check needed it. 1,000
+  declared hosts, 1M rows in batches of 1,000 with a rolling window on
+  each: 2.8 s → 1.2 s, now the same as without groups.
+- **`live.reduce` no longer slows down a loop of pushes** ([PND-REDUCEMICRO]).
+  Each push queued one more microtask when pushes ran in a loop without
+  awaiting, and each held the reduce and everything it had emitted until
+  the loop ended. Now a loop queues one. 1M pushes into a series keeping
+  10k events, with a reduce: 5.2-9.7 s (slower on each repeat) to 4.3-4.5 s.
+- **Live views and `drop` / `reorder` series with retention evict much
+  faster on buffers up to ~16k events** ([PND-EVICTSPLICE]). Dropping the
+  oldest event copied the whole buffer on every push (~20 µs at 10k
+  events); it now moves the array's start in place. Larger buffers still
+  copy on eviction ([PND-EVICTDEQUE]). With
+  `maxEvents: 10_000`, 100k pushes into a `reorder` series went from 2.4 s
+  to 31 ms, and into a series with three `diff`-style views from 5.7 s to
+  0.25 s.
+- **Live `fill('zero')` no longer writes `0` into text and true/false
+  columns.** `zero` now fills number columns only and skips the others
+  (both `fill('zero')` and `fill({ col: 'zero' })`), as batch `fill` does.
+- **`LiveSeries.push` one event at a time no longer slows down as the series
+  grows** ([PND-LIVEPUSHSCAN]). On a `strict` time-keyed series each push
+  looked up the newest row by walking every stored push from the oldest, so
+  100k pushes took 18.6 s; they now take 0.2 s.
+
+- **`LiveSeries.push` / `pushMany` refuse a batch with a bad row whole, in
+  every ordering mode** ([PND-BATCHATOM]). Under `ordering: 'drop'` or
+  `'reorder'`, and for interval / time-range keys under `'strict'`, a bad
+  cell, a wrong row width or a row the ordering refuses used to throw only
+  after the rows before it were committed and their `'event'`s had fired,
+  skipping retention, `'batch'` and `'evict'` (a `maxEvents: 2` series could
+  hold 4 rows). The whole batch is now checked first, as it already was for
+  time-keyed `'strict'` series, so a throw leaves the series and its
+  listeners untouched. Batches with no bad row behave as before.
+
+### Added
+
+- **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
+  annotation draws at 0.4 alpha, which was too loud for a focus tint behind
+  data and too quiet for a mark that carries the chart's point, so consumers
+  replaced `theme.annotation` wholesale in both directions. `annotation.roles`
+  entries can now set `depth` (their own three-level ramp), and `color` is
+  optional (a role without it takes the register hue). `defaultTheme` and
+  `estelaTheme` ship two roles: `wash` (edges rest at 0.2, fill 0.06; estela's
+  is a 7% foam tint) and `argument` (rests at 0.85). Use them as
+  `<Region role="wash">` / `<Marker role="argument">`. Marks with no `role`
+  are unchanged. A theme that replaces `annotation` without spreading the
+  base's `roles` has neither role, so `role="wash"` falls back to the register.
+
+### Changed
+
+- **Partitioned live series take each `pushMany` in one pass per partition**
+  ([PND-PARTBATCH]). With a strict time-keyed source (the default),
+  `partitionBy` used to hand a `pushMany` batch to its partitions one row at a
+  time, and each row paid its own storage write, retention pass, one-row
+  `'batch'` and end-of-push settle. Now each partition stores its rows, runs
+  retention, fires one `'batch'` with all its rows and settles once per
+  `pushMany`, like a plain `pushMany` into that partition. `'event'` still
+  fires row by row in the source's order across partitions, so `collect()`,
+  `apply()` and partitioned rolling see exactly the same events. What you can
+  notice: a partition's `'batch'` / `'evict'` listeners get one call per
+  `pushMany` instead of one per row, a `reduce` built on a partition emits once
+  per `pushMany`, and a partition's rows are all stored before its first
+  `'event'`. Partitions finish (their `'batch'`, `'evict'` and settle) in the
+  order of their last row in the batch, so a `reduce` under `apply()` still
+  reaches the combined series in time order. A push made from inside a
+  partition listener now runs after the whole batch has been delivered, not
+  after the current row. A listener that throws on one partition no longer
+  stops the rest of the batch reaching the other partitions; with typed
+  `groups` an undeclared value drops only its own row; and if one partition
+  rejects its rows as out of order, only that partition skips them (all three
+  still throw after the batch is delivered). Single-row `push` and non-strict sources are unchanged. Speed,
+  1000 hosts with a fused rolling attached: 19-29% faster
+  (`scripts/perf-partition-rolling.mjs`).
+
+- **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
+  to emit from a microtask, so several `push()` calls with no `await` between
+  them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output
+  (6) instead of 1, 3, 6, and `Trigger.count(2)` over four pushes gave 10, 10
+  instead of 3, 10. Now every `push` / `pushMany` / `pushJson` call emits
+  synchronously, after retention, before it returns, whether or not the caller
+  awaits. Code that awaited between pushes sees no change; code that pushed
+  several times without awaiting now gets one output per push. A `pushMany`
+  still emits once. A reduce built over a source that already holds events
+  still emits its replay once, on a microtask.
+
+### Added
+
+- **Chain-friendly options on `rolling`, `diff`, `rate` and `pctChange`**
+  ([PND-CHAIN]). `rolling(window, mapping, { append: true })` keeps every
+  source column and adds the outputs after them (before, `rolling` returned
+  only the key and its outputs, so a chain lost `close`, `sma`, …). An output
+  may not reuse an existing name, so name each output with `{ from, using }`.
+  Event-driven form only; also on `partitionBy(...).rolling`. And
+  `diff('rsi', { output: 'rsiChange' })` (same for `rate` / `pctChange`)
+  puts the change in a new optional number column and keeps the source
+  (one source column; the name must be new). Both reuse names pond-ts already
+  has (`collapse`'s `append`, `scan` / `smooth`'s `output`). New public type
+  `RollingAppendSchema`. pond-rs gets the same (`Rolling { append }`,
+  `diff_with(&cols, Change::default().output(..))`), plus Rust-only short
+  forms: `diff` / `rate` / `pct_change` / `fill` / `fill_all` without the
+  default arguments (`_with` forms take them), and `reduce_number` /
+  `reduce_value` for a single column's answer.
+
+### Changed
+
+- **`rolling(sequence, window, mapping)` no longer scans every row for every
+  grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,
+  so finding windows costs O(rows + buckets) instead of O(rows × buckets). A
+  5-minute `avg` on a 1-minute grid over 100k rows: 7.4 s → 5 ms. Results are
+  bit-for-bit unchanged (each window is still reduced as `aggregate` reduces a
+  bucket), and the result's keys and columns are built directly instead of
+  through row intake.
+
+### Changed
+
+- **`@pond-ts/fit`: samples without a GPS fix.** `ActivityStreams.latlng`
+  entries may now be `null` (type `Array<GeoPoint | null>`) for a sample the
+  device recorded with no fix — the minutes before a watch finds satellites,
+  or a dropout. Before, a source had to drop those samples, losing their heart
+  rate and the device's distance (a run whose first 5 minutes had no fix read
+  3.7 mi against the watch's 4.0 mi). With gaps present, distance comes from
+  the device's `distanceMeters` when recorded (else the joined fixes), the map
+  `polyline` and `bounds` use only the fixes, and the summary carries
+  `gpsSpans` so a chart position can be placed on the map: new
+  `lineDistanceAt` / `lineRange` (null where there was no fix). Tracks with a
+  fix on every sample are unchanged. **Type-level break:** code that reads
+  `streams.latlng` entries must now handle `null`. A device distance that goes
+  backwards (a counter reset) is not used for gaps; the joined fixes are. `stepDistances` now skips non-finite
+  positions instead of returning NaN, and `cleanSwimTrack` accepts `null`.
+
+### Fixed
+
+- **Rolling `difference` no longer slows down with window size.** It kept
+  the window as a sorted list and inserted and removed each row, so a row
+  cost more the bigger the window: on 1M rows one second apart, 11 s with a
+  1-day window. It now tracks the largest and smallest values the way
+  rolling `min` / `max` do: ~250 ms for windows from 5 minutes to 1 day.
+  Answers are unchanged, bit for bit (`packages/core/scripts/perf-rolling-difference.mjs`).
+- **`trim` keeps keys in order.** Clipping time ranges or intervals to a
+  range could leave two rows on the same start in the wrong order (`[0, 10]`
+  and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`), so lookups such
+  as `bisect` on the result were wrong and `fromJSON` refused to reload it.
+  `trim` now re-sorts (stably) when clipping reorders keys.
+- **Interval labels must be text or numbers.** A label of `true`, `false`,
+  `null` or an array was quietly stored as a number (`true` became `1`,
+  `null` became `0`) by `fromJSON`, `new TimeSeries` and anything else that
+  builds an `Interval`. `new Interval` now throws instead, as `fromColumns`
+  already did.
+- **`TimeSeries.fromPoints` reads `null` as a gap.** Points parsed from
+  JSON carry `null` for a missing value, and `fromPoints` refused them
+  ("expected finite number"), so chart data could not be read back. A `null`
+  cell is now a gap, as in `fromJSON`; a required column still refuses it.
+- **An `aggregate` column no longer depends on the other columns in the
+  call.** One column using `unique`, `top`, `samples`, `keep` or
+  `difference`, a reducer over a text, boolean or array column, or a
+  custom function used to switch the whole call to a slower method. That
+  method sums in a different order, so `sum` and `avg` on buckets of 32+
+  values could change in the last digit, and `median` could return the
+  other sign of zero. For example, adding `host: 'count'` could change
+  `v: 'sum'`. Each column now gets the answer it gets alone, and these mixed
+  calls are 2–10× faster
+  (`packages/core/scripts/perf-aggregate-mixed.mjs`).
+- **`smooth` on time-range and interval keys windows by midpoint.**
+  `movingAverage` and `loess` place such a row at its midpoint, but keys
+  sort by start, so a long range before a short one put the midpoints out
+  of order, and both methods assumed they were in order: the moving
+  average could take in rows far outside its window (`[0, 10]`, `[1, 1]`,
+  `[2, 2]`, `[3, 3]` with a 2 ms window gave every row the mean of all
+  four), and loess fitted from the wrong neighbours. Both now work in
+  midpoint order. Time keys, and ranges whose midpoints are in order,
+  give the same answers as before.
+- **`loess` gives the same answer on every Node version, and is faster.**
+  Its weights used `**`, which V8 has computed differently across
+  versions (Node 22 and newer V8 can differ in the last bit), so the last
+  digits of a fit depended on the Node version. The weights are now
+  plain products: the last bit of some fits changes once, and a 0.05 span
+  over 20k rows takes ~0.12 s instead of ~2.7 s.
+
+- **`collapse` keeps numbers after a first-row gap.** The output column's
+  kind came from the first row's result alone, so an `undefined` there made
+  it a text column and every later number became a gap. The kind now comes
+  from the first defined result; a result of another kind throws instead of
+  being dropped silently, and an unknown key names itself (it used to fail
+  with `Cannot read properties of undefined`).
+- **`TimeSeries.concat` marks a column optional when any input does.** It
+  took each column's `required` flag from the first series, so gaps from a
+  later series sat in a column marked required and the result could not be
+  reloaded with `fromJSON`.
+
+### Changed
+
+- **`scan(…, { output })` marks its new column optional.** Rows before the
+  first value and non-finite step outputs are gaps, but the column was typed
+  and declared required. Its schema entry now has `required: false`, and
+  `event.get(output)` is typed `number | undefined` (on `TimeSeries` and
+  `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
+  a gap check.
+
+### Fixed
+
+- **Column expressions** (follow-up to [PND-EXPR], from a Codex review): a
+  number column built with `fromColumns` may store a gap as `±Infinity`;
+  expressions now read it as a gap, as functions do (before, `gt(0)` kept
+  such a row and `abs()` produced a column that counted gaps as values).
+  `find` / `some` / `every` with an expression now build a text column's
+  dictionary lookup once instead of once per stretch (1M rows, 400k distinct
+  labels, no match: 780 → 7 ms) and read only the columns the expression
+  names (8 unused text columns: 90 → 4 ms).
+
+## [0.75.0] — 2026-10-19
+
+### Changed
+
+- **`filter` is ~4–5× faster, and so is building a series from events.** On
+  1M rows (`packages/core/scripts/perf-filter.mjs`; each figure a median of 15
+  calls, repeated in 3 processes) a filter
+  keeping about half the rows went from ~155 ms to ~32 ms, keep-all from
+  ~290 ms to ~58 ms. `filter` now copies the kept rows out of each column
+  instead of rebuilding every column from the kept events, and a series built
+  from events (`filter`, `TimeSeries.fromEvents`, and every operator that
+  builds its result from events) now holds them in a plain list instead of a
+  per-row lookup table; `TimeSeries.fromEvents` on 1M events went from
+  ~230 ms to ~73 ms. Values are unchanged, and `filter` still returns the
+  source's own event objects ([PND-FILTERTAKE]). One difference in how a
+  column is stored: a text column that was dictionary-encoded keeps its whole
+  dictionary after `filter`, as it already did after `slice`, so `toArrow()`
+  can export it as a dictionary column (listing values no kept row uses) where
+  it used to export plain text.
+
+- **`shift`, `fill` and `mapColumns` are 2–24× faster on number columns.**
+  They used to copy every cell into a plain JS list and rebuild the column from
+  it; they now read and write the column's number buffer directly, as `diff`
+  and `cumulative` already did ([PND-BOXFREE]). On 1M rows with ~2% gaps
+  (`packages/core/scripts/perf-fill-shift-map.mjs`, median of 3 runs): `shift`
+  ~63 → ~2.8 ms, `fill('hold' | 'bfill' | 'zero')` ~57 → ~6 ms,
+  `fill('linear')` ~23 → ~9.5 ms (~75 → ~9.5 ms with only a few calls to
+  warm up, as in a one-off script), `mapColumns` ~69 → ~5 ms (the mapper itself
+  still runs once per value). Results are unchanged, cell for cell. Text,
+  boolean and array columns take the old path and are unchanged in speed.
+
+### Fixed
+
+- **Rolling `sum` / `avg` / `stdev` no longer drift.** A sliding window adds
+  each value as it enters and subtracts it as it leaves, and with plain
+  doubles every step's rounding error stayed in the running total for as long
+  as the window was non-empty. It showed worst when a window drained to a few
+  close values: on a 1M-row price series a two-value window read stdev
+  0.000442 for a true 0.000354 (25% off), and a one-value window's average was
+  9.4e-10 off the value. The running totals are now kept to about twice double
+  precision, so every row of that series matches an exact answer (stdev within
+  3.4e-16 relative, and every average equal to the exact value rounded once). Applies to `rolling` (time and
+  count windows), `rollingByColumn`, `smooth('movingAverage')` and the live
+  rolling / reduce operators. Removing a value far larger than the rest of the
+  window (e.g. a spike leaving a quiet window) no longer cancels the stdev to 0
+  either. Results can differ from before in the last digits; speed is within
+  about ±10% (rolling `sum` ~12% slower in a microbenchmark, end-to-end runs
+  unchanged).
+- **Charts: a streaming chart no longer rebuilds its canvas on every update.**
+  `<Canvas>` assigned `canvas.width` / `canvas.height` on every redraw, and the
+  platform reallocates and clears the backing buffer on every assignment, even
+  to the value it already has. Since a chart redraws whenever its data changes,
+  every row's canvas was rebuilt on every tick (a live-append chart in the e2e
+  suite made 120 same-size writes in 1.5 s; it now makes none, and every visual
+  baseline is unchanged). The buffer is now resized only when its device-pixel
+  size changes. Each draw is also bracketed
+  in `save` / `restore`, because nothing else now resets the context between
+  draws: a `<Canvas draw>` callback still starts from the default state every
+  time, with or without a resize.
 
 ## [0.74.0] — 2026-10-14
 

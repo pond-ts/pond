@@ -136,12 +136,13 @@ const overlayStyle: CSSProperties = {
 
 /**
  * Read the container + row frames an annotation needs (throw if misplaced), and
- * resolve the mark's annotation style for its optional `role`. A `role` recolors
- * *this* mark from the theme's `annotation.roles[role]` map (`color`, and
- * optionally `fillOpacity` / `dash`) while keeping the shared depth ramp — so a smile can
- * place a green ATM baseline, a neutral vertical, and a distinct marker at once
- * without splitting the whole register. An unknown / unset role falls back to
- * the base `annotation` register (`roles[role] ?? annotation`).
+ * resolve the mark's annotation style for its optional `role`. A `role` restyles
+ * *this* mark from the theme's `annotation.roles[role]` map — any of `color`,
+ * `fillOpacity`, `dash` and `depth`, each falling back to the base register — so
+ * a smile can place a green ATM baseline, a neutral vertical, and a distinct
+ * marker at once without splitting the whole register, and a quiet `wash` and a
+ * loud `argument` can rest at different alphas. An unknown / unset role is the
+ * base `annotation` register.
  */
 function useAnnotationFrame(name: string, role?: string) {
   const container = useContext(ContainerContext);
@@ -154,14 +155,16 @@ function useAnnotationFrame(name: string, role?: string) {
   }
   const base = container.theme.annotation ?? DEFAULT_ANNOTATION;
   const roleStyle = role !== undefined ? base.roles?.[role] : undefined;
-  // The role overrides only colour (+ optional fill / dash); depth stays the
-  // shared ramp, so selection / hover / edit levels read identically per role.
+  // Each field the role sets wins; the rest is the base register. The level
+  // logic (selected / hover / edit / resting) is shared — a role's `depth` only
+  // changes how bright each level draws.
   const ann = roleStyle
     ? {
         ...base,
-        color: roleStyle.color,
+        color: roleStyle.color ?? base.color,
         fillOpacity: roleStyle.fillOpacity ?? base.fillOpacity,
         dash: roleStyle.dash ?? base.dash,
+        depth: roleStyle.depth ?? base.depth,
       }
     : base;
   return { container, row, ann };
@@ -659,10 +662,11 @@ export interface MarkerProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  no hover, no select, no edit. */
   selectable?: boolean;
-  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
-   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
-   *  several marks can differ (a green ATM baseline, a distinct marker) without
-   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+  /** Theme **role** — restyles this mark from `theme.annotation.roles[role]`
+   *  (any of `color`, `fillOpacity`, `dash`, `depth`), so several marks can
+   *  differ (a green ATM baseline, a distinct marker) without splitting the
+   *  register. The shipped themes define `wash` (quiet, behind data) and
+   *  `argument` (loud, legible at rest). Omitted / unknown ⇒ the base register.
    *  Colour is a theme concern — there is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
@@ -837,10 +841,11 @@ export interface BaselineProps {
   /** Whether the baseline responds to hover + selection (default `true`). When
    *  `false` it's inert background context — drawn at the back (level 3) always. */
   selectable?: boolean;
-  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
-   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
-   *  several marks can differ (a green ATM baseline, a distinct marker) without
-   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+  /** Theme **role** — restyles this mark from `theme.annotation.roles[role]`
+   *  (any of `color`, `fillOpacity`, `dash`, `depth`), so several marks can
+   *  differ (a green ATM baseline, a distinct marker) without splitting the
+   *  register. The shipped themes define `wash` (quiet, behind data) and
+   *  `argument` (loud, legible at rest). Omitted / unknown ⇒ the base register.
    *  Colour is a theme concern — there is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
@@ -1071,11 +1076,11 @@ export interface ZoneProps {
    * a band is genuinely a thing to point at.
    */
   selectable?: boolean;
-  /** Theme **role** — colours this band from `theme.annotation.roles[role]` (its
-   *  `color`, optionally `fillOpacity`), keeping the shared depth ramp. This is
-   *  how a zone set gets its **semantic palette** (`good` green, `moderate`
-   *  yellow, …): the scale lives in the theme, not at the call site. Omitted /
-   *  unknown ⇒ the base annotation colour. */
+  /** Theme **role** — styles this band from `theme.annotation.roles[role]` (any
+   *  of `color`, `fillOpacity`, `dash`, `depth`). This is how a zone set gets
+   *  its **semantic palette** (`good` green, `moderate` yellow, …): the scale
+   *  lives in the theme, not at the call site. Omitted / unknown ⇒ the base
+   *  register. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the
    *  band remotely. Ignored unless `selectable`. */
@@ -1270,10 +1275,11 @@ export interface RegionProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  and the double-click hit-test skips it. */
   selectable?: boolean;
-  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
-   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
-   *  several marks can differ (a green ATM band, a distinct marker) without
-   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+  /** Theme **role** — restyles this mark from `theme.annotation.roles[role]`
+   *  (any of `color`, `fillOpacity`, `dash`, `depth`), so several marks can
+   *  differ (a green ATM band, a distinct marker) without splitting the
+   *  register. The shipped themes define `wash` (quiet, behind data) and
+   *  `argument` (loud, legible at rest). Omitted / unknown ⇒ the base register.
    *  Colour is a theme concern — there is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark

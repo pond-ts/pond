@@ -3,6 +3,7 @@ import {
   type ColumnarStore,
   type ColumnSchema,
   float64ColumnFromArray,
+  withColumnAppended,
   withColumnReplaced,
   withRowRange,
 } from '../../columnar/index.js';
@@ -68,18 +69,47 @@ export function diffRateOp<
   mode: DiffRateMode,
   cols: readonly string[],
   drop: boolean,
+  output?: string,
 ): { store: ColumnarStore<OutSchema>; schema: OutSchema } {
   if (cols.length === 0) {
     throw new Error(`${mode}() requires at least one column name`);
   }
+  // `output` named => the result goes in a new optional number column and
+  // the source is left as it was. One source only: several sources can't
+  // share one output name.
+  if (output !== undefined) {
+    if (cols.length !== 1) {
+      throw new RangeError(
+        `${mode}: options.output needs exactly one source column, got ${cols.length}`,
+      );
+    }
+    if (schema.some((c) => c.name === output)) {
+      throw new RangeError(
+        `${mode}: output column '${output}' already exists; omit options.output to replace the source column`,
+      );
+    }
+  }
   const targetSet = new Set(cols);
   const outSchema = Object.freeze(
-    schema.map((col, i) =>
-      i === 0 || !targetSet.has(col.name)
-        ? col
-        : { ...col, kind: 'number' as const, required: false as const },
-    ),
+    output !== undefined
+      ? [
+          ...schema,
+          { name: output, kind: 'number' as const, required: false as const },
+        ]
+      : schema.map((col, i) =>
+          i === 0 || !targetSet.has(col.name)
+            ? col
+            : { ...col, kind: 'number' as const, required: false as const },
+        ),
   ) as unknown as OutSchema;
+  const place = (
+    into: ColumnarStore<ColumnSchema>,
+    name: string,
+    column: Column,
+  ): ColumnarStore<ColumnSchema> =>
+    output !== undefined
+      ? withColumnAppended(into, output, column)
+      : withColumnReplaced(into, name, column);
 
   const n = store.length;
 
@@ -120,7 +150,7 @@ export function diffRateOp<
           out.set(i, delta);
         }
       }
-      result = withColumnReplaced(result, name, out.finish());
+      result = place(result, name, out.finish());
       continue;
     }
 
@@ -144,7 +174,7 @@ export function diffRateOp<
         out[i] = undefined;
       }
     }
-    result = withColumnReplaced(result, name, float64ColumnFromArray(out));
+    result = place(result, name, float64ColumnFromArray(out));
   }
 
   // drop:true removes the predecessor-less first row from every column

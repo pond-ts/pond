@@ -18,6 +18,9 @@ import { story, waitForCanvasPaint } from './support.js';
  *     floor far under the 60 target).
  *  3. **Hover never repaints the data canvas** — the cursor is a pure
  *     SVG-overlay concern; a pointer sweep must leave the row canvas untouched.
+ *  4. **Live append never reallocates an unchanged canvas** — a redraw at the
+ *     same size must not reassign `width` / `height`, which rebuilds the
+ *     backing buffer.
  *
  * Absolute FPS / timing stays in the directional results writeup, never here.
  * Sparse-marker preservation (a decimation invariant) is N/A in Phase 1 — there
@@ -268,5 +271,70 @@ test.describe('perf invariants (CI-gating)', () => {
       () => (window as unknown as { __canvasClears: number }).__canvasClears,
     );
     expect(clears, `data-canvas repaints during hover sweep`).toBe(0);
+  });
+
+  // INVARIANT 4 — live append never reallocates an unchanged canvas. Every
+  // assignment to `canvas.width` / `height` reallocates and clears the backing
+  // buffer, even to the value it already holds, so a redraw must only assign a
+  // dimension that actually moved. Only *redundant* writes are counted: a real
+  // resize (a y-axis label widening as the data moves) is legitimate. Binary,
+  // like invariant 3: the contract is zero, and clear count is the liveness gate.
+  test('live append never reallocates an unchanged canvas', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as {
+        __canvasClears: number;
+        __redundantResizes: number;
+      };
+      w.__canvasClears = 0;
+      w.__redundantResizes = 0;
+      const clear = CanvasRenderingContext2D.prototype.clearRect;
+      CanvasRenderingContext2D.prototype.clearRect = function (
+        ...args: Parameters<typeof clear>
+      ) {
+        w.__canvasClears += 1;
+        return clear.apply(this, args);
+      };
+      for (const dim of ['width', 'height'] as const) {
+        const desc = Object.getOwnPropertyDescriptor(
+          HTMLCanvasElement.prototype,
+          dim,
+        )!;
+        Object.defineProperty(HTMLCanvasElement.prototype, dim, {
+          ...desc,
+          set(this: HTMLCanvasElement, value: number) {
+            if (desc.get!.call(this) === value) w.__redundantResizes += 1;
+            desc.set!.call(this, value);
+          },
+        });
+      }
+    });
+    await page.goto(
+      `${story('perf-bench--live')}&args=scenario:line;windowSize:1500;pushMs:16;batch:100`,
+    );
+    await waitForCanvasPaint(page.locator('canvas').first());
+
+    // Let mount-time layout settle, then measure a window of steady appends.
+    await page.waitForTimeout(1_000);
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __canvasClears: number;
+        __redundantResizes: number;
+      };
+      w.__canvasClears = 0;
+      w.__redundantResizes = 0;
+    });
+    await page.waitForTimeout(1_500);
+    const { clears, redundant } = await page.evaluate(() => {
+      const w = window as unknown as {
+        __canvasClears: number;
+        __redundantResizes: number;
+      };
+      return { clears: w.__canvasClears, redundant: w.__redundantResizes };
+    });
+
+    expect(clears, `redraws during live append`).toBeGreaterThan(10);
+    expect(redundant, `same-size width/height writes`).toBe(0);
   });
 });

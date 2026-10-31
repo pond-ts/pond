@@ -19,7 +19,7 @@ import {
 } from '../src/annotations.js';
 import type { ContainerFrame } from '../src/context.js';
 import type { DiscontinuityProvider } from '../src/tradingTimeScale.js';
-import { defaultTheme, type ChartTheme } from '../src/theme.js';
+import { defaultTheme, estelaTheme, type ChartTheme } from '../src/theme.js';
 import type { AnnotationSpec } from '../src/context.js';
 
 afterEach(cleanup);
@@ -723,6 +723,110 @@ describe('annotation theme roles (#508 item 3)', () => {
     expect(
       strokes(<Region from={1} to={3} role="band" label={false} />),
     ).toContain('#0000ff');
+  });
+});
+
+describe('annotation role depth — wash / argument [PND-ANNROLE]', () => {
+  /** Render one mark under `theme` and report its first SVG line's stroke +
+   *  opacity, and its first rect's (a region / zone body) fill opacity. */
+  const look = (child: ReactNode, theme: ChartTheme) => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={theme}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const line = container.querySelector('svg line');
+    const rect = container.querySelector('svg rect');
+    const out = {
+      stroke: line?.getAttribute('stroke'),
+      opacity: Number(line?.getAttribute('opacity')),
+      fill: rect ? Number(rect.getAttribute('opacity')) : undefined,
+    };
+    unmount();
+    return out;
+  };
+
+  const roleTheme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: {
+        loud: { depth: [1, 0.9, 0.8] },
+        tinted: { color: '#00aa00' },
+      },
+    },
+  };
+
+  it("a role's depth sets the resting alpha; its hue falls back to the register", () => {
+    expect(look(<Marker at={2} role="loud" label={false} />, roleTheme)) //
+      .toMatchObject({ stroke: '#808080', opacity: 0.8 });
+  });
+
+  it("a role without depth keeps the register's ramp", () => {
+    expect(look(<Marker at={2} role="tinted" label={false} />, roleTheme)) //
+      .toMatchObject({ stroke: '#00aa00', opacity: 0.4 });
+  });
+
+  it('the shipped themes define wash and argument', () => {
+    for (const theme of [defaultTheme, estelaTheme]) {
+      const roles = theme.annotation?.roles;
+      expect(roles?.wash?.depth).toBeDefined();
+      expect(roles?.argument?.depth).toBeDefined();
+    }
+  });
+
+  it('argument rests louder than an unrolled mark, wash quieter', () => {
+    const plain = look(<Marker at={2} label={false} />, defaultTheme).opacity;
+    const argument = look(
+      <Marker at={2} role="argument" label={false} />,
+      defaultTheme,
+    ).opacity;
+    const wash = look(
+      <Marker at={2} role="wash" label={false} />,
+      defaultTheme,
+    ).opacity;
+    expect(argument).toBeGreaterThan(plain);
+    expect(wash).toBeLessThan(plain);
+  });
+
+  it('an unrolled mark still rests at 0.4 in the default theme', () => {
+    expect(look(<Marker at={2} label={false} />, defaultTheme)).toMatchObject({
+      stroke: defaultTheme.annotation!.color,
+      opacity: 0.4,
+    });
+  });
+
+  it('a wash region draws its fill quieter than the register', () => {
+    const plain = look(
+      <Region from={1} to={3} selectable={false} label={false} />,
+      defaultTheme,
+    ).fill;
+    const wash = look(
+      <Region from={1} to={3} selectable={false} role="wash" label={false} />,
+      defaultTheme,
+    ).fill;
+    expect(plain).toBe(defaultTheme.annotation!.fillOpacity);
+    expect(wash).toBeLessThan(plain!);
+  });
+
+  it("estela's wash is a 7% foam tint, its argument the reef register hue", () => {
+    expect(
+      look(
+        <Region from={1} to={3} selectable={false} role="wash" label={false} />,
+        estelaTheme,
+      ),
+    ).toMatchObject({ stroke: '#F1FBF9', fill: 0.07 });
+    expect(
+      look(<Marker at={2} role="argument" label={false} />, estelaTheme).stroke,
+    ).toBe(estelaTheme.annotation!.color);
   });
 });
 

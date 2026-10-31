@@ -408,10 +408,8 @@ describe('LiveReduce.stats', () => {
   it('eventsObserved + bufferSize advance per source push (after microtask)', async () => {
     const live = makeLive();
     const r = live.reduce({ value: 'avg' });
-    // Synchronous pushes share one microtask flush — eventsObserved
-    // counts every event but emissions collapses to one. Awaiting the
-    // microtask between pushes is what splits them into separate
-    // emissions (matches LiveReduce class JSDoc semantics).
+    // Each push emits once at its end ([PND-REDUCETICK]); awaiting
+    // between pushes changes nothing.
     live.push([1000, 1, 'a']);
     await flush();
     live.push([2000, 2, 'a']);
@@ -425,15 +423,14 @@ describe('LiveReduce.stats', () => {
     expect(s.emissions).toBe(3);
   });
 
-  it('synchronous pushes collapse to one deferred emission', async () => {
+  it('synchronous pushes each emit once ([PND-REDUCETICK])', () => {
     const live = makeLive();
     const r = live.reduce({ value: 'count' });
     live.push([1000, 1, 'a']);
     live.push([2000, 2, 'a']);
     live.push([3000, 3, 'a']);
-    await flush();
     expect(r.stats().eventsObserved).toBe(3);
-    expect(r.stats().emissions).toBe(1);
+    expect(r.stats().emissions).toBe(3);
   });
 
   it('emissions counts deferred microtask fires (one per pushMany under Trigger.event)', async () => {

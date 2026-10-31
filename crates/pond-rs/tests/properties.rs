@@ -1,0 +1,1740 @@
+//! Property tests: pond-rs against plain brute-force answers, on random
+//! inputs.
+//!
+//! `core_parity.rs` checks pond-rs gives exactly pond-ts's answers on
+//! hand-picked cases. These tests check a different thing: that both are
+//! *right*, on many random inputs neither was written against. Each one
+//! recomputes the answer the slow, obvious way (filter the rows, then reduce
+//! them) and compares. If one fails, check pond-ts on the same input first:
+//! a disagreement here is as likely a pond-ts bug as a pond-rs one.
+//!
+//! Exact reducers (count, min, max, first, last, median, percentile) must
+//! agree exactly. Sum, avg and stdev are compared within a small relative
+//! tolerance, because the fast path adds values in a different order.
+//!
+//! Inputs come from a seeded generator, so a failure names its seed and is
+//! reproducible.
+
+use jiff::Timestamp;
+use jiff::civil::{Date, Weekday};
+use jiff::tz::TimeZone;
+use pond_rs::{
+    Agg, Align, AlignMethod, Alignment, At, Bins, CalendarUnit, Column, Join, JoinType, Keep, Key,
+    Materialize, Pick, Pivot, Reducer, Rolling, RollingOver, Sample, Scalar, Sequence, Smooth,
+    TimeRangeKeys, TimeSeries,
+};
+
+/// SplitMix64: small, seeded, good enough to vary test inputs.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    /// Uniform in `0..n`.
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.below(100) < percent
+    }
+}
+
+const SEEDS: u64 = 300;
+
+/// A random series: non-decreasing times (repeats allowed), one column with
+/// some gaps. Values are small integers or have few decimals, sometimes all
+/// equal, so ties and flat windows come up often.
+fn random_series(rng: &mut Rng) -> (Vec<i64>, Vec<Option<f64>>) {
+    let n = rng.below(120) as usize;
+    let gap_percent = [0, 10, 50, 95][rng.below(4) as usize];
+    let spread = [1, 10, 1000][rng.below(3) as usize];
+    let flat = rng.chance(10);
+    let mut t = rng.below(10_000) as i64 - 5_000;
+    let mut times = Vec::with_capacity(n);
+    let mut values = Vec::with_capacity(n);
+    for _ in 0..n {
+        t += [0, 1, 7, 250, 3_000][rng.below(5) as usize];
+        times.push(t);
+        values.push(if rng.chance(gap_percent) {
+            None
+        } else if flat {
+            Some(3.25)
+        } else {
+            Some((rng.below(2 * spread * 100) as f64 - (spread * 100) as f64) / 100.0)
+        });
+    }
+    (times, values)
+}
+
+fn series(times: &[i64], values: &[Option<f64>]) -> TimeSeries {
+    TimeSeries::new(
+        "s",
+        times.to_vec(),
+        vec![Column::optional("v", values.to_vec())],
+    )
+    .unwrap()
+}
+
+const REDUCERS: [Reducer; 15] = [
+    Reducer::Count,
+    Reducer::Sum,
+    Reducer::Avg,
+    Reducer::Min,
+    Reducer::Max,
+    Reducer::First,
+    Reducer::Last,
+    Reducer::Median,
+    Reducer::Stdev,
+    Reducer::Percentile(0.0),
+    Reducer::Percentile(37.5),
+    Reducer::Percentile(99.9),
+    Reducer::Percentile(100.0),
+    Reducer::Difference,
+    Reducer::Keep,
+];
+
+fn aggs() -> Vec<Agg> {
+    REDUCERS
+        .iter()
+        .enumerate()
+        .map(|(i, r)| Agg::new(format!("r{i}"), "v", *r))
+        .collect()
+}
+
+/// The obvious answer: `present` are the window's present values in time
+/// order. `None` is a gap.
+fn naive(reducer: Reducer, present: &[f64]) -> Option<f64> {
+    let n = present.len();
+    let sorted = || {
+        let mut s = present.to_vec();
+        s.sort_by(f64::total_cmp);
+        s
+    };
+    let percentile = |q: f64| {
+        let s = sorted();
+        let rank = q / 100.0 * (n - 1) as f64;
+        let (lo, hi) = (rank.floor() as usize, rank.ceil() as usize);
+        s[lo] + (s[hi] - s[lo]) * (rank - lo as f64)
+    };
+    let mean = || present.iter().sum::<f64>() / n as f64;
+    match reducer {
+        Reducer::Count => Some(n as f64),
+        Reducer::Sum => Some(present.iter().sum()),
+        _ if n == 0 => None,
+        Reducer::Avg => Some(mean()),
+        Reducer::Min => present.iter().copied().reduce(f64::min),
+        Reducer::Max => present.iter().copied().reduce(f64::max),
+        Reducer::First => present.first().copied(),
+        Reducer::Last => present.last().copied(),
+        Reducer::Median => Some(percentile(50.0)),
+        Reducer::Percentile(q) => Some(percentile(q)),
+        Reducer::Stdev => {
+            let m = mean();
+            Some((present.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / n as f64).sqrt())
+        }
+        Reducer::Difference => {
+            let max = present.iter().copied().reduce(f64::max)?;
+            Some(max - present.iter().copied().reduce(f64::min)?)
+        }
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => unreachable!("lists"),
+        Reducer::Keep => present
+            .iter()
+            .all(|&v| v == present[0])
+            .then_some(present[0]),
+    }
+}
+
+/// Compare one cell. `scale` is the largest magnitude in the window, the
+/// size the rounding error of a sum is measured against.
+fn check(what: &str, reducer: Reducer, got: Option<f64>, want: Option<f64>, scale: f64) {
+    let close = match (got, want) {
+        (None, None) => true,
+        (Some(g), Some(w)) => match reducer {
+            Reducer::Sum | Reducer::Avg | Reducer::Stdev => {
+                (g - w).abs() <= 1e-12 * 128.0 * scale.max(1.0)
+            }
+            _ => g == w,
+        },
+        _ => false,
+    };
+    assert!(close, "{what} {reducer:?}: got {got:?}, want {want:?}");
+}
+
+/// A random rolling window: time or rows, any alignment, sometimes a
+/// minimum row count.
+struct RollCase {
+    rows: Option<usize>,
+    window_ms: i64,
+    options: Rolling,
+}
+
+impl RollCase {
+    fn random(rng: &mut Rng) -> Self {
+        let alignment =
+            [Alignment::Trailing, Alignment::Leading, Alignment::Centered][rng.below(3) as usize];
+        let min_samples = if rng.chance(30) {
+            rng.below(6) as usize
+        } else {
+            0
+        };
+        RollCase {
+            rows: rng.chance(40).then(|| 1 + rng.below(9) as usize),
+            window_ms: [1, 7, 250, 1_000, 1_001, 10_000, 1_000_000][rng.below(7) as usize],
+            options: Rolling {
+                alignment,
+                min_samples,
+                ..Rolling::default()
+            },
+        }
+    }
+
+    fn run(&self, s: &TimeSeries, aggs: &[Agg]) -> TimeSeries {
+        match self.rows {
+            Some(n) => s.rolling_rows(n, aggs, self.options),
+            None => s.rolling_with(&format!("{}ms", self.window_ms), aggs, self.options),
+        }
+        .unwrap()
+    }
+
+    /// The rows in `row`'s window, or `None` when the window holds fewer
+    /// than the minimum.
+    fn window(&self, times: &[i64], row: usize) -> Option<Vec<usize>> {
+        let n = times.len();
+        let rows: Vec<usize> = match self.rows {
+            Some(k) => {
+                let (before, after) = match self.options.alignment {
+                    Alignment::Trailing => (k - 1, 0),
+                    Alignment::Leading => (0, k - 1),
+                    Alignment::Centered => ((k - 1) / 2, k - 1 - (k - 1) / 2),
+                };
+                (row.saturating_sub(before)..(row + after + 1).min(n)).collect()
+            }
+            None => {
+                // Doubled, so a centred odd window keeps its half ms.
+                let (t, w) = (2 * times[row], self.window_ms);
+                (0..n)
+                    .filter(|&r| {
+                        let u = 2 * times[r];
+                        match self.options.alignment {
+                            Alignment::Trailing => u > t - 2 * w && u <= t,
+                            Alignment::Leading => u >= t && u < t + 2 * w,
+                            Alignment::Centered => u >= t - w && u < t + w,
+                        }
+                    })
+                    .collect()
+            }
+        };
+        (rows.len() >= self.options.min_samples).then_some(rows)
+    }
+}
+
+#[test]
+fn rolling_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let case = RollCase::random(&mut rng);
+        let out = case.run(&series(&times, &values), &aggs);
+        assert_eq!(out.key(), &Key::Time(times.clone()), "seed {seed}");
+        for row in 0..times.len() {
+            let window = case.window(&times, row);
+            let present: Vec<f64> = window.iter().flatten().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(row);
+                let what = format!(
+                    "seed {seed} rows {:?} window {}ms {:?} row {row}",
+                    case.rows, case.window_ms, case.options
+                );
+                let want = window.as_ref().and_then(|_| naive(reducer, &present));
+                check(&what, reducer, got, want, scale);
+            }
+        }
+    }
+}
+
+/// The rows in the window at doubled sample point `p2`. (Exact for these
+/// small times; past 2^52 ms pond-ts's float edges round, which the parity
+/// fixture covers.)
+fn grid_window(times: &[i64], p2: i64, w: i64, alignment: Alignment) -> Vec<usize> {
+    (0..times.len())
+        .filter(|&r| {
+            let u = 2 * times[r];
+            match alignment {
+                Alignment::Trailing => u > p2 - 2 * w && u <= p2,
+                Alignment::Leading => u >= p2 && u < p2 + 2 * w,
+                Alignment::Centered => u >= p2 - w && u < p2 + w,
+            }
+        })
+        .collect()
+}
+
+/// `rolling_over`: each bucket's window, found by brute force on the
+/// bucket's sample point, reduces as `aggregate` would.
+#[test]
+fn rolling_over_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let case = RollCase::random(&mut rng);
+        let options = RollingOver {
+            alignment: case.options.alignment,
+            min_samples: case.options.min_samples,
+            sample: grid.at,
+            range: grid.range,
+        };
+        let window = format!("{}ms", case.window_ms);
+        let out = series(&times, &values)
+            .rolling_over(&grid.sequence(), &window, &aggs, options)
+            .unwrap();
+        let buckets = grid.buckets(&times);
+        let Key::Interval(keys) = out.key() else {
+            panic!("interval keys")
+        };
+        assert_eq!(keys.begin.len(), buckets.len(), "seed {seed}");
+        let w = case.window_ms;
+        for (b, &(begin, end, p2)) in buckets.iter().enumerate() {
+            assert_eq!((keys.begin[b], keys.end[b]), (begin, end), "seed {seed}");
+            let rows = grid_window(&times, p2, w, options.alignment);
+            let held = rows.len() >= options.min_samples;
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(b);
+                let what = format!("seed {seed} {window} {options:?} bucket {b}");
+                let want = if held { naive(reducer, &present) } else { None };
+                check(&what, reducer, got, want, scale);
+            }
+        }
+    }
+}
+
+#[test]
+fn aggregate_every_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let mut step = [1, 7, 1_000, 60_000][rng.below(4) as usize];
+        // Keep the brute force quick: at most a few thousand buckets.
+        let span = times.last().zip(times.first()).map_or(0, |(l, f)| l - f);
+        while span / step > 5_000 {
+            step *= 10;
+        }
+        let anchor = rng.below(100_000) as i64 - 50_000;
+        let sequence = Sequence::every_ms(step).unwrap().with_anchor(anchor);
+        let out = series(&times, &values).aggregate(&sequence, &aggs).unwrap();
+        let keys = match out.key() {
+            Key::Interval(k) => k.clone(),
+            _ => panic!("seed {seed}: aggregate gave non-interval keys"),
+        };
+        if times.is_empty() {
+            assert!(keys.begin.is_empty(), "seed {seed}");
+            continue;
+        }
+        // The grid: every bucket on the anchor's step, back to back, from
+        // the one holding the first row to the one holding the last.
+        for i in 0..keys.begin.len() {
+            assert_eq!((keys.begin[i] - anchor).rem_euclid(step), 0, "seed {seed}");
+            assert_eq!(keys.end[i], keys.begin[i] + step, "seed {seed}");
+            assert_eq!(
+                keys.label.numbers().unwrap()[i],
+                keys.begin[i] as f64,
+                "seed {seed}"
+            );
+        }
+        assert!(keys.begin[0] <= times[0], "seed {seed}");
+        assert!(
+            times[times.len() - 1] < keys.end[keys.end.len() - 1],
+            "seed {seed}"
+        );
+        assert!(
+            keys.end.windows(2).all(|e| e[1] - e[0] == step),
+            "seed {seed}"
+        );
+        assert!(
+            keys.begin[0] + step > times[0],
+            "seed {seed}: extra bucket at the start"
+        );
+        assert!(
+            keys.begin[keys.begin.len() - 1] <= times[times.len() - 1],
+            "seed {seed}: extra bucket at the end"
+        );
+        check_buckets(seed, &times, &values, &keys.begin, &keys.end, &out);
+    }
+}
+
+/// Each bucket's row against the rows with `begin <= t < end`.
+fn check_buckets(
+    seed: u64,
+    times: &[i64],
+    values: &[Option<f64>],
+    begin: &[i64],
+    end: &[i64],
+    out: &TimeSeries,
+) {
+    for (b, (&lo, &hi)) in begin.iter().zip(end).enumerate() {
+        let present: Vec<f64> = times
+            .iter()
+            .zip(values)
+            .filter(|&(&t, _)| lo <= t && t < hi)
+            .filter_map(|(_, v)| *v)
+            .collect();
+        let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        for (i, &reducer) in REDUCERS.iter().enumerate() {
+            let got = out
+                .column(&format!("r{i}"))
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .get(b);
+            let what = format!("seed {seed} bucket {b} [{lo}, {hi})");
+            check(&what, reducer, got, naive(reducer, &present), scale);
+        }
+    }
+}
+
+/// Zones with awkward days: DST at 02:00 (New York, London), DST at
+/// midnight (Santiago), a half-hour DST shift (Lord Howe), a whole skipped
+/// day (Apia, 2011-12-30), no DST (Kolkata), a fixed offset.
+const ZONES: [&str; 8] = [
+    "UTC",
+    "America/New_York",
+    "Europe/London",
+    "America/Santiago",
+    "Australia/Lord_Howe",
+    "Pacific/Apia",
+    "Asia/Kolkata",
+    "+05:30",
+];
+
+/// Awkward local days, each with its zone (UTC midnight of that date):
+/// Apia's skipped 2011-12-30, New York's spring forward 2015-03-08 and fall
+/// back 2015-11-01, Santiago's midnight change 2016-08-14, Lord Howe's half
+/// hour 2016-04-03.
+const AWKWARD: [(&str, i64); 5] = [
+    ("Pacific/Apia", 1_325_203_200_000),
+    ("America/New_York", 1_425_772_800_000),
+    ("America/New_York", 1_446_336_000_000),
+    ("America/Santiago", 1_471_132_800_000),
+    ("Australia/Lord_Howe", 1_459_641_600_000),
+];
+
+fn zone(name: &str) -> TimeZone {
+    match name {
+        "+05:30" => TimeZone::fixed(jiff::tz::offset(5) + jiff::SignedDuration::from_mins(30)),
+        _ => TimeZone::get(name).unwrap(),
+    }
+}
+
+fn local_date(ms: i64, tz: &TimeZone) -> Date {
+    Timestamp::from_millisecond(ms)
+        .unwrap()
+        .to_zoned(tz.clone())
+        .date()
+}
+
+/// Is `date` the first day of a `unit` (weeks start on ISO day `week_start`)?
+fn starts_unit(date: Date, unit: CalendarUnit, week_start: i8) -> bool {
+    match unit {
+        CalendarUnit::Day => true,
+        CalendarUnit::Week => {
+            date.weekday() == Weekday::from_monday_one_offset(week_start).unwrap()
+        }
+        CalendarUnit::Month => date.day() == 1,
+        CalendarUnit::Quarter => date.day() == 1 && (date.month() - 1) % 3 == 0,
+        CalendarUnit::Year => date.day() == 1 && date.month() == 1,
+    }
+}
+
+/// Calendar buckets, checked from first principles in the zone: each bucket
+/// starts at the first instant of a local date that begins a unit, the
+/// buckets are back to back, and no unit start is skipped or repeated.
+#[test]
+fn calendar_buckets_are_whole_local_units() {
+    const UNITS: [(&str, CalendarUnit, i64); 5] = [
+        ("day", CalendarUnit::Day, 86_400_000),
+        ("week", CalendarUnit::Week, 7 * 86_400_000),
+        ("month", CalendarUnit::Month, 31 * 86_400_000),
+        ("quarter", CalendarUnit::Quarter, 92 * 86_400_000),
+        ("year", CalendarUnit::Year, 366 * 86_400_000),
+    ];
+    // 2011-12-25: a week before Apia's skipped day. Ranges reach ~2016.
+    const START: i64 = 1_324_771_200_000;
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (unit_name, unit, longest) = UNITS[rng.below(UNITS.len() as u64) as usize];
+        let week_start = 1 + rng.below(7) as i8;
+        // Half the time cross a known awkward day in its own zone, so each
+        // one is actually hit; otherwise any zone, anywhere in ~4 years.
+        let (zone_name, begin) = if rng.chance(50) {
+            let (zone, day) = AWKWARD[rng.below(AWKWARD.len() as u64) as usize];
+            (zone, day - rng.below(3 * longest as u64) as i64)
+        } else {
+            let at = START + rng.below(4 * 365) as i64 * 86_400_000 + rng.below(86_400_000) as i64;
+            (ZONES[rng.below(ZONES.len() as u64) as usize], at)
+        };
+        let end = begin + rng.below(40 * longest as u64) as i64;
+        let tz = zone(zone_name);
+        let sequence = Sequence::calendar(unit_name, zone_name)
+            .unwrap()
+            .with_week_start(week_start)
+            .unwrap();
+        let keys = sequence.buckets_overlapping(begin, end).unwrap();
+        let what = format!("seed {seed}: {unit_name} in {zone_name} (week from {week_start})");
+
+        let n = keys.begin.len();
+        assert!(n >= 1, "{what}");
+        assert!(
+            keys.begin[0] <= begin && end < keys.end[n - 1],
+            "{what}: does not cover"
+        );
+        assert!(begin < keys.end[0], "{what}: extra bucket at the start");
+        assert!(keys.begin[n - 1] <= end, "{what}: extra bucket at the end");
+        for i in 0..n {
+            let (b, e) = (keys.begin[i], keys.end[i]);
+            assert!(b < e, "{what}: bucket {i} empty");
+            assert_eq!(keys.label.numbers().unwrap()[i], b as f64, "{what}");
+            if i + 1 < n {
+                assert_eq!(e, keys.begin[i + 1], "{what}: bucket {i} not back to back");
+            }
+            // First instant of its local date. That date starts a unit, or
+            // a date the zone skipped just before it did (Apia's week from
+            // Friday 2011-12-30 begins on Saturday the 31st).
+            let day = local_date(b, &tz);
+            let before = local_date(b - 1, &tz);
+            assert!(before < day, "{what}: bucket {i} starts mid-day");
+            let mut d = day;
+            while d > before && !starts_unit(d, unit, week_start) {
+                d = d.yesterday().unwrap();
+            }
+            assert!(d > before, "{what}: bucket {i} starts {day}");
+            // No unit start inside the bucket: every day boundary between
+            // b and e falls on a date that does not start a unit. Walk the
+            // local dates the bucket covers.
+            let last = local_date(e - 1, &tz);
+            assert!(last >= day, "{what}");
+            let mut d = day.tomorrow().unwrap();
+            while d <= last {
+                assert!(
+                    !starts_unit(d, unit, week_start),
+                    "{what}: bucket {i} [{b}, {e}) swallows unit start {d}"
+                );
+                d = d.tomorrow().unwrap();
+            }
+            // And the next bucket starts on the date right after `last`
+            // (or a later one, when dates were skipped, as in Apia).
+            assert!(local_date(e, &tz) > last, "{what}: bucket {i} ends mid-day");
+        }
+    }
+}
+
+/// Aggregate over calendar buckets: same brute-force row checks as for
+/// fixed steps, on series that straddle DST changes.
+#[test]
+fn aggregate_calendar_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let unit = ["day", "week"][rng.below(2) as usize];
+        // Rows every few hours, over a few weeks around an awkward day (in
+        // its zone) or, half the time, in any zone.
+        let (awkward_zone, day) = AWKWARD[rng.below(AWKWARD.len() as u64) as usize];
+        let zone_name = if rng.chance(50) {
+            awkward_zone
+        } else {
+            ZONES[rng.below(ZONES.len() as u64) as usize]
+        };
+        let base = day - 10 * 86_400_000;
+        let n = rng.below(300) as usize;
+        let mut t = base;
+        let mut times = Vec::with_capacity(n);
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            t += rng.below(3 * 3_600_000) as i64;
+            times.push(t);
+            values.push((!rng.chance(10)).then(|| rng.below(1000) as f64 / 8.0));
+        }
+        let sequence = Sequence::calendar(unit, zone_name).unwrap();
+        let out = series(&times, &values).aggregate(&sequence, &aggs).unwrap();
+        let keys = match out.key() {
+            Key::Interval(k) => k.clone(),
+            _ => panic!("seed {seed}: aggregate gave non-interval keys"),
+        };
+        if let (Some(&first), Some(&last)) = (times.first(), times.last()) {
+            let want = sequence.buckets_overlapping(first, last).unwrap();
+            assert_eq!(keys, want, "seed {seed}");
+        }
+        check_buckets(seed, &times, &values, &keys.begin, &keys.end, &out);
+    }
+}
+
+/// A running sum adds each value as it enters the window and subtracts it as
+/// it leaves, so rounding errors can pile up over a long series ([PND-ROLLSTD]).
+/// Long runs of huge values followed by runs of small ones make that visible:
+/// once the huge values have left, a drifted sum is off by far more than
+/// the small window's own rounding. The brute force re-adds each short
+/// window from scratch, so it cannot drift.
+#[test]
+fn rolling_sum_does_not_drift() {
+    for seed in 0..4 {
+        let mut rng = Rng(seed);
+        let n: usize = 50_000;
+        let times: Vec<i64> = (0..n as i64).map(|i| i * 1_000).collect();
+        let values: Vec<Option<f64>> = (0..n)
+            .map(|i| {
+                let big = (i / 500) % 2 == 0;
+                let v = rng.below(1_000_000) as f64 / 997.0;
+                Some(if big { v * 1e8 } else { v })
+            })
+            .collect();
+        let aggs = [
+            Agg::new("sum", "v", Reducer::Sum),
+            Agg::new("avg", "v", Reducer::Avg),
+            Agg::new("stdev", "v", Reducer::Stdev),
+        ];
+        let out = series(&times, &values).rolling("10s", &aggs).unwrap();
+        for row in 0..n {
+            let present: Vec<f64> = values[row.saturating_sub(9)..=row]
+                .iter()
+                .filter_map(|v| *v)
+                .collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (name, reducer) in [
+                ("sum", Reducer::Sum),
+                ("avg", Reducer::Avg),
+                ("stdev", Reducer::Stdev),
+            ] {
+                let got = out.column(name).unwrap().numbers().unwrap().get(row);
+                let what = format!("seed {seed} row {row}");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
+    }
+}
+
+/// Decimal columns: `count`, `first`, `last`, `min`, `max` and `sum` are
+/// exact, so they must equal a brute-force answer on the raw `i128`s, even
+/// for values far past what an `f64` holds exactly. `avg` goes through
+/// `f64`, so it must equal `avg` of a number column of the same values.
+#[test]
+fn decimal_reducers_are_exact() {
+    use pond_rs::{Decimal, DecimalColumn};
+    let exact = [
+        Reducer::Count,
+        Reducer::Sum,
+        Reducer::Min,
+        Reducer::Max,
+        Reducer::First,
+        Reducer::Last,
+    ];
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, shape) = random_series(&mut rng);
+        // Huge values (up to 34 digits, so a window of thousands still
+        // fits 38) or small ones with many ties.
+        let huge = rng.chance(50);
+        let raw: Vec<Option<i128>> = shape
+            .iter()
+            .map(|v| {
+                v.map(|_| {
+                    if huge {
+                        ((rng.next() >> 8) as i128 * (rng.next() >> 8) as i128)
+                            * if rng.chance(50) { -1 } else { 1 }
+                    } else {
+                        rng.below(7) as i128 - 3
+                    }
+                })
+            })
+            .collect();
+        // Negative scales and scales past 22 (where to_f64 parses text).
+        let scale = rng.below(30) as i8 - 4;
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional(
+                    "d",
+                    DecimalColumn::from_options(raw.clone(), scale).unwrap(),
+                ),
+                Column::optional(
+                    "f",
+                    raw.iter()
+                        .map(|v| v.map(|value| Decimal { value, scale }.to_f64()))
+                        .collect::<Vec<_>>(),
+                ),
+            ],
+        )
+        .unwrap();
+        let mut aggs: Vec<Agg> = exact
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| Agg::new(format!("r{i}"), "d", r))
+            .collect();
+        aggs.push(Agg::new("d_avg", "d", Reducer::Avg));
+        aggs.push(Agg::new("f_avg", "f", Reducer::Avg));
+
+        // Brute force over the rows a window or bucket holds.
+        let want = |rows: &[usize], reducer: Reducer| -> Option<i128> {
+            let present: Vec<i128> = rows.iter().filter_map(|&r| raw[r]).collect();
+            match reducer {
+                Reducer::Count => Some(present.len() as i128),
+                Reducer::Sum => Some(present.iter().sum()),
+                Reducer::Min => present.iter().min().copied(),
+                Reducer::Max => present.iter().max().copied(),
+                Reducer::First => present.first().copied(),
+                Reducer::Last => present.last().copied(),
+                _ => unreachable!(),
+            }
+        };
+        let check_out = |what: &str, out: &TimeSeries, row: usize, rows: &[usize]| {
+            for (i, &reducer) in exact.iter().enumerate() {
+                let col = out.column(&format!("r{i}")).unwrap();
+                let got = match reducer {
+                    Reducer::Count => col.numbers().unwrap().get(row).map(|v| v as i128),
+                    _ => {
+                        let d = col.decimals().unwrap();
+                        assert_eq!(d.scale(), scale, "{what}");
+                        d.get(row).map(|d| d.value)
+                    }
+                };
+                assert_eq!(got, want(rows, reducer), "{what} {reducer:?}");
+            }
+            let bits = |name: &str| {
+                out.column(name)
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(row)
+                    .map(f64::to_bits)
+            };
+            assert_eq!(bits("d_avg"), bits("f_avg"), "{what} avg");
+        };
+
+        let case = RollCase::random(&mut rng);
+        let out = case.run(&s, &aggs);
+        for row in 0..times.len() {
+            let what = format!("seed {seed} rolling row {row}");
+            match case.window(&times, row) {
+                Some(rows) => check_out(&what, &out, row, &rows),
+                None => {
+                    for c in out.columns() {
+                        assert!(!c.data().is_present(row), "{what} {}", c.name());
+                    }
+                }
+            }
+        }
+
+        let grid = random_grid(&mut rng, &times);
+        let options = RollingOver {
+            alignment: case.options.alignment,
+            min_samples: case.options.min_samples,
+            sample: grid.at,
+            range: grid.range,
+        };
+        let w = case.window_ms;
+        let out = s
+            .rolling_over(&grid.sequence(), &format!("{w}ms"), &aggs, options)
+            .unwrap();
+        for (b, &(_, _, p2)) in grid.buckets(&times).iter().enumerate() {
+            let rows = grid_window(&times, p2, w, options.alignment);
+            let what = format!("seed {seed} rolling_over bucket {b}");
+            if rows.len() >= options.min_samples {
+                check_out(&what, &out, b, &rows);
+            } else {
+                for c in out.columns() {
+                    assert!(!c.data().is_present(b), "{what} {}", c.name());
+                }
+            }
+        }
+
+        let out = s
+            .aggregate(&Sequence::every_ms(1_000).unwrap(), &aggs)
+            .unwrap();
+        let Key::Interval(keys) = out.key() else {
+            panic!("interval keys")
+        };
+        for b in 0..keys.begin.len() {
+            let rows: Vec<usize> = (0..times.len())
+                .filter(|&r| times[r] >= keys.begin[b] && times[r] < keys.end[b])
+                .collect();
+            check_out(&format!("seed {seed} bucket {b}"), &out, b, &rows);
+        }
+    }
+}
+
+/// A random fixed grid and grid options for `align` / `materialize`: step,
+/// anchor, sample point, and sometimes a range of its own.
+struct GridCase {
+    step: i64,
+    anchor: i64,
+    at: At,
+    range: Option<(i64, i64)>,
+}
+
+fn random_grid(rng: &mut Rng, times: &[i64]) -> GridCase {
+    let mut step = [1, 7, 250, 333, 1_000, 3_000][rng.below(6) as usize];
+    let span = times.last().zip(times.first()).map_or(0, |(l, f)| l - f);
+    while span / step > 3_000 {
+        step *= 10;
+    }
+    let at = [At::Begin, At::Center, At::End][rng.below(3) as usize];
+    let range = rng.chance(30).then(|| {
+        let b = rng.below(20_000) as i64 - 10_000;
+        (b, b + rng.below(20_000) as i64)
+    });
+    GridCase {
+        step,
+        anchor: rng.below(10_000) as i64 - 5_000,
+        at,
+        range,
+    }
+}
+
+impl GridCase {
+    fn sequence(&self) -> Sequence {
+        Sequence::every_ms(self.step)
+            .unwrap()
+            .with_anchor(self.anchor)
+    }
+
+    /// The buckets, worked out one by one: every bucket near the range
+    /// whose sample point (doubled, so a middle is whole) is in it —
+    /// `[begin, end]`, or `(begin, end]` when sampling at the end.
+    fn buckets(&self, times: &[i64]) -> Vec<(i64, i64, i64)> {
+        let Some((b, e)) = self
+            .range
+            .or_else(|| Some((*times.first()?, *times.last()?)))
+        else {
+            return vec![];
+        };
+        let first = (b - self.anchor).div_euclid(self.step) - 2;
+        let last = (e - self.anchor).div_euclid(self.step) + 2;
+        (first..=last)
+            .map(|k| {
+                let start = self.anchor + k * self.step;
+                let end = start + self.step;
+                let point2 = match self.at {
+                    At::Begin => 2 * start,
+                    At::Center => start + end,
+                    At::End => 2 * end,
+                };
+                (start, end, point2)
+            })
+            .filter(|&(_, _, p2)| match self.at {
+                At::End => p2 > 2 * b && p2 <= 2 * e,
+                _ => p2 >= 2 * b && p2 <= 2 * e,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn align_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let buckets = grid.buckets(&times);
+        for method in [AlignMethod::Hold, AlignMethod::Linear] {
+            let options = Align {
+                method,
+                sample: grid.at,
+                range: grid.range,
+            };
+            let out = series(&times, &values)
+                .align(&grid.sequence(), options)
+                .unwrap();
+            let what = format!("seed {seed} {method:?} step {} {:?}", grid.step, grid.at);
+            let begins: Vec<i64> = buckets.iter().map(|b| b.0).collect();
+            assert_eq!(out.key().begin(), &begins[..], "{what}");
+            let got = out.column("v").unwrap().numbers().unwrap();
+            for (row, &(_, _, p2)) in buckets.iter().enumerate() {
+                // A row exactly at the point: the first of them. Otherwise
+                // the last row before it, and for linear the first after.
+                let at = times.iter().position(|&t| 2 * t == p2);
+                let before = times.iter().rposition(|&t| 2 * t < p2);
+                let after = times.iter().position(|&t| 2 * t > p2);
+                let want = match (at, before, after, method) {
+                    (Some(i), ..) => values[i],
+                    (None, None, _, _) => None,
+                    (None, Some(p), _, AlignMethod::Hold) | (None, Some(p), None, _) => values[p],
+                    (None, Some(p), Some(q), AlignMethod::Linear) => match (values[p], values[q]) {
+                        (Some(a), Some(b)) => {
+                            let ratio = (p2 as f64 / 2.0 - times[p] as f64)
+                                / (times[q] as f64 - times[p] as f64);
+                            Some(a + (b - a) * ratio)
+                        }
+                        _ => values[p],
+                    },
+                };
+                let got = got.get(row);
+                assert!(
+                    got.map(f64::to_bits) == want.map(f64::to_bits),
+                    "{what} row {row}: got {got:?}, want {want:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn materialize_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let buckets = grid.buckets(&times);
+        for pick in [Pick::First, Pick::Last, Pick::Nearest] {
+            let options = Materialize {
+                pick,
+                sample: grid.at,
+                range: grid.range,
+            };
+            let result = series(&times, &values).materialize(&grid.sequence(), options);
+            let what = format!("seed {seed} {pick:?} step {} {:?}", grid.step, grid.at);
+            if buckets.iter().any(|b| b.2 % 2 != 0) {
+                // A time on a half millisecond: an error, not a rounded key.
+                assert!(result.is_err(), "{what}");
+                continue;
+            }
+            let out = result.unwrap();
+            let want_time: Vec<i64> = buckets.iter().map(|b| b.2 / 2).collect();
+            assert_eq!(out.key().begin(), &want_time[..], "{what}");
+            let got = out.column("v").unwrap().numbers().unwrap();
+            for (row, &(start, end, p2)) in buckets.iter().enumerate() {
+                let inside: Vec<usize> = (0..times.len())
+                    .filter(|&i| times[i] >= start && times[i] < end)
+                    .collect();
+                let chosen = match pick {
+                    Pick::First => inside.first().copied(),
+                    Pick::Last => inside.last().copied(),
+                    // min_by_key keeps the first of equal keys.
+                    Pick::Nearest => inside
+                        .iter()
+                        .copied()
+                        .min_by_key(|&i| (2 * times[i] - p2).abs()),
+                };
+                let want = chosen.and_then(|i| values[i]);
+                assert!(
+                    got.get(row).map(f64::to_bits) == want.map(f64::to_bits),
+                    "{what} row {row}: got {:?}, want {want:?}",
+                    got.get(row)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dedupe_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let s = series(&times, &values);
+        let mut distinct = times.clone();
+        distinct.dedup();
+        for keep in [
+            Keep::First,
+            Keep::Last,
+            Keep::Drop,
+            Keep::Min("v".into()),
+            Keep::Max("v".into()),
+        ] {
+            let what = format!("seed {seed} {keep:?}");
+            let mut want_time = vec![];
+            let mut want_v = vec![];
+            for &t in &distinct {
+                let rows: Vec<usize> = (0..times.len()).filter(|&i| times[i] == t).collect();
+                let chosen = if rows.len() == 1 {
+                    Some(rows[0])
+                } else {
+                    match &keep {
+                        Keep::First => Some(rows[0]),
+                        Keep::Last => Some(*rows.last().unwrap()),
+                        Keep::Drop => None,
+                        // The first row with the smallest (largest) value;
+                        // gaps only win when every row is a gap.
+                        Keep::Min(_) | Keep::Max(_) => {
+                            let min = matches!(keep, Keep::Min(_));
+                            let best = rows.iter().copied().filter(|&i| values[i].is_some()).fold(
+                                None,
+                                |best: Option<usize>, i| match best {
+                                    None => Some(i),
+                                    Some(b) => {
+                                        let (vi, vb) = (values[i].unwrap(), values[b].unwrap());
+                                        if (min && vi < vb) || (!min && vi > vb) {
+                                            Some(i)
+                                        } else {
+                                            Some(b)
+                                        }
+                                    }
+                                },
+                            );
+                            Some(best.unwrap_or(rows[0]))
+                        }
+                        Keep::Error => unreachable!(),
+                    }
+                };
+                if let Some(i) = chosen {
+                    want_time.push(t);
+                    want_v.push(values[i]);
+                }
+            }
+            let out = s.dedupe(keep.clone()).unwrap();
+            assert_eq!(out.key().begin(), &want_time[..], "{what}");
+            let got: Vec<Option<f64>> =
+                out.column("v").unwrap().numbers().unwrap().iter().collect();
+            assert_eq!(got, want_v, "{what}");
+        }
+        let repeats = distinct.len() < times.len();
+        assert_eq!(s.dedupe(Keep::Error).is_err(), repeats, "seed {seed}");
+    }
+}
+
+/// `join` against grouping by time: at each time, rows pair in order while
+/// both sides have one, then the longer side's extra rows follow alone.
+#[test]
+fn join_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (lt, lv) = random_series(&mut rng);
+        let (rt, rv) = random_series(&mut rng);
+        let left = series(&lt, &lv);
+        let right =
+            TimeSeries::new("r", rt.clone(), vec![Column::optional("w", rv.clone())]).unwrap();
+        let mut keys: Vec<i64> = lt.iter().chain(&rt).copied().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for how in [
+            JoinType::Inner,
+            JoinType::Left,
+            JoinType::Right,
+            JoinType::Outer,
+        ] {
+            let what = format!("seed {seed} {how:?}");
+            let (keep_left, keep_right) = match how {
+                JoinType::Inner => (false, false),
+                JoinType::Left => (true, false),
+                JoinType::Right => (false, true),
+                JoinType::Outer => (true, true),
+            };
+            let (mut want_t, mut want_v, mut want_w) = (vec![], vec![], vec![]);
+            for &t in &keys {
+                let l: Vec<usize> = (0..lt.len()).filter(|&i| lt[i] == t).collect();
+                let r: Vec<usize> = (0..rt.len()).filter(|&i| rt[i] == t).collect();
+                for k in 0..l.len().max(r.len()) {
+                    let (a, b) = (l.get(k), r.get(k));
+                    let keep = (a.is_some() && b.is_some())
+                        || (a.is_some() && keep_left)
+                        || (b.is_some() && keep_right);
+                    if keep {
+                        want_t.push(t);
+                        want_v.push(a.and_then(|&i| lv[i]));
+                        want_w.push(b.and_then(|&i| rv[i]));
+                    }
+                }
+            }
+            let out = left
+                .join(
+                    &right,
+                    Join {
+                        how,
+                        ..Join::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(out.key().begin(), &want_t[..], "{what}");
+            let col = |name: &str| -> Vec<Option<f64>> {
+                out.column(name)
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .iter()
+                    .collect()
+            };
+            assert_eq!(col("v"), want_v, "{what}");
+            assert_eq!(col("w"), want_w, "{what}");
+        }
+    }
+}
+
+/// `random_series`, keyed by time ranges of random lengths from 0 to 5 ms,
+/// so `smooth` anchors (range middles) can fall on a half millisecond.
+/// Returns the series and each row's doubled anchor (`begin + end`).
+fn ranged(rng: &mut Rng, times: &[i64], values: &[Option<f64>]) -> (TimeSeries, Vec<i64>) {
+    let mut ends: Vec<i64> = times.iter().map(|&t| t + rng.below(6) as i64).collect();
+    // Keys sort by begin, then end.
+    for i in 1..times.len() {
+        if times[i] == times[i - 1] && ends[i] < ends[i - 1] {
+            ends[i] = ends[i - 1];
+        }
+    }
+    let keys = TimeRangeKeys {
+        begin: times.to_vec(),
+        end: ends.clone(),
+    };
+    let s = TimeSeries::from_time_ranges("s", keys, vec![Column::optional("v", values.to_vec())])
+        .unwrap();
+    let doubled = times.iter().zip(&ends).map(|(b, e)| b + e).collect();
+    (s, doubled)
+}
+
+fn numbers(s: &TimeSeries, name: &str) -> Vec<Option<f64>> {
+    s.column(name).unwrap().numbers().unwrap().iter().collect()
+}
+
+/// `smooth`'s moving average is the mean of the values whose anchor is in
+/// the window, checked by brute force on time and time-range keys; on time
+/// keys it is the rolling `avg` bit for bit.
+#[test]
+fn moving_average_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let case = RollCase::random(&mut rng);
+        let (alignment, w) = (case.options.alignment, case.window_ms);
+        let skip = rng.chance(50);
+        let mut smooth = Smooth::moving_average(&format!("{w}ms")).alignment(alignment);
+        if skip {
+            smooth = smooth.skip_missing();
+        }
+        let plain = series(&times, &values);
+        let (ranges, doubled) = ranged(&mut rng, &times, &values);
+        let by_time: Vec<i64> = times.iter().map(|t| 2 * t).collect();
+        for (s, anchors) in [(&plain, &by_time), (&ranges, &doubled)] {
+            let got = numbers(&s.smooth("v", &smooth).unwrap(), "v");
+            for row in 0..times.len() {
+                let t = anchors[row];
+                let present: Vec<f64> = (0..times.len())
+                    .filter(|&r| {
+                        let u = anchors[r];
+                        match alignment {
+                            Alignment::Trailing => u > t - 2 * w && u <= t,
+                            Alignment::Leading => u >= t && u < t + 2 * w,
+                            Alignment::Centered => u >= t - w && u < t + w,
+                        }
+                    })
+                    .filter_map(|r| values[r])
+                    .collect();
+                let want = if skip && values[row].is_none() {
+                    None
+                } else {
+                    naive(Reducer::Avg, &present)
+                };
+                let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+                let what = format!("seed {seed} {w}ms {alignment:?} skip {skip} row {row}");
+                check(&what, Reducer::Avg, got[row], want, scale);
+            }
+        }
+        let rolled = plain
+            .rolling_with(
+                &format!("{w}ms"),
+                &[Agg::new("v", "v", Reducer::Avg)],
+                Rolling {
+                    alignment,
+                    ..Rolling::default()
+                },
+            )
+            .unwrap();
+        let smoothed = numbers(&plain.smooth("v", &smooth).unwrap(), "v");
+        for (row, (a, b)) in numbers(&rolled, "v").iter().zip(&smoothed).enumerate() {
+            let a = if skip && values[row].is_none() {
+                None
+            } else {
+                *a
+            };
+            assert_eq!(
+                a.map(f64::to_bits),
+                b.map(f64::to_bits),
+                "seed {seed} row {row}"
+            );
+        }
+    }
+}
+
+/// `smooth`'s loess at each present row is the weighted straight-line fit
+/// over the nearest `span` share of values, solved here another way: the
+/// values nearer than the k-th nearest, by sorting distances, then the
+/// weighted least squares around their weighted mean time.
+#[test]
+fn loess_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let span = [0.05, 0.2, 0.5, 1.0][rng.below(4) as usize];
+        let got = numbers(
+            &series(&times, &values)
+                .smooth("v", &Smooth::loess(span).skip_missing())
+                .unwrap(),
+            "v",
+        );
+        let (at, ys): (Vec<f64>, Vec<f64>) = times
+            .iter()
+            .zip(&values)
+            .filter_map(|(&t, v)| v.map(|v| (t as f64, v)))
+            .unzip();
+        let n = at.len();
+        for row in 0..times.len() {
+            let what = format!("seed {seed} span {span} row {row}");
+            if values[row].is_none() {
+                assert_eq!(got[row], None, "{what}");
+                continue;
+            }
+            let x = times[row] as f64;
+            let want = if n == 1 {
+                ys[0]
+            } else {
+                let k = ((span * n as f64).ceil() as usize).clamp(2, n);
+                // The fit's reach is the k-th smallest distance; every value
+                // nearer than that has weight.
+                let mut distances: Vec<f64> = at.iter().map(|a| (a - x).abs()).collect();
+                distances.sort_by(f64::total_cmp);
+                let h = distances[k - 1];
+                let near: Vec<usize> = (0..n).filter(|&i| (at[i] - x).abs() < h).collect();
+                if h == 0.0 {
+                    let here: Vec<f64> = (0..n).filter(|&i| at[i] == x).map(|i| ys[i]).collect();
+                    here.iter().sum::<f64>() / here.len() as f64
+                } else {
+                    let w: Vec<f64> = near
+                        .iter()
+                        .map(|&i| (1.0 - ((at[i] - x).abs() / h).powi(3)).max(0.0).powi(3))
+                        .collect();
+                    let sw: f64 = w.iter().sum();
+                    let mean_t = near.iter().zip(&w).map(|(&i, w)| w * at[i]).sum::<f64>() / sw;
+                    let mean_y = near.iter().zip(&w).map(|(&i, w)| w * ys[i]).sum::<f64>() / sw;
+                    let (mut sxy, mut sxx) = (0.0, 0.0);
+                    for (&i, w) in near.iter().zip(&w) {
+                        sxy += w * (at[i] - mean_t) * (ys[i] - mean_y);
+                        sxx += w * (at[i] - mean_t).powi(2);
+                    }
+                    // The row itself is in the fit with weight 1, so some
+                    // spread in time remains unless every weighted value
+                    // shares its time.
+                    if sxx == 0.0 {
+                        mean_y
+                    } else {
+                        mean_y + sxy / sxx * (x - mean_t)
+                    }
+                }
+            };
+            let g = got[row].unwrap_or_else(|| panic!("{what}: gap"));
+            let scale = ys.iter().fold(1.0f64, |m, v| m.max(v.abs()));
+            assert!(
+                (g - want).abs() <= 1e-9 * scale,
+                "{what}: got {g}, want {want}"
+            );
+        }
+    }
+}
+
+/// `baseline` is the rolling `avg` and `stdev` plus a band; `outliers` is
+/// the rows outside that band.
+#[test]
+fn baseline_and_outliers_follow_rolling() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let case = RollCase::random(&mut rng);
+        let window = format!("{}ms", case.window_ms);
+        let sigma = [0.5, 1.0, 2.0][rng.below(3) as usize];
+        let s = series(&times, &values);
+        let base = s.baseline("v", &window, sigma, case.options).unwrap();
+        let rolled = s
+            .rolling_with(
+                &window,
+                &[
+                    Agg::new("avg", "v", Reducer::Avg),
+                    Agg::new("sd", "v", Reducer::Stdev),
+                ],
+                case.options,
+            )
+            .unwrap();
+        let bits = |v: Vec<Option<f64>>| -> Vec<Option<u64>> {
+            v.into_iter().map(|x| x.map(f64::to_bits)).collect()
+        };
+        let what = format!("seed {seed} {window} {:?} sigma {sigma}", case.options);
+        assert_eq!(
+            bits(numbers(&base, "avg")),
+            bits(numbers(&rolled, "avg")),
+            "{what}"
+        );
+        assert_eq!(
+            bits(numbers(&base, "sd")),
+            bits(numbers(&rolled, "sd")),
+            "{what}"
+        );
+        let (avg, sd) = (numbers(&base, "avg"), numbers(&base, "sd"));
+        let (upper, lower) = (numbers(&base, "upper"), numbers(&base, "lower"));
+        let mut flagged = vec![];
+        for row in 0..times.len() {
+            let band = match (avg[row], sd[row]) {
+                (Some(a), Some(d)) if d > 0.0 => Some((a + sigma * d, a - sigma * d)),
+                _ => None,
+            };
+            assert_eq!(upper[row].zip(lower[row]), band, "{what} row {row}");
+            if let (Some(v), Some(a), Some(d)) = (values[row], avg[row], sd[row])
+                && d > 0.0
+                && (v - a).abs() > sigma * d
+            {
+                flagged.push(times[row]);
+            }
+        }
+        let out = s.outliers("v", &window, sigma, case.options).unwrap();
+        assert_eq!(out.key().begin(), &flagged[..], "{what}");
+    }
+}
+
+/// `scan` with a running-sum step is `cumulative_with` addition, and
+/// `sample` by stride keeps every `n`th row.
+#[test]
+fn scan_and_stride_match_simple_versions() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let s = series(&times, &values);
+        let scanned = s.scan("v", 0.0, |a, v, _| (a + v, a + v)).unwrap();
+        let folded = s.cumulative_with("v", |a, v| a + v).unwrap();
+        assert_eq!(numbers(&scanned, "v"), numbers(&folded, "v"), "seed {seed}");
+        let stride = 1 + rng.below(7) as usize;
+        let want: Vec<i64> = times
+            .iter()
+            .skip(stride - 1)
+            .step_by(stride)
+            .copied()
+            .collect();
+        let got = s.sample(Sample::Stride(stride)).unwrap();
+        assert_eq!(got.key().begin(), &want[..], "seed {seed} stride {stride}");
+    }
+}
+
+/// `concat` is a stable sort, by begin then end, of the inputs laid one
+/// after another; on time and time-range keys, with empty inputs.
+#[test]
+fn concat_is_a_stable_sort() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let ranges = rng.chance(50);
+        let count = 1 + rng.below(4) as usize;
+        let mut parts = Vec::new();
+        // (begin, end, value) of every input row, inputs one after another.
+        let mut all: Vec<(i64, i64, Option<f64>)> = Vec::new();
+        for _ in 0..count {
+            let (times, values) = random_series(&mut rng);
+            let s = if ranges {
+                ranged(&mut rng, &times, &values).0
+            } else {
+                series(&times, &values)
+            };
+            let key = s.key();
+            for (i, v) in values.iter().enumerate() {
+                let end = key.end().map_or(key.begin()[i], |e| e[i]);
+                all.push((key.begin()[i], end, *v));
+            }
+            parts.push(s);
+        }
+        all.sort_by_key(|&(b, e, _)| (b, e));
+        let refs: Vec<&TimeSeries> = parts.iter().collect();
+        let got = TimeSeries::concat(&refs).unwrap();
+        let begins: Vec<i64> = all.iter().map(|r| r.0).collect();
+        assert_eq!(got.key().begin(), &begins[..], "seed {seed}");
+        if ranges {
+            let ends: Vec<i64> = all.iter().map(|r| r.1).collect();
+            assert_eq!(got.key().end().unwrap(), &ends[..], "seed {seed}");
+        }
+        let want: Vec<Option<f64>> = all.iter().map(|r| r.2).collect();
+        let got_values = numbers(&got, "v");
+        assert_eq!(got_values.len(), want.len(), "seed {seed}");
+        for (g, w) in got_values.iter().zip(&want) {
+            assert_eq!(g.map(f64::to_bits), w.map(f64::to_bits), "seed {seed}");
+        }
+    }
+}
+
+/// `pivot_by_group` against a direct build: a row per distinct time, a
+/// column per group (named as JavaScript writes the number, `undefined`
+/// for a gap, in text order), a lone row copied as is, several reduced.
+#[test]
+fn pivot_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let groups: Vec<Option<f64>> = times
+            .iter()
+            .map(|_| (!rng.chance(10)).then(|| (rng.below(12) as f64 - 2.0) / 2.0))
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("g", groups.clone()),
+                Column::optional("v", values.clone()),
+            ],
+        )
+        .unwrap();
+        let reducer = REDUCERS[rng.below(REDUCERS.len() as u64) as usize];
+        let got = s
+            .pivot_by_group("g", "v", &Pivot::default().aggregate(reducer))
+            .unwrap();
+
+        let name = |g: Option<f64>| match g {
+            None => "undefined".to_string(),
+            Some(x) if x == x.trunc() => format!("{}", x as i64),
+            Some(x) => format!("{x}"),
+        };
+        let mut names: Vec<String> = groups.iter().map(|&g| name(g)).collect();
+        names.sort();
+        names.dedup();
+        let mut distinct = times.clone();
+        distinct.dedup();
+        assert_eq!(got.key().begin(), &distinct[..], "seed {seed}");
+        let columns: Vec<String> = got.columns().iter().map(|c| c.name().to_string()).collect();
+        let want_columns: Vec<String> = names.iter().map(|n| format!("{n}_v")).collect();
+        assert_eq!(columns, want_columns, "seed {seed}");
+        for n in &names {
+            let column = numbers(&got, &format!("{n}_v"));
+            for (row, &t) in distinct.iter().enumerate() {
+                let cell: Vec<Option<f64>> = (0..times.len())
+                    .filter(|&i| times[i] == t && name(groups[i]) == *n)
+                    .map(|i| values[i])
+                    .collect();
+                let want = match cell.len() {
+                    0 => None,
+                    1 => cell[0],
+                    _ => naive(reducer, &cell.iter().flatten().copied().collect::<Vec<_>>()),
+                };
+                let scale = cell.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
+                check(
+                    &format!("seed {seed} {n} at {t}"),
+                    reducer,
+                    column[row],
+                    want,
+                    scale,
+                );
+            }
+        }
+    }
+}
+
+/// `collapse` is the closure applied row by row; the output is required
+/// exactly when it has no gaps.
+#[test]
+fn collapse_applies_the_closure_per_row() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let other: Vec<Option<f64>> = values.iter().map(|v| v.map(|x| x * 2.0 - 1.0)).collect();
+        let s = TimeSeries::new(
+            "s",
+            times,
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("w", other.clone()),
+            ],
+        )
+        .unwrap();
+        let got = s
+            .collapse(&["v", "w"], "q", |r| {
+                Ok(match (r.number("v")?, r.number("w")?) {
+                    (Some(a), Some(b)) => Some(Scalar::Number(a / b)),
+                    _ => None,
+                })
+            })
+            .unwrap();
+        let want: Vec<Option<f64>> = values
+            .iter()
+            .zip(&other)
+            .map(|(a, b)| a.zip(*b).map(|(a, b)| a / b).filter(|q| q.is_finite()))
+            .collect();
+        if want.iter().all(Option::is_none) {
+            // No value to take a kind from: a text column of gaps, as pond-ts.
+            let q = got.column("q").unwrap();
+            assert_eq!(q.kind(), pond_rs::ColumnKind::String, "seed {seed}");
+            assert_eq!(q.data().missing_count(), want.len(), "seed {seed}");
+            continue;
+        }
+        let q = numbers(&got, "q");
+        assert_eq!(
+            q.iter().map(|v| v.map(f64::to_bits)).collect::<Vec<_>>(),
+            want.iter().map(|v| v.map(f64::to_bits)).collect::<Vec<_>>(),
+            "seed {seed}"
+        );
+        assert_eq!(got.columns().len(), 1, "seed {seed}");
+        assert_eq!(
+            got.column("q").unwrap().is_required(),
+            want.iter().all(Option::is_some),
+            "seed {seed}"
+        );
+    }
+}
+
+/// `by_column` with random bins: each bin holds exactly the rows whose
+/// axis value lies in its range, reduced in row order; every row with a
+/// value inside the edges lands in one bin.
+#[test]
+fn by_column_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let axis: Vec<Option<f64>> = (0..times.len())
+            .map(|_| {
+                (!rng.chance(15)).then(|| {
+                    (rng.below(4_000) as f64 - 2_000.0) / [1.0, 100.0][rng.below(2) as usize]
+                })
+            })
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("a", axis.clone()),
+            ],
+        )
+        .unwrap();
+        let bins = if rng.chance(50) {
+            let width = [0.25, 0.5, 1.0, 3.0, 7.5, 100.0][rng.below(6) as usize];
+            let origin = [0.0, 0.3, -1.0, 12.5][rng.below(4) as usize];
+            Bins::width_from(width, origin)
+        } else {
+            let mut edges: Vec<f64> = (0..2 + rng.below(6))
+                .map(|_| (rng.below(4_000) as f64 - 2_000.0) / 100.0)
+                .collect();
+            edges.sort_by(f64::total_cmp);
+            edges.dedup();
+            if edges.len() < 2 {
+                edges.push(edges[0] + 1.0);
+            }
+            if rng.chance(50) {
+                Bins::edges_upper_inclusive(edges)
+            } else {
+                Bins::edges(edges)
+            }
+        };
+        let out = s.by_column("a", &bins, &aggs).unwrap();
+        let starts = out
+            .column("start")
+            .unwrap()
+            .numbers()
+            .unwrap()
+            .values()
+            .to_vec();
+        let ends = out
+            .column("end")
+            .unwrap()
+            .numbers()
+            .unwrap()
+            .values()
+            .to_vec();
+        let upper = matches!(
+            bins,
+            Bins::Edges {
+                upper_inclusive: true,
+                ..
+            }
+        );
+        let mut seen = vec![0; axis.len()];
+        for b in 0..out.len() {
+            let inside = |a: f64| {
+                if upper {
+                    (a > starts[b] || (b == 0 && a == starts[b])) && a <= ends[b]
+                } else {
+                    a >= starts[b] && a < ends[b]
+                }
+            };
+            let rows: Vec<usize> = (0..axis.len())
+                .filter(|&r| axis[r].is_some_and(inside))
+                .collect();
+            for &r in &rows {
+                seen[r] += 1;
+            }
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(b);
+                let what = format!("seed {seed} {bins:?} bin {b}");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
+        for (r, a) in axis.iter().enumerate() {
+            let want = match (&bins, a) {
+                (_, None) => 0,
+                (Bins::Width { .. }, Some(_)) => 1,
+                (
+                    Bins::Edges {
+                        edges,
+                        upper_inclusive,
+                    },
+                    Some(a),
+                ) => {
+                    let (lo, hi) = (edges[0], edges[edges.len() - 1]);
+                    usize::from(*a >= lo && if *upper_inclusive { *a <= hi } else { *a < hi })
+                }
+            };
+            assert_eq!(seen[r], want, "seed {seed} {bins:?} row {r} ({a:?})");
+        }
+        if let Bins::Width { .. } = bins
+            && !out.is_empty()
+        {
+            for b in 1..out.len() {
+                assert_eq!(starts[b], ends[b - 1], "seed {seed}: bins touch");
+            }
+            let count = out.column("r0").unwrap().numbers().unwrap();
+            let holds = |b: usize| {
+                (0..axis.len()).any(|r| axis[r].is_some_and(|a| a >= starts[b] && a < ends[b]))
+            };
+            assert!(
+                holds(0) && holds(out.len() - 1),
+                "seed {seed}: end bins hold rows ({:?})",
+                count.values()
+            );
+        }
+    }
+}
+
+/// `rolling_by_column`, per row and at centers: each window holds the rows
+/// whose axis value is within the radius; a row without a value gets the
+/// empty window.
+#[test]
+fn rolling_by_column_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let axis: Vec<Option<f64>> = times
+            .iter()
+            .map(|&t| (!rng.chance(10)).then_some(t as f64 / 1000.0))
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("a", axis.clone()),
+            ],
+        )
+        .unwrap();
+        let radius = [0.001, 0.25, 1.0, 3.0, 1e6][rng.below(5) as usize];
+        let centers: Option<Vec<f64>> = rng.chance(40).then(|| {
+            let mut c: Vec<f64> = (0..rng.below(20))
+                .map(|_| (rng.below(40_000) as f64 - 20_000.0) / 1000.0)
+                .collect();
+            c.sort_by(f64::total_cmp);
+            c
+        });
+        let out = match &centers {
+            Some(c) => s.rolling_by_column_at("a", radius, c, &aggs),
+            None => s.rolling_by_column("a", radius, &aggs),
+        }
+        .unwrap();
+        let points: Vec<Option<f64>> = match &centers {
+            Some(c) => c.iter().map(|&x| Some(x)).collect(),
+            None => axis.clone(),
+        };
+        assert_eq!(out.len(), points.len(), "seed {seed}");
+        for (k, p) in points.iter().enumerate() {
+            let rows: Vec<usize> = match p {
+                None => vec![],
+                Some(p) => (0..axis.len())
+                    .filter(|&r| axis[r].is_some_and(|a| a >= p - radius && a <= p + radius))
+                    .collect(),
+            };
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(k);
+                let what = format!("seed {seed} radius {radius} at {p:?} (output {k})");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
+    }
+}
+
+/// `by_value` on a random non-decreasing axis (with repeats): the nearest
+/// row holds the closest value, and a slice holds
+/// exactly the rows with `lo <= axis < hi`, in order.
+#[test]
+fn value_series_nearest_and_slice_match_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let n = rng.below(40) as usize;
+        let mut x = 0.0;
+        let axis: Vec<f64> = (0..n)
+            .map(|_| {
+                if !rng.chance(30) {
+                    x += (1 + rng.below(50)) as f64 / [1.0, 4.0, 10.0][rng.below(3) as usize];
+                }
+                x
+            })
+            .collect();
+        let row: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let s = TimeSeries::new(
+            "s",
+            (0..n as i64).collect(),
+            vec![
+                Column::required("x", axis.clone()),
+                Column::required("row", row),
+            ],
+        )
+        .unwrap();
+        let v = s.by_value("x").unwrap();
+        assert_eq!(v.axis(), axis.as_slice(), "seed {seed}");
+        let probe = |rng: &mut Rng| {
+            (rng.below(4_000) as f64 - 500.0) / [1.0, 4.0, 10.0][rng.below(3) as usize]
+        };
+        for _ in 0..20 {
+            let p = probe(&mut rng);
+            // The closest value, the lower one on a tie; of the rows holding
+            // it, the one next to where `p` would go: the last when it is
+            // below `p`, else the first.
+            let best = (0..n)
+                .map(|i| axis[i])
+                .min_by(|a, b| (a - p).abs().total_cmp(&(b - p).abs()).then(a.total_cmp(b)));
+            let want = best.map(|b| {
+                let mut rows = (0..n).filter(|&i| axis[i] == b);
+                if b < p { rows.next_back() } else { rows.next() }.unwrap()
+            });
+            assert_eq!(v.nearest_index(p), want, "seed {seed} nearest({p})");
+            let (lo, hi) = (p, probe(&mut rng));
+            let want: Vec<f64> = (0..n)
+                .filter(|&i| lo <= axis[i] && axis[i] < hi)
+                .map(|i| i as f64)
+                .collect();
+            let got = v.slice_by_value(lo, hi);
+            assert_eq!(
+                got.column("row").unwrap().numbers().unwrap().values(),
+                want.as_slice(),
+                "seed {seed} slice({lo}, {hi})"
+            );
+        }
+    }
+}

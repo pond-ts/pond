@@ -2196,6 +2196,30 @@ describe('TimeSeries', () => {
     expect(trimmed.at(1)?.key()).toEqual(new TimeRange({ start: 20, end: 22 }));
   });
 
+  it('trim keeps keys in order when clipping moves two to the same start', () => {
+    const ts = TimeSeries.fromJSON({
+      name: 'r',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'value', kind: 'number' },
+      ] as const,
+      rows: [
+        [[0, 10], 1],
+        [[2, 5], 2],
+        [[4, 6], 3],
+      ],
+    });
+    const trimmed = ts.trim([3, 20]);
+    expect(trimmed.toJSON().rows).toEqual([
+      [[3, 5], 2],
+      [[3, 10], 1],
+      [[4, 6], 3],
+    ]);
+    // Order holds, so lookups and a reload work.
+    expect(trimmed.bisect([3, 10])).toBe(1);
+    expect(() => TimeSeries.fromJSON(trimmed.toJSON())).not.toThrow();
+  });
+
   it('rejects rows with invalid shape', () => {
     const schema = [
       { name: 'time', kind: 'time' },
