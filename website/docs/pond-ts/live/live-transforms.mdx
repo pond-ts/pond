@@ -2,6 +2,9 @@
 sidebar_position: 14
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Live Transforms
 
 Live transforms build incremental processing pipelines on top of
@@ -23,6 +26,9 @@ read as "the same thing, but incremental."
 
 `LiveView` wraps any live source with a per-event transform. The built-in
 methods on `LiveSeries` return pre-configured views:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { LiveSeries, Sequence } from 'pond-ts';
@@ -57,6 +63,78 @@ const last5m = live.window('5m'); // time-based
 const last100 = live.window(100); // count-based
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("mem", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+
+    // Filter: only events from one host.
+    let api1 = live.filter(live.root(), |e| {
+        e.string("host").ok().flatten() == Some("api-1")
+    })?;
+
+    // Map: new values for each event, one cell per value column in schema
+    // order. A gap stays a gap.
+    let pct = live.map(live.root(), |e| {
+        let cpu = e.number("cpu").ok().flatten();
+        vec![
+            cpu.map(|c| (c * 100.0).into()),
+            e.value("mem").unwrap().cloned(),
+            e.value("host").unwrap().cloned(),
+        ]
+    })?;
+
+    // Select: only the named columns. An unknown name is an error.
+    let cpu_only = live.select(live.root(), &["cpu"])?;
+    assert!(live.select(live.root(), &["nope"]).is_err());
+
+    // Window: the last 30 seconds, or the last 2 events.
+    let last_30s = live.window(live.root(), "30s")?;
+    let last_two = live.window_rows(live.root(), 2)?;
+
+    for (t, cpu, mem, host) in [
+        (0, 0.2, 50.0, "api-1"),
+        (20_000, 0.4, 55.0, "api-2"),
+        (40_000, 0.6, 52.0, "api-1"),
+        (60_000, 0.8, 60.0, "api-2"),
+        (70_000, 1.0, 58.0, "api-1"),
+    ] {
+        live.push(t, [Some(cpu.into()), Some(mem.into()), Some(host.into())])?;
+    }
+
+    assert_eq!(live[api1].len(), 3);
+    assert_eq!(live[pct].last().unwrap().number("cpu")?, Some(100.0));
+    let names: Vec<&str> = live[cpu_only]
+        .schema()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "cpu"]);
+    let times: Vec<i64> = live[last_30s].events().map(|e| e.begin()).collect();
+    assert_eq!(times, [40_000, 60_000, 70_000]);
+    assert_eq!(live[last_two].len(), 2);
+    Ok(())
+}
+```
+
+A count window is `window_rows`. `map` returns one cell per value column and cannot change an event's time.
+
+</TabItem>
+</Tabs>
+
 Under `ordering: 'reorder'`, `window()` eviction is not re-applied
 when a late event is inserted — a late event can temporarily sit
 "outside" the declared window until the next prune. See
@@ -64,6 +142,9 @@ when a late event is inserted — a late event can temporarily sit
 
 Views maintain their own event buffer and implement the `LiveSource` interface,
 so they compose by stacking:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const pipeline = live
@@ -75,9 +156,57 @@ const pipeline = live
 const ts = pipeline.toTimeSeries();
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("mem", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    // Each view is the source of the next.
+    let api1 = live.filter(live.root(), |e| {
+        e.string("host").ok().flatten() == Some("api-1")
+    })?;
+    let cpu = live.select(api1, &["cpu"])?;
+    let pipeline = live.window(cpu, "1m")?;
+
+    for (t, cpu, mem, host) in [
+        (0, 0.2, 50.0, "api-1"),
+        (20_000, 0.4, 55.0, "api-2"),
+        (40_000, 0.6, 52.0, "api-1"),
+        (60_000, 0.8, 60.0, "api-2"),
+        (70_000, 1.0, 58.0, "api-1"),
+    ] {
+        live.push(t, [Some(cpu.into()), Some(mem.into()), Some(host.into())])?;
+    }
+
+    // A copy of the windowed view, as a batch series.
+    let ts = live[pipeline].to_time_series()?;
+    assert_eq!(ts.column("cpu")?.numbers()?.get(0), Some(0.6));
+    assert_eq!(ts.len(), 2); // api-1 within a minute of 70 s
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### Subscriptions
 
 Every view exposes `on('event', fn)` for push-based notification:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const unsub = api1.on('event', (event) => {
@@ -88,14 +217,65 @@ const unsub = api1.on('event', (event) => {
 unsub();
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let api1 = live.filter(live.root(), |e| {
+        e.string("host").ok().flatten() == Some("api-1")
+    })?;
+    live.watch(api1, OutputKind::Event)?;
+
+    let out = live.push(0, [Some(0.2.into()), Some("api-1".into())])?;
+    let [Output::Event { event, .. }] = &out[..] else {
+        panic!()
+    };
+    assert_eq!(event.number("cpu")?, Some(0.2));
+    // Filtered out: nothing comes back.
+    assert!(
+        live.push(1_000, [Some(0.4.into()), Some("api-2".into())])?
+            .is_empty()
+    );
+
+    // Stop getting them.
+    live.unwatch(api1, OutputKind::Event)?;
+    assert!(
+        live.push(2_000, [Some(0.6.into()), Some("api-1".into())])?
+            .is_empty()
+    );
+    Ok(())
+}
+```
+
+pond-rs has no listeners. `watch` the view, and each push returns its events.
+
+</TabItem>
+</Tabs>
+
 ### Cleanup
 
 Call `dispose()` to unsubscribe a view from its source and stop receiving events.
 
 ## LiveAggregation: bucketed aggregation
 
-`LiveAggregation` incrementally aggregates events into fixed-size time buckets.
-Buckets finalize as the data advances past their boundary.
+`LiveAggregation` incrementally aggregates events into time buckets: fixed-size
+(`Sequence.every`) or calendar ones (`Sequence.calendar`). Buckets finalize as
+the data advances past their boundary.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const agg = live.aggregate(Sequence.every('1m'), {
@@ -110,6 +290,72 @@ const closed = agg.closed();
 const snap = agg.snapshot();
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("mem", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let agg = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg), Agg::of("mem", Reducer::Max)],
+    )?;
+    // Built on a view: only api-1's events.
+    let api1 = live.filter(live.root(), |e| {
+        e.string("host").ok().flatten() == Some("api-1")
+    })?;
+    let api1_agg = live.aggregate(
+        api1,
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+
+    for (t, cpu, mem, host) in [
+        (0, 0.2, 50.0, "api-1"),
+        (20_000, 0.4, 55.0, "api-2"),
+        (40_000, 0.6, 52.0, "api-1"),
+        (60_000, 0.8, 60.0, "api-2"),
+        (70_000, 1.0, 58.0, "api-1"),
+    ] {
+        live.push(t, [Some(cpu.into()), Some(mem.into()), Some(host.into())])?;
+    }
+
+    // closed(): only finished buckets. The first minute closed at 60 s.
+    let closed = live[agg].closed()?;
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        closed.column("cpu")?.numbers()?.get(0),
+        Some(0.4000000000000001)
+    );
+    assert_eq!(closed.column("mem")?.numbers()?.get(0), Some(55.0));
+
+    // snapshot(): the open minute too, as it stands.
+    let snap = live[agg].snapshot()?;
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap.column("cpu")?.numbers()?.get(1), Some(0.9));
+
+    assert_eq!(live[api1_agg].at(0).unwrap().number("cpu")?, Some(0.4));
+    Ok(())
+}
+```
+
+This program also builds the filtered aggregation shown next.
+
+</TabItem>
+</Tabs>
+
 Or create it from a view for filtered aggregation:
 
 ```ts
@@ -117,6 +363,57 @@ const agg = live
   .filter((e) => e.get('host') === 'api-1')
   .aggregate(Sequence.every('1m'), { cpu: 'avg' });
 ```
+
+Calendar buckets follow the sequence's time zone, so a day is 23 or 25 hours
+across a daylight-saving change and a month is as long as that month:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const daily = live.aggregate(
+  Sequence.calendar('day', { timeZone: 'America/New_York' }),
+  { cpu: 'avg' },
+);
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let daily = live.aggregate(
+        live.root(),
+        &Sequence::calendar("day", "America/New_York")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+
+    let hour = 3_600_000;
+    let mar10 = 1_710_028_800_000; // midnight UTC, 10 March 2024
+    live.push(mar10 + 16 * hour, [Some(0.4.into())])?; // noon on the 10th, New York
+    live.push(mar10 + 30 * hour, [Some(0.6.into())])?; // the 11th
+
+    // New York's clocks moved forward on the 10th: a 23-hour day.
+    let day = live[daily].at(0).unwrap();
+    assert_eq!(day.begin(), mar10 + 5 * hour);
+    assert_eq!(day.end() - day.begin(), 23 * hour);
+    assert_eq!(day.number("cpu")?, Some(0.4));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### Reading the current value
 
@@ -129,6 +426,9 @@ bucket closes.
 
 For the current partial value you have three paths, from lightest to
 heaviest:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // 1. 'bucket' event — fires on every contributing push with the
@@ -149,6 +449,63 @@ const batch = live
   .aggregate(Sequence.every('1m'), { cpu: 'avg' }, { range });
 const currentCpu = batch.last()?.get('cpu');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let minute = Sequence::every("1m")?;
+    let avg = [Agg::of("cpu", Reducer::Avg)];
+    let agg = live.aggregate(live.root(), &minute, &avg)?;
+    // 1. Bucket outputs: the open bucket as it stands, after every event.
+    live.watch(agg, OutputKind::Bucket)?;
+
+    let mut current = Vec::new();
+    for (t, cpu) in [
+        (0, 0.2),
+        (20_000, 0.4),
+        (40_000, 0.6),
+        (60_000, 0.8),
+        (70_000, 1.0),
+    ] {
+        for out in live.push(t, [Some(cpu.into()), Some("api-1".into())])? {
+            if let Output::Bucket { event, .. } = out {
+                current.push((event.begin(), event.number("cpu")?));
+            }
+        }
+    }
+    assert_eq!(current.last(), Some(&(60_000, Some(0.9))));
+
+    // len() and at() see closed buckets only.
+    assert_eq!(live[agg].len(), 1);
+
+    // 2. snapshot(): the open bucket is the last row.
+    let snap = live[agg].snapshot()?;
+    assert_eq!(snap.last().unwrap().number("cpu")?, Some(0.9));
+
+    // 3. A batch aggregate over a copy of the series.
+    let batch = live.to_time_series()?.aggregate(&minute, &avg)?;
+    assert_eq!(batch.last().unwrap().number("cpu")?, Some(0.9));
+    Ok(())
+}
+```
+
+pond-rs's batch `aggregate` has no `range` option: its buckets run from the first event to the last.
+
+</TabItem>
+</Tabs>
 
 **When to use which**:
 
@@ -175,6 +532,9 @@ Sometimes you don't want a bucketed time series at all — you want a
 single record summarizing the source's current or recent state. `tail`
 gives you a trailing slice; `reduce` collapses a series to one record:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // "Current" — whole series, one record
 const state = live.toTimeSeries().reduce({
@@ -190,6 +550,57 @@ const recent = live.toTimeSeries().tail('30s').reduce({
   host: 'top3',
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Scalar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    for (t, cpu, host) in [
+        (0, 0.2, "api-1"),
+        (20_000, 0.4, "api-2"),
+        (40_000, 0.6, "api-1"),
+        (60_000, 0.8, "api-2"),
+        (70_000, 1.0, "api-1"),
+    ] {
+        live.push(t, [Some(cpu.into()), Some(host.into())])?;
+    }
+    let hosts = [Scalar::from("api-1"), Scalar::from("api-2")];
+
+    // "Current": the whole series, one record.
+    let state = live.to_time_series()?.reduce(&[
+        Agg::of("cpu", Reducer::Avg),
+        Agg::of("host", Reducer::Unique),
+    ])?;
+    assert_eq!(state.number("cpu")?, Some(0.6));
+    assert_eq!(state.array("host")?, Some(&hosts[..]));
+
+    // "Recent": the trailing 30 seconds, one record.
+    let recent = live.to_time_series()?.tail("30s")?.reduce(&[
+        Agg::of("cpu", Reducer::Percentile(95.0)),
+        Agg::of("host", Reducer::Top(3)),
+    ])?;
+    assert_eq!(recent.number("cpu")?, Some(0.99));
+    assert_eq!(recent.array("host")?, Some(&hosts[..]));
+    Ok(())
+}
+```
+
+`reduce` returns a `Reduced`, read by output name with `number`, `array` and so on.
+
+</TabItem>
+</Tabs>
 
 Fields narrow per-entry from the reducer name _and_ from the source
 column's declared kind: numeric reducers (`'sum'`, `'avg'`, `'count'`,
@@ -243,6 +654,10 @@ function StatCards({ live }) {
 }
 ```
 
+React hooks are TypeScript only. In Rust, `live.reduce(from, &aggs)` keeps a
+record like this up to date as events arrive (see
+[Live series → Rolling windows and reduce](../../pond-rs/live#rolling-windows-and-reduce)).
+
 `useCurrent` returns a stable-shape record even when the source is
 empty (every mapped field is `undefined`), so destructuring on first
 render is safe. Types narrow per-entry: `'avg'` yields `number`,
@@ -260,6 +675,9 @@ shifts but `host` doesn't, `current.cpu` is a new number (as it
 should be) while `current.host` stays stable.
 
 ### Subscriptions
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // Fires when a bucket finalizes
@@ -280,6 +698,70 @@ agg.on('update', () => {
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let agg = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+    live.watch(agg, OutputKind::Event)?; // a bucket closed
+    live.watch(agg, OutputKind::Bucket)?; // the open bucket, as it stands
+    live.watch(agg, OutputKind::Update)?; // every source event
+
+    let describe = |out: Vec<Output>| -> Vec<String> {
+        out.into_iter()
+            .map(|o| match o {
+                Output::Event { event, .. } => format!(
+                    "event [{} – {}] {:?}",
+                    event.begin(),
+                    event.end(),
+                    event.number("cpu").unwrap()
+                ),
+                Output::Bucket { event, .. } => {
+                    format!(
+                        "bucket {} {:?}",
+                        event.begin(),
+                        event.number("cpu").unwrap()
+                    )
+                }
+                Output::Update { .. } => "update".into(),
+                _ => unreachable!(),
+            })
+            .collect()
+    };
+
+    let out = live.push(40_000, [Some(0.6.into())])?;
+    assert_eq!(describe(out), ["bucket 0 Some(0.6)", "update"]);
+    let out = live.push(60_000, [Some(0.8.into())])?;
+    assert_eq!(
+        describe(out),
+        [
+            "bucket 60000 Some(0.8)",
+            "event [0 – 60000] Some(0.6)",
+            "update"
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 The `bucket` event is especially useful for live dashboards — it gives you the
 evolving partial aggregate as events accumulate, without waiting for the bucket
 to close.
@@ -289,6 +771,9 @@ to close.
 In messaging systems, events often arrive slightly out of order. The `grace`
 option delays bucket closing so late events can still accumulate into their
 correct bucket:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const live = new LiveSeries({
@@ -301,13 +786,62 @@ const live = new LiveSeries({
 // Grace defaults from the source's graceWindow — no need to repeat it
 const agg = live.aggregate(Sequence.every('1m'), { cpu: 'avg' });
 
-// Or override with an explicit value
-const agg2 = live.aggregate(
+// Or override with an explicit value. `live.aggregate` takes no options,
+// so build the aggregation directly to pass one.
+const agg2 = new LiveAggregation(
+  live,
   Sequence.every('1m'),
   { cpu: 'avg' },
   { grace: '5s' },
 );
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+        LiveOptions::new()
+            .ordering(OrderingMode::Reorder)
+            .grace_window("10s"),
+    )?;
+    let minute = Sequence::every("1m")?;
+    let avg = [Agg::of("cpu", Reducer::Avg)];
+    // Takes the series' 10-second grace.
+    let agg = live.aggregate(live.root(), &minute, &avg)?;
+    // Its own grace of 5 seconds.
+    let agg2 = live.aggregate_with(live.root(), &minute, &avg, Some("5s"))?;
+
+    live.push(50_000, [Some(0.5.into())])?;
+    live.push(62_000, [Some(0.7.into())])?;
+    live.push(58_000, [Some(0.9.into())])?; // late, both still open
+    live.push(66_000, [Some(0.1.into())])?; // 5 s past the minute: agg2 closes
+    assert_eq!((live[agg].len(), live[agg2].len()), (0, 1));
+    live.push(59_000, [Some(0.3.into())])?; // late: only agg takes it
+    live.push(71_000, [Some(0.2.into())])?; // 10 s past: agg closes
+
+    assert_eq!(
+        live[agg].at(0).unwrap().number("cpu")?,
+        Some(0.5666666666666667)
+    );
+    assert_eq!(live[agg2].at(0).unwrap().number("cpu")?, Some(0.7));
+    Ok(())
+}
+```
+
+In pond-rs the override is `aggregate_with(from, &sequence, &aggs, Some("5s"))`.
+
+</TabItem>
+</Tabs>
 
 When the source is a `LiveSeries` with a `graceWindow`, `LiveAggregation`
 inherits that value as its default grace period. You can still override it with
@@ -321,7 +855,7 @@ With a grace period active, a bucket doesn't finalize until the data's watermark
 - The `bucket` event fires with each update, reflecting the revised state
 - `snapshot()` includes all pending buckets as provisional results
 
-Once the grace window expires, the bucket closes normally and fires the `close`
+Once the grace window expires, the bucket closes normally and fires the `event`
 event with the final value. Events arriving after their bucket's grace window
 has expired are silently dropped.
 
@@ -372,6 +906,9 @@ at construction to prevent the accept-then-evict race.
 `LiveAggregation` satisfies the `LiveSource` interface. Its output events are
 interval-keyed closed buckets:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Chain further processing on closed bucket stream
 import { LiveView } from 'pond-ts';
@@ -384,6 +921,47 @@ alerts.on('event', (bucket) => {
   notify(`High CPU in bucket ${bucket.begin()}`);
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let agg = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+    // A view of the closed buckets.
+    let alerts = live.filter(agg, |bucket| {
+        bucket.number("cpu").ok().flatten() > Some(0.5)
+    })?;
+    live.watch(alerts, OutputKind::Event)?;
+
+    for (t, cpu) in [(0, 0.9), (30_000, 0.8), (60_000, 0.1), (120_000, 0.5)] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+    assert_eq!(live[agg].len(), 2); // closed buckets only
+    let hot: Vec<i64> = live[alerts].events().map(|b| b.begin()).collect();
+    assert_eq!(hot, [0]);
+    Ok(())
+}
+```
+
+In pond-rs, a view built on an aggregation (with `filter`, `map` and the rest) sees each bucket as it closes.
+
+</TabItem>
+</Tabs>
 
 - `agg.length` — number of **closed** buckets (does not include the
   open bucket)
@@ -406,6 +984,9 @@ windows to include it. See
 of guarantees that hold at each point in the pipeline.
 :::
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const rolling = live.rolling('5m', { cpu: 'avg' });
 
@@ -417,6 +998,62 @@ rolling.on('update', (val) => {
   console.log('rolling avg:', val.cpu);
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let rolling = live.rolling(live.root(), "2s", &[Agg::of("cpu", Reducer::Avg)])?;
+    live.watch(rolling, OutputKind::Update)?;
+
+    let mut updates = Vec::new();
+    for (t, cpu) in [
+        (0, 1.0),
+        (1_000, 2.0),
+        (2_000, 3.0),
+        (3_000, 4.0),
+        (4_000, 5.0),
+    ] {
+        for out in live.push(t, [Some(cpu.into())])? {
+            // The window's values after every source event.
+            if let Output::Update {
+                values: Some(v), ..
+            } = out
+            {
+                updates.push(v[0].clone());
+            }
+        }
+    }
+    let expected: Vec<_> = [1.0, 1.5, 2.0, 3.0, 4.0].map(|x| Some(x.into())).into();
+    assert_eq!(updates, expected);
+
+    // The current value, without emitting.
+    assert_eq!(live[rolling].value(), [Some(4.0.into())]);
+
+    // One output event per source event, keyed at it.
+    assert_eq!(live[rolling].len(), 5);
+    assert_eq!(live[rolling].at(0).unwrap().number("cpu")?, Some(1.0));
+    let latest = live[rolling].at(-1).unwrap();
+    assert_eq!((latest.begin(), latest.number("cpu")?), (4_000, Some(4.0)));
+    Ok(())
+}
+```
+
+This program also reads back the output events, as in the next section.
+
+</TabItem>
+</Tabs>
 
 ### As a LiveSource
 
@@ -476,6 +1113,9 @@ source** (e.g. a 1-minute baseline of `avg`/`stdev` plus a 200-ms
 current-tick window of raw samples for anomaly detection), pass a
 keyed record of mappings to `live.rolling`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { LiveSeries, Trigger } from 'pond-ts';
 
@@ -502,6 +1142,92 @@ fused.on('event', (event) => {
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Scalar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let fused = live.rolling_windows(
+        live.root(),
+        &[
+            RollingWindow::new(
+                "1m",
+                &[
+                    Agg::new("cpu_avg", "cpu", Reducer::Avg),
+                    Agg::new("cpu_sd", "cpu", Reducer::Stdev),
+                ],
+            ),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)]),
+        ],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    for (t, cpu) in [
+        (0, 1.0),
+        (100, 3.0),
+        (150, 5.0),
+        (250, 7.0),
+        (300, 9.0),
+        (420, 2.0),
+    ] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+
+    // All the columns from both windows on one event.
+    let names: Vec<&str> = live[fused]
+        .schema()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "cpu_avg", "cpu_sd", "cpu_samples"]);
+    let e = live[fused].at(0).unwrap();
+    assert_eq!(e.begin(), 200);
+    let (avg, sd) = (e.number("cpu_avg")?.unwrap(), e.number("cpu_sd")?.unwrap());
+    assert_eq!((avg, sd), (4.0, 2.23606797749979));
+    let samples = e.array("cpu_samples")?.unwrap();
+    assert_eq!(
+        samples,
+        [Scalar::from(3.0), Scalar::from(5.0), Scalar::from(7.0)]
+    );
+
+    // A score per sample, as in the TypeScript.
+    let z: Vec<f64> = samples
+        .iter()
+        .map(|s| match s {
+            Scalar::Number(x) => (x - avg) / sd,
+            _ => f64::NAN,
+        })
+        .collect();
+    assert_eq!(z.len(), 3);
+
+    // The same output name in two windows is refused.
+    let twice = [
+        RollingWindow::new("1m", &[Agg::new("x", "cpu", Reducer::Avg)]),
+        RollingWindow::new("5s", &[Agg::new("x", "cpu", Reducer::Max)]),
+    ];
+    assert!(
+        live.rolling_windows(live.root(), &twice, &RollingOptions::new())
+            .is_err()
+    );
+    Ok(())
+}
+```
+
+`rolling_windows` takes a list of `RollingWindow`s, one per window.
+
+</TabItem>
+</Tabs>
+
 Conceptually equivalent to declaring two `live.rolling(...)` calls
 over the same source plus a per-`(ts, key)` join — but **one ingest
 pass** updates all windows' reducer state, **one merged event** is
@@ -527,6 +1253,9 @@ When one window needs different options from the rest (`minSamples`,
 e.g.), the value form switches from a bare mapping to an
 elaborated `{ mapping, minSamples }` wrapper:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 live.rolling(
   {
@@ -540,6 +1269,67 @@ live.rolling(
 );
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Scalar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let fused = live.rolling_windows(
+        live.root(),
+        &[
+            RollingWindow::new("1m", &[Agg::new("cpu_avg", "cpu", Reducer::Avg)]),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)])
+                .min_samples(3), // this window only
+        ],
+        &RollingOptions::new()
+            .trigger(Trigger::every("200ms")?)
+            .min_samples(2), // every other window
+    )?;
+
+    for (t, cpu) in [
+        (0, 1.0),
+        (210, 3.0),
+        (300, 5.0),
+        (350, 6.0),
+        (420, 2.0),
+        (650, 8.0),
+    ] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+
+    let rows: Vec<_> = live[fused]
+        .events()
+        .map(|e| {
+            let samples = e.array("cpu_samples").unwrap().map(|s| s.to_vec());
+            (e.begin(), e.number("cpu_avg").unwrap(), samples)
+        })
+        .collect();
+    let three = [5.0, 6.0, 2.0].map(Scalar::from).to_vec();
+    assert_eq!(
+        rows,
+        [
+            (200, Some(2.0), None), // the 200 ms window holds 1 sample: a gap
+            (400, Some(3.4), Some(three)),
+            (600, Some(4.166666666666667), None),
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 Top-level options apply as defaults across all windows; per-window
 elaborated `minSamples` overrides for that window.
 
@@ -547,6 +1337,9 @@ elaborated `minSamples` overrides for that window.
 
 The same form composes with `partitionBy(...)` — and through
 chained pipelines like `partitionBy(...).fill(...).rolling({...})`:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const fused = live
@@ -562,6 +1355,78 @@ const fused = live
 // One merged event per partition per boundary; partition column
 // auto-injected at the front of the schema.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, PartitionOptions, RollingOptions, RollingWindow, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    let filled = live.per_partition(hosts, |live, host| {
+        Ok(live.fill(host, &[("cpu", Fill::Hold)])?.id())
+    })?;
+    let fused = live.partition_rolling_windows(
+        filled,
+        &[
+            RollingWindow::new("1m", &[Agg::new("cpu_avg", "cpu", Reducer::Avg)]),
+            RollingWindow::new("200ms", &[Agg::new("cpu_samples", "cpu", Reducer::Samples)]),
+        ],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    for (t, host, cpu) in [
+        (0, "a", Some(1.0)),
+        (50, "b", Some(4.0)),
+        (150, "a", None), // filled with a's last value
+        (250, "b", Some(6.0)),
+        (420, "a", Some(3.0)),
+    ] {
+        live.push(t, [cpu.map(Value::from), Some(host.into())])?;
+    }
+
+    // One event per host per boundary; the host column comes first.
+    let names: Vec<&str> = live[fused]
+        .schema()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "host", "cpu_avg", "cpu_samples"]);
+    let rows: Vec<_> = live[fused]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (e.begin(), host, e.number("cpu_avg").unwrap())
+        })
+        .collect();
+    let row = |t, h: &str, v| (t, h.to_string(), Some(v));
+    assert_eq!(
+        rows,
+        [
+            row(200, "a", 1.0),
+            row(200, "b", 5.0),
+            row(400, "a", 1.6666666666666667),
+            row(400, "b", 5.0),
+        ]
+    );
+    Ok(())
+}
+```
+
+The per-host `fill` is a `per_partition` chain; `partition_rolling_windows` emits every host together on the clock.
+
+</TabItem>
+</Tabs>
 
 On the partitioned form, **clock trigger is required** — synced
 cross-partition emission needs a single shared boundary detector.
@@ -592,6 +1457,9 @@ see [Windowing](../../pond-ts/concepts/windowing#multi-window-rolling-live).
 These methods compute per-event deltas by comparing consecutive events. Each
 returns a `LiveView` that tracks the previous event's values in a closure.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Absolute difference between consecutive events
 const deltas = live.diff('requests');
@@ -602,6 +1470,57 @@ const perSec = live.rate('requests');
 // Percentage change: (curr - prev) / prev
 const pctChg = live.pctChange('requests');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, LiveView, Node};
+use pond_rs::{ColumnDef, ColumnKind, Fill, FirstRow};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "web",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("requests", ColumnKind::Number),
+        ],
+    )?;
+    // The change since the previous event.
+    let deltas = live.diff(live.root(), &["requests"])?;
+    // That change per second.
+    let per_sec = live.rate(live.root(), &["requests"])?;
+    // As a fraction of the previous value.
+    let pct_chg = live.pct_change(live.root(), &["requests"])?;
+    // Without the first event...
+    let dropped = live.diff_with(live.root(), &["requests"], FirstRow::Drop)?;
+    // ...or with its gap filled with 0.
+    let diffs = live.diff(live.root(), &["requests"])?;
+    let zeroed = live.fill(diffs, &[("requests", Fill::Zero)])?;
+
+    for (t, requests) in [(0, 100.0), (2_000, 150.0), (4_000, 120.0)] {
+        live.push(t, [Some(requests.into())])?;
+    }
+
+    let col = |node: Node<LiveView>| -> Vec<Option<f64>> {
+        live[node]
+            .events()
+            .map(|e| e.number("requests").unwrap())
+            .collect()
+    };
+    assert_eq!(col(deltas), [None, Some(50.0), Some(-30.0)]);
+    assert_eq!(col(per_sec), [None, Some(25.0), Some(-15.0)]);
+    assert_eq!(col(pct_chg), [None, Some(0.5), Some(-0.2)]);
+    assert_eq!(col(dropped), [Some(50.0), Some(-30.0)]);
+    assert_eq!(col(zeroed), [Some(0.0), Some(50.0), Some(-30.0)]);
+    Ok(())
+}
+```
+
+This program also covers dropping the first event and filling its gap, from the blocks below. Pass a list of names for several columns.
+
+</TabItem>
+</Tabs>
 
 Multiple columns work:
 
@@ -628,6 +1547,9 @@ Replaces `undefined` values as events arrive. Only forward-looking strategies
 are supported in live mode — `bfill` and `linear` require future values and
 will throw.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Carry forward the last known value for all columns
 const held = live.fill('hold');
@@ -642,10 +1564,107 @@ const mixed = live.fill({ cpu: 'hold', host: 'unknown' });
 const limited = live.fill('hold', { limit: 3 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, LiveView, Node};
+use pond_rs::{ColumnDef, ColumnKind, Fill, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    // Carry forward the last value, in every column.
+    let held = live.fill_all(live.root(), Fill::Hold)?;
+    // Gaps become 0 (number columns only).
+    let zeroed = live.fill_all(live.root(), Fill::Zero)?;
+    // Per column, with a literal value.
+    let mixed = live.fill(
+        live.root(),
+        &[("cpu", Fill::Hold), ("host", Fill::Value("unknown".into()))],
+    )?;
+    // At most 1 gap in a row.
+    let limited = live.fill_all_with(live.root(), Fill::Hold, 1)?;
+    // Fills that need later events are refused.
+    assert!(live.fill_all(live.root(), Fill::Linear).is_err());
+
+    for (t, cpu, host) in [
+        (0, Some(0.5), Some("a")),
+        (1_000, None, None),
+        (2_000, None, Some("b")),
+        (3_000, Some(0.7), None),
+    ] {
+        live.push(t, [cpu.map(Value::from), host.map(Value::from)])?;
+    }
+
+    let rows = |node: Node<LiveView>| -> Vec<(Option<f64>, Option<String>)> {
+        live[node]
+            .events()
+            .map(|e| {
+                (
+                    e.number("cpu").unwrap(),
+                    e.string("host").unwrap().map(String::from),
+                )
+            })
+            .collect()
+    };
+    let r = |cpu: Option<f64>, host: Option<&str>| (cpu, host.map(String::from));
+    assert_eq!(
+        rows(held),
+        [
+            r(Some(0.5), Some("a")),
+            r(Some(0.5), Some("a")),
+            r(Some(0.5), Some("b")),
+            r(Some(0.7), Some("b"))
+        ]
+    );
+    assert_eq!(
+        rows(zeroed),
+        [
+            r(Some(0.5), Some("a")),
+            r(Some(0.0), None),
+            r(Some(0.0), Some("b")),
+            r(Some(0.7), None)
+        ]
+    );
+    assert_eq!(
+        rows(mixed),
+        [
+            r(Some(0.5), Some("a")),
+            r(Some(0.5), Some("unknown")),
+            r(Some(0.5), Some("b")),
+            r(Some(0.7), Some("unknown")),
+        ]
+    );
+    assert_eq!(
+        rows(limited),
+        [
+            r(Some(0.5), Some("a")),
+            r(Some(0.5), Some("a")),
+            r(None, Some("b")),
+            r(Some(0.7), Some("b"))
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### cumulative
 
 Running accumulation over the stream. Supports `sum`, `max`, `min`, `count`,
 and custom functions:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const running = live.cumulative({ requests: 'sum' });
@@ -654,6 +1673,62 @@ const custom = live.cumulative({
   requests: (acc, value) => acc + value * 2,
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, LiveView, Node};
+use pond_rs::{ColumnDef, ColumnKind, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "web",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("requests", ColumnKind::Number),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let running = live.cumulative(live.root(), &[("requests", Reducer::Sum)])?;
+    let peaks = live.cumulative(live.root(), &[("cpu", Reducer::Max)])?;
+    // A fold of your own: the first value as it is, then f(acc, value).
+    let custom = live.cumulative_with(live.root(), "requests", |acc, v| acc + v * 2.0)?;
+
+    for (t, requests, cpu) in [
+        (0, Some(10.0), 0.5),
+        (1_000, None, 0.9),
+        (2_000, Some(5.0), 0.3),
+    ] {
+        live.push(t, [requests.map(Value::from), Some(cpu.into())])?;
+    }
+
+    let col = |node: Node<LiveView>, name: &str| -> Vec<Option<f64>> {
+        live[node]
+            .events()
+            .map(|e| e.number(name).unwrap())
+            .collect()
+    };
+    // A gap keeps the running value.
+    assert_eq!(
+        col(running, "requests"),
+        [Some(10.0), Some(10.0), Some(15.0)]
+    );
+    // Other columns pass through.
+    assert_eq!(col(running, "cpu"), [Some(0.5), Some(0.9), Some(0.3)]);
+    assert_eq!(col(peaks, "cpu"), [Some(0.5), Some(0.9), Some(0.9)]);
+    assert_eq!(
+        col(custom, "requests"),
+        [Some(10.0), Some(10.0), Some(20.0)]
+    );
+    Ok(())
+}
+```
+
+`cumulative_with` runs one fold on one column.
+
+</TabItem>
+</Tabs>
 
 Non-accumulated columns pass through unchanged. When a target column's value is
 not a number, the accumulator holds its previous value.
@@ -677,6 +1752,9 @@ Returns a `LiveView<S>`, so the chainable surface (`filter`, `rolling`,
 `reduce`, `select`, `map`, `diff`, `rate`, `cumulative`, `fill`, …) is
 immediately available downstream of the sample.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Canonical shape: per-host stride before per-host rolling.
 const baselines = live
@@ -688,6 +1766,65 @@ baselines.on('event', (e) => {
   // 1-in-10 of each host's stream feeds a 5-minute rolling window.
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{CollectOptions, LiveSeries, PartitionOptions};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sample};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    // Every 2nd event of each host, then a 1-minute count per host.
+    let counts = live.apply(
+        hosts,
+        |live, host| {
+            let sampled = live.sample(host, Sample::Stride(2))?;
+            Ok(live
+                .rolling(sampled, "1m", &[Agg::new("events", "cpu", Reducer::Count)])?
+                .id())
+        },
+        &CollectOptions::new(),
+    )?;
+
+    for i in 0..8 {
+        let host = if i % 2 == 1 { "b" } else { "a" };
+        live.push(i * 1_000, [Some((i as f64).into()), Some(host.into())])?;
+    }
+
+    // The counts are of the sampled events: times 2 for the true count.
+    let rows: Vec<_> = live[counts]
+        .events()
+        .map(|e| (e.begin(), e.number("events").unwrap()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (2_000, Some(1.0)),
+            (3_000, Some(1.0)),
+            (6_000, Some(2.0)),
+            (7_000, Some(2.0))
+        ]
+    );
+    // The series itself still counts every event.
+    assert_eq!(live.stats().ingested, 8);
+    Ok(())
+}
+```
+
+In pond-rs, `sample` goes inside the per-host chain (`apply` or `per_partition`), so each host gets its own stride counter. This program also shows the counts after sampling, from the section below.
+
+</TabItem>
+</Tabs>
 
 ### Multi-entity series — see `partitionBy` \{#sampling-multi-entity\}
 
@@ -743,6 +1880,9 @@ materialize the live buffer first via `live.toTimeSeries()`.
 
 ### Multi-stage pipeline
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const pipeline = live
   .filter((e) => e.get('host') === 'api-1')
@@ -754,6 +1894,59 @@ pipeline.on('event', (bucket) => {
   storeMetric('api-1-cpu-1m', bucket.get('cpu'), bucket.begin());
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let api1 = live.filter(live.root(), |e| {
+        e.string("host").ok().flatten() == Some("api-1")
+    })?;
+    let cpu = live.select(api1, &["cpu"])?;
+    let recent = live.window(cpu, "10m")?;
+    let pipeline = live.aggregate(
+        recent,
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+    live.watch(pipeline, OutputKind::Event)?;
+
+    let mut stored = Vec::new();
+    for (t, cpu, host) in [
+        (0, 0.2, "api-1"),
+        (30_000, 0.9, "api-2"),
+        (40_000, 0.4, "api-1"),
+        (70_000, 0.6, "api-1"),
+        (130_000, 0.1, "api-1"),
+    ] {
+        for out in live.push(t, [Some(cpu.into()), Some(host.into())])? {
+            if let Output::Event { event: bucket, .. } = out {
+                stored.push((bucket.begin(), bucket.number("cpu")?));
+            }
+        }
+    }
+    assert_eq!(
+        stored,
+        [(0, Some(0.30000000000000004)), (60_000, Some(0.6))]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### Diff → fill pipeline
 
@@ -787,6 +1980,9 @@ Each consumer maintains independent state but shares the upstream event stream.
 Exponential moving average doesn't need a dedicated class — it's a stateful
 closure inside `map()`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 function ema(alpha: number) {
   let prev: number | undefined;
@@ -801,10 +1997,64 @@ function ema(alpha: number) {
 const smoothed = ema(0.3);
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let alpha = 0.3;
+    let mut prev: Option<f64> = None;
+    // The closure keeps its own state between events.
+    let smoothed = live.map(live.root(), move |e| {
+        let host = e.value("host").unwrap().cloned();
+        let Some(raw) = e.number("cpu").unwrap() else {
+            return vec![None, host]; // pass through; no new prev
+        };
+        let next = prev.map_or(raw, |p| alpha * raw + (1.0 - alpha) * p);
+        prev = Some(next);
+        vec![Some(next.into()), host]
+    })?;
+
+    for (t, cpu) in [
+        (0, Some(1.0)),
+        (1_000, Some(2.0)),
+        (2_000, None),
+        (3_000, Some(4.0)),
+    ] {
+        live.push(t, [cpu.map(Value::from), Some("a".into())])?;
+    }
+    let cpu: Vec<_> = live[smoothed]
+        .events()
+        .map(|e| e.number("cpu").unwrap())
+        .collect();
+    assert_eq!(cpu, [Some(1.0), Some(1.2999999999999998), None, Some(2.11)]);
+    Ok(())
+}
+```
+
+The `map` closure can keep state between events.
+
+</TabItem>
+</Tabs>
+
 ### Snapshot for batch analytics
 
 When you need the full batch toolkit, snapshot any live source into a
 `TimeSeries`:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const ts = live.window('1h').toTimeSeries();
@@ -814,11 +2064,63 @@ const grouped = ts.groupBy('host', (g) => g.reduce({ cpu: 'avg' }));
 const filled = ts.fill({ cpu: 'linear' });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let last_hour = live.window(live.root(), "1h")?;
+    for (t, cpu, host) in [
+        (0, Some(0.2), "a"),
+        (1_000, Some(0.4), "b"),
+        (2_000, None, "a"),
+        (3_000, Some(0.8), "a"),
+    ] {
+        live.push(t, [cpu.map(Value::from), Some(host.into())])?;
+    }
+
+    let ts = live[last_hour].to_time_series()?;
+    // The whole batch toolkit.
+    let mut by_host = Vec::new();
+    for (_key, group) in ts.group_by(&["host"])? {
+        by_host.push(
+            group
+                .reduce(&[Agg::of("cpu", Reducer::Avg)])?
+                .number("cpu")?,
+        );
+    }
+    assert_eq!(by_host, [Some(0.5), Some(0.4)]);
+    let filled = ts.fill(&[("cpu", Fill::Linear)])?;
+    assert_eq!(
+        filled.column("cpu")?.numbers()?.get(2),
+        Some(0.6000000000000001)
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### Partitioned rolling → one unified series \{#collect\}
 
 `partitionBy(col)` runs a per-partition pipeline; `collect()` fans the
 per-partition outputs back into a single `LiveSeries` you can snapshot,
 `window()`, or hand to a React hook:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const baseline = live
@@ -831,6 +2133,89 @@ const baseline = live
   .collect({ retention: { maxAge: '30m' } });
 // LiveSeries<{ time, host, avg, sd }> — one series, every host interleaved
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{CollectOptions, LiveSeries, PartitionOptions};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    let baseline = live.apply(
+        hosts,
+        |live, host| {
+            let rolling = live.rolling(
+                host,
+                "1m",
+                &[
+                    // The host column is not carried over unless you keep it.
+                    Agg::new("host", "host", Reducer::Last),
+                    Agg::new("avg", "cpu", Reducer::Avg),
+                    Agg::new("sd", "cpu", Reducer::Stdev),
+                ],
+            )?;
+            Ok(rolling.id())
+        },
+        // The gathered series keeps its own retention; set it here.
+        &CollectOptions::new().max_age("30m"),
+    )?;
+
+    for (t, cpu, host) in [
+        (0, 1.0, "a"),
+        (1_000, 3.0, "b"),
+        (2_000, 3.0, "a"),
+        (3_000, 5.0, "b"),
+    ] {
+        live.push(t, [Some(cpu.into()), Some(host.into())])?;
+    }
+
+    // One series, every host interleaved.
+    let names: Vec<&str> = live[baseline]
+        .schema()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "host", "avg", "sd"]);
+    let rows: Vec<_> = live[baseline]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (
+                e.begin(),
+                host,
+                e.number("avg").unwrap(),
+                e.number("sd").unwrap(),
+            )
+        })
+        .collect();
+    let row = |t, h: &str, a, s| (t, h.to_string(), Some(a), Some(s));
+    assert_eq!(
+        rows,
+        [
+            row(0, "a", 1.0, 0.0),
+            row(1_000, "b", 3.0, 0.0),
+            row(2_000, "a", 2.0, 1.0),
+            row(3_000, "b", 4.0, 1.0)
+        ]
+    );
+    Ok(())
+}
+```
+
+As in pond-ts, the gathered series keeps everything unless `CollectOptions` sets a retention, and the host column comes through only if a reducer carries it.
+
+</TabItem>
+</Tabs>
 
 Two things to know about `collect()`:
 
@@ -855,8 +2240,51 @@ Call `dispose()` on any view or accumulator to unsubscribe from its source.
 After disposal, the object stops receiving events but its current state remains
 readable.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 agg.dispose();
 rolling.dispose();
 view.dispose();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let agg = live.aggregate(
+        live.root(),
+        &Sequence::every("1m")?,
+        &[Agg::of("cpu", Reducer::Avg)],
+    )?;
+    let rolling = live.rolling(live.root(), "5m", &[Agg::of("cpu", Reducer::Avg)])?;
+    let view = live.window(live.root(), "1h")?;
+    live.push(0, [Some(0.5.into())])?;
+
+    live.remove(agg)?;
+    live.remove(rolling)?;
+    live.remove(view)?;
+    // A removed handle gives an error; the series carries on.
+    assert!(live.get(rolling).is_err());
+    live.push(60_000, [Some(0.7.into())])?;
+    assert_eq!(live.len(), 2);
+    Ok(())
+}
+```
+
+After `remove`, `live.get(node)` gives an error, so a removed node can no longer be read. pond-ts keeps a disposed object readable.
+
+</TabItem>
+</Tabs>

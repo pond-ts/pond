@@ -14,7 +14,7 @@
 mod common;
 
 use common::{Dump, Dumped};
-use pond_rs::{Agg, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Agg, Column, Fill, Reducer, TimeSeries};
 use serde_json::json;
 
 fn main() -> pond_rs::Result<()> {
@@ -71,7 +71,7 @@ fn main() -> pond_rs::Result<()> {
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
-                        .diff(&["close"], FirstRow::Keep)
+                        .diff(&["close"])
                         .unwrap()
                         .collect()
                         .unwrap(),
@@ -85,7 +85,7 @@ fn main() -> pond_rs::Result<()> {
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
-                        .fill_all(Fill::Linear, &FillLimits::none())
+                        .fill_all(Fill::Linear)
                         .unwrap()
                         .collect()
                         .unwrap(),

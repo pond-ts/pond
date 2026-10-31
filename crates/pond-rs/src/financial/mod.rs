@@ -1,13 +1,32 @@
 //! Technical-analysis studies for price bars (pond-ts `@pond-ts/financial`):
-//! moving averages, rolling statistics and the z-score so far, each a method
-//! on [`TimeSeries`] that adds one number column and keeps every row.
+//! moving averages and the studies built on them (MACD, price oscillator,
+//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), bands (Bollinger,
+//! Keltner, STARC, ATR, Donchian, high-low, prime number, envelope),
+//! momentum (RSI, stochastics, Williams %R, Chande momentum, momentum,
+//! percent change, intraday momentum, awesome and ultimate oscillators,
+//! CCI, Fisher transform, psychological line, pretty good and prime number
+//! oscillators, QStick, relative vigor, centre of gravity, Chande forecast,
+//! true strength), trend (directional movement, Aroon, vortex, vertical
+//! horizontal filter, random walk index, SuperTrend, parabolic SAR, ATR
+//! trailing stop, ZigZag, Ichimoku, Elder impulse and ray, trend
+//! intensity, RAVI, swing index and its running total),
+//! rolling statistics and the z-score so far, each a method on
+//! [`TimeSeries`] that adds its number columns and keeps every row. Also
+//! trading calendars ([`TradingCalendar`], [`SessionRules`]): the sessions
+//! an exchange trades, their lookups, and session tagging.
 //!
 //! Every study follows the same rules, as in pond-ts:
 //!
 //! - It reads one number column, `close` unless [`Study::column`] names
-//!   another, and writes a new optional column named after the study
-//!   (`sma`, `ema`, …) unless [`Study::output`] names it. The output must
-//!   not be the name of a column the series already has.
+//!   another, and writes new optional columns named after the study
+//!   (`sma`, `ema`, …) unless [`Study::output`] names it. A study with
+//!   several settings takes an options struct named after it instead
+//!   ([`Macd`], [`Trix`], …): `Default` is pond-ts's defaults, with a
+//!   setter per setting, `column`, and `output` (or `prefix`, for a study
+//!   that writes several columns: `macdLine`, `macdSignal`, `macdHist`).
+//!   A study that reads price bars takes `high`, `low`, `close` (and
+//!   `open`) setters instead of `column` ([`Keltner`], [`Donchian`], …).
+//!   No output may take the name of a column the series already has.
 //! - Periods count rows (bars), not time: a 20-bar average spans a weekend
 //!   gap as easily as a minute.
 //! - The first rows, before a full window, get gaps; the row count never
@@ -31,7 +50,59 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 
+#[macro_use]
+mod options;
+mod averages;
+mod bands;
+mod bivariate;
+mod calendar;
+pub mod catalog;
 mod kernels;
+mod momentum;
+mod price;
+mod regression;
+mod session;
+mod statistics;
+mod trend;
+mod volatility;
+mod volume;
+
+pub use averages::{
+    Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
+    PriceOscillator, Rainbow, RainbowOscillator, SchaffTrendCycle, SpecialK, Trix,
+};
+pub use bands::{
+    AtrBands, Bollinger, BollingerBandwidth, BollingerPercentB, Donchian, Envelope, HighLowBands,
+    Keltner, PrimeNumberBands, StarcBands,
+};
+pub use calendar::{
+    DateBound, Session, SessionBreak, SessionRef, SessionRules, Stamped, TagSessions,
+    TradingCalendar, generate_sessions, normalize_sessions,
+};
+pub use momentum::{
+    AwesomeOscillator, CommodityChannelIndex, FisherTransform, IntradayMomentumIndex,
+    PercentChange, PrettyGoodOscillator, PrimeNumberOscillator, Qstick, RelativeVigorIndex,
+    Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
+    WilliamsR,
+};
+pub use price::{AveragePrice, BalanceOfPower, MedianPrice, TypicalPrice, WeightedClose};
+pub use session::{AnchoredVwap, PivotMethod, PivotPoints, SessionAnchor, SessionVwap};
+pub use statistics::{Beta, Correlation, LinearRegression, PerformanceIndex, PriceRelative};
+pub use trend::{
+    AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
+    Ichimoku, ParabolicSar, RandomWalkIndex, Ravi, SuperTrend, SwingIndex, TrendIntensityIndex,
+    Vortex, ZigZag,
+};
+pub use volatility::{
+    Atr, ChaikinVolatility, ChoppinessIndex, GopalakrishnanRangeIndex, HistoricalVolatility,
+    MassIndex, RelativeVolatilityIndex,
+};
+pub use volume::{
+    AccumulationDistribution, ChaikinMoneyFlow, ChaikinOscillator, EaseOfMovement, ForceIndex,
+    Klinger, MarketFacilitationIndex, MoneyFlowIndex, NegativeVolumeIndex, Obv,
+    PositiveVolumeIndex, PriceVolumeTrend, ShinoharaIntensityRatio, TradeVolumeIndex,
+    TwiggsMoneyFlow, VolumeOscillator, Vwap,
+};
 
 use std::borrow::Cow;
 
@@ -308,8 +379,8 @@ impl TimeSeries {
         self.study_output(call, output, values)
     }
 
-    /// The checks every study runs, and its source column's numbers with
-    /// every gap as `NaN` (borrowed when they already are).
+    /// The checks every single-period study runs, and its source column's
+    /// numbers with every gap as `NaN`.
     fn study_input(
         &self,
         call: &'static str,
@@ -323,26 +394,57 @@ impl TimeSeries {
             });
         }
         let output = study.output_or(default).to_string();
-        if output == self.key_name() || self.columns().iter().any(|c| c.name() == output) {
-            return Err(PondError::InvalidData {
-                call,
-                message: format!(
-                    "study output column '{output}' collides with an existing column; pass a different 'output'"
-                ),
-            });
+        self.free_names(call, &[&output])?;
+        Ok((self.study_source(call, study.source())?, output))
+    }
+
+    /// The price columns a study reads, each named by its option or its
+    /// default.
+    fn price_columns<const N: usize>(
+        &self,
+        call: &'static str,
+        names: [&Option<String>; N],
+        defaults: [&str; N],
+    ) -> Result<[std::borrow::Cow<'_, [f64]>; N]> {
+        let mut out = Vec::with_capacity(N);
+        for (name, default) in names.into_iter().zip(defaults) {
+            out.push(self.study_source(call, name.as_deref().unwrap_or(default))?);
         }
-        let source = &self.columns()[self.column_index(call, study.source())?];
+        Ok(out.try_into().unwrap_or_else(|_| unreachable!()))
+    }
+
+    /// Refuses a study output named like a column the series already has.
+    fn free_names(&self, call: &'static str, names: &[impl AsRef<str>]) -> Result<()> {
+        for name in names {
+            let name = name.as_ref();
+            if name == self.key_name() || self.columns().iter().any(|c| c.name() == name) {
+                return Err(PondError::InvalidData {
+                    call,
+                    message: format!(
+                        "study output column '{name}' collides with an existing column; pass a different 'output'"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A study's source column's numbers with every gap as `NaN` (borrowed
+    /// when they already are).
+    fn study_source(&self, call: &'static str, column: &str) -> Result<Cow<'_, [f64]>> {
+        let source = &self.columns()[self.column_index(call, column)?];
         match source.data() {
             ColumnData::Number(v) => {
                 // Gaps must read as NaN; copy only if one is stored as an
                 // infinity.
                 let values = v.values();
-                let values = if v.all_finite() || !values.iter().any(|x| x.is_infinite()) {
-                    Cow::Borrowed(values)
-                } else {
-                    Cow::Owned(kernels::gaps_as_nan(values))
-                };
-                Ok((values, output))
+                Ok(
+                    if v.all_finite() || !values.iter().any(|x| x.is_infinite()) {
+                        Cow::Borrowed(values)
+                    } else {
+                        Cow::Owned(kernels::gaps_as_nan(values))
+                    },
+                )
             }
             other => Err(PondError::WrongKind {
                 call,
@@ -359,8 +461,26 @@ impl TimeSeries {
         output: String,
         values: Vec<f64>,
     ) -> Result<TimeSeries> {
-        self.with_column(Column::optional(output, values))
-            .map_err(|e| e.renamed(call))
+        self.study_outputs(call, [(output, values)])
+    }
+
+    /// Adds the study's columns, in order, as optional number columns.
+    fn study_outputs(
+        &self,
+        call: &'static str,
+        columns: impl IntoIterator<Item = (String, Vec<f64>)>,
+    ) -> Result<TimeSeries> {
+        let mut columns = columns.into_iter();
+        let (name, values) = columns.next().expect("a study writes a column");
+        let mut out = self
+            .with_column(Column::optional(name, values))
+            .map_err(|e| e.renamed(call))?;
+        for (name, values) in columns {
+            out = out
+                .with_column(Column::optional(name, values))
+                .map_err(|e| e.renamed(call))?;
+        }
+        Ok(out)
     }
 }
 
@@ -419,10 +539,59 @@ mod tests {
             for kind in MaType::ALL {
                 results.push(series.moving_average(kind, study()));
             }
+            for kind in MaType::ALL {
+                results.push(series.moving_average_deviation(kind, study()));
+                results.push(series.disparity_index(kind, study()));
+                results.push(series.detrended_price_oscillator(kind, study()));
+                let (fast, slow) = (period - 1, period);
+                results.push(
+                    series.price_oscillator(
+                        PriceOscillator::default().fast(fast).slow(slow).ma(kind),
+                    ),
+                );
+                results.push(series.moving_average_cross(
+                    MovingAverageCross::default().fast(fast).slow(slow).ma(kind),
+                ));
+                results.push(series.rainbow(Rainbow::default().period(period).ma(kind)));
+                results.push(
+                    series.rainbow_oscillator(
+                        RainbowOscillator::default()
+                            .period(period)
+                            .lookback(period)
+                            .ma(kind),
+                    ),
+                );
+            }
+            let (fast, slow) = (period - 1, period);
+            results.push(series.macd(Macd::default().fast(fast).slow(slow).signal(period)));
+            results.push(series.trix(Trix::default().period(period).signal(period)));
+            results.push(
+                series.schaff_trend_cycle(
+                    SchaffTrendCycle::default()
+                        .fast(fast)
+                        .slow(slow)
+                        .cycle(period),
+                ),
+            );
+            results.push(
+                series.coppock(
+                    Coppock::default()
+                        .long(period)
+                        .short(period)
+                        .wma_period(period),
+                ),
+            );
             for result in results {
                 let out = result.unwrap();
-                let values = out.column("out").unwrap().numbers().unwrap();
-                assert!((0..10).all(|i| values.get(i).is_none()), "period {period}");
+                // Every column the study added is all gaps.
+                for column in &out.columns()[1..] {
+                    let values = column.numbers().unwrap();
+                    assert!(
+                        (0..10).all(|i| values.get(i).is_none()),
+                        "period {period}: {}",
+                        column.name()
+                    );
+                }
             }
         }
     }

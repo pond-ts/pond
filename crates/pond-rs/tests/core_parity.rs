@@ -14,10 +14,10 @@ use common::{
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Column, ColumnData,
-    ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key,
-    KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat,
-    Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
+    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Change, Column,
+    ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions,
+    Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver,
+    RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
 };
 use serde_json::{Value, json};
 
@@ -162,14 +162,17 @@ macro_rules! shared_op {
             }
             "diff" | "rate" | "pctChange" => {
                 let names = column_names(&args[0]);
-                let first = match args.get(1).and_then(|o| o["drop"].as_bool()) {
-                    Some(true) => FirstRow::Drop,
-                    _ => FirstRow::Keep,
-                };
+                let mut options = Change::default();
+                if args.get(1).and_then(|o| o["drop"].as_bool()) == Some(true) {
+                    options = options.first(FirstRow::Drop);
+                }
+                if let Some(output) = args.get(1).and_then(|o| o["output"].as_str()) {
+                    options = options.output(output);
+                }
                 Some(match $op {
-                    "diff" => $target.diff(&names, first),
-                    "rate" => $target.rate(&names, first),
-                    _ => $target.pct_change(&names, first),
+                    "diff" => $target.diff_with(&names, options),
+                    "rate" => $target.rate_with(&names, options),
+                    _ => $target.pct_change_with(&names, options),
                 })
             }
             "cumulative" => Some($target.cumulative(&cumulative_spec(&args[0]))),
@@ -180,13 +183,13 @@ macro_rules! shared_op {
             "fill" => {
                 let limits = fill_limits(args.get(1));
                 Some(match &args[0] {
-                    Value::String(_) => $target.fill_all(fill_strategy(&args[0]), &limits),
+                    Value::String(_) => $target.fill_all_with(fill_strategy(&args[0]), &limits),
                     Value::Object(map) => {
                         let spec: Vec<(&str, Fill)> = map
                             .iter()
                             .map(|(c, v)| (c.as_str(), fill_strategy(v)))
                             .collect();
-                        $target.fill(&spec, &limits)
+                        $target.fill_with(&spec, &limits)
                     }
                     other => panic!("fill takes a strategy or a mapping, got {other}"),
                 })
@@ -494,6 +497,7 @@ fn rolling_options(options: Option<&Value>) -> Rolling {
             Some(other) => panic!("unknown alignment {other}"),
         },
         min_samples: o["minSamples"].as_u64().unwrap_or(0) as usize,
+        append: o["append"].as_bool().unwrap_or(false),
     }
 }
 
@@ -788,6 +792,45 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 (Some(b), None) => input.slice(b..),
                 (Some(b), Some(e)) => input.slice(b..e),
             })
+        }
+        "filter" if case.args[0].get("expr").is_some() => {
+            input.filter_expr(&expr_arg(&case.args[0]))
+        }
+        "mapColumns"
+            if case.args[0]
+                .as_object()
+                .is_some_and(|m| !m.is_empty() && m.values().all(|v| v.get("expr").is_some())) =>
+        {
+            let spec = case.args[0].as_object().expect("a mapping");
+            let exprs: Vec<(String, pond_rs::Expr)> =
+                spec.iter().map(|(k, v)| (k.clone(), expr_arg(v))).collect();
+            let pairs: Vec<(&str, &pond_rs::Expr)> =
+                exprs.iter().map(|(k, e)| (k.as_str(), e)).collect();
+            // As the function cases: pond-ts keeps a mapped column
+            // required even when it gets a gap ([PND-MAPREQ]).
+            return Some(
+                input
+                    .map_exprs(&pairs)
+                    .map(|s| {
+                        let mut json = to_json(&s);
+                        match case.id.as_str() {
+                            "mapColumns-expr-overflow" => {
+                                assert_eq!(json.schema[1].required, Some(false));
+                                json.schema[1].required = None;
+                            }
+                            "mapColumns-expr-required" => {
+                                assert_ne!(json.schema[1].required, Some(false));
+                            }
+                            _ => {}
+                        }
+                        Outcome::from(json)
+                    })
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        "withColumn" if case.args[1].get("expr").is_some() => {
+            let name = case.args[0].as_str().expect("column name");
+            input.with_column_expr(name, &expr_arg(&case.args[1]))
         }
         "filter" => {
             let spec = &case.args[0]["fn"];
@@ -1129,6 +1172,11 @@ fn encode(data: &ColumnData, i: usize) -> Value {
     }
 }
 
+/// `{ "expr": tree }`: a column expression in pond-ts's JSON form.
+fn expr_arg(v: &Value) -> pond_rs::Expr {
+    pond_rs::Expr::from_value(&v["expr"]).expect("an expression tree")
+}
+
 /// A `filter` / `find` test spec from the fixture (cases.mjs `closure`).
 fn row_test(spec: &Value, r: &pond_rs::Row<'_>) -> pond_rs::Result<bool> {
     if let Some(column) = spec["column"].as_str() {
@@ -1206,6 +1254,13 @@ fn row_lookups_match_pond_ts() {
             |r: Option<pond_rs::EventKey>| r.map_or(Value::Null, |r| json!([r.begin(), r.end()]));
         let got: pond_rs::Result<Value> = match q.op.as_str() {
             "at" => Ok(pos(s.at(q.arg.as_i64().expect("position")))),
+            "find" if q.arg.get("expr").is_some() => s.find_expr(&expr_arg(&q.arg)).map(pos),
+            "some" if q.arg.get("expr").is_some() => {
+                s.some_expr(&expr_arg(&q.arg)).map(|b| json!(b))
+            }
+            "every" if q.arg.get("expr").is_some() => {
+                s.every_expr(&expr_arg(&q.arg)).map(|b| json!(b))
+            }
             "find" => s.find(|r| row_test(&q.arg, r)).map(pos),
             "some" => s.some(|r| row_test(&q.arg, r)).map(|b| json!(b)),
             "every" => s.every(|r| row_test(&q.arg, r)).map(|b| json!(b)),
@@ -1381,22 +1436,22 @@ fn implemented_ops_match_pond_ts() {
         // output required even when it holds gaps; pond-rs marks it
         // optional then (and required when it has none, as pond-ts).
         let mut case = case.clone();
-        if case.op == "collapse" {
-            if let Some(expected) = case.expected.as_mut() {
-                let name = case.args[1].as_str().expect("output");
-                let at = expected
-                    .schema
-                    .iter()
-                    .position(|c| c.name == name)
-                    .expect("collapse output in the schema");
-                if expected.rows.iter().any(|r| r[at].is_null()) {
-                    assert_eq!(
-                        expected.schema[at].required, None,
-                        "{}: pond-ts fixed [PND-COLLAPSEREQ]",
-                        case.id
-                    );
-                    expected.schema[at].required = Some(false);
-                }
+        if case.op == "collapse"
+            && let Some(expected) = case.expected.as_mut()
+        {
+            let name = case.args[1].as_str().expect("output");
+            let at = expected
+                .schema
+                .iter()
+                .position(|c| c.name == name)
+                .expect("collapse output in the schema");
+            if expected.rows.iter().any(|r| r[at].is_null()) {
+                assert_eq!(
+                    expected.schema[at].required, None,
+                    "{}: pond-ts fixed [PND-COLLAPSEREQ]",
+                    case.id
+                );
+                expected.schema[at].required = Some(false);
             }
         }
         if let Err(why) = check_case(&case, &actual) {

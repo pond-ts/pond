@@ -29,6 +29,25 @@ where
     }
 }
 
+/// `(a(), b())`, the two on separate cores when the `parallel` feature is
+/// on (and not on wasm32).
+pub(crate) fn join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    {
+        rayon::join(a, b)
+    }
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    {
+        (a(), b())
+    }
+}
+
 /// Fill `a`, and `b` when it is not empty (then the same length), in
 /// stretches of `chunk` rows: `f(first_row, a_stretch, b_stretch)`, on
 /// several cores when the `parallel` feature is on (and not on wasm32).
@@ -64,6 +83,35 @@ where
             for (k, (a, b)) in a.chunks_mut(chunk).zip(b.chunks_mut(chunk)).enumerate() {
                 f(k * chunk, a, b);
             }
+        }
+    }
+}
+
+/// [`fill_chunks`] for three outputs of the same length.
+pub(crate) fn fill_chunks3<F>(a: &mut [f64], b: &mut [f64], c: &mut [f64], chunk: usize, f: F)
+where
+    F: Fn(usize, &mut [f64], &mut [f64], &mut [f64]) + Sync + Send,
+{
+    debug_assert!(b.len() == a.len() && c.len() == a.len());
+    let chunk = chunk.max(1);
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    {
+        use rayon::prelude::*;
+        a.par_chunks_mut(chunk)
+            .zip(b.par_chunks_mut(chunk))
+            .zip(c.par_chunks_mut(chunk))
+            .enumerate()
+            .for_each(|(k, ((a, b), c))| f(k * chunk, a, b, c));
+    }
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    {
+        for (k, ((a, b), c)) in a
+            .chunks_mut(chunk)
+            .zip(b.chunks_mut(chunk))
+            .zip(c.chunks_mut(chunk))
+            .enumerate()
+        {
+            f(k * chunk, a, b, c);
         }
     }
 }

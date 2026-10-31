@@ -258,6 +258,8 @@ const sidebars: SidebarsConfig = {
         'pond-rs/series-and-columns',
         'pond-rs/operations',
         'pond-rs/partitions',
+        'pond-rs/finance-studies',
+        'pond-rs/live',
         'pond-rs/arrow',
         'pond-rs/performance',
         'pond-rs/coming-from-pond-ts',

@@ -43,7 +43,7 @@ A chart draws in two colour registers, and annotations live in the second:
 One register doesn't mean one colour. A theme can define **named roles** under
 `annotation.roles`, and a mark picks one with its `role` prop — so a vol smile
 can place a green ATM baseline, a blue reference marker, and an amber zone at
-once, each still an annotation (shared depth ramp, distinct from data):
+once, each still an annotation (distinct from data):
 
 ```tsx
 // `v` resolves each CSS var to a concrete colour at theme-build time — the
@@ -65,17 +65,37 @@ const theme = cssVarTheme(defaultTheme, (v) => ({
 <Region from={a} to={b} role="span" />
 ```
 
-A mark resolves `roles[role] ?? annotation` — an unknown or unset `role` is the
-base annotation colour. Colour stays a **theme** concern (there is no per-mark
+A role can set any of `color`, `fillOpacity`, `dash` (px on/off lengths for
+the mark's **lines** — fills are never dashed; `dash` can also be set once on
+the register to apply to every mark) and `depth` (see below). Each field the
+role leaves out comes from the base register, and an unknown or unset `role` is
+the base register. Colour stays a **theme** concern (there is no per-mark
 colour prop): the theme owns the palette, the mark just names a role.
-
-Roles carry `color`, optionally `fillOpacity`, and optionally `dash` (px on/off
-lengths for the mark's **lines** — fills are never dashed; `dash` can also be
-set once on the register to apply to every mark).
 
 This is also how a **scale** is styled: a [`Zone`](./zone.mdx) set names one
 role per band (`good`, `moderate`, …) and the theme holds the whole palette in
 one place, rather than six colours spread across call sites.
+
+### Shipped roles: `wash` and `argument`
+
+How loud a mark should be at rest depends on what it is for. The built-in
+themes define two roles, named by intent:
+
+| Role       | For                                                                                                | Resting alpha  |
+| ---------- | -------------------------------------------------------------------------------------------------- | -------------- |
+| `wash`     | A tint _behind_ data — a focus band behind a selected lap. Must not compete with the trace on top. | 0.2, fill 0.06 |
+| `argument` | A mark that _is_ the point of the chart — the vaccine dates on a measles heat map.                 | 0.85           |
+
+```tsx
+<Region from={lapStart} to={lapEnd} role="wash" selectable={false} />
+<Marker at={licensed} label="1963 · vaccine licensed" role="argument" />
+```
+
+In `defaultTheme` neither sets a colour, so both take the register hue (and
+follow it if a theme recolours the register); `estelaTheme`'s `wash` is a 7%
+tint of its foam data colour instead. A mark with no `role` keeps the register's own
+`[1, 0.7, 0.4]` ramp, which suits the usual case of marks secondary to a line.
+A theme can redefine either role, or add its own with a `depth` of its own.
 
 ## Depth and brightness
 
@@ -88,7 +108,9 @@ in front:
   behind the data-facing marks.
 
 You don't set levels directly; they follow from `selected` / `editing` /
-`selectable` (see [Editing & creating](./editing-and-creating.mdx)).
+`selectable` (see [Editing & creating](./editing-and-creating.mdx)). How bright
+each level draws is the theme's `annotation.depth` ramp — or the mark's role's
+own `depth`, if it has one.
 
 ## Three interaction modes
 

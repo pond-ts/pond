@@ -30,6 +30,43 @@ pub enum FirstRow {
     Drop,
 }
 
+/// Options for [`TimeSeries::diff_with`], [`TimeSeries::rate_with`] and
+/// [`TimeSeries::pct_change_with`]. `Change::default()` is pond-ts's
+/// default: the first row kept, each named column replaced by its change.
+///
+/// ```
+/// # use pond_rs::{Change, Column, FirstRow, TimeSeries};
+/// let s = TimeSeries::new("s", vec![0, 1000, 2000],
+///     vec![Column::required("v", vec![1.0, 4.0, 3.0])])?;
+/// let d = s.diff_with(&["v"], Change::default().output("dv").first(FirstRow::Drop))?;
+/// assert_eq!(d.column("v")?.numbers()?.get(0), Some(4.0)); // source kept
+/// assert_eq!(d.column("dv")?.numbers()?.get(0), Some(3.0));
+/// # Ok::<(), pond_rs::PondError>(())
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Change {
+    first: FirstRow,
+    output: Option<String>,
+}
+
+impl Change {
+    /// Keep or drop the first row (pond-ts `{ drop }`).
+    pub fn first(mut self, first: FirstRow) -> Self {
+        self.first = first;
+        self
+    }
+
+    /// Put the result in a new optional column of this name and keep the
+    /// source column as it was (pond-ts `{ output }`). Takes exactly one
+    /// source column; the name must not already exist. The new column has
+    /// the kind the in-place result would: a decimal source stays an exact
+    /// decimal for `diff`, and gives numbers for `rate` and `pct_change`.
+    pub fn output(mut self, name: &str) -> Self {
+        self.output = Some(name.to_string());
+        self
+    }
+}
+
 /// How [`TimeSeries::fill`] fills a run of gaps.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fill {
@@ -115,16 +152,26 @@ impl TimeSeries {
     /// kinds are an error. Changed columns may have gaps afterwards.
     ///
     /// ```
-    /// # use pond_rs::{Column, FirstRow, TimeSeries};
+    /// # use pond_rs::{Column, TimeSeries};
     /// let s = TimeSeries::new("s", vec![0, 1000, 2000],
     ///     vec![Column::required("v", vec![1.0, 4.0, 3.0])])?;
-    /// let d = s.diff(&["v"], FirstRow::Keep)?;
+    /// let d = s.diff(&["v"])?;
     /// let got: Vec<_> = d.column("v")?.numbers()?.iter().collect();
     /// assert_eq!(got, [None, Some(3.0), Some(-1.0)]);
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
-    pub fn diff(&self, columns: &[&str], first: FirstRow) -> Result<TimeSeries> {
-        self.change(Delta::Diff, columns, first)
+    ///
+    /// The first row is kept and each named column is replaced; see
+    /// [`TimeSeries::diff_with`] to drop the first row or keep the source.
+    pub fn diff(&self, columns: &[&str]) -> Result<TimeSeries> {
+        self.change(Delta::Diff, columns, &Change::default())
+    }
+
+    /// [`TimeSeries::diff`] with [`Change`] options: drop the first row, or
+    /// put the result in a new column and keep the source (pond-ts
+    /// `diff(column, { drop, output })`).
+    pub fn diff_with(&self, columns: &[&str], options: Change) -> Result<TimeSeries> {
+        self.change(Delta::Diff, columns, &options)
     }
 
     /// Each row's change from the row before, per second of key time:
@@ -132,21 +179,52 @@ impl TimeSeries {
     /// `rate`). Gaps as for [`TimeSeries::diff`]; two rows with the same
     /// begin give a gap. Range and interval keys use their begin. Number
     /// and decimal columns give numbers (decimals via the nearest `f64`).
-    pub fn rate(&self, columns: &[&str], first: FirstRow) -> Result<TimeSeries> {
-        self.change(Delta::Rate, columns, first)
+    pub fn rate(&self, columns: &[&str]) -> Result<TimeSeries> {
+        self.change(Delta::Rate, columns, &Change::default())
+    }
+
+    /// [`TimeSeries::rate`] with [`Change`] options, as
+    /// [`TimeSeries::diff_with`].
+    pub fn rate_with(&self, columns: &[&str], options: Change) -> Result<TimeSeries> {
+        self.change(Delta::Rate, columns, &options)
     }
 
     /// Each row's change as a fraction of the row before:
     /// `(value - previous) / previous` (pond-ts `pctChange`; not multiplied
     /// by 100). Gaps as for [`TimeSeries::diff`]; a previous value of 0
     /// gives a gap. Number and decimal columns give numbers.
-    pub fn pct_change(&self, columns: &[&str], first: FirstRow) -> Result<TimeSeries> {
-        self.change(Delta::Pct, columns, first)
+    pub fn pct_change(&self, columns: &[&str]) -> Result<TimeSeries> {
+        self.change(Delta::Pct, columns, &Change::default())
     }
 
-    fn change(&self, change: Delta, columns: &[&str], first: FirstRow) -> Result<TimeSeries> {
+    /// [`TimeSeries::pct_change`] with [`Change`] options, as
+    /// [`TimeSeries::diff_with`].
+    pub fn pct_change_with(&self, columns: &[&str], options: Change) -> Result<TimeSeries> {
+        self.change(Delta::Pct, columns, &options)
+    }
+
+    fn change(&self, change: Delta, columns: &[&str], options: &Change) -> Result<TimeSeries> {
         let call = change.call();
         let targets = self.targets(call, columns)?;
+        if let Some(output) = &options.output {
+            if targets.len() != 1 {
+                return Err(PondError::InvalidData {
+                    call,
+                    message: format!(
+                        "output needs exactly one source column, got {}",
+                        targets.len()
+                    ),
+                });
+            }
+            if output == self.key_name() || self.columns().iter().any(|c| c.name() == output) {
+                return Err(PondError::InvalidData {
+                    call,
+                    message: format!(
+                        "output column '{output}' already exists; leave output unset to replace the source column"
+                    ),
+                });
+            }
+        }
         let begin = self.key().begin();
         let n = self.len();
         // Seconds between each row and the one before, as pond-ts computes
@@ -211,10 +289,13 @@ impl TimeSeries {
                     ));
                 }
             };
-            out[c] = Column::from_data(column.name().to_string(), data, false);
+            match &options.output {
+                Some(output) => out.push(Column::from_data(output.clone(), data, false)),
+                None => out[c] = Column::from_data(column.name().to_string(), data, false),
+            }
         }
         let result = self.with_value_columns(out);
-        Ok(match first {
+        Ok(match options.first {
             FirstRow::Drop if n > 0 => result.row_range(1..n),
             _ => result,
         })
@@ -370,11 +451,18 @@ impl TimeSeries {
     /// # use pond_rs::{Column, Fill, FillLimits, TimeSeries};
     /// let s = TimeSeries::new("s", vec![0, 1000, 2000],
     ///     vec![Column::optional("v", vec![Some(1.0), None, Some(3.0)])])?;
-    /// let f = s.fill(&[("v", Fill::Linear)], &FillLimits::none())?;
+    /// let f = s.fill(&[("v", Fill::Linear)])?;
     /// assert_eq!(f.column("v")?.numbers()?.get(1), Some(2.0));
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
-    pub fn fill(&self, spec: &[(&str, Fill)], limits: &FillLimits) -> Result<TimeSeries> {
+    pub fn fill(&self, spec: &[(&str, Fill)]) -> Result<TimeSeries> {
+        self.fill_with(spec, &FillLimits::none())
+    }
+
+    /// [`TimeSeries::fill`] with limits on how far a fill reaches
+    /// ([`FillLimits`]: rows per run, longest gap in time), as pond-ts
+    /// `fill(spec, { limit, maxGap })`.
+    pub fn fill_with(&self, spec: &[(&str, Fill)], limits: &FillLimits) -> Result<TimeSeries> {
         let mut plan = Vec::with_capacity(spec.len());
         for (i, (name, fill)) in spec.iter().enumerate() {
             let c = self.column_index("fill", name)?;
@@ -390,7 +478,13 @@ impl TimeSeries {
     /// numbers and `Zero` skips columns that are not numbers or decimals.
     /// A `Value` is an error here; give values per column with
     /// [`TimeSeries::fill`].
-    pub fn fill_all(&self, fill: Fill, limits: &FillLimits) -> Result<TimeSeries> {
+    pub fn fill_all(&self, fill: Fill) -> Result<TimeSeries> {
+        self.fill_all_with(fill, &FillLimits::none())
+    }
+
+    /// [`TimeSeries::fill_all`] with [`FillLimits`], as
+    /// [`TimeSeries::fill_with`].
+    pub fn fill_all_with(&self, fill: Fill, limits: &FillLimits) -> Result<TimeSeries> {
         if let Fill::Value(_) = fill {
             return Err(PondError::InvalidData {
                 call: "fill_all",
@@ -897,9 +991,9 @@ mod tests {
             let s = edge_numbers(n, seed);
             let values = s.column("v").unwrap().numbers().unwrap().values().to_vec();
             for (change, got) in [
-                (Delta::Diff, s.diff(&["v"], FirstRow::Keep)),
-                (Delta::Rate, s.rate(&["v"], FirstRow::Keep)),
-                (Delta::Pct, s.pct_change(&["v"], FirstRow::Keep)),
+                (Delta::Diff, s.diff(&["v"])),
+                (Delta::Rate, s.rate(&["v"])),
+                (Delta::Pct, s.pct_change(&["v"])),
             ] {
                 let want: Vec<u64> = reference(s.key().begin(), &values, change)
                     .iter()
@@ -951,7 +1045,7 @@ mod tests {
     fn decimal_diff_and_cumulative_are_exact() {
         // 0.10, 0.30, gap, 0.20
         let s = decimals(vec![Some(10), Some(30), None, Some(20)]);
-        let d = s.diff(&["d"], FirstRow::Keep).unwrap();
+        let d = s.diff(&["d"]).unwrap();
         assert_eq!(text(&d, "d"), strs(&[None, Some("0.20"), None, None]));
         let c = s.cumulative(&[("d", Reducer::Sum)]).unwrap();
         assert_eq!(
@@ -970,7 +1064,7 @@ mod tests {
         );
         // rate and pct_change give numbers, via f64, so the same bits as a
         // number column of 0.1 and 0.3 (not exactly 2).
-        let r = s.pct_change(&["d"], FirstRow::Keep).unwrap();
+        let r = s.pct_change(&["d"]).unwrap();
         let got = r.column("d").unwrap().numbers().unwrap().get(1).unwrap();
         assert_eq!(got.to_bits(), ((0.3f64 - 0.1) / 0.1).to_bits());
     }
@@ -979,7 +1073,7 @@ mod tests {
     fn decimal_results_past_38_digits_are_errors() {
         let max = 10i128.pow(38) - 1;
         let s = decimals(vec![Some(max), Some(-max), Some(1), Some(1)]);
-        let e = s.diff(&["d"], FirstRow::Keep).unwrap_err().to_string();
+        let e = s.diff(&["d"]).unwrap_err().to_string();
         assert!(e.contains("'d' at row 1 has more than 38 digits"), "{e}");
         let s = decimals(vec![Some(max), Some(1), None, None]);
         let e = s
@@ -1003,20 +1097,17 @@ mod tests {
         assert_eq!(text(&lead, "host"), strs(&[None, None, None, None]));
 
         let f = s
-            .fill(
-                &[
-                    (
-                        "d",
-                        Fill::Value(Value::Decimal(Decimal {
-                            value: -5,
-                            scale: 2,
-                        })),
-                    ),
-                    ("host", Fill::Hold),
-                    ("up", Fill::Bfill),
-                ],
-                &FillLimits::none(),
-            )
+            .fill(&[
+                (
+                    "d",
+                    Fill::Value(Value::Decimal(Decimal {
+                        value: -5,
+                        scale: 2,
+                    })),
+                ),
+                ("host", Fill::Hold),
+                ("up", Fill::Bfill),
+            ])
             .unwrap();
         assert_eq!(
             text(&f, "d"),
@@ -1032,7 +1123,7 @@ mod tests {
         );
 
         // fill_all: Zero fills decimals and skips text and true/false.
-        let z = s.fill_all(Fill::Zero, &FillLimits::none()).unwrap();
+        let z = s.fill_all(Fill::Zero).unwrap();
         assert_eq!(
             text(&z, "d"),
             strs(&[Some("0.10"), Some("0.00"), Some("0.20"), Some("0.00")])
@@ -1063,18 +1154,18 @@ mod tests {
                 "scale 2",
             ),
         ] {
-            let e = s.fill(&[(name, fill)], &none).unwrap_err().to_string();
+            let e = s.fill_with(&[(name, fill)], &none).unwrap_err().to_string();
             assert!(e.contains(want), "{e}");
         }
         let twice = [("host", Fill::Hold), ("host", Fill::Bfill)];
-        let e = s.fill(&twice, &none).unwrap_err().to_string();
+        let e = s.fill_with(&twice, &none).unwrap_err().to_string();
         assert!(e.contains("'host' is named twice"), "{e}");
         let e = s
-            .fill_all(Fill::Value(Value::Boolean(true)), &none)
+            .fill_all_with(Fill::Value(Value::Boolean(true)), &none)
             .unwrap_err();
         assert!(e.to_string().contains("per column"), "{e}");
         let e = s
-            .fill_all(Fill::Hold, &FillLimits::none().max_gap("2 s"))
+            .fill_all_with(Fill::Hold, &FillLimits::none().max_gap("2 s"))
             .unwrap_err();
         assert!(matches!(e, PondError::InvalidDuration { .. }), "{e}");
     }
@@ -1082,9 +1173,9 @@ mod tests {
     #[test]
     fn other_errors_name_the_problem() {
         let s = decimals(vec![Some(1), Some(2), Some(3), Some(4)]);
-        let e = s.diff(&[], FirstRow::Keep).unwrap_err().to_string();
+        let e = s.diff(&[]).unwrap_err().to_string();
         assert!(e.contains("diff: needs at least one column"), "{e}");
-        let e = s.rate(&["host"], FirstRow::Keep).unwrap_err().to_string();
+        let e = s.rate(&["host"]).unwrap_err().to_string();
         assert!(
             e.contains("'host'") && e.contains("number or decimal"),
             "{e}"
@@ -1144,7 +1235,9 @@ mod tests {
         let s =
             TimeSeries::from_intervals("i", keys, vec![Column::required("v", vec![1.0, 2.0, 4.0])])
                 .unwrap();
-        let d = s.diff(&["v"], FirstRow::Drop).unwrap();
+        let d = s
+            .diff_with(&["v"], Change::default().first(FirstRow::Drop))
+            .unwrap();
         let crate::Key::Interval(k) = d.key() else {
             panic!()
         };
@@ -1155,7 +1248,13 @@ mod tests {
         assert_eq!(got, [Some(1.0), Some(2.0)]);
         // Number labels too, and an empty series drops nothing.
         let empty = s.row_range(0..0);
-        assert_eq!(empty.diff(&["v"], FirstRow::Drop).unwrap().len(), 0);
+        assert_eq!(
+            empty
+                .diff_with(&["v"], Change::default().first(FirstRow::Drop))
+                .unwrap()
+                .len(),
+            0
+        );
         let agg = TimeSeries::new(
             "t",
             vec![0, 1000],
@@ -1167,7 +1266,9 @@ mod tests {
             &[crate::Agg::of("v", Reducer::Sum)],
         )
         .unwrap();
-        let d = agg.rate(&["v"], FirstRow::Drop).unwrap();
+        let d = agg
+            .rate_with(&["v"], Change::default().first(FirstRow::Drop))
+            .unwrap();
         let crate::Key::Interval(k) = d.key() else {
             panic!()
         };
@@ -1185,16 +1286,13 @@ mod tests {
             value: 123_456_789,
             scale: 2,
         }));
-        let e = s
-            .fill(&[("d", big)], &FillLimits::none())
-            .unwrap_err()
-            .to_string();
+        let e = s.fill(&[("d", big)]).unwrap_err().to_string();
         assert!(e.contains("more than its 5 digits"), "{e}");
         let ok = Fill::Value(Value::Decimal(Decimal {
             value: 99_999,
             scale: 2,
         }));
-        let f = s.fill(&[("d", ok)], &FillLimits::none()).unwrap();
+        let f = s.fill(&[("d", ok)]).unwrap();
         let mut bytes = Vec::new();
         f.write_ipc(&mut bytes).unwrap();
         assert!(TimeSeries::from_ipc_bytes("s", bytes, "time").is_ok());

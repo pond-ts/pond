@@ -138,6 +138,30 @@ describe('ChunkedColumnarLiveStorage — append + read', () => {
     expect(s.at(2500)).toBeUndefined();
   });
 
+  it('finds every row among many uneven chunks, before and after a partial evict', () => {
+    // Rows are looked up from the nearer end ([PND-LIVEPUSHSCAN]); check
+    // both halves, the middle and every chunk boundary.
+    const s = make();
+    const sizes = [1, 3, 1, 1, 7, 2, 1, 5, 1, 1, 4];
+    let base = 0;
+    for (const n of sizes) {
+      s.appendChunkFromRows(batch(base, n));
+      base += n;
+    }
+    const check = (offset: number) => {
+      for (let i = 0; i < s.length; i += 1) {
+        expect(s.beginAt(i)).toBe(offset + i);
+        expect(s.at(i)!.get('value')).toBe(offset + i);
+      }
+    };
+    expect(s.length).toBe(base);
+    check(0);
+    s.dropPrefix(5); // the first three chunks (1 + 3 + 1 rows)
+    s.dropPrefix(3); // then a partial cut into the 7-row chunk
+    expect(s.length).toBe(base - 8);
+    check(8);
+  });
+
   it('empty batch is a no-op', () => {
     const s = make();
     s.appendChunkFromRows(batch(0, 10));

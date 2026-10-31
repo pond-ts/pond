@@ -43,10 +43,19 @@
   queue is [PND-GATHER](PND_CORE_PLAN.md).
 - **gRPC pipeline** — fully realized for the M3.5 scope; the V5 re-bench ran
   (2026-05-29) and correctly parked the next levers
-  ([PND-LROLL](PND_COLUMNAR_PLAN.md) unearned at 2.1× headroom). Remaining:
-  the **writeup** and the **M5 extraction sweep** producing three RFC-style
-  designs (`@pond-ts/server`, `useRemoteLiveSeries`, `@pond-ts/dev-producer`)
-  that feed [PND-SERVER](PND_ECOSYSTEM_PLAN.md).
+  ([PND-LROLL](PND_COLUMNAR_PLAN.md) unearned at 2.1× headroom). **Revived
+  2026-10-27..30 on pond-rs:** bumped to pond-ts 0.75 (found the 0.20
+  partition slowdown → [PND-PARTBATCH] #838), added a Rust producer and a
+  Rust aggregator on the pond-rs live layer (same `/live-agg` rows as Node,
+  checked row by row), bounded per-subscriber producer queues, and a Node vs
+  Rust race (Rust takes all of 100k rows/s on <0.5 core where Node tops out
+  at ~35k; ~7x Node at 1M rows/s). The race's latency gap turned out to be
+  the two aggregators timing different things; both now report a same-rule
+  `batchDoneMs`. Experiment PRs #43–#51. **Writeup landed** as the how-to
+  guide `website/docs/how-to-guides/streaming-aggregator.mdx`. Remaining:
+  the **M5 extraction sweep** producing three RFC-style designs
+  (`@pond-ts/server`, `useRemoteLiveSeries`, `@pond-ts/dev-producer`) that
+  feed [PND-SERVER](PND_ECOSYSTEM_PLAN.md).
 - **Webapp telemetry** (Codex; trading-platform app) — pond's first
   production deployment (live rolling stats on real frontend telemetry).
   Watch for production friction reports.

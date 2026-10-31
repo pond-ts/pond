@@ -26,6 +26,7 @@ pub enum AlignMethod {
 /// time range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Align {
+    /// How each bucket's value is found (default: hold).
     pub method: AlignMethod,
     /// Which point of each bucket is sampled: its start, middle or end.
     pub sample: At,
@@ -53,6 +54,7 @@ pub enum Pick {
 /// row's time, over the series' own time range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Materialize {
+    /// Which row a bucket with several keeps (default: the last).
     pub pick: Pick,
     /// The row's time: each bucket's start, middle or end.
     pub sample: At,
@@ -672,9 +674,6 @@ pub(crate) fn iso_time(ms: i64) -> String {
 /// read back as `x`, in plain form from 1e-6 up to 1e21 and exponent form
 /// outside it.
 pub(crate) fn js_number(x: f64) -> String {
-    if x == 0.0 {
-        return "0".into();
-    }
     if !x.is_finite() {
         return if x.is_nan() {
             "NaN".into()
@@ -684,33 +683,13 @@ pub(crate) fn js_number(x: f64) -> String {
             "-Infinity".into()
         };
     }
-    // Rust's `{:e}` gives the shortest round-trip digits, as JavaScript does.
-    let sci = format!("{:e}", x.abs());
-    let (mantissa, exp) = sci.split_once('e').expect("exponent form");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let n = exp.parse::<i32>().expect("exponent") + 1; // point after n digits
-    let sign = if x < 0.0 { "-" } else { "" };
-    let body = if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let e = n - 1;
-        let exp = if e < 0 {
-            format!("-{}", -e)
-        } else {
-            format!("+{e}")
-        };
-        if k == 1 {
-            format!("{digits}e{exp}")
-        } else {
-            format!("{}.{}e{exp}", &digits[..1], &digits[1..])
-        }
-    };
-    format!("{sign}{body}")
+    // The JSON writer's digits, which take JavaScript's choice when a
+    // number lies halfway between two shortest forms (Codex review R08:
+    // Rust's formatter rounds up there, so a group named
+    // "667962307169479.2" in pond-ts was "…479.3" here).
+    let mut out = Vec::with_capacity(24);
+    crate::json::push_number(&mut out, x);
+    String::from_utf8(out).expect("digits are ASCII")
 }
 
 #[cfg(test)]
@@ -861,9 +840,33 @@ mod tests {
             (-0.0, "0"),
             (5e-324, "5e-324"),
             (f64::MAX, "1.7976931348623157e+308"),
+            // Halfway between two shortest forms: JavaScript takes the
+            // even one (Codex review R08; Rust's formatter rounds up). A
+            // 300k-value comparison against node found 78 such numbers
+            // before the fix and none after.
+            (f64::from_bits(4828698899371157050), "667962307169479.2"),
         ] {
             assert_eq!(js_number(x), js, "{x}");
         }
+    }
+
+    #[test]
+    fn pivot_names_a_halfway_number_group_as_javascript() {
+        let g = f64::from_bits(4828698899371157050);
+        let series = s(
+            vec![0],
+            vec![
+                Column::required("g", vec![g]),
+                Column::required("v", vec![1.0]),
+            ],
+        );
+        let out = series
+            .pivot_by_group("g", "v", &crate::Pivot::default())
+            .unwrap();
+        assert_eq!(out.columns()[0].name(), "667962307169479.2_v");
+        // Declaring the group by its JavaScript name finds it.
+        let declared = crate::Pivot::default().groups(["667962307169479.2"]);
+        assert!(series.pivot_by_group("g", "v", &declared).is_ok());
     }
 
     #[test]

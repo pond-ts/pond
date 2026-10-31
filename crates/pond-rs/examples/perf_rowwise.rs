@@ -11,7 +11,7 @@
 
 mod common;
 
-use pond_rs::{Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Change, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
 
 fn main() -> pond_rs::Result<()> {
     const ROWS: usize = 1_000_000;
@@ -46,16 +46,16 @@ fn main() -> pond_rs::Result<()> {
     let extra = Column::optional_raw("w", s.column("v")?.numbers()?.values().to_vec());
     type Case<'a> = (&'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let cases: Vec<Case> = vec![
-        ("diff", Box::new(|| s.diff(&["v"], FirstRow::Keep).unwrap())),
+        ("diff", Box::new(|| s.diff(&["v"]).unwrap())),
         (
             "diff drop",
-            Box::new(|| s.diff(&["v"], FirstRow::Drop).unwrap()),
+            Box::new(|| {
+                s.diff_with(&["v"], Change::default().first(FirstRow::Drop))
+                    .unwrap()
+            }),
         ),
-        ("rate", Box::new(|| s.rate(&["v"], FirstRow::Keep).unwrap())),
-        (
-            "pct_change",
-            Box::new(|| s.pct_change(&["v"], FirstRow::Keep).unwrap()),
-        ),
+        ("rate", Box::new(|| s.rate(&["v"]).unwrap())),
+        ("pct_change", Box::new(|| s.pct_change(&["v"]).unwrap())),
         (
             "cumulative sum",
             Box::new(|| s.cumulative(&[("v", Reducer::Sum)]).unwrap()),
@@ -63,16 +63,16 @@ fn main() -> pond_rs::Result<()> {
         ("shift 1", Box::new(|| s.shift(&["v"], 1).unwrap())),
         (
             "fill hold",
-            Box::new(|| s.fill_all(Fill::Hold, &none).unwrap()),
+            Box::new(|| s.fill_all_with(Fill::Hold, &none).unwrap()),
         ),
         (
             "fill linear",
-            Box::new(|| s.fill_all(Fill::Linear, &none).unwrap()),
+            Box::new(|| s.fill_all_with(Fill::Linear, &none).unwrap()),
         ),
         (
             "fill linear maxGap 3s",
             Box::new(|| {
-                s.fill_all(Fill::Linear, &FillLimits::none().max_gap("3s"))
+                s.fill_all_with(Fill::Linear, &FillLimits::none().max_gap("3s"))
                     .unwrap()
             }),
         ),
