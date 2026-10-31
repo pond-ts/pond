@@ -295,7 +295,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   rows as in pond-ts (it was ignored). 1M rows: one number column 227 →
   37 ms (pond-ts 220), four number columns 430 → 56 (216), a number, a
   text and a boolean column 593 → 74 (235), time-range keys 627 → 64
-  (224).
+  (224). Where generated code is not allowed (a CSP without
+  `'unsafe-eval'`, `--disallow-code-generation-from-strings`) it falls back
+  to a plain loop with the same output, about as fast as pond-ts's.
 - **pond-rs: live layer does less work per event.** A top-to-bottom
   instruction-count review (callgrind, 23 `perf_live` cases) found that a
   bare push spent about 45% of its instructions in malloc/free, that a

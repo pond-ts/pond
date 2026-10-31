@@ -540,28 +540,46 @@ const numericKeys = (rows) =>
 // returns (see its doc in crates/pond-wasm). The loop is written out per
 // schema so each row is one array (or object) literal: a cell-by-cell loop
 // over the columns ran several times slower. Kept per schema and format.
+// Where code cannot be made from text (`--disallow-code-generation-from-
+// strings`, Cloudflare Workers, a CSP without 'unsafe-eval'), the
+// cell-by-cell loop builds the same rows.
 const ROW_BUILDERS = new Map();
 const TEXT_GAP = 0xffffffff;
+let canGenerate;
+
+// Each column's form, as `series_columns` sent it.
+const formOf = (p) =>
+  p === null
+    ? '-'
+    : p instanceof Float64Array
+      ? 'n'
+      : p instanceof Uint8Array
+        ? 'b'
+        : p.length === 2 && p[1] instanceof Uint32Array
+          ? 's'
+          : 'a';
 
 function rowBuilder(schema, parts, object) {
-  // Each column's form, as `series_columns` sent it.
-  const forms = parts
-    .slice(3)
-    .map((p) =>
-      p === null
-        ? '-'
-        : p instanceof Float64Array
-          ? 'n'
-          : p instanceof Uint8Array
-            ? 'b'
-            : p.length === 2 && p[1] instanceof Uint32Array
-              ? 's'
-              : 'a',
-    );
+  const forms = parts.slice(3).map(formOf);
   const sig = JSON.stringify([object, schema, forms]);
   let build = ROW_BUILDERS.get(sig);
   if (build !== undefined) return build;
+  if (canGenerate === undefined) {
+    try {
+      canGenerate = new Function('return true')();
+    } catch {
+      canGenerate = false;
+    }
+  }
+  build = canGenerate
+    ? generatedRows(schema, forms, object)
+    : (parts) => plainRows(schema, parts, object);
+  if (ROW_BUILDERS.size >= 64) ROW_BUILDERS.clear();
+  ROW_BUILDERS.set(sig, build);
+  return build;
+}
 
+function generatedRows(schema, forms, object) {
   const pre = [];
   // The expression for part `p`'s value at row `i`.
   const cell = (p) => {
@@ -582,7 +600,11 @@ function rowBuilder(schema, parts, object) {
     }
   };
   const kind = schema[0].kind;
-  const names = schema.map((c) => JSON.stringify(c.name));
+  // A field name as written in the literal. `"__proto__": v` would set the
+  // prototype; the computed form makes an own field like any other name.
+  const names = schema.map((c) =>
+    c.name === '__proto__' ? '["__proto__"]' : JSON.stringify(c.name),
+  );
   const key =
     kind === 'time'
       ? 'c1[i]'
@@ -598,7 +620,7 @@ function rowBuilder(schema, parts, object) {
   const row = object
     ? `{ ${[key, ...cells].map((e, c) => `${names[c]}: ${e}`).join(', ')} }`
     : `[${key}, ${cells.join(', ')}]`;
-  build = new Function(
+  return new Function(
     'parts',
     `${pre.join('\n')}
     const n = c1.length, rows = new Array(n);
@@ -606,9 +628,69 @@ function rowBuilder(schema, parts, object) {
     for (let i = 0; i < n; i++) rows[i] = ${row};
     return rows;`,
   );
-  if (ROW_BUILDERS.size >= 64) ROW_BUILDERS.clear();
-  ROW_BUILDERS.set(sig, build);
-  return build;
+}
+
+// Part `p`'s value at row `i`, as a function (the generated loop's cells).
+function cellReader(p) {
+  switch (formOf(p)) {
+    case 'n':
+      return (i) => {
+        const x = p[i];
+        return x - x === 0 ? x : null;
+      };
+    case 'b':
+      return (i) => (p[i] === 2 ? null : p[i] === 1);
+    case 's': {
+      const [table, places] = p;
+      return (i) => (places[i] === TEXT_GAP ? null : table[places[i]]);
+    }
+    default:
+      return (i) => p[i];
+  }
+}
+
+// The generated loop's rows, cell by cell.
+function plainRows(schema, parts, object) {
+  const [, begin, end] = parts;
+  const kind = schema[0].kind;
+  const label = kind === 'interval' ? cellReader(parts[3]) : undefined;
+  const cells = parts.slice(4).map(cellReader);
+  const names = schema.map((c) => c.name);
+  const field = (r, name, v) => {
+    if (name === '__proto__')
+      Object.defineProperty(r, name, {
+        value: v,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    else r[name] = v;
+  };
+  const rows = new Array(begin.length);
+  for (let i = 0; i < begin.length; i++) {
+    const k =
+      kind === 'time'
+        ? begin[i]
+        : kind === 'timeRange'
+          ? object
+            ? { start: begin[i], end: end[i] }
+            : [begin[i], end[i]]
+          : object
+            ? { value: label(i), start: begin[i], end: end[i] }
+            : [label(i), begin[i], end[i]];
+    if (object) {
+      const r = {};
+      field(r, names[0], k);
+      for (let c = 0; c < cells.length; c++)
+        field(r, names[c + 1], cells[c](i));
+      rows[i] = r;
+    } else {
+      const r = [k];
+      for (let c = 0; c < cells.length; c++) r.push(cells[c](i));
+      rows[i] = r;
+    }
+  }
+  return rows;
 }
 
 export class TimeSeries {

@@ -4213,6 +4213,23 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         Still differs: the constructor names the key by its kind
         (`time`, `timeRange`, `interval`) whatever the schema says, so a
         renamed key comes back under the default name.
+        Review (PR #871) fixes: a column named `__proto__` set an object
+        row's prototype (the literal `"__proto__": v`); now written as a
+        computed key, an own field like any name (pond-ts refuses
+        `__proto__` / `constructor` at construction; the bridge takes
+        them, a known difference). Where `new Function` is refused
+        (`--disallow-code-generation-from-strings`, Workers, strict CSP)
+        toJSON fell over with EvalError; now it checks once and falls back
+        to a cell-by-cell loop with the same output (1M rows: 171 / 149 /
+        181 / 201 ms, object rows 263; pond-ts ~175-220). The test now
+        also runs itself in a child with code generation off, uses names
+        that need escaping (quotes, backslash, newline, U+2028, keywords,
+        the loop's own variable names), repeated and empty interval
+        labels, the reserved names, a decimal column from Arrow and an
+        unknown rowFormat. Planted: a plain `"__proto__"` key, -0 to 0 in
+        the fallback and `__proto__` by assignment in the fallback each
+        fail it. Speed after: 37.7 / 48.7 / 75.8 / 62.1 / 69.1 ms
+        (unchanged).
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
