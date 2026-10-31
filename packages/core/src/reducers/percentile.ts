@@ -3,7 +3,9 @@ import type { ReducerDef } from './types.js';
 import { rollingSortedArray } from './rolling.js';
 
 /**
- * An ascending copy of `numeric`: the same order as
+ * An ascending copy of `numeric`, which must hold only finite numbers
+ * (every caller strips NaN / ±Infinity first; with NaN present the two
+ * sorts below can disagree): the same order as
  * `numeric.slice().sort((a, b) => a - b)` — a stable sort, so equal values
  * (`-0` and `0`) keep their input order — but by insertion sort when the
  * list is short (an array cell, a small bucket), which skips the comparator

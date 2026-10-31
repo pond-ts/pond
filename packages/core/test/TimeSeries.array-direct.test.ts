@@ -73,6 +73,30 @@ describe('arrayAggregate builds columns directly', () => {
     expect(Object.isFrozen(cell)).toBe(true);
   });
 
+  it('rejects a result that does not fit the kind, with the intake error', () => {
+    expect(() =>
+      makeSeries().arrayAggregate('tags', () => 'x', {
+        kind: 'number',
+        as: 'n',
+      }),
+    ).toThrow(new ValidationError('row 0 col 3: expected finite number'));
+  });
+
+  it('an `as` naming an existing column keeps the row-intake error', () => {
+    // `count` gives a gap for the missing array, and `v` is required.
+    expect(() =>
+      makeSeries().arrayAggregate('tags', 'count', { as: 'v' }),
+    ).toThrow(new ValidationError('row 1 col 2 (v) is required'));
+  });
+
+  it('with `as`, the untouched array column is shared with the input', () => {
+    // Like `select` / `rename`: columns the operator doesn't change are
+    // reused, so the kept array is the input's own (frozen) array.
+    const s = makeSeries();
+    const out = s.arrayAggregate('tags', 'count', { as: 'n' });
+    expect(out.at(0)!.get('tags')).toBe(s.at(0)!.get('tags'));
+  });
+
   it('freezes built-in array results', () => {
     const out = makeSeries().arrayAggregate('tags', 'unique');
     expect(Object.isFrozen(out.at(0)!.get('tags'))).toBe(true);

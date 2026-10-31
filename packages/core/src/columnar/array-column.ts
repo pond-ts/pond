@@ -58,11 +58,12 @@ export function copyCell(cell: ArrayValue): ArrayValue {
 }
 
 /**
- * Set only while {@link arrayColumnFromOwnedCells} runs its constructor
- * call: the constructor then skips its element validation and per-cell
- * copy (the caller has done both, or made the cells itself).
+ * Module-private key that only {@link arrayColumnFromOwnedCells} passes:
+ * the constructor then skips its element validation and per-cell copy
+ * (the caller has done both, or made the cells itself). Not exported, so
+ * no outside caller can reach the unchecked path.
  */
-let trustOwnedCells = false;
+const OWNED_CELLS: unique symbol = Symbol('ArrayColumn.ownedCells');
 
 /**
  * Array-kind value column. Currently single-mode (fallback). The
@@ -90,6 +91,7 @@ export class ArrayColumn {
     options: {
       fallback: ReadonlyArray<ArrayValue | undefined>;
       validity?: ValidityBitmap;
+      [OWNED_CELLS]?: true;
     },
   ) {
     validateColumnLength(length, 'ArrayColumn');
@@ -104,7 +106,7 @@ export class ArrayColumn {
         `ArrayColumn: validity length ${validity.length} does not match column length ${length}`,
       );
     }
-    if (trustOwnedCells) {
+    if (options[OWNED_CELLS] === true) {
       this.length = length;
       this.fallback = options.fallback;
       if (validity !== undefined) this.validity = validity;
@@ -263,15 +265,11 @@ export function arrayColumnFromOwnedCells(
   const validity = missing
     ? validityFromPredicate(length, (i) => cells[i] !== undefined)
     : undefined;
-  trustOwnedCells = true;
-  try {
-    return new ArrayColumn(length, {
-      fallback: cells,
-      ...(validity !== undefined ? { validity } : {}),
-    });
-  } finally {
-    trustOwnedCells = false;
-  }
+  return new ArrayColumn(length, {
+    fallback: cells,
+    ...(validity !== undefined ? { validity } : {}),
+    [OWNED_CELLS]: true,
+  });
 }
 
 /**

@@ -6014,7 +6014,14 @@ export class TimeSeries<S extends SeriesSchema> {
           const numeric = allNumbers
             ? (cell as ReadonlyArray<number>)
             : (cell.filter((v) => typeof v === 'number') as number[]);
-          out[i] = finiteOrMissing(def.reduce(cell, numeric));
+          const result = finiteOrMissing(def.reduce(cell, numeric));
+          // The array-output built-ins (unique / samples / top) build a new
+          // array today; if one ever handed back its input, the output
+          // column would share the source's array, so copy it here.
+          out[i] =
+            result === cell || result === numeric
+              ? ((result as ArrayValue).slice() as unknown as ArrayValue)
+              : result;
         } else {
           out[i] = applyAggregateReducer(
             reducer,

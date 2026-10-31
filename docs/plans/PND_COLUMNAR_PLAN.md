@@ -739,7 +739,11 @@ row per element and went through strict `new TimeSeries` intake. Now:
 - `arrayAggregate` reads the array column, reduces each cell, and shares the
   key and every other column. For built-in reducers a cell is passed as
   `defined` directly (an array cell can hold only finite numbers, strings and
-  booleans, so the row path's filtering removed nothing).
+  booleans, so the row path's filtering removed nothing). One visible
+  difference from the row path: with `as:`, the untouched array column is
+  the input's own column, so `out.at(i).get('tags') === src.at(i).get('tags')`
+  (before: an equal copy). Within one series every row still has its own
+  array; `select` / `rename` already shared columns this way.
 - `arrayExplode` numbers the output rows, gathers the key and the other
   columns once (`withRowSelection`; replace mode drops the array column
   first), and builds the element column directly.
