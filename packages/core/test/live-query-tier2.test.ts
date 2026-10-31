@@ -481,36 +481,32 @@ describe('LiveSeries.bisect lower-bound pinning on same-timestamp duplicates', (
 
 // ── LiveView non-monotonic map (Codex regression pin) ──────────
 
-describe('LiveView re-keying map runtime check', () => {
-  it('throws ValidationError on a map that produces non-monotonic keys', () => {
-    // Bug Codex caught on PR #125 review: `LiveView.map` accepts
-    // any user fn; if the fn rewrites keys non-monotonically, the
-    // view appended in source order without re-sort. The four
-    // binary-search query primitives then returned wrong answers
-    // silently.
-    //
-    // Fix: append-time check in `#appendChecked` throws a clear
-    // `ValidationError` on non-monotonic mapped events. Sane
-    // transforms (data-only maps, time-axis shifts that preserve
-    // order) still work; only genuine reorderings throw.
+describe('LiveView re-keying map ordering', () => {
+  it('keeps the buffer sorted under a map that produces non-monotonic keys', () => {
+    // Codex caught on PR #125 review that a re-keying map appended in
+    // source order, so the binary-search queries answered wrongly. It
+    // threw until [PND-LATE]; now the event goes in at its key position,
+    // so the queries stay right.
     const live = makeLive();
     live.pushMany([
       [1000, 1],
       [2000, 2],
       [3000, 3],
     ]);
-    // Re-keying map that flips relative order: this must throw.
-    expect(() =>
-      live.map((event) => {
-        const t = event.begin();
-        // Rewrite t=2000 → t=500 to push the second event before
-        // the first in keyspace.
-        if (t === 2000) {
-          return new Event(new Time(500), event.data() as any) as any;
-        }
-        return event;
-      }),
-    ).toThrow(/non-monotonic|older than the previous tail/);
+    const view = live.map((event) => {
+      const t = event.begin();
+      // Rewrite t=2000 to t=500, before the first event in keyspace.
+      if (t === 2000) {
+        return new Event(new Time(500), event.data() as any) as any;
+      }
+      return event;
+    });
+    const begins = Array.from({ length: view.length }, (_, i) =>
+      view.at(i)!.begin(),
+    );
+    expect(begins).toEqual([500, 1000, 3000]);
+    expect(view.bisect(new Time(1000))).toBe(1);
+    expect(view.includesKey(new Time(500))).toBe(true);
   });
 
   it('does NOT throw on a key-preserving map (data-only transform)', () => {

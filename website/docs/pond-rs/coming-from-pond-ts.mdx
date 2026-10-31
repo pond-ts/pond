@@ -1,0 +1,253 @@
+---
+id: coming-from-pond-ts
+title: Coming from pond-ts
+sidebar_position: 8
+description: How pond-rs names map to pond-ts, and every place where pond-rs behaves differently on purpose.
+---
+
+# Coming from pond-ts
+
+pond-rs gives the same answers as pond-ts; the parity tests compare the two
+on the same inputs, bit for bit, including the inputs where pond-ts throws an
+error. What changes is the shape of the code, because Rust is not
+TypeScript, and a short list of places where pond-rs refuses something
+pond-ts lets through.
+
+## Names
+
+Methods are the pond-ts names in Rust's `snake_case`.
+
+| pond-ts                                                           | pond-rs                                                                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                                         |
+| `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                                        |
+| `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                                     |
+| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                                              |
+| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                                       |
+| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                                             |
+| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                                         |
+| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                                              |
+| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                                  |
+| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                                          |
+| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`                   |
+| `live.on('event', fn)` after `new LiveSeries(...)`                | `live.watch(node, OutputKind::Event)?`, then read the outputs each `push` returns (see [Live series](./live)) |
+| `live.rolling('30s', m, { trigger: t })`                          | `live.rolling_with(live.root(), "30s", &aggs, &RollingOptions::new().trigger(t))?`                            |
+| `live.rolling(100, m, options)`                                   | `live.rolling_rows(live.root(), 100, &aggs, &options)?`                                                       |
+| `live.rolling({ '1m': m1, '5m': m5 })`                            | `live.rolling_windows(live.root(), &[RollingWindow::new("1m", &m1), …], &opts)?`                              |
+| `live.reduce(m)`                                                  | `live.reduce(live.root(), &aggs)?`                                                                            |
+| `Trigger.every('1m')`, `Trigger.count(10)`                        | `Trigger::every("1m")?`, `Trigger::count(10)?`                                                                |
+| `live.partitionBy('host')`                                        | `live.partition_by(live.root(), "host", &PartitionOptions::new())?`                                           |
+| `live.partitionBy('host').diff('cpu').collect()`                  | `live.apply(hosts, \|live, h\| Ok(live.diff(h, &["cpu"])?.id()), &CollectOptions::new())?`                    |
+| `live.partitionBy('host').rolling('30s', m, { trigger })`         | `live.partition_rolling(hosts, "30s", &aggs, &RollingOptions::new().trigger(t))?`                             |
+| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                                    |
+| `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                                        |
+| `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                                          |
+| `series.rolling(seq, '5m', m)`                                    | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                                              |
+| `series.smooth('cpu', 'ema', { span: 20 })`                       | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                                              |
+| `series.baseline('cpu', { window, sigma })`                       | `series.baseline("cpu", window, sigma, Rolling::default())?`                                                  |
+| `series.scan('cpu', step, init)`                                  | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                                          |
+| `series.sample({ reservoir: { size } })`                          | `series.sample(Sample::Reservoir { size, seed })?`                                                            |
+| `TimeSeries.concat([a, b])`                                       | `TimeSeries::concat(&[&a, &b])?`                                                                              |
+| `series.collapse(keys, out, fn, { append })`                      | `series.collapse(&keys, out, f)?` / `collapse_keep`                                                           |
+| `series.pivotByGroup('host', 'cpu')`                              | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                                    |
+| `series.byColumn('watts', { edges }, m)`                          | `series.by_column("watts", &Bins::edges(edges), &aggs)?` (a `Table`, not an array of records)                 |
+| `series.rollingByColumn('km', { radius, at }, m)`                 | `series.rolling_by_column_at("km", radius, &at, &aggs)?`                                                      |
+| `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                                        |
+| `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                                      |
+| `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                                       |
+| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                                    |
+| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                                            |
+| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                                |
+| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`                           |
+| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                                 |
+| `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                                               |
+| `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                                   |
+| `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                                |
+| `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                                       |
+| `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                                      |
+| `series.tail('1h')`                                               | `series.tail("1h")?`                                                                                          |
+| `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                                   |
+| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                                 |
+| `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                                            |
+| `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                                        |
+| `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                                              |
+| `series.groupBy('host')` / `toMap()`                              | `series.group_by(&["host"])` / `iter()`                                                                       |
+| `series.atOrBefore(t)` / `nearest(t)`                             | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                                                    |
+| `new TimeRange(a, b)` as a lookup key                             | `EventKey::time_range(a, b)?`                                                                                 |
+| `series.within(a, b)` / `containedBy(range)`                      | `series.within(a, b)?` / `contained_by(range)`                                                                |
+| `series.at(i).get('cpu')`                                         | `series.column("cpu")?.numbers()?.get(i)`                                                                     |
+| `toJSON()` / `TimeSeries.fromJSON(json)`                          | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?`                            |
+| `toColumns()` / `toPoints()`                                      | `to_columns_json()?` / `to_points_json()?` (and `from_columns_json` / `from_points_json`)                     |
+| `toArrow()` / `fromArrow()`                                       | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                                                   |
+
+## Types are checked when the code runs
+
+pond-ts tracks every column's name and type in TypeScript's type system, so
+`series.get('cpu')` is known to be a number before the code runs. Rust
+cannot express "this series has a number column called `cpu`" without a lot
+of machinery, so pond-rs checks when the code runs instead, as polars does.
+`column("cpu")?` fails if there is no such column and lists the ones there
+are; `.numbers()?` fails if it holds text. The errors are written to be
+fixed from the message alone.
+
+## Where pond-rs is stricter
+
+Each of these is a case where pond-ts quietly does something surprising and
+pond-rs returns an error instead.
+
+- **A study on a missing or text column.** Most of pond-ts's financial
+  studies give a column of all gaps, so a typo in the column name looks like "no
+  data" (logged as a pond-ts issue, [PND-STUDYSRC]). pond-rs returns an
+  error naming the column.
+- **Number reducers on text.** pond-ts runs them anyway: `sum` of a text
+  column gives 0 and `avg` gives gaps. pond-rs allows only `count`, `first`
+  and `last` on text and true/false columns.
+- **`fill` mistakes.** An unknown column, `Linear` on a column that is not
+  numbers, or a fill value of the wrong kind is an error.
+- **Half milliseconds.** pond-rs keeps every time in whole milliseconds.
+  `as_time(At::Center)` on an interval an odd number of milliseconds long
+  would land on a half millisecond, where pond-ts gives e.g. `2499.5`;
+  pond-rs returns an error rather than a different answer.
+- **Huge numbers in `rolling`.** A rolling `sum` or `avg` over values of
+  2^960 (about 10^289) or more, or a `stdev` over values of 2^480 (about
+  10^144) or more, is an error. pond-ts switches to a slower exact method
+  for these; pond-rs has not built it yet.
+- **`materialize` on a half millisecond.** With `At::Center` on buckets an
+  odd number of milliseconds long, the row's time would be on a half
+  millisecond; pond-rs returns an error (pond-ts gives e.g. `1.5`).
+- **`dedupe` with `Keep::Min` / `Max`** must name a number or decimal
+  column, checked before anything runs. pond-ts looks at the column only
+  when it meets a duplicate, and quietly keeps the first row if the column
+  does not exist.
+- **`join_many` of no series** is an error that says so (pond-ts fails
+  reading `undefined`).
+- **Very large years and odd offsets in `parse_time`.** Years beyond
+  ±9999, and offsets with a fraction of a second (`+00:00:00.5`), are
+  errors. pond-ts reads both; for the offset, the library pond-rs uses
+  would round to the second, so pond-rs refuses rather than be half a
+  second out.
+- **Lookup keys and spans are checked when built.** `EventKey::time_range`
+  and `EventKey::interval` refuse a start after the end straight away, even
+  where pond-ts never reads the key (such as `nearest`, `overlapping` or
+  `trim` on an empty series). A number label must be finite, and times are whole
+  milliseconds.
+- **`offset_time` past the time limit.** Moving a key beyond
+  `MAX_TIME_MS` is an error; pond-ts allows it, but such a key cannot be
+  read back. Offsets are whole milliseconds (pond-ts takes `0.5`).
+- **JSON input** refuses times that are not whole milliseconds or are
+  past `MAX_TIME_MS`, a missing `name`, and text with a lone surrogate.
+  Columns JSON also refuses cells pond-ts quietly converts and numbers too
+  big to store; see [Arrow and JSON](./arrow#json).
+- **List columns.** Each of these is an error in pond-rs where pond-ts
+  quietly gives an odd result:
+  - An `array_*` call on a column that is not a list. pond-ts gives an
+    empty series, or for `arrayAggregate` overwrites the column with gaps.
+  - `partition_by` on a list column. pond-ts groups lists by their text, so
+    `["a,b"]` and `["a", "b"]` land together.
+  - A number reducer in `array_aggregate` given a kind other than number.
+  - A number that is not finite from `map_arrays` or in a fill value
+    (pond-ts leaves a gap).
+
+  Also, `First`, `Last`, `Keep` and `array_explode` with no kind take the
+  kind of the elements; pond-ts assumes text and so fails on numbers. `shift` works
+  on list columns (pond-ts throws).
+
+- **`smooth` and `baseline` on the wrong column.** An unknown column or
+  one that is not numbers is an error. pond-ts passes the series through
+  unchanged (`smooth` on an unknown column) or gives a gap in every row,
+  on a partitioned series too.
+- **`baseline_named`** refuses a name that is the key's, or the same name
+  twice; pond-ts only checks the existing columns.
+- **An option a smoothing method does not take** (`warmup` on a loess,
+  say) is an error when the code runs; pond-ts's types refuse it when
+  the code is checked.
+- **`concat` of series whose interval labels differ in kind** (text in
+  one, numbers in another) is an error; pond-ts allows the mix.
+- **`sum` on a list column in `by_column` / `rolling_by_column`** is an
+  error, as in every other call; pond-ts gives 0 ([PND-KINDREDUCE]).
+- **A repeated rename.** `rename` with the same `from` twice is an error
+  (pond-ts's object syntax cannot express it).
+
+## Where pond-rs does more
+
+- **Repeatable random samples.** `Sample::Reservoir` takes a seed, so
+  the same seed picks the same rows; pond-ts's reservoir has none. The
+  picked rows keep their order in the series, where pond-ts sorts them by
+  key, which can order rows sharing a key differently. On a partitioned
+  series each partition gets its own seed, made from yours, so those picks
+  repeat too.
+- **Exact decimals.** A column kind of their own, for money and other exact
+  values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
+- **`with_column`** takes any kind of column and you choose required or
+  optional. pond-ts's `withColumn` takes numbers only and always makes the
+  column optional.
+- **`shift`** works on every column kind (pond-ts: numbers only).
+- **`group_by`** takes several columns (pond-ts: one), and partition keys
+  are typed values (`Value::String("a")`) rather than strings to parse.
+
+## Where pond-rs fixes a pond-ts bug
+
+Building pond-rs turned up several pond-ts bugs. Where pond-rs could not
+copy the bug without being wrong, it does the right thing, and the pond-ts
+bug is logged in `PLAN.md` to fix there.
+
+- `Keep` on a list column keeps a list that is the same in every row.
+  pond-ts compares the lists as objects, so two equal lists in different
+  rows count as different and give a gap ([PND-ARRAYKEY]). pond-rs compares
+  the elements exactly, so `[0]` and `[-0]` count as different.
+- After `map_numbers` turns values into gaps, a required column becomes
+  optional. pond-ts keeps it marked required, which its own `fromJSON` then
+  refuses ([PND-MAPREQ]).
+- A column read from Arrow with nulls in it is optional. pond-ts's
+  `fromArrow` marks every column required, even one with nulls, so its own
+  save-and-reload then fails ([PND-ARROWREQ]). pond-rs takes the flag from
+  the Arrow field's nullability.
+
+## Small differences
+
+- **`collapse`'s output is optional when it has gaps.** pond-ts marks it
+  required even then, so its own `fromJSON` refuses the result (logged
+  as a pond-ts issue, [PND-COLLAPSEREQ]). Decimal groups in
+  `pivot_by_group`, which pond-ts has no kind for, are named in full
+  (`1.50_cpu`).
+- **`reduce` returns a `Reduced`**, read by output name with `number`,
+  `string` and so on, rather than a plain object. The one-column form
+  (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom
+  reducer functions are not built.
+- **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
+  builds the surviving row), and `align` / `materialize` take a range as an
+  epoch-millisecond pair rather than a pond-ts `BoundedSequence`.
+- **Text labels in `join`** compare as Node's `localeCompare` does under
+  an English (or the root) locale. Node uses the machine's locale, so
+  pond-ts on a machine set to another language can order interval labels
+  differently; pond-rs always uses the root order.
+- **A partitioned `scan` gives each partition its own copy of the start
+  value.** pond-ts hands every partition the same start object, so a step
+  that changes it in place carries state from one partition into the
+  next. In pond-rs every partition starts from a fresh copy.
+- **`align` with `Linear` holds exact decimal columns** instead of drawing a
+  line through them, since a point between two decimals is generally not
+  exact. pond-ts has no decimal kind.
+
+- **A plain number as a span.** `contained_by(5_000)` or `overlaps(5_000)`
+  treats the number as a moment. pond-ts throws on a bare number there;
+  passing it a `Time` gives the same answer as pond-rs.
+- **`NaN` and infinities when building a series.** pond-ts's
+  `fromJSON` and `new TimeSeries` refuse them; pond-rs reads them as gaps
+  in a number column (and refuses them in a required one).
+
+- The key column cannot be renamed yet. An interval key is always named
+  `interval` and a time key `time`; if you need `day_start` in a file,
+  rename that one Arrow field.
+- When pond-ts builds a text column it decides by itself whether to store
+  it as a dictionary (a list of distinct strings plus a number per row).
+  pond-rs keeps whatever it was given: built from Rust values, plain text;
+  read from Arrow, as it was in the file. The values are the same either
+  way.
+- Time-zone rules: pond-rs carries its own copy of the time-zone database;
+  pond-ts uses the one in its JavaScript engine. They agree unless the two
+  copies are from releases that disagree about a zone's history. This
+  affects calendar buckets and `parse_time_in` alike; checks found it in
+  Casablanca's predicted future clock changes and in `EST5EDT` before 1967.
+- pond-ts's typed `groups` option on `partitionBy` (declare the partition
+  values up front) is not built; nothing has needed it in Rust.

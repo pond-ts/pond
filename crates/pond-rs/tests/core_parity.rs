@@ -1,0 +1,2145 @@
+//! pond-rs against pond-ts's own output for core operations.
+//!
+//! To bring an operation under test, add a match arm to [`run`] that builds
+//! the input series, calls the pond-rs operation, and returns the result in
+//! `toJSON()` form (or `Err` with the pond-rs error text). Every fixture case
+//! for that op is then checked.
+
+mod common;
+
+use common::{
+    ColumnDef, CoreCase, CoreFixture, Outcome, SeriesJson, cell_number, check_case, check_coverage,
+    compare_series, load_core_fixture, report,
+};
+use pond_rs::ColumnDef as RsColumnDef;
+use pond_rs::Value as Literal;
+use pond_rs::{
+    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Change, Column,
+    ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions,
+    Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver,
+    RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
+};
+use serde_json::{Value, json};
+
+/// Every op the fixture may contain. A new op in the fixture fails
+/// `fixture_ops_are_known` until it is listed here, so additions are noticed.
+const KNOWN_OPS: &[&str] = &[
+    "rolling",
+    "aggregate",
+    "diff",
+    "rate",
+    "pctChange",
+    "cumulative",
+    "shift",
+    "fill",
+    "select",
+    "rename",
+    "asTime",
+    "slice",
+    "filter",
+    "mapColumns",
+    "withColumn",
+    "partitionBy",
+    "groupBy",
+    "align",
+    "materialize",
+    "dedupe",
+    "join",
+    "joinMany",
+    "tail",
+    "reduce",
+    "overlapping",
+    "containedBy",
+    "trim",
+    "before",
+    "after",
+    "within",
+    "asTimeRange",
+    "asInterval",
+    "offsetTime",
+    "arrayContains",
+    "arrayContainsAll",
+    "arrayContainsAny",
+    "arrayAggregate",
+    "arrayExplode",
+    "smooth",
+    "baseline",
+    "outliers",
+    "scan",
+    "sample",
+    "concat",
+    "collapse",
+    "pivotByGroup",
+    "byColumn",
+    "rollingByColumn",
+];
+
+/// Ops with an arm in [`run`]. Every fixture case for a listed op must run
+/// and match; an op that runs without being listed is also an error.
+const IMPLEMENTED_OPS: &[&str] = &[
+    "rolling",
+    "aggregate",
+    "select",
+    "rename",
+    "asTime",
+    "diff",
+    "rate",
+    "pctChange",
+    "cumulative",
+    "shift",
+    "fill",
+    "slice",
+    "filter",
+    "mapColumns",
+    "withColumn",
+    "partitionBy",
+    "groupBy",
+    "align",
+    "materialize",
+    "dedupe",
+    "join",
+    "joinMany",
+    "tail",
+    "reduce",
+    "overlapping",
+    "containedBy",
+    "trim",
+    "before",
+    "after",
+    "within",
+    "asTimeRange",
+    "asInterval",
+    "offsetTime",
+    "arrayContains",
+    "arrayContainsAll",
+    "arrayContainsAny",
+    "arrayAggregate",
+    "arrayExplode",
+    "smooth",
+    "baseline",
+    "outliers",
+    "scan",
+    "sample",
+    "concat",
+    "collapse",
+    "pivotByGroup",
+    "byColumn",
+    "rollingByColumn",
+];
+
+/// The ops a plain series and a partitioned one both have, with the same
+/// argument shapes: `Some(result)`, or `None` for any other op.
+macro_rules! shared_op {
+    ($target:expr, $op:expr, $args:expr) => {{
+        let args: &[Value] = $args;
+        match $op {
+            "rolling" => Some(if let Some(window) = args[0].as_str() {
+                let options = rolling_options(args.get(2));
+                mapping(&args[1]).and_then(|aggs| $target.rolling_with(window, &aggs, options))
+            } else if let Some(rows) = args[0]["count"].as_u64() {
+                let options = rolling_options(args.get(2));
+                mapping(&args[1])
+                    .and_then(|aggs| $target.rolling_rows(rows as usize, &aggs, options))
+            } else {
+                let window = args[1].as_str().expect("rolling window is a string");
+                let o = args.get(3).unwrap_or(&Value::Null);
+                let r = rolling_options(Some(o));
+                let options = RollingOver {
+                    alignment: r.alignment,
+                    min_samples: r.min_samples,
+                    sample: sample(o),
+                    range: range(o),
+                };
+                sequence(&args[0]["sequence"]).and_then(|seq| {
+                    mapping(&args[2])
+                        .and_then(|aggs| $target.rolling_over(&seq, window, &aggs, options))
+                })
+            }),
+            "aggregate" => {
+                Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                    mapping(&args[1]).and_then(|aggs| $target.aggregate(&seq, &aggs))
+                }))
+            }
+            "diff" | "rate" | "pctChange" => {
+                let names = column_names(&args[0]);
+                let mut options = Change::default();
+                if args.get(1).and_then(|o| o["drop"].as_bool()) == Some(true) {
+                    options = options.first(FirstRow::Drop);
+                }
+                if let Some(output) = args.get(1).and_then(|o| o["output"].as_str()) {
+                    options = options.output(output);
+                }
+                Some(match $op {
+                    "diff" => $target.diff_with(&names, options),
+                    "rate" => $target.rate_with(&names, options),
+                    _ => $target.pct_change_with(&names, options),
+                })
+            }
+            "cumulative" => Some($target.cumulative(&cumulative_spec(&args[0]))),
+            "shift" => {
+                let n = args[1].as_f64().expect("shift offset");
+                Some($target.shift(&column_names(&args[0]), n as i64))
+            }
+            "fill" => {
+                let limits = fill_limits(args.get(1));
+                Some(match &args[0] {
+                    Value::String(_) => $target.fill_all_with(fill_strategy(&args[0]), &limits),
+                    Value::Object(map) => {
+                        let spec: Vec<(&str, Fill)> = map
+                            .iter()
+                            .map(|(c, v)| (c.as_str(), fill_strategy(v)))
+                            .collect();
+                        $target.fill_with(&spec, &limits)
+                    }
+                    other => panic!("fill takes a strategy or a mapping, got {other}"),
+                })
+            }
+            "align" => Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                let o = args.get(1).unwrap_or(&Value::Null);
+                let method = match o["method"].as_str() {
+                    None | Some("hold") => AlignMethod::Hold,
+                    Some("linear") => AlignMethod::Linear,
+                    Some(other) => panic!("unknown align method {other}"),
+                };
+                $target.align(
+                    &seq,
+                    Align {
+                        method,
+                        sample: sample(o),
+                        range: range(o),
+                    },
+                )
+            })),
+            "materialize" => Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                let o = args.get(1).unwrap_or(&Value::Null);
+                let pick = match o["select"].as_str() {
+                    None | Some("last") => Pick::Last,
+                    Some("first") => Pick::First,
+                    Some("nearest") => Pick::Nearest,
+                    Some(other) => panic!("unknown materialize select {other}"),
+                };
+                $target.materialize(
+                    &seq,
+                    Materialize {
+                        pick,
+                        sample: sample(o),
+                        range: range(o),
+                    },
+                )
+            })),
+            "dedupe" => {
+                let keep = &args.first().unwrap_or(&Value::Null)["keep"];
+                let keep = match keep {
+                    Value::Null => Keep::Last,
+                    Value::String(k) => match k.as_str() {
+                        "first" => Keep::First,
+                        "last" => Keep::Last,
+                        "error" => Keep::Error,
+                        "drop" => Keep::Drop,
+                        other => panic!("unknown keep {other}"),
+                    },
+                    Value::Object(m) => match (m.get("min"), m.get("max")) {
+                        (Some(c), _) => Keep::Min(c.as_str().expect("column").into()),
+                        (_, Some(c)) => Keep::Max(c.as_str().expect("column").into()),
+                        _ => panic!("unknown keep {keep}"),
+                    },
+                    other => panic!("unknown keep {other}"),
+                };
+                Some($target.dedupe(keep))
+            }
+            "smooth" => Some(match smooth_options(&args[1], &args[2]) {
+                Ok(smooth) => $target.smooth(args[0].as_str().expect("column"), &smooth),
+                Err(why) => return Some(Err(why)),
+            }),
+            "baseline" | "outliers" => {
+                let column = args[0].as_str().expect("column");
+                let o = &args[1];
+                let window = o["window"].as_str().expect("window");
+                let sigma = o["sigma"].as_f64().expect("sigma");
+                let options = rolling_options(Some(o));
+                Some(if $op == "outliers" {
+                    $target.outliers(column, window, sigma, options)
+                } else if o["names"].is_null() {
+                    $target.baseline(column, window, sigma, options)
+                } else {
+                    let names = &o["names"];
+                    let name = |k: &'static str| names[k].as_str().unwrap_or(k);
+                    $target.baseline_named(
+                        column,
+                        window,
+                        sigma,
+                        options,
+                        [name("avg"), name("sd"), name("upper"), name("lower")],
+                    )
+                })
+            }
+            "scan" => Some(run_scan(&$target, args)),
+            "sample" => {
+                let o = &args[0];
+                let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
+                Some(
+                    match (whole(&o["stride"]), whole(&o["reservoir"]["size"])) {
+                        (Some(n), _) => $target.sample(pond_rs::Sample::Stride(n as usize)),
+                        (_, Some(n)) => $target.sample(pond_rs::Sample::Reservoir {
+                            size: n as usize,
+                            seed: 0,
+                        }),
+                        // A fractional or negative count cannot be written in
+                        // Rust (`usize`); pond-ts rejects it, so stand in that
+                        // error.
+                        _ => return Some(Err("sample count must be a whole number".into())),
+                    },
+                )
+            }
+            _ => None,
+        }
+    }};
+}
+
+/// pond-ts `smooth(column, method, options)` as a pond-rs [`Smooth`], or
+/// the error pond-ts gives for options pond-rs cannot even express (a
+/// missing or doubled rate, a fractional count).
+fn smooth_options(method: &Value, o: &Value) -> Result<pond_rs::Smooth, String> {
+    use pond_rs::Smooth;
+    let count = |k: &str| match &o[k] {
+        Value::Null => Ok(None),
+        v => v
+            .as_u64()
+            .map(|n| Some(n as usize))
+            .ok_or_else(|| format!("{k} must be a whole number")),
+    };
+    let mut smooth = match method.as_str().expect("method") {
+        "ema" => match (o["alpha"].as_f64(), o["span"].as_f64()) {
+            (Some(a), None) => Smooth::ema(a),
+            (None, Some(s)) => Smooth::ema_span(s),
+            _ => return Err("ema needs exactly one of alpha or span".into()),
+        },
+        "movingAverage" => match o["window"].as_str() {
+            Some(w) => Smooth::moving_average(w),
+            None => return Err("moving_average needs a window".into()),
+        },
+        "loess" => match o["span"].as_f64() {
+            Some(s) => Smooth::loess(s),
+            None => return Err("loess needs a span".into()),
+        },
+        other => panic!("unknown smooth method {other}"),
+    };
+    if let Some(n) = count("warmup")? {
+        smooth = smooth.warmup(n);
+    }
+    if let Some(n) = count("minSamples")? {
+        smooth = smooth.min_samples(n);
+    }
+    if o["alignment"].is_string() {
+        smooth = smooth.alignment(rolling_options(Some(o)).alignment);
+    }
+    match o["missing"].as_str() {
+        None | Some("bridge") => {}
+        Some("skip") => smooth = smooth.skip_missing(),
+        Some(other) => panic!("unknown missing {other}"),
+    }
+    if let Some(name) = o["output"].as_str() {
+        smooth = smooth.output(name);
+    }
+    Ok(smooth)
+}
+
+/// pond-ts `scan(column, step, init, { output })`, with the step named by
+/// the closure spec (cases.mjs `closure`).
+fn run_scan<T: Scan>(input: &T, args: &[Value]) -> pond_rs::Result<T> {
+    let column = args[0].as_str().expect("column");
+    let spec = &args[1]["fn"];
+    let output = args.get(3).and_then(|o| o["output"].as_str());
+    fn go<T: Scan, A: Clone + Send + Sync>(
+        input: &T,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<T> {
+        input.scan_any(column, output, init, step)
+    }
+    match spec["scan"].as_str().expect("scan spec") {
+        "sum" => go(input, column, output, decode_f64(&args[2]), |a, v, _| {
+            (a + v, a + v)
+        }),
+        "index" => go(input, column, output, decode_f64(&args[2]), |a, v, i| {
+            (a + 1.0, v * i as f64 - a)
+        }),
+        "nonfinite" => go(input, column, output, decode_f64(&args[2]), |a, v, _| {
+            (a + 1.0, v / (a % 3.0))
+        }),
+        "gain" => {
+            let band = spec["band"].as_f64().expect("band");
+            go(
+                input,
+                column,
+                output,
+                (None::<f64>, 0.0),
+                move |(reference, gain), v, _| match reference {
+                    None => ((Some(v), 0.0), 0.0),
+                    Some(r) if v - r >= band => ((Some(v), gain + v - r), gain + v - r),
+                    Some(r) if v - r <= -band => ((Some(v), gain), gain),
+                    Some(r) => ((Some(r), gain), gain),
+                },
+            )
+        }
+        other => panic!("unknown scan spec {other}"),
+    }
+}
+
+/// `scan` / `scan_to` on a series or a partitioned view.
+trait Scan: Sized {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self>;
+}
+
+impl Scan for TimeSeries {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self> {
+        match output {
+            None => self.scan(column, init, step),
+            Some(name) => self.scan_to(column, name, init, step),
+        }
+    }
+}
+
+impl Scan for pond_rs::PartitionedSeries {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self> {
+        match output {
+            None => self.scan(column, init, step),
+            Some(name) => self.scan_to(column, name, init, step),
+        }
+    }
+}
+
+/// pond-ts `collapse(keys, output, reducer, { append })`, with the reducer
+/// named by the closure spec (cases.mjs `closure`).
+fn run_collapse(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
+    let columns: Vec<&str> = args[0]
+        .as_array()
+        .expect("collapse keys")
+        .iter()
+        .map(|k| k.as_str().expect("key"))
+        .collect();
+    let output = args[1].as_str().expect("output");
+    let spec = &args[2]["fn"];
+    let keys: Vec<String> = spec["keys"]
+        .as_array()
+        .expect("closure keys")
+        .iter()
+        .map(|k| k.as_str().expect("key").to_string())
+        .collect();
+    let how = spec["collapse"]
+        .as_str()
+        .expect("collapse spec")
+        .to_string();
+    let step = move |r: &pond_rs::Row<'_>| -> pond_rs::Result<Option<Scalar>> {
+        let numbers = || -> pond_rs::Result<Option<Vec<f64>>> {
+            keys.iter()
+                .map(|k| r.number(k))
+                .collect::<pond_rs::Result<Option<Vec<f64>>>>()
+        };
+        Ok(match how.as_str() {
+            "sum" => numbers()?.map(|v| Scalar::Number(v.iter().fold(0.0, |s, x| s + x))),
+            "ratio" => numbers()?.map(|v| Scalar::Number(v[0] / v[1])),
+            "gt" => numbers()?.map(|v| Scalar::Boolean(v[0] > v[1])),
+            "join" => keys
+                .iter()
+                .map(|k| r.string(k))
+                .collect::<pond_rs::Result<Option<Vec<&str>>>>()?
+                .map(|v| Scalar::String(v.join("|"))),
+            "none" => None,
+            "nan" => Some(Scalar::Number(f64::NAN)),
+            "nanOrText" => Some(match numbers()? {
+                Some(_) => Scalar::String("x".into()),
+                None => Scalar::Number(f64::NAN),
+            }),
+            other => panic!("unknown collapse spec {other}"),
+        })
+    };
+    if args
+        .get(3)
+        .is_some_and(|o| o["append"] == Value::Bool(true))
+    {
+        input.collapse_keep(&columns, output, step)
+    } else {
+        input.collapse(&columns, output, step)
+    }
+}
+
+/// `alignment` and `minSamples` in rolling options.
+fn rolling_options(options: Option<&Value>) -> Rolling {
+    let Some(o) = options else {
+        return Rolling::default();
+    };
+    Rolling {
+        alignment: match o["alignment"].as_str() {
+            None | Some("trailing") => Alignment::Trailing,
+            Some("leading") => Alignment::Leading,
+            Some("centered") => Alignment::Centered,
+            Some(other) => panic!("unknown alignment {other}"),
+        },
+        min_samples: o["minSamples"].as_u64().unwrap_or(0) as usize,
+        append: o["append"].as_bool().unwrap_or(false),
+    }
+}
+
+/// `sample` in align / materialize options.
+fn sample(options: &Value) -> At {
+    match options["sample"].as_str() {
+        None | Some("begin") => At::Begin,
+        Some("center") => At::Center,
+        Some("end") => At::End,
+        Some(other) => panic!("unknown sample {other}"),
+    }
+}
+
+/// `range`: `{ start, end }` or one time (a zero-length range).
+fn range(options: &Value) -> Option<(i64, i64)> {
+    match &options["range"] {
+        Value::Null => None,
+        Value::Number(t) => {
+            let t = t.as_i64().expect("whole ms");
+            Some((t, t))
+        }
+        r => Some((
+            r["start"].as_i64().expect("range start"),
+            r["end"].as_i64().expect("range end"),
+        )),
+    }
+}
+
+fn cumulative_spec(json: &Value) -> Vec<(&str, Reducer)> {
+    json.as_object()
+        .expect("cumulative takes a mapping")
+        .iter()
+        .map(|(c, r)| {
+            (
+                c.as_str(),
+                Reducer::parse(r.as_str().expect("reducer")).unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn fill_limits(options: Option<&Value>) -> FillLimits {
+    let mut limits = FillLimits::none();
+    if let Some(limit) = options.and_then(|o| o["limit"].as_u64()) {
+        limits = limits.limit(limit as usize);
+    }
+    if let Some(max_gap) = options.and_then(|o| o["maxGap"].as_str()) {
+        limits = limits.max_gap(max_gap);
+    }
+    limits
+}
+
+/// One array element from the fixture (`{"f64": "-0"}` is -0).
+fn scalar(v: &Value) -> Scalar {
+    match v {
+        Value::String(s) => Scalar::String(s.clone()),
+        Value::Bool(b) => Scalar::Boolean(*b),
+        _ => Scalar::Number(decode_f64(v)),
+    }
+}
+
+/// `arrayAggregate` / `arrayExplode` options: `{ as, kind }`.
+fn array_options(v: Option<&Value>) -> ArrayOptions {
+    ArrayOptions {
+        output: v.and_then(|o| o["as"].as_str()).map(str::to_string),
+        kind: v.and_then(|o| o["kind"].as_str()).map(column_kind),
+    }
+}
+
+fn fill_strategy(v: &Value) -> Fill {
+    match v.as_str() {
+        Some("hold") => Fill::Hold,
+        Some("bfill") => Fill::Bfill,
+        Some("linear") => Fill::Linear,
+        Some("zero") => Fill::Zero,
+        Some(text) => Fill::Value(Literal::String(text.into())),
+        None => match v {
+            Value::Bool(b) => Fill::Value(Literal::Boolean(*b)),
+            Value::Array(a) => Fill::Value(Literal::Array(a.iter().map(scalar).collect())),
+            _ => Fill::Value(Literal::Number(v.as_f64().expect("a literal"))),
+        },
+    }
+}
+
+/// A partition key as pond-ts writes it: `String(value)` for one column
+/// (`missing` for a gap), `JSON.stringify` of the values for several.
+fn partition_key(key: &[Option<Literal>], missing: &str) -> String {
+    fn js_number(v: f64) -> String {
+        assert!(
+            v == 0.0 || (1e-6..1e21).contains(&v.abs()),
+            "no JavaScript exponent form in the harness yet: {v}"
+        );
+        if v == v.trunc() {
+            format!("{}", v as i64)
+        } else {
+            format!("{v}")
+        }
+    }
+    let text = |v: &Literal| match v {
+        Literal::Number(x) => js_number(*x),
+        Literal::String(s) => s.clone(),
+        Literal::Boolean(b) => b.to_string(),
+        Literal::Decimal(d) => d.to_string(),
+        Literal::Array(_) => unreachable!("partition_by refuses arrays"),
+    };
+    if let [one] = key {
+        return one.as_ref().map_or(missing.to_string(), text);
+    }
+    let parts: Vec<String> = key
+        .iter()
+        .map(|v| match v {
+            None => "null".to_string(),
+            Some(Literal::String(s)) => serde_json::to_string(s).unwrap(),
+            Some(other) => text(other),
+        })
+        .collect();
+    format!("[{}]", parts.join(","))
+}
+
+/// Run one case through pond-rs. `None` means the op is not implemented yet.
+fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>> {
+    let input = to_series(&fixture.inputs[&case.input]);
+    if case.op == "shift" && case.args[1].as_f64().is_some_and(|n| n.fract() != 0.0) {
+        // A fractional offset cannot be written in Rust (`n` is an i64);
+        // pond-ts rejects it, so stand in that error here.
+        return Some(Err("shift offset must be a whole number".into()));
+    }
+    if let Some(result) = shared_op!(input, case.op.as_str(), &case.args) {
+        return Some(
+            result
+                .map(|s| to_json(&s).into())
+                .map_err(|e| e.to_string()),
+        );
+    }
+    if case.op == "byColumn" || case.op == "rollingByColumn" {
+        return Some(value_axis(&input, case).map_err(|e| e.to_string()));
+    }
+    if case.op == "reduce" {
+        let reduced = mapping(&case.args[0]).and_then(|aggs| input.reduce(&aggs));
+        return Some(
+            reduced
+                .map(|r| {
+                    Outcome::Record(
+                        r.columns()
+                            .iter()
+                            .map(|c| (c.name().to_string(), encode(c.data(), 0)))
+                            .collect(),
+                    )
+                })
+                .map_err(|e| e.to_string()),
+        );
+    }
+    let result = match case.op.as_str() {
+        "tail" => input.tail(case.args[0].as_str().expect("tail takes a duration string")),
+        "overlapping" => event_key(&case.args[0]).map(|k| input.overlapping(k)),
+        "containedBy" => event_key(&case.args[0]).map(|k| input.contained_by(k)),
+        "trim" => event_key(&case.args[0]).map(|k| input.trim(k)),
+        "before" => event_key(&case.args[0]).map(|k| input.before(k)),
+        "after" => event_key(&case.args[0]).map(|k| input.after(k)),
+        "within" => {
+            let ms = |i: usize| case.args[i].as_i64().expect("within takes whole ms");
+            input.within(ms(0), ms(1))
+        }
+        "asTimeRange" => input.as_time_range(),
+        "asInterval" => match &case.args[0] {
+            Value::String(label) => input.as_interval(label.as_str()),
+            Value::Object(o) if o.contains_key("fn") => {
+                let spec = o["fn"].as_str().expect("closure spec is a string");
+                input.as_interval_with(|range, i| -> pond_rs::Label {
+                    match spec {
+                        "rangeBegin" => (range.begin() as f64).into(),
+                        "rangeEnd" => (range.end() as f64).into(),
+                        "rowLabel" => format!("row{i}").into(),
+                        "mixedLabel" if i == 0 => 1.0.into(),
+                        "mixedLabel" => "b".into(),
+                        other => panic!("unknown asInterval closure '{other}'"),
+                    }
+                })
+            }
+            n => input.as_interval(decode_f64(n)),
+        },
+        "offsetTime" => match &case.args[0] {
+            Value::String(by) => input.offset_time(by),
+            n => input.offset_time_ms(n.as_i64().expect("offsetTime takes whole ms")),
+        },
+        "join" => {
+            let other = to_series(&fixture.inputs[series_name(&case.args[0])]);
+            input.join(&other, join_options(case.args.get(1)))
+        }
+        "joinMany" => {
+            let others: Vec<TimeSeries> = case.args[0]
+                .as_array()
+                .expect("joinMany takes a list of series")
+                .iter()
+                .map(|a| to_series(&fixture.inputs[series_name(a)]))
+                .collect();
+            let all: Vec<&TimeSeries> = std::iter::once(&input).chain(&others).collect();
+            TimeSeries::join_many(&all, join_options(case.args.get(1)))
+        }
+        "arrayContains" => input.array_contains(
+            case.args[0].as_str().expect("column"),
+            scalar(&case.args[1]),
+        ),
+        "arrayContainsAll" | "arrayContainsAny" => {
+            let column = case.args[0].as_str().expect("column");
+            let values: Vec<Scalar> = case.args[1]
+                .as_array()
+                .expect("values")
+                .iter()
+                .map(scalar)
+                .collect();
+            if case.op == "arrayContainsAll" {
+                input.array_contains_all(column, &values)
+            } else {
+                input.array_contains_any(column, &values)
+            }
+        }
+        "arrayAggregate" => Reducer::parse(case.args[1].as_str().expect("reducer")).and_then(|r| {
+            input.array_aggregate(
+                case.args[0].as_str().expect("column"),
+                r,
+                &array_options(case.args.get(2)),
+            )
+        }),
+        "arrayExplode" => input.array_explode(
+            case.args[0].as_str().expect("column"),
+            &array_options(case.args.get(1)),
+        ),
+        "concat" => {
+            let others: Vec<TimeSeries> = case.args[0]
+                .as_array()
+                .expect("concat takes a list of series")
+                .iter()
+                .map(|a| to_series(&fixture.inputs[series_name(a)]))
+                .collect();
+            let all: Vec<&TimeSeries> = std::iter::once(&input).chain(&others).collect();
+            TimeSeries::concat(&all)
+        }
+        "collapse" => run_collapse(&input, &case.args),
+        "pivotByGroup" => {
+            let o = case.args.get(2);
+            let mut pivot = pond_rs::Pivot::default();
+            if let Some(name) = o.and_then(|o| o["aggregate"].as_str()) {
+                match Reducer::parse(name) {
+                    Ok(r) => pivot = pivot.aggregate(r),
+                    Err(e) => return Some(Err(e.to_string())),
+                }
+            }
+            if let Some(groups) = o.and_then(|o| o["groups"].as_array()) {
+                pivot = pivot.groups(groups.iter().map(|g| g.as_str().expect("group name")));
+            }
+            input.pivot_by_group(
+                case.args[0].as_str().expect("group column"),
+                case.args[1].as_str().expect("value column"),
+                &pivot,
+            )
+        }
+        "select" => {
+            let names: Vec<&str> = case
+                .args
+                .iter()
+                .map(|a| a.as_str().expect("select takes column names"))
+                .collect();
+            input.select(&names)
+        }
+        "rename" => {
+            let renames: Vec<(&str, &str)> = case.args[0]
+                .as_object()
+                .expect("rename takes a mapping")
+                .iter()
+                .map(|(from, to)| (from.as_str(), to.as_str().expect("new name")))
+                .collect();
+            input.rename(&renames)
+        }
+        "asTime" => {
+            let at = match case.args.first().and_then(|o| o["at"].as_str()) {
+                None | Some("begin") => At::Begin,
+                Some("center") => At::Center,
+                Some("end") => At::End,
+                Some(other) => panic!("unknown asTime anchor {other}"),
+            };
+            input.as_time(at)
+        }
+        "slice" => {
+            let at = |i: usize| {
+                case.args
+                    .get(i)
+                    .map(|v| v.as_i64().expect("whole position"))
+            };
+            Ok(match (at(0), at(1)) {
+                (None, _) => input.slice(..),
+                (Some(b), None) => input.slice(b..),
+                (Some(b), Some(e)) => input.slice(b..e),
+            })
+        }
+        "filter" if case.args[0].get("expr").is_some() => {
+            input.filter_expr(&expr_arg(&case.args[0]))
+        }
+        "mapColumns"
+            if case.args[0]
+                .as_object()
+                .is_some_and(|m| !m.is_empty() && m.values().all(|v| v.get("expr").is_some())) =>
+        {
+            let spec = case.args[0].as_object().expect("a mapping");
+            let exprs: Vec<(String, pond_rs::Expr)> =
+                spec.iter().map(|(k, v)| (k.clone(), expr_arg(v))).collect();
+            let pairs: Vec<(&str, &pond_rs::Expr)> =
+                exprs.iter().map(|(k, e)| (k.as_str(), e)).collect();
+            // As the function cases: pond-ts keeps a mapped column
+            // required even when it gets a gap ([PND-MAPREQ]).
+            return Some(
+                input
+                    .map_exprs(&pairs)
+                    .map(|s| {
+                        let mut json = to_json(&s);
+                        match case.id.as_str() {
+                            "mapColumns-expr-overflow" => {
+                                assert_eq!(json.schema[1].required, Some(false));
+                                json.schema[1].required = None;
+                            }
+                            "mapColumns-expr-required" => {
+                                assert_ne!(json.schema[1].required, Some(false));
+                            }
+                            _ => {}
+                        }
+                        Outcome::from(json)
+                    })
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        "withColumn" if case.args[1].get("expr").is_some() => {
+            let name = case.args[0].as_str().expect("column name");
+            input.with_column_expr(name, &expr_arg(&case.args[1]))
+        }
+        "filter" => {
+            let spec = &case.args[0]["fn"];
+            input.filter(|r| row_test(spec, r))
+        }
+        "mapColumns" => {
+            let spec = case.args[0]
+                .as_object()
+                .expect("mapColumns takes a mapping");
+            if spec.is_empty() {
+                // pond-rs maps one column per call, so an empty mapping
+                // cannot be written; stand in pond-ts's error.
+                return Some(Err("mapColumns needs at least one column".into()));
+            }
+            let mut out = Ok(input);
+            for (column, mapper) in spec {
+                let column = column.as_str();
+                let mapper = &mapper["fn"];
+                out = out.and_then(|s| match mapper.as_str() {
+                    Some("upper") => s.map_strings(column, |v| v.to_uppercase()),
+                    Some("not") => s.map_booleans(column, |v| !v),
+                    _ => {
+                        let mul = mapper["mul"].as_f64().expect("mul");
+                        let add = mapper["add"].as_f64().expect("add");
+                        s.map_numbers(column, |v| v * mul + add)
+                    }
+                });
+            }
+            // pond-ts keeps a mapped column marked required even when the
+            // mapping leaves a gap ([PND-MAPREQ]); pond-rs makes it
+            // optional. Check that, then compare the rest as pond-ts has it.
+            return Some(
+                out.map(|s| {
+                    let mut json = to_json(&s);
+                    if case.id == "mapColumns-overflow" {
+                        assert_eq!(
+                            json.schema[1].required,
+                            Some(false),
+                            "mapped gap makes it optional"
+                        );
+                        json.schema[1].required = None;
+                    }
+                    Outcome::from(json)
+                })
+                .map_err(|e| e.to_string()),
+            );
+        }
+        "withColumn" => {
+            let name = case.args[0].as_str().expect("column name");
+            let values: Vec<Option<f64>> = case.args[1]
+                .as_array()
+                .expect("values")
+                .iter()
+                .map(Value::as_f64)
+                .collect();
+            input.with_column(Column::optional(name, values))
+        }
+        "partitionBy" => {
+            let by = column_names(&case.args[0]);
+            let steps = case.args[1].as_array().expect("steps");
+            let mut view = match input.partition_by(&by) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e.to_string())),
+            };
+            for step in steps {
+                let step = step.as_array().expect("a step is [method, ...args]");
+                let method = step[0].as_str().expect("method name");
+                view = match shared_op!(view, method, &step[1..]) {
+                    Some(Ok(v)) => v,
+                    Some(Err(e)) => return Some(Err(e.to_string())),
+                    None => panic!("no partitioned '{method}' in the harness"),
+                };
+            }
+            return Some(match case.args[2].as_str() {
+                Some("collect") => view
+                    .collect()
+                    .map(|s| to_json(&s).into())
+                    .map_err(|e| e.to_string()),
+                Some("toMap") => Ok(Outcome::Groups(
+                    view.iter()
+                        .map(|(key, s)| (partition_key(key, " undefined"), to_json(s)))
+                        .collect(),
+                )),
+                other => panic!("unknown partition end {other:?}"),
+            });
+        }
+        "groupBy" => {
+            let column = case.args[0].as_str().expect("groupBy column");
+            return Some(
+                input
+                    .group_by(&[column])
+                    .map(|groups| {
+                        Outcome::Groups(
+                            groups
+                                .iter()
+                                .map(|(key, s)| (partition_key(key, "undefined"), to_json(s)))
+                                .collect(),
+                        )
+                    })
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        _ => return None,
+    };
+    Some(
+        result
+            .map(|s| to_json(&s).into())
+            .map_err(|e| e.to_string()),
+    )
+}
+
+/// `{every}` or `{calendar, timeZone, weekStartsOn?}`.
+/// One column name or a list of them.
+fn column_names(json: &Value) -> Vec<&str> {
+    match json {
+        Value::String(name) => vec![name.as_str()],
+        Value::Array(names) => names
+            .iter()
+            .map(|n| n.as_str().expect("column name"))
+            .collect(),
+        other => panic!("expected column names, got {other}"),
+    }
+}
+
+fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
+    if let Some(every) = json["every"].as_str() {
+        return Sequence::every(every);
+    }
+    let unit = json["calendar"]
+        .as_str()
+        .expect("sequence is every or calendar");
+    let zone = json["timeZone"].as_str().expect("calendar timeZone");
+    let seq = Sequence::calendar(unit, zone)?;
+    match json["weekStartsOn"].as_i64() {
+        Some(day) => seq.with_week_start(day as i8),
+        None => Ok(seq),
+    }
+}
+
+/// A fixture input series as a pond-rs `TimeSeries`.
+fn to_series(json: &SeriesJson) -> TimeSeries {
+    let key_kind = json.schema[0].kind.as_str();
+    assert!(
+        ["time", "timeRange", "interval"].contains(&key_kind),
+        "{}: inputs are time-, timeRange- or interval-keyed",
+        json.name
+    );
+    let columns = json.schema[1..]
+        .iter()
+        .enumerate()
+        .map(|(c, def)| {
+            let cells = json.rows.iter().map(|row| &row[c + 1]);
+            let data: ColumnData = match def.kind.as_str() {
+                "number" => cells.map(cell_number).collect::<Vec<_>>().into(),
+                "string" => cells
+                    .map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+                    .into(),
+                "boolean" => cells.map(Value::as_bool).collect::<Vec<_>>().into(),
+                "array" => cells
+                    .map(|v| v.as_array().map(|a| a.iter().map(scalar).collect()))
+                    .collect::<Vec<Option<Vec<Scalar>>>>()
+                    .into(),
+                other => panic!("{}.{}: unknown column kind {other}", json.name, def.name),
+            };
+            if def.required.unwrap_or(true) {
+                Column::required(&def.name, data)
+            } else {
+                Column::optional(&def.name, data)
+            }
+        })
+        .collect();
+    let ms = |v: &Value| v.as_i64().expect("key times are integers");
+    if key_kind == "time" {
+        let time = json.rows.iter().map(|row| ms(&row[0])).collect();
+        TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+    } else if key_kind == "timeRange" {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let keys = TimeRangeKeys {
+            begin: part(0),
+            end: part(1),
+        };
+        TimeSeries::from_time_ranges(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
+    } else {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let labels: Vec<&Value> = json.rows.iter().map(|row| &row[0][0]).collect();
+        let label: Labels = if labels.iter().all(|l| l.is_string()) {
+            labels
+                .iter()
+                .map(|l| l.as_str().unwrap())
+                .collect::<Vec<_>>()
+                .into()
+        } else {
+            labels
+                .iter()
+                .map(|l| l.as_f64().expect("interval labels are numbers or text"))
+                .collect::<Vec<_>>()
+                .into()
+        };
+        let keys = IntervalKeys {
+            label,
+            begin: part(1),
+            end: part(2),
+        };
+        TimeSeries::from_intervals(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
+    }
+}
+
+/// `byColumn` / `rollingByColumn`, as records.
+fn value_axis(input: &TimeSeries, case: &CoreCase) -> pond_rs::Result<Outcome> {
+    let column = case.args[0].as_str().expect("column name");
+    let spec = &case.args[1];
+    let aggs = mapping(&case.args[2])?;
+    let numbers = |v: &Value| -> Vec<f64> {
+        v.as_array()
+            .expect("an array of numbers")
+            .iter()
+            .map(|x| x.as_f64().expect("a number"))
+            .collect()
+    };
+    let table = if case.op == "byColumn" {
+        let bins = match spec.get("edges") {
+            Some(edges) if spec["inclusive"] == "(]" => Bins::edges_upper_inclusive(numbers(edges)),
+            Some(edges) => Bins::edges(numbers(edges)),
+            None => Bins::width_from(
+                spec["width"].as_f64().expect("width"),
+                spec.get("origin")
+                    .map_or(0.0, |o| o.as_f64().expect("origin")),
+            ),
+        };
+        input.by_column(column, &bins, &aggs)?
+    } else {
+        let radius = spec["radius"].as_f64().expect("radius");
+        match spec.get("at") {
+            Some(at) => input.rolling_by_column_at(column, radius, &numbers(at), &aggs)?,
+            None => input.rolling_by_column(column, radius, &aggs)?,
+        }
+    };
+    Ok(Outcome::Records(
+        (0..table.len())
+            .map(|row| {
+                table
+                    .columns()
+                    .iter()
+                    .map(|c| (c.name().to_string(), encode(c.data(), row)))
+                    .collect()
+            })
+            .collect(),
+    ))
+}
+
+/// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
+/// `{ out: { from, using } }`, in key order.
+fn mapping(json: &Value) -> pond_rs::Result<Vec<Agg>> {
+    json.as_object()
+        .expect("mapping is an object")
+        .iter()
+        .map(|(output, spec)| match spec {
+            Value::String(reducer) => Ok(Agg::of(output, Reducer::parse(reducer)?)),
+            _ => Ok(Agg::new(
+                output,
+                spec["from"].as_str().expect("spec.from"),
+                Reducer::parse(spec["using"].as_str().expect("spec.using"))?,
+            )),
+        })
+        .collect()
+}
+
+/// A pond-rs series in `TimeSeries.toJSON()` form, tagging what plain JSON
+/// would lose.
+fn to_json(series: &TimeSeries) -> SeriesJson {
+    let schema = series
+        .schema()
+        .into_iter()
+        .map(|def| ColumnDef {
+            name: def.name,
+            kind: def.kind.as_str().to_string(),
+            required: match def.kind {
+                ColumnKind::Time | ColumnKind::TimeRange | ColumnKind::Interval => None,
+                _ => (!def.required).then_some(false),
+            },
+        })
+        .collect();
+    let rows = (0..series.len())
+        .map(|i| {
+            let key = match series.key() {
+                Key::Time(t) => json!(t[i]),
+                Key::TimeRange(k) => json!([k.begin[i], k.end[i]]),
+                Key::Interval(k) => {
+                    let label = match &k.label {
+                        Labels::Number(v) if v[i] == 0.0 && v[i].is_sign_negative() => {
+                            json!({ "f64": "-0" })
+                        }
+                        Labels::Number(v) => json!(v[i]),
+                        Labels::String(c) => json!(c.get(i)),
+                    };
+                    json!([label, k.begin[i], k.end[i]])
+                }
+            };
+            std::iter::once(key)
+                .chain(series.columns().iter().map(|c| encode(c.data(), i)))
+                .collect()
+        })
+        .collect();
+    SeriesJson {
+        name: series.name().to_string(),
+        schema,
+        rows,
+    }
+}
+
+fn encode(data: &ColumnData, i: usize) -> Value {
+    match data {
+        ColumnData::Number(c) => match c.get(i) {
+            None => Value::Null,
+            Some(v) if v == 0.0 && v.is_sign_negative() => json!({ "f64": "-0" }),
+            Some(v) => json!(v),
+        },
+        // pond-ts has no decimals, so no fixture holds one.
+        ColumnData::Decimal(_) => panic!("pond-ts has no decimal columns"),
+        ColumnData::String(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
+        ColumnData::Boolean(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
+        ColumnData::Array(c) => c.get(i).map_or(Value::Null, |v| {
+            Value::Array(
+                v.iter()
+                    .map(|e| match e {
+                        Scalar::Number(x) if *x == 0.0 && x.is_sign_negative() => {
+                            json!({ "f64": "-0" })
+                        }
+                        Scalar::Number(x) => json!(x),
+                        Scalar::String(x) => json!(x),
+                        Scalar::Boolean(x) => json!(x),
+                    })
+                    .collect(),
+            )
+        }),
+    }
+}
+
+/// `{ "expr": tree }`: a column expression in pond-ts's JSON form.
+fn expr_arg(v: &Value) -> pond_rs::Expr {
+    pond_rs::Expr::from_value(&v["expr"]).expect("an expression tree")
+}
+
+/// A `filter` / `find` test spec from the fixture (cases.mjs `closure`).
+fn row_test(spec: &Value, r: &pond_rs::Row<'_>) -> pond_rs::Result<bool> {
+    if let Some(column) = spec["column"].as_str() {
+        return Ok(match (&spec["gt"], &spec["eq"]) {
+            (Value::Number(gt), _) => r.number(column)?.is_some_and(|v| v > gt.as_f64().unwrap()),
+            (_, Value::String(eq)) => r.string(column)? == Some(eq.as_str()),
+            (_, Value::Bool(eq)) => r.boolean(column)? == Some(*eq),
+            _ => panic!("unknown filter spec {spec}"),
+        });
+    }
+    if let Some(column) = spec["missing"].as_str() {
+        return Ok(r.number(column)?.is_none());
+    }
+    if let Some(n) = spec["everyNth"].as_u64() {
+        return Ok(r.index() % n as usize == 0);
+    }
+    if let Some(t) = spec["beginAtLeast"].as_i64() {
+        return Ok(r.begin() >= t);
+    }
+    if let Some(t) = spec["endAtMost"].as_i64() {
+        return Ok(r.end() <= t);
+    }
+    panic!("unknown filter spec {spec}")
+}
+
+/// A pond-ts `KeyLike` from the fixture: a number or `{"time": t}` is a
+/// time, `[start, end]` a time range, `[label, start, end]` an interval
+/// (also as `{"timeRange": …}` / `{"interval": …}`).
+fn event_key(arg: &Value) -> pond_rs::Result<pond_rs::EventKey> {
+    let ms = |v: &Value| v.as_i64().unwrap_or_else(|| panic!("whole ms, got {v}"));
+    match arg {
+        Value::Array(a) if a.len() == 2 => pond_rs::EventKey::time_range(ms(&a[0]), ms(&a[1])),
+        Value::Array(a) if a.len() == 3 => {
+            let label: pond_rs::Label = match &a[0] {
+                Value::String(t) => t.as_str().into(),
+                v => decode_f64(v).into(),
+            };
+            pond_rs::EventKey::interval(label, ms(&a[1]), ms(&a[2]))
+        }
+        Value::Object(o) if o.contains_key("time") => Ok(pond_rs::EventKey::time(ms(&o["time"]))),
+        Value::Object(o) if o.contains_key("timeRange") => event_key(&o["timeRange"]),
+        Value::Object(o) if o.contains_key("interval") => event_key(&o["interval"]),
+        v => Ok(pond_rs::EventKey::time(ms(v))),
+    }
+}
+
+/// A number cell, with the fixture's tags for -0 / NaN / infinities.
+fn decode_f64(v: &Value) -> f64 {
+    match v["f64"].as_str() {
+        Some("-0") => -0.0,
+        Some("NaN") => f64::NAN,
+        Some("inf") => f64::INFINITY,
+        Some("-inf") => f64::NEG_INFINITY,
+        _ => v.as_f64().unwrap_or_else(|| panic!("a number, got {v}")),
+    }
+}
+
+/// Every row lookup in the fixture (`bisect`, `includesKey`, `atOrBefore`,
+/// `atOrAfter`, `nearest`, `at`, `find`, `some`, `every`) gives the row,
+/// index or answer pond-ts gives, or fails where pond-ts throws.
+#[test]
+fn row_lookups_match_pond_ts() {
+    let fixture = load_core_fixture();
+    assert!(!fixture.queries.is_empty(), "core fixture has no queries");
+    let inputs: std::collections::BTreeMap<&str, TimeSeries> = fixture
+        .queries
+        .iter()
+        .map(|q| (q.input.as_str(), to_series(&fixture.inputs[&q.input])))
+        .collect();
+    let mut failures = Vec::new();
+    for q in &fixture.queries {
+        let s = &inputs[q.input.as_str()];
+        let pos = |r: Option<pond_rs::Row<'_>>| r.map_or(Value::Null, |r| json!(r.index()));
+        let span =
+            |r: Option<pond_rs::EventKey>| r.map_or(Value::Null, |r| json!([r.begin(), r.end()]));
+        let got: pond_rs::Result<Value> = match q.op.as_str() {
+            "at" => Ok(pos(s.at(q.arg.as_i64().expect("position")))),
+            "find" if q.arg.get("expr").is_some() => s.find_expr(&expr_arg(&q.arg)).map(pos),
+            "some" if q.arg.get("expr").is_some() => {
+                s.some_expr(&expr_arg(&q.arg)).map(|b| json!(b))
+            }
+            "every" if q.arg.get("expr").is_some() => {
+                s.every_expr(&expr_arg(&q.arg)).map(|b| json!(b))
+            }
+            "find" => s.find(|r| row_test(&q.arg, r)).map(pos),
+            "some" => s.some(|r| row_test(&q.arg, r)).map(|b| json!(b)),
+            "every" => s.every(|r| row_test(&q.arg, r)).map(|b| json!(b)),
+            "timeRange" => Ok(span(s.time_range())),
+            op => event_key(&q.arg).map(|k| match op {
+                "overlaps" => json!(s.overlaps(k)),
+                "contains" => json!(s.contains(k)),
+                "intersection" => span(s.intersection(k)),
+                "bisect" => json!(s.bisect(k)),
+                "includesKey" => json!(s.includes_key(k)),
+                "atOrBefore" => pos(s.at_or_before(k)),
+                "atOrAfter" => pos(s.at_or_after(k)),
+                "nearest" => pos(s.nearest(k)),
+                _ => panic!("unknown query op {op}"),
+            }),
+        };
+        // A `null` expected (no row) reads as `None`; `error` tells them apart.
+        let want = q
+            .error
+            .is_none()
+            .then(|| q.expected.clone().unwrap_or(Value::Null));
+        let same = match (&got, &want) {
+            (Ok(v), Some(want)) => v == want,
+            (Err(_), None) => true,
+            // Known difference: on an empty series pond-ts `nearest` returns
+            // before it builds the key, so a backwards range is no error
+            // there. pond-rs checks a key when it is built, before any call.
+            (Err(_), Some(Value::Null)) => {
+                q.op == "nearest" && s.is_empty() && matches!(&q.arg, Value::Array(_))
+            }
+            _ => false,
+        };
+        if !same {
+            failures.push(format!(
+                "{}.{}({}): pond-rs {got:?}, pond-ts {}",
+                q.input,
+                q.op,
+                q.arg,
+                q.expected
+                    .as_ref()
+                    .map_or_else(|| format!("{:?}", q.error), |v| v.to_string())
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} differ:\n{}",
+        failures.len(),
+        fixture.queries.len(),
+        failures.join("\n")
+    );
+}
+
+/// Every text pond-ts's `Time.parse` reads (or refuses) in the fixture,
+/// read (or refused) the same by `parse_time_in`.
+#[test]
+fn times_parse_as_pond_ts_parses_them() {
+    let fixture = load_core_fixture();
+    assert!(
+        !fixture.time_parse.is_empty(),
+        "core fixture has no timeParse"
+    );
+    let mut failures = Vec::new();
+    for case in &fixture.time_parse {
+        let got = pond_rs::parse_time_in(&case.input, &case.time_zone);
+        let same = match (&got, case.expected) {
+            (Ok(ms), Some(want)) => *ms == want,
+            (Err(_), None) => true,
+            _ => false,
+        };
+        if !same {
+            failures.push(format!(
+                "{:?} in {}: pond-rs {got:?}, pond-ts {}",
+                case.input,
+                case.time_zone,
+                case.expected
+                    .map_or_else(|| format!("{:?}", case.error), |ms| ms.to_string())
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn fixture_ops_are_known() {
+    let fixture = load_core_fixture();
+    assert!(!fixture.cases.is_empty(), "core fixture has no cases");
+    for case in &fixture.cases {
+        assert!(
+            KNOWN_OPS.contains(&case.op.as_str()),
+            "case '{}' uses op '{}', which is not in KNOWN_OPS",
+            case.id,
+            case.op
+        );
+        assert!(
+            fixture.inputs.contains_key(&case.input),
+            "case '{}' names unknown input '{}'",
+            case.id,
+            case.input
+        );
+    }
+}
+
+#[test]
+fn implemented_ops_match_pond_ts() {
+    let fixture = load_core_fixture();
+    let mut implemented = 0;
+    let mut failures = Vec::new();
+    for case in &fixture.cases {
+        let actual = run(&fixture, case);
+        check_coverage(
+            &case.id,
+            &case.op,
+            IMPLEMENTED_OPS,
+            actual.is_some(),
+            &mut failures,
+        );
+        let Some(actual) = actual else {
+            continue;
+        };
+        implemented += 1;
+        // Known difference: on an empty series pond-ts `overlapping` / `trim`
+        // never build their range, so a backwards one is no error there.
+        // pond-rs checks a key when it is built.
+        let empty_backwards = ["span-overlapping-emptyHosts-8", "span-trim-emptyHosts-8"];
+        if empty_backwards.contains(&case.id.as_str()) {
+            assert!(
+                actual.is_err(),
+                "{}: pond-rs should refuse the key",
+                case.id
+            );
+            continue;
+        }
+        // Known difference: without a kind, pond-ts writes number arrays'
+        // first element and exploded elements as strings, and so throws;
+        // pond-rs takes the elements' kind, giving what pond-ts gives with
+        // `kind: 'number'`.
+        let kind_from_elements = [
+            (
+                "arrayAggregate-nums-first",
+                "arrayAggregate-nums-first-number",
+            ),
+            ("arrayExplode-nums", "arrayExplode-nums-number"),
+        ];
+        if let Some((_, same_as)) = kind_from_elements.iter().find(|(id, _)| *id == case.id) {
+            assert!(case.error.is_some(), "{}: pond-ts should throw", case.id);
+            if let Err(why) = check_case(find(&fixture, same_as), &actual) {
+                failures.push(format!("{} (as {same_as}): {why}", case.id));
+            }
+            continue;
+        }
+        // Known difference: pond-ts smooths a text column to all gaps (per
+        // partition too), passes an unknown column through, and baselines a
+        // text column to gaps; pond-rs refuses them.
+        let refused = [
+            "smooth-ema-text",
+            "smooth-ema-unknown",
+            "baseline-text",
+            "partition-smooth-text",
+        ];
+        if refused.contains(&case.id.as_str()) {
+            assert!(
+                case.expected.is_some(),
+                "{}: pond-ts gives a series",
+                case.id
+            );
+            if actual.is_ok() {
+                failures.push(format!("{}: pond-rs should refuse", case.id));
+            }
+            continue;
+        }
+        // Known difference ([PND-COLLAPSEREQ]): pond-ts marks collapse's
+        // output required even when it holds gaps; pond-rs marks it
+        // optional then (and required when it has none, as pond-ts).
+        let mut case = case.clone();
+        if case.op == "collapse"
+            && let Some(expected) = case.expected.as_mut()
+        {
+            let name = case.args[1].as_str().expect("output");
+            let at = expected
+                .schema
+                .iter()
+                .position(|c| c.name == name)
+                .expect("collapse output in the schema");
+            if expected.rows.iter().any(|r| r[at].is_null()) {
+                assert_eq!(
+                    expected.schema[at].required, None,
+                    "{}: pond-ts fixed [PND-COLLAPSEREQ]",
+                    case.id
+                );
+                expected.schema[at].required = Some(false);
+            }
+        }
+        if let Err(why) = check_case(&case, &actual) {
+            failures.push(format!("{} ({}): {why}", case.id, case.op));
+        }
+    }
+    report("core parity", implemented, fixture.cases.len(), &failures);
+}
+
+/// The comparator must accept a correct answer and reject wrong ones, or a
+/// green harness means nothing. Exercised on the real fixture data.
+#[test]
+fn comparator_catches_mismatches() {
+    let fixture = load_core_fixture();
+    for case in &fixture.cases {
+        let own: Result<Outcome, String> =
+            match (&case.expected, &case.groups, &case.reduced, &case.records) {
+                (Some(expected), _, _, _) => Ok(Outcome::Series(expected.clone())),
+                (None, Some(groups), _, _) => Ok(Outcome::Groups(groups.clone())),
+                (None, None, Some(record), _) => Ok(Outcome::Record(record.clone())),
+                (None, None, None, Some(records)) => Ok(Outcome::Records(records.clone())),
+                (None, None, None, None) => Err("pond-rs error".to_string()),
+            };
+        check_case(case, &own).unwrap_or_else(|why| panic!("{} rejects itself: {why}", case.id));
+    }
+
+    let case = find(&fixture, "rolling-3s-avg-sum");
+    let expected = case.expected.as_ref().unwrap();
+
+    // A one-ulp change to a value cell is caught when exact.
+    let mut wrong = expected.clone();
+    let cell = &mut wrong.rows[1][1];
+    let v = cell.as_f64().unwrap();
+    *cell = serde_json::json!(f64::from_bits(v.to_bits() + 1));
+    assert!(compare_series(expected, &wrong, None).is_err());
+    // …and accepted within a tolerance.
+    assert!(compare_series(expected, &wrong, Some(1e-12)).is_ok());
+
+    // Missing vs present is caught.
+    let mut wrong = expected.clone();
+    wrong.rows[1][1] = serde_json::Value::Null;
+    assert!(compare_series(expected, &wrong, Some(1.0)).is_err());
+
+    // A key written as 1000.0 instead of 1000 is the same key.
+    let mut same = expected.clone();
+    same.rows[1][0] = serde_json::json!(1000.0);
+    assert!(compare_series(expected, &same, None).is_ok());
+
+    // A schema difference, including `required`, is caught.
+    let mut wrong = expected.clone();
+    wrong.schema[1].required = Some(true);
+    assert!(compare_series(expected, &wrong, None).is_err());
+
+    // A shifted key is caught.
+    let mut wrong = expected.clone();
+    wrong.rows[0][0] = serde_json::json!(1);
+    assert!(compare_series(expected, &wrong, None).is_err());
+
+    // A dropped row is caught.
+    let mut wrong = expected.clone();
+    wrong.rows.pop();
+    assert!(compare_series(expected, &wrong, None).is_err());
+
+    // Signed zero is exact, even under a tolerance: -0 is not 0.
+    let case = find(&fixture, "pctChange-signed");
+    let expected = case.expected.as_ref().unwrap();
+    assert_eq!(expected.rows[1][1], serde_json::json!({ "f64": "-0" }));
+    let mut wrong = expected.clone();
+    wrong.rows[1][1] = serde_json::json!(0);
+    assert!(compare_series(expected, &wrong, None).is_err());
+    assert!(compare_series(expected, &wrong, Some(1e-12)).is_err());
+    assert!(common::compare_number(-0.0, 0.0, Some(1.0)).is_err());
+    assert!(common::compare_number(0.0, -0.0, Some(1.0)).is_err());
+    assert!(common::compare_number(-0.0, -0.0, Some(1.0)).is_ok());
+    assert!(common::compare_number(0.0, -1e-20, Some(1e-12)).is_ok());
+
+    // An infinity never matches a finite value, tolerance or not.
+    let mut wrong = expected.clone();
+    wrong.rows[2][1] = serde_json::json!({ "f64": "-inf" });
+    assert!(compare_series(expected, &wrong, Some(1e300)).is_err());
+
+    // Success where pond-ts throws is caught, and the reverse.
+    let error_case = find(&fixture, "error-unknown-column");
+    assert!(check_case(error_case, &Ok(expected.clone().into())).is_err());
+
+    // Groups: a different key, a missing group or a series where groups
+    // are expected are all caught.
+    let case = find(&fixture, "partition-toMap");
+    let groups = case.groups.clone().unwrap();
+    let mut wrong = groups.clone();
+    wrong[0].0 = "zz".into();
+    assert!(check_case(case, &Ok(Outcome::Groups(wrong))).is_err());
+    let mut wrong = groups.clone();
+    wrong.pop();
+    assert!(check_case(case, &Ok(Outcome::Groups(wrong))).is_err());
+    assert!(check_case(case, &Ok(groups[0].1.clone().into())).is_err());
+    let case = find(&fixture, "pctChange-signed");
+    assert!(check_case(case, &Err("boom".to_string())).is_err());
+}
+
+fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
+    fixture
+        .cases
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("fixture case '{id}' missing"))
+}
+
+/// Arrow IPC files built from pond-ts's own `toArrow` output (its buffers,
+/// null bits and dictionaries) by apache-arrow in
+/// `packages/core/scripts/parity/export.mjs`: pond-rs must read back the
+/// input series exactly. `noisy` is every field Float64, the key included
+/// (pond-ts's documented recipe); `mixed` adds Utf8, Dictionary<Int32, Utf8>
+/// and Boolean fields (`toArrow`'s `utf8`, `dictionary` and `bool`). The
+/// script, not pond-ts, picks the Arrow types and which fields are nullable.
+#[test]
+fn reads_the_pond_ts_arrow_exports() {
+    let fixture = load_core_fixture();
+    for (input, file, key) in [
+        ("noisy", "parity-export.arrow", ArrowKey::from("time")),
+        ("mixed", "parity-export-mixed.arrow", "time".into()),
+        (
+            "ranges",
+            "parity-export-ranges.arrow",
+            ArrowKey::TimeRange("timeRange".into()),
+        ),
+        (
+            "labelled",
+            "parity-export-labelled.arrow",
+            ArrowKey::Interval("interval".into()),
+        ),
+    ] {
+        let bytes = std::fs::read(common::repo_path(&format!(
+            "packages/core/test/fixtures/{file}"
+        )))
+        .unwrap();
+        let series = TimeSeries::from_ipc_bytes(input, bytes, key.clone()).unwrap();
+        compare_series(&fixture.inputs[input], &to_json(&series), None)
+            .unwrap_or_else(|why| panic!("{file}: {why}"));
+        // pond-rs's own file reads back the same.
+        let mut written = Vec::new();
+        series.write_ipc(&mut written).unwrap();
+        let again = TimeSeries::from_ipc_bytes(input, written, key).unwrap();
+        compare_series(&fixture.inputs[input], &to_json(&again), None)
+            .unwrap_or_else(|why| panic!("{file} rewritten by pond-rs: {why}"));
+        if input == "mixed" {
+            // pond-ts wrote `site` as a dictionary and `host` as plain text;
+            // pond-rs keeps each as it came.
+            assert!(
+                series
+                    .column("site")
+                    .unwrap()
+                    .strings()
+                    .unwrap()
+                    .is_dictionary()
+            );
+            assert!(
+                !series
+                    .column("host")
+                    .unwrap()
+                    .strings()
+                    .unwrap()
+                    .is_dictionary()
+            );
+        }
+    }
+}
+
+/// `{ "series": name }`: another fixture input.
+fn series_name(arg: &Value) -> &str {
+    arg["series"]
+        .as_str()
+        .expect("a series argument names an input")
+}
+
+/// pond-ts join options: `{ type?, onConflict?, prefixes? }`.
+fn join_options(arg: Option<&Value>) -> Join {
+    let o = arg.unwrap_or(&Value::Null);
+    let how = match o["type"].as_str() {
+        None | Some("outer") => JoinType::Outer,
+        Some("inner") => JoinType::Inner,
+        Some("left") => JoinType::Left,
+        Some("right") => JoinType::Right,
+        Some(other) => panic!("unknown join type {other}"),
+    };
+    let on_conflict = match o["onConflict"].as_str() {
+        None | Some("error") => OnConflict::Error,
+        Some("prefix") => OnConflict::Prefix(
+            o["prefixes"]
+                .as_array()
+                .expect("prefixes")
+                .iter()
+                .map(|p| p.as_str().expect("prefix").to_string())
+                .collect(),
+        ),
+        Some(other) => panic!("unknown onConflict {other}"),
+    };
+    Join { how, on_conflict }
+}
+
+/// JSON numbers compare by value (`1` and `1.0` are the same), objects by
+/// their entries, as pond-ts's `JSON.parse` would see them.
+fn same_json(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| same_json(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
+/// `to_json` writes what pond-ts `toJSON` writes, and `from_json` reads
+/// every payload pond-ts `fromJSON` reads (each input in both row formats,
+/// plus the hand-written `JSON_PAYLOADS`) to the same series, and refuses
+/// what it refuses.
+#[test]
+fn json_matches_pond_ts() {
+    let fixture = load_core_fixture();
+    let mut failures = Vec::new();
+    for case in &fixture.json.to_json {
+        let label = format!("toJSON {} ({})", case.input, case.row_format);
+        let format = match case.row_format.as_str() {
+            "array" => RowFormat::Array,
+            "object" => RowFormat::Object,
+            other => panic!("unknown row format {other}"),
+        };
+        let series = to_series(&fixture.inputs[&case.input]);
+        match series.to_json(format) {
+            // Through text, as a reader of the wire would see it.
+            Ok(text) => {
+                let got: Value = serde_json::from_str(&text).expect("to_json writes JSON");
+                if !same_json(&case.expected, &got) {
+                    failures.push(format!("{label}: expected {}, got {got}", case.expected));
+                }
+            }
+            Err(e) => failures.push(format!("{label}: pond-rs errored: {e}")),
+        }
+    }
+    // Known differences: pond-rs times are whole milliseconds within
+    // ±MAX_TIME_MS; pond-ts takes 1.5 and 8.64e15 + 1.
+    const REFUSED_BY_POND_RS: &[&str] = &["fractionKey", "farKey"];
+    for case in &fixture.json.from_json {
+        let label = format!("fromJSON {}", case.id);
+        let mut options = JsonOptions::new();
+        if let Some(o) = &case.options {
+            if let Some(zone) = o.get("timeZone").and_then(Value::as_str) {
+                options = options.time_zone(zone);
+            }
+            options = options.order(match o.get("ordering").and_then(Value::as_str) {
+                None | Some("strict") => KeyOrder::Strict,
+                Some("reorder") => KeyOrder::Reorder,
+                Some("clamp") => KeyOrder::Clamp,
+                Some(other) => panic!("unknown ordering {other}"),
+            });
+        }
+        let got = TimeSeries::from_json(&case.payload.to_string(), &options);
+        // The parsed-value door must agree with the text door.
+        let same_door = TimeSeries::from_json_value(&case.payload, &options);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: from_json and from_json_value disagree"));
+        }
+        let outcome = match (&case.expected, &got) {
+            _ if REFUSED_BY_POND_RS.contains(&case.id.as_str()) => match &got {
+                Err(_) => Ok(()),
+                Ok(_) => Err("expected pond-rs to refuse it (a known difference)".into()),
+            },
+            (Some(expected), Ok(series)) => compare_series(expected, &to_json(series), None),
+            (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+            (None, Ok(_)) => Err(format!(
+                "pond-ts throws ({}), pond-rs read it",
+                case.error.as_ref().map_or("?", |e| e.message.as_str())
+            )),
+            (None, Err(_)) => Ok(()),
+        };
+        if let Err(why) = outcome {
+            failures.push(format!("{label}: {why}"));
+        }
+    }
+    let total = fixture.json.to_json.len() + fixture.json.from_json.len();
+    report("core JSON parity", total, total, &failures);
+}
+
+/// `to_columns_json` / `to_points_json` write what pond-ts `toColumns` /
+/// `toPoints` write (each input), and `from_columns_json` /
+/// `from_points_json` read what pond-ts `fromColumns` / `fromPoints` read
+/// (each input's own output, plus the hand-written `COLUMN_PAYLOADS` and
+/// `POINT_PAYLOADS`) to the same series, and refuse what they refuse.
+#[test]
+fn columns_and_points_json_match_pond_ts() {
+    let fixture = load_core_fixture();
+    let cases = &fixture.columns_json;
+    let mut failures = Vec::new();
+    let wire = |label: String,
+                expected: &Option<Value>,
+                got: pond_rs::Result<String>,
+                failures: &mut Vec<String>| {
+        match (expected, got) {
+            (Some(expected), Ok(text)) => {
+                let got: Value = serde_json::from_str(&text).expect("writes JSON");
+                if !same_json(expected, &got) {
+                    failures.push(format!("{label}: expected {expected}, got {got}"));
+                }
+            }
+            (Some(_), Err(e)) => failures.push(format!("{label}: pond-rs errored: {e}")),
+            (None, Ok(_)) => failures.push(format!("{label}: pond-ts throws, pond-rs wrote it")),
+            (None, Err(_)) => {}
+        }
+    };
+    for case in &cases.to_columns {
+        let series = to_series(&fixture.inputs[&case.input]);
+        wire(
+            format!("toColumns {}", case.input),
+            &case.expected,
+            series.to_columns_json(),
+            &mut failures,
+        );
+    }
+    for case in &cases.to_points {
+        let series = to_series(&fixture.inputs[&case.input]);
+        wire(
+            format!("toPoints {}", case.input),
+            &case.expected,
+            series.to_points_json(),
+            &mut failures,
+        );
+    }
+
+    // Known differences, each in the docs: pond-rs refuses cells pond-ts
+    // coerces, times that are not whole milliseconds or are out of range, a
+    // payload with no name, and a value column named `ts` in points.
+    const COLUMNS_REFUSED: &[&str] = &[
+        "numberAsText",
+        "numberAsBool",
+        "textAsNumber",
+        "keyAsText",
+        "keyAsBool",
+        "fractionKey",
+        "farKey",
+        "noName",
+    ];
+    const POINTS_REFUSED: &[&str] = &["fractionTs", "farTs", "tsColumn"];
+    let judge = |label: &str,
+                 refused: bool,
+                 expected: Option<SeriesJson>,
+                 error: &Option<common::ErrorJson>,
+                 got: &pond_rs::Result<TimeSeries>|
+     -> Result<(), String> {
+        match (expected, got) {
+            _ if refused => match got {
+                Err(_) => Ok(()),
+                Ok(_) => Err("expected pond-rs to refuse it (a known difference)".into()),
+            },
+            (Some(expected), Ok(series)) => compare_series(&expected, &to_json(series), None),
+            (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+            (None, Ok(_)) => Err(format!(
+                "pond-ts throws ({}), pond-rs read it",
+                error.as_ref().map_or("?", |e| e.message.as_str())
+            )),
+            (None, Err(_)) => Ok(()),
+        }
+        .map_err(|why| format!("{label}: {why}"))
+    };
+    for case in &cases.from_columns {
+        let order = match case
+            .options
+            .as_ref()
+            .and_then(|o| o.get("ordering"))
+            .and_then(Value::as_str)
+        {
+            None | Some("strict") => KeyOrder::Strict,
+            Some("reorder") => KeyOrder::Reorder,
+            Some("clamp") => KeyOrder::Clamp,
+            Some(other) => panic!("unknown ordering {other}"),
+        };
+        let label = format!("fromColumns {}", case.id);
+        let got = TimeSeries::from_columns_json(&case.payload.to_string(), order);
+        let same_door = TimeSeries::from_columns_value(&case.payload, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: the text and value doors disagree"));
+        }
+        let refused = COLUMNS_REFUSED.contains(&case.id.as_str());
+        let expected = case.expected.as_ref().filter(|_| !refused).map(|v| {
+            let mut s: SeriesJson = serde_json::from_value(v.clone()).expect("a series");
+            // pond-ts keeps a column with gaps marked required here; pond-rs
+            // marks it optional (a known difference).
+            for (c, def) in s.schema.iter_mut().enumerate().skip(1) {
+                if def.required.is_none() && s.rows.iter().any(|r| r[c].is_null()) {
+                    def.required = Some(false);
+                }
+            }
+            s
+        });
+        if let Err(why) = judge(&label, refused, expected, &case.error, &got) {
+            failures.push(why);
+        }
+    }
+    for case in &cases.from_points {
+        let label = format!("fromPoints {}", case.id);
+        let schema: Vec<RsColumnDef> = case
+            .schema
+            .iter()
+            .map(|d| RsColumnDef {
+                name: d.name.clone(),
+                kind: column_kind(&d.kind),
+                required: d.required != Some(false),
+            })
+            .collect();
+        let got = TimeSeries::from_points_json(&case.points.to_string(), "p", &schema);
+        let same_door = TimeSeries::from_points_value(&case.points, "p", &schema);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: the text and value doors disagree"));
+        }
+        let refused = POINTS_REFUSED.contains(&case.id.as_str());
+        if let Err(why) = judge(&label, refused, case.expected.clone(), &case.error, &got) {
+            failures.push(why);
+        }
+    }
+    let total = cases.to_columns.len()
+        + cases.to_points.len()
+        + cases.from_columns.len()
+        + cases.from_points.len();
+    report("core columns / points JSON parity", total, total, &failures);
+}
+
+/// `by_value` gives what pond-ts `byValue` gives (on every number column of
+/// every input, and of the fixture's own `sources`), refuses what it
+/// refuses, writes it as `toJSON` / `toColumns` write it, and finds the
+/// rows `nearestIndex` / `sliceByValue` find. `ValueSeries::from_json` /
+/// `from_columns_json` read what pond-ts `fromJSON` / `fromColumns` read
+/// (each `byValue` result's own output, plus hand-written payloads) and
+/// refuse what they refuse.
+#[test]
+fn value_series_match_pond_ts() {
+    let fixture = load_core_fixture();
+    let vs = &fixture.value_series;
+    let mut failures = Vec::new();
+    let mut check = |label: String, outcome: Result<(), String>| {
+        if let Err(why) = outcome {
+            failures.push(format!("{label}: {why}"));
+        }
+    };
+    let same_wire =
+        |expected: &Option<Value>, got: pond_rs::Result<String>| -> Result<(), String> {
+            let expected = expected.as_ref().ok_or("no wire form in the fixture")?;
+            let got: Value = serde_json::from_str(&got.map_err(|e| e.to_string())?).unwrap();
+            if same_json(expected, &got) {
+                Ok(())
+            } else {
+                Err(format!("expected {expected}, got {got}"))
+            }
+        };
+    for case in &vs.by_value {
+        let label = format!("byValue {}.{}", case.input, case.axis);
+        let source = fixture
+            .inputs
+            .get(&case.input)
+            .or_else(|| vs.sources.get(&case.input));
+        let series = to_series(source.expect("a known input"));
+        let got = series.by_value(&case.axis);
+        let (expected, got) = match (&case.expected, got) {
+            (Some(e), Ok(g)) => (e, g),
+            (Some(_), Err(e)) => {
+                check(
+                    label,
+                    Err(format!("pond-ts succeeds, pond-rs errored: {e}")),
+                );
+                continue;
+            }
+            (None, Ok(_)) => {
+                check(label, Err("pond-ts throws, pond-rs succeeded".into()));
+                continue;
+            }
+            (None, Err(_)) => continue,
+        };
+        check(
+            label.clone(),
+            compare_series(expected, &value_json(&got), None),
+        );
+        check(
+            format!("{label} toJSON"),
+            same_wire(&case.to_json, got.to_json(RowFormat::Array)),
+        );
+        check(
+            format!("{label} toJSON object"),
+            same_wire(&case.to_objects, got.to_json(RowFormat::Object)),
+        );
+        check(
+            format!("{label} toColumns"),
+            same_wire(&case.to_columns, got.to_columns_json()),
+        );
+        for (probe, want) in &case.nearest {
+            let p = cell_number(probe).expect("a number");
+            let have = got.nearest_index(p);
+            if have != *want {
+                check(
+                    format!("{label} nearest({p})"),
+                    Err(format!("expected {want:?}, got {have:?}")),
+                );
+            }
+        }
+        for (lo, hi, want) in &case.slices {
+            let (lo, hi) = (cell_number(lo).unwrap(), cell_number(hi).unwrap());
+            check(
+                format!("{label} slice({lo}, {hi})"),
+                compare_series(want, &value_json(&got.slice_by_value(lo, hi)), None),
+            );
+        }
+    }
+
+    let order_of = |options: &Option<Value>| match options
+        .as_ref()
+        .and_then(|o| o.get("ordering"))
+        .and_then(Value::as_str)
+    {
+        None | Some("strict") => KeyOrder::Strict,
+        Some("reorder") => KeyOrder::Reorder,
+        Some("clamp") => KeyOrder::Clamp,
+        Some(other) => panic!("unknown ordering {other}"),
+    };
+    let judge = |expected: &Option<Value>, got: &pond_rs::Result<ValueSeries>| match (expected, got)
+    {
+        (Some(e), Ok(g)) => {
+            let e: SeriesJson = serde_json::from_value(e.clone()).expect("a series");
+            compare_series(&e, &value_json(g), None)
+        }
+        (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+        (None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
+        (None, Err(_)) => Ok(()),
+    };
+    for case in &vs.from_json {
+        let order = order_of(&case.options);
+        let got = ValueSeries::from_json(&case.payload.to_string(), order);
+        let same_door = ValueSeries::from_json_value(&case.payload, order);
+        let label = format!("ValueSeries.fromJSON {} {:?}", case.id, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            check(
+                label.clone(),
+                Err("the text and value doors disagree".into()),
+            );
+        }
+        check(label, judge(&case.expected, &got));
+    }
+    for case in &vs.from_columns {
+        let order = order_of(&case.options);
+        let got = ValueSeries::from_columns_json(&case.payload.to_string(), order);
+        let same_door = ValueSeries::from_columns_value(&case.payload, order);
+        let label = format!("ValueSeries.fromColumns {} {:?}", case.id, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            check(
+                label.clone(),
+                Err("the text and value doors disagree".into()),
+            );
+        }
+        // pond-ts keeps a column with gaps marked required here; pond-rs
+        // marks it optional (a known difference, as for TimeSeries).
+        let expected = case.expected.clone().map(|mut v| {
+            let rows = v["rows"].clone();
+            for (c, def) in v["schema"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .enumerate()
+                .skip(1)
+            {
+                let gap = rows.as_array().unwrap().iter().any(|r| r[c].is_null());
+                if def.get("required").is_none() && gap {
+                    def["required"] = json!(false);
+                }
+            }
+            v
+        });
+        check(label, judge(&expected, &got));
+    }
+    let total = vs.by_value.len() + vs.from_json.len() + vs.from_columns.len();
+    report("core ValueSeries parity", total, total, &failures);
+}
+
+/// `ValueSeries::from_ipc_bytes` reads the Arrow files pond-ts
+/// `ValueSeries.fromArrow` reads (integer, float, dictionary, empty and
+/// two-batch tables) to the same series, and refuses what it refuses.
+/// pond-rs marks a nullable value field optional where pond-ts leaves the
+/// schema bare. Known differences, checked as such: pond-ts reads a
+/// Timestamp axis as its raw count (pond-rs refuses a time-typed axis) and
+/// refuses a true/false value field (pond-rs reads it). Also reads back
+/// `parity-export-value.arrow`, pond-ts's own `toArrow` output.
+#[test]
+fn value_series_arrow_match_pond_ts() {
+    let cases = common::load_value_arrow_cases();
+    let mut failures = Vec::new();
+    for case in &cases {
+        let bytes = hex(&case.ipc);
+        let schema = arrow_ipc::reader::FileReader::try_new(std::io::Cursor::new(&bytes), None)
+            .unwrap()
+            .schema();
+        let got = ValueSeries::from_ipc_bytes("va", bytes, &case.axis);
+        let outcome = match (case.id.as_str(), &case.expected, &got) {
+            ("timestampAxis", Some(_), Err(_)) | ("boolValues", None, Ok(_)) => Ok(()),
+            ("timestampAxis" | "boolValues", ..) => {
+                Err("expected the known difference".to_string())
+            }
+            (_, Some(e), Ok(g)) => {
+                let mut e = e.clone();
+                for def in e.schema.iter_mut().skip(1) {
+                    if schema.field_with_name(&def.name).unwrap().is_nullable() {
+                        def.required.get_or_insert(false);
+                    }
+                }
+                compare_series(&e, &value_json(g), None)
+            }
+            (_, Some(_), Err(err)) => Err(format!("pond-ts reads it, pond-rs errored: {err}")),
+            (_, None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
+            (_, None, Err(_)) => Ok(()),
+        };
+        if let Err(why) = outcome {
+            failures.push(format!("{}: {why}", case.id));
+        }
+    }
+    report(
+        "ValueSeries.fromArrow parity",
+        cases.len(),
+        cases.len(),
+        &failures,
+    );
+
+    let fixture = load_core_fixture();
+    let expected = &fixture.value_series.arrow_export;
+    let bytes = std::fs::read(common::repo_path(
+        "packages/core/test/fixtures/parity-export-value.arrow",
+    ))
+    .unwrap();
+    let series = ValueSeries::from_ipc_bytes("vexport", bytes, "strike").unwrap();
+    compare_series(expected, &value_json(&series), None)
+        .unwrap_or_else(|why| panic!("parity-export-value.arrow: {why}"));
+    let mut written = Vec::new();
+    series.write_ipc(&mut written).unwrap();
+    let again = ValueSeries::from_ipc_bytes("vexport", written, "strike").unwrap();
+    assert_eq!(again, series);
+}
+
+fn hex(text: &str) -> Vec<u8> {
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// A value series in pond-ts `toJSON()` form, -0 tagged.
+fn value_json(series: &ValueSeries) -> SeriesJson {
+    let schema = series
+        .schema()
+        .into_iter()
+        .enumerate()
+        .map(|(c, def)| ColumnDef {
+            name: def.name,
+            kind: def.kind.as_str().to_string(),
+            required: (c > 0 && !def.required).then_some(false),
+        })
+        .collect();
+    let axis = ColumnData::from(pond_rs::Float64Column::from_values(series.axis().to_vec()));
+    let rows = (0..series.len())
+        .map(|i| {
+            std::iter::once(encode(&axis, i))
+                .chain(series.columns().iter().map(|c| encode(c.data(), i)))
+                .collect()
+        })
+        .collect();
+    SeriesJson {
+        name: series.name().to_string(),
+        schema,
+        rows,
+    }
+}
+
+fn column_kind(kind: &str) -> ColumnKind {
+    match kind {
+        "time" => ColumnKind::Time,
+        "timeRange" => ColumnKind::TimeRange,
+        "interval" => ColumnKind::Interval,
+        "number" => ColumnKind::Number,
+        "string" => ColumnKind::String,
+        "boolean" => ColumnKind::Boolean,
+        "array" => ColumnKind::Array,
+        other => panic!("unknown kind {other}"),
+    }
+}

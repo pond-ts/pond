@@ -1,0 +1,395 @@
+---
+id: arrow
+title: Arrow and JSON
+sidebar_position: 6
+description: Read and write Apache Arrow IPC (Feather v2) files and streams with pond-rs, which field types it accepts, when columns share the file's memory, and pond-ts's row JSON format.
+---
+
+# Arrow and JSON
+
+[Apache Arrow](https://arrow.apache.org/) is the common format for passing
+tables between tools: pandas, polars, DuckDB and pond-ts all read and write
+it. pond-rs reads and writes Arrow's IPC format, which is the `.arrow` /
+Feather v2 file (pandas `to_feather`, polars `write_ipc`, pond-ts
+`toArrow`), and the stream form of it.
+
+## Read and write
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000],
+        vec![
+            Column::required("host", vec!["a", "b"]),
+            Column::optional("load", vec![Some(0.5), None]),
+        ],
+    )?;
+
+    // Write to anything that implements `std::io::Write`:
+    // a file, a Vec, a socket.
+    let mut bytes = Vec::new();
+    s.write_ipc(&mut bytes)?;
+
+    // Read back. The last argument names the key field.
+    let back = TimeSeries::read_ipc("cpu", bytes.as_slice(), "time")?;
+    assert_eq!(back, s);
+    Ok(())
+}
+```
+
+For a file on disk: `TimeSeries::read_ipc("name", File::open(path)?, "time")`
+and `s.write_ipc(File::create(path)?)`. If the bytes are already in memory,
+`TimeSeries::from_ipc_bytes(name, bytes, key)` skips a copy. If you already
+have Arrow `RecordBatch`es, `TimeSeries::from_arrow` and `s.to_arrow()`
+convert directly.
+
+pond-rs re-exports the Arrow crates it uses (`pond_rs::arrow_array`,
+`pond_rs::arrow_schema`, `pond_rs::arrow_ipc`), so you do not need to add
+them yourself or match their versions.
+
+## The key field
+
+The third argument says which field is the key.
+
+- A plain name, `"time"` or `"ts"`, reads a **time** key from that field.
+- `ArrowKey::TimeRange("timeRange".into())` reads a **time range** from
+  `timeRange` and `timeRangeEnd`.
+- `ArrowKey::Interval("interval".into())` reads an **interval** from
+  `interval`, `intervalEnd` and `intervalLabel`. This is what pond-rs and
+  pond-ts write for an `aggregate` result.
+
+Key fields may be an Arrow `Timestamp` in any unit, `Date32`, `Date64`, or
+`Int64` / `Float64` epoch milliseconds. They must have no nulls and be in
+order. A micro- or nanosecond timestamp with a part smaller than a
+millisecond is an error rather than being rounded quietly.
+
+```rust
+use pond_rs::{Agg, ArrowKey, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 30_000, 60_000],
+        vec![Column::required("load", vec![1.0, 2.0, 4.0])],
+    )?;
+    let per_minute =
+        s.aggregate(&Sequence::every("1m")?, &[Agg::of("load", Reducer::Sum)])?;
+
+    let mut bytes = Vec::new();
+    per_minute.write_ipc(&mut bytes)?;
+    let back = TimeSeries::read_ipc(
+        "per_minute",
+        bytes.as_slice(),
+        ArrowKey::Interval("interval".into()),
+    )?;
+    assert_eq!(back.key(), per_minute.key());
+    Ok(())
+}
+```
+
+## Which value fields it reads
+
+| Arrow field type                                                             | Becomes                                        |
+| ---------------------------------------------------------------------------- | ---------------------------------------------- |
+| any integer or float (`Int8`…`UInt64`, `Float16/32/64`)                      | number column (`f64`)                          |
+| `Decimal32`, `Decimal64`, `Decimal128`                                       | exact decimal column, same precision and scale |
+| `Utf8`, `LargeUtf8`, `Utf8View`, dictionaries of text                        | text column                                    |
+| `Boolean`                                                                    | true/false column                              |
+| `List`, `LargeList`, `FixedSizeList` of numbers, text or `Boolean`           | list column                                    |
+| `Timestamp`, `Date32`, `Date64`                                              | number column: epoch milliseconds              |
+| `Time32`, `Time64`, `Duration`                                               | number column: a length in milliseconds        |
+| `Null`                                                                       | number column, all gaps                        |
+| a dictionary of numbers or times                                             | number column, decoded                         |
+| anything else (`Decimal256`, binary, structs, lists of decimals or lists, …) | an error naming the field                      |
+
+Nulls become gaps. A field Arrow marks nullable becomes an optional column;
+a non-nullable one becomes required, unless it holds `NaN` or infinities,
+which makes it optional. Files compressed with LZ4 or ZSTD are
+read (pandas compresses with LZ4 by default). To skip fields pond-rs does
+not read, project them away first with `RecordBatch::project` and use
+`from_arrow`.
+
+Writing uses the types pond-ts `toArrow` uses: the key as
+`Timestamp(Millisecond, "UTC")`, numbers as `Float64`, text as `Utf8` (or
+the dictionary form if it was read that way), true/false as `Boolean`,
+decimals as `Decimal128`, with gaps as nulls.
+
+### List columns
+
+A [list column](./operations#list-columns) is written as an Arrow `List`
+of `Float64`, `Utf8` or `Boolean` items, and read back from `List`,
+`LargeList` or `FixedSizeList` fields, including the list files pyarrow and
+polars write. A null list is a gap; an empty list stays an empty list.
+
+An Arrow list holds one kind of item, so every element in a column must be
+the same kind to be written. A column that mixes numbers and text is
+refused, with an error naming the first element that differs; turn it into
+one kind with `map_arrays`, or leave it out with `select`. On the way in, a
+null item, or a number that is `NaN` or infinite, is an error, since an
+element of a list cannot be a gap.
+
+```rust
+use pond_rs::{Column, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "requests",
+        vec![0, 1_000, 2_000],
+        vec![Column::optional(
+            "tags",
+            vec![Some(vec![Scalar::from("web"), "eu".into()]), None, Some(vec![])],
+        )],
+    )?;
+
+    let mut bytes = Vec::new();
+    s.write_ipc(&mut bytes)?;
+    let back = TimeSeries::read_ipc("requests", bytes.as_slice(), "time")?;
+    let tags = back.column("tags")?.arrays()?;
+    assert_eq!(tags.get(0), Some(&[Scalar::from("web"), "eu".into()][..]));
+    assert_eq!(tags.get(1), None); // a gap
+    assert_eq!(tags.get(2), Some(&[][..])); // an empty list
+
+    let mixed = TimeSeries::new(
+        "mixed",
+        vec![0],
+        vec![Column::required("v", vec![vec![Scalar::from(1.0), "a".into()]])],
+    )?;
+    assert!(mixed.to_arrow().is_err()); // numbers and text in one list column
+    Ok(())
+}
+```
+
+pond-ts cannot read or write Arrow lists, so a file with a list column that
+pond-rs wrote does not open in pond-ts.
+
+## Memory: when the file is not copied
+
+For a file with one batch (the usual case for a file written in one go),
+some columns are used **in place**: pond-rs points at the file's own bytes
+instead of copying them. This applies to gap-free `Float64` fields, `Utf8`,
+`Dictionary<Int32, Utf8>`, `Boolean` and `Decimal128` fields. Writing is the
+same in reverse: each column's values are handed to Arrow without a copy.
+
+The cost: while any column that points into the file is alive, in this
+series or anything made from it, the whole file stays in memory, including
+the parts that were copied. If that matters, drop the series once you have
+your results, or read a smaller file.
+
+## JSON
+
+`TimeSeries::from_json(text, &options)` and `series.to_json(format)` read
+and write pond-ts's JSON format, the one `TimeSeries.fromJSON` and
+`toJSON` use. A file pond-ts wrote reads back in pond-rs and the other way
+round.
+
+The shape is `{ "name", "schema", "rows" }`. The schema lists the key column
+first, then each value column with its kind (`number`, `string` or
+`boolean`; `"required": false` allows gaps). A gap is `null`. Rows are
+arrays in schema order (`RowFormat::Array`) or objects keyed by column name
+(`RowFormat::Object`):
+
+| Key kind    | Array row             | Object row                  |
+| ----------- | --------------------- | --------------------------- |
+| `time`      | `1000`                | `1000`                      |
+| `timeRange` | `[begin, end]`        | `{"start", "end"}`          |
+| `interval`  | `[label, begin, end]` | `{"value", "start", "end"}` |
+
+On the way in, any time may be text instead of milliseconds, read the way
+[`parse_time_in`](./series-and-columns#times-written-as-text) reads it.
+`JsonOptions::new().time_zone("Europe/Madrid")` sets the zone for times
+written without an offset (UTC otherwise).
+
+```rust
+use pond_rs::{JsonOptions, KeyOrder, RowFormat, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let text = r#"{
+      "name": "cpu",
+      "schema": [
+        {"name": "time", "kind": "time"},
+        {"name": "load", "kind": "number", "required": false}
+      ],
+      "rows": [["2026-03-29T01:30", 0.5], ["2026-03-29T03:30", null]]
+    }"#;
+    // Madrid's clocks go forward at 02:00 that night, so these are an hour apart.
+    let s = TimeSeries::from_json(text, &JsonOptions::new().time_zone("Europe/Madrid"))?;
+    assert_eq!(s.key().begin()[1] - s.key().begin()[0], 3_600_000);
+
+    assert_eq!(
+        s.to_json(RowFormat::Object)?,
+        r#"{"name":"cpu","schema":[{"name":"time","kind":"time"},{"name":"load","kind":"number","required":false}],"rows":[{"time":1774744200000,"load":0.5},{"time":1774747800000,"load":null}]}"#
+    );
+
+    // Rows out of time order are refused unless you ask for them to be sorted.
+    let backwards = r#"{"name":"x","schema":[{"name":"time","kind":"time"},{"name":"v","kind":"number"}],
+                        "rows":[[2000, 1], [1000, 2]]}"#;
+    assert!(TimeSeries::from_json(backwards, &JsonOptions::new()).is_err());
+    let sorted = TimeSeries::from_json(backwards, &JsonOptions::new().order(KeyOrder::Reorder))?;
+    assert_eq!(sorted.key().begin(), &[1000, 2000]);
+    Ok(())
+}
+```
+
+`KeyOrder` has three settings, as pond-ts's `ordering` option: `Strict`
+(the default) refuses rows out of order, `Reorder` sorts them by key, and
+`Clamp` keeps them where they are and moves a backwards time up to the time
+above it (time keys only).
+
+`to_json` writes numbers exactly as JavaScript's `JSON.stringify` does
+(`0.000001`, `1e+21`), so its output matches pond-ts's byte for byte.
+`from_json_value` and `to_json_value` work on an already-parsed
+`serde_json::Value` (pond-rs re-exports `serde_json`).
+
+### Columns and points
+
+Two more JSON shapes, as pond-ts's `toColumns` / `fromColumns` and
+`toPoints` / `fromPoints`:
+
+- **Columns**: `{ "name", "schema", "columns" }`, one array per column
+  under its name, `null` for a gap. A time range key is written as two
+  columns, `timeRange` (the start) and `timeRangeEnd`; an interval key as
+  three, `interval`, `intervalEnd` and `intervalLabel`. Read with
+  `from_columns_json(text, KeyOrder)`, write with `to_columns_json()`.
+  Columns of true/false values are written but, as in pond-ts, cannot be
+  read back from this shape.
+- **Points**: `[{"ts": 0, "cpu": 0.5}, ...]`, one object per row with the
+  time under `ts`, the shape most chart libraries take. A gap is left out
+  on the way out; on the way in, a missing name or `null` is a gap. Points
+  carry no schema, so `from_points_json(text, name, &schema)` takes one,
+  and the key must be a plain time.
+
+```rust
+use pond_rs::{ColumnDef, ColumnKind, KeyOrder, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let columns = r#"{"name":"cpu",
+      "schema":[{"name":"time","kind":"time"},{"name":"load","kind":"number","required":false}],
+      "columns":{"time":[0,60000],"load":[0.5,null]}}"#;
+    let s = TimeSeries::from_columns_json(columns, KeyOrder::Strict)?;
+    assert_eq!(s.len(), 2);
+    assert_eq!(s.to_points_json()?, r#"[{"ts":0,"load":0.5},{"ts":60000}]"#);
+
+    let schema = [
+        ColumnDef { name: "time".into(), kind: ColumnKind::Time, required: true },
+        ColumnDef { name: "load".into(), kind: ColumnKind::Number, required: false },
+    ];
+    let back = TimeSeries::from_points_json(
+        r#"[{"ts":0,"load":0.5},{"ts":60000,"load":null}]"#,
+        "cpu",
+        &schema,
+    )?;
+    assert_eq!(back.to_columns_json()?, s.to_columns_json()?);
+    Ok(())
+}
+```
+
+Where pond-rs's JSON differs from pond-ts's:
+
+- **Times** must be whole milliseconds and within `MAX_TIME_MS` of 1970.
+  pond-ts accepts `1.5`, and times just past the limit.
+- **A missing `name`** is an error.
+- **Text with a lone surrogate** (`"\ud800"`, half of a character
+  JavaScript stores in two pieces) is refused, since it is not valid text in
+  Rust.
+- **Decimal columns** cannot be written to JSON, since a JSON number would
+  lose their exactness. Turn them into numbers with `map_decimals`, or use
+  Arrow.
+- **The schema written back** has only each column's `name`, `kind` and
+  `"required": false`. pond-ts writes back the schema it was given.
+- **Column order in objects.** pond-rs writes names in schema order.
+  JavaScript always puts names that look like whole numbers (a column
+  called `"1"`) first, so pond-ts's text can list them in another order.
+  The JSON means the same.
+- **Columns JSON is read strictly.** A cell of the wrong kind is an error;
+  pond-ts turns `"5"` in a number column into 5, `true` into 1, and a
+  number in a text column into a gap. A number too big to store (`1e400`)
+  is an error too, where pond-ts stores a gap. pond-ts also ignores
+  `required` here; pond-rs makes any column with gaps optional.
+- **A value column named `ts`** is refused by both points calls, since it
+  would clash with the time.
+
+### Value series
+
+A [`ValueSeries`](./operations#keyed-by-distance-instead-of-time-by_value)
+reads and writes the same two JSON shapes as pond-ts's `ValueSeries`:
+`from_json` / `to_json` for rows, and `from_columns_json` /
+`to_columns_json` for one array per column. The axis comes first in the
+schema, with kind `"value"`, and every axis cell must be a number.
+`KeyOrder` decides what happens to an axis value below the one before it,
+as for a time series.
+
+```rust
+use pond_rs::{KeyOrder, RowFormat, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let text = r#"{"name": "calls",
+      "schema": [{"name": "strike", "kind": "value"}, {"name": "bid", "kind": "number"}],
+      "rows": [[100, 3.4], [90, 11.2], {"strike": 95, "bid": 6.9}]}"#;
+
+    assert!(ValueSeries::from_json(text, KeyOrder::Strict).is_err()); // 90 after 100
+    let chain = ValueSeries::from_json(text, KeyOrder::Reorder)?;
+    assert_eq!(chain.axis(), &[90.0, 95.0, 100.0]);
+
+    let back = chain.to_json(RowFormat::Array)?;
+    assert!(back.ends_with(r#""rows":[[90,11.2],[95,6.9],[100,3.4]]}"#));
+    let cols = ValueSeries::from_columns_json(&chain.to_columns_json()?, KeyOrder::Strict)?;
+    assert_eq!(cols.axis(), chain.axis());
+    Ok(())
+}
+```
+
+As in pond-ts, only number and text value columns read back in: a
+true/false or list column kept by `by_value` is written out but refused on
+the way back. The differences listed above for a time series apply here
+too (a missing `name` and wrongly typed cells are refused, and a column
+with gaps read from columns JSON is optional).
+
+Arrow files work too. `write_ipc` / `to_arrow` write the axis first, as a
+`Float64` field with no nulls, then each value column as a time series
+writes it. `read_ipc(name, reader, axis)`, `from_ipc_bytes(name, bytes,
+axis)` and `from_arrow(name, &batches, axis)` read one back, naming the
+field to use as the axis. The axis field can be any integer type, `Float32`
+or `Float64`, read as it is stored (no unit), and must have no nulls, only
+finite values, and never go down. Every other field is read as a time
+series reads value fields.
+
+```rust
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "calls",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::optional("bid", vec![Some(11.2), None, Some(3.4)]),
+            Column::required("liquid", vec![true, false, true]),
+        ],
+    )?;
+
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    let back = ValueSeries::from_ipc_bytes("calls", file, "strike")?;
+    assert_eq!(back, chain);
+    assert!(!back.column("bid")?.is_required()); // a field with nulls is optional
+
+    // The axis must name a field in the file.
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    assert!(ValueSeries::from_ipc_bytes("calls", file, "price").is_err());
+    Ok(())
+}
+```
+
+Three differences from pond-ts's `ValueSeries.fromArrow`:
+
+- **A time-typed axis** (an Arrow `Timestamp`, say) is refused. pond-ts
+  reads its stored numbers, which are in the field's unit, not
+  milliseconds.
+- **True/false, decimal and list value fields** are read. pond-ts refuses
+  them.
+- **A value field with nulls** is optional. pond-ts marks it required,
+  which its own JSON reader then refuses ([PND-ARROWREQ]).

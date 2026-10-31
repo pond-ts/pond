@@ -2,6 +2,9 @@
 sidebar_position: 11
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Cleaning Data
 
 Real ingestion is messy. Timestamps drift, values arrive `null`,
@@ -33,6 +36,9 @@ otherwise the type system narrows their cell values to `T` (not
 `T | undefined`), and `fill`/`dedupe` won't have anything to
 operate on:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const schema = [
   { name: 'time', kind: 'time' },
@@ -40,6 +46,51 @@ const schema = [
   { name: 'host', kind: 'string' }, // ← required (always present)
 ] as const;
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, ColumnDef, ColumnKind, JsonOptions, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Built from Rust values: Column::optional allows gaps (None).
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000],
+        vec![
+            Column::optional("cpu", vec![Some(0.5), None]), // optional
+            Column::required("host", vec!["a", "a"]),       // required (always present)
+        ],
+    )?;
+    assert_eq!(cpu.column("cpu")?.numbers()?.get(1), None);
+
+    // The same schema written out, as a live series or a JSON file takes it.
+    let schema = [
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("cpu", ColumnKind::Number),
+        ColumnDef::required("host", ColumnKind::String),
+    ];
+    assert_eq!(schema.len(), 3);
+
+    // From JSON: null is a gap, allowed only where "required" is false.
+    let ok = r#"{"name": "cpu",
+      "schema": [{"name": "time", "kind": "time"},
+                 {"name": "cpu", "kind": "number", "required": false}],
+      "rows": [[0, 0.5], [1000, null]]}"#;
+    let s = TimeSeries::from_json(ok, &JsonOptions::new())?;
+    assert_eq!(s.column("cpu")?.numbers()?.get(1), None);
+
+    let strict = ok.replace(r#", "required": false"#, "");
+    assert!(TimeSeries::from_json(&strict, &JsonOptions::new()).is_err());
+    Ok(())
+}
+```
+
+Rust has no type-level narrowing: `Column::optional` and `Column::required` set the flag, and pond-rs checks it when the series is built.
+
+</TabItem>
+</Tabs>
 
 When ingesting JSON or CSV-derived rows, missing cells arrive as
 `null` on the wire and become `undefined` after
@@ -55,6 +106,9 @@ when you need optional values, or see [the known limitation in the
 predicate, drop the rest. Same schema in, same schema out, fewer
 rows.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Drop events whose value is missing.
 const present = cpu.filter((e) => e.get('cpu') !== undefined);
@@ -68,6 +122,52 @@ const sane = cpu.filter((e) => {
 // Drop events from a known-bad host.
 const trusted = events.filter((e) => e.get('host') !== 'staging-1');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::optional(
+                "cpu",
+                vec![Some(0.5), None, Some(-0.2), Some(1.7), Some(0.8)],
+            ),
+            Column::required(
+                "host",
+                vec!["web-1", "web-1", "staging-1", "web-2", "web-2"],
+            ),
+        ],
+    )?;
+
+    // Drop rows whose value is missing.
+    let present = cpu.filter(|e| Ok(e.number("cpu")?.is_some()))?;
+    assert_eq!(present.len(), 4);
+
+    // Drop obvious sensor errors (negative CPU, value over 100%).
+    let sane = cpu.filter(|e| Ok(e.number("cpu")?.is_some_and(|v| (0.0..=1.0).contains(&v))))?;
+    assert_eq!(sane.key().begin(), &[0, 4_000]);
+
+    // Drop rows from a known-bad host.
+    let trusted = cpu.filter(|e| Ok(e.string("host")? != Some("staging-1")))?;
+    assert_eq!(trusted.len(), 4);
+
+    // Just the bad rows, to inspect.
+    let bad = cpu.filter(|e| Ok(e.number("cpu")?.is_none_or(|v| !(0.0..=1.0).contains(&v))))?;
+    assert_eq!(bad.len(), 3);
+    Ok(())
+}
+```
+
+The closure returns a `Result`, so lookups inside it can use `?`.
+
+</TabItem>
+</Tabs>
 
 Filtering early means downstream transforms never see the bad rows.
 For exploration, also pull _just_ the bad rows into a separate series
@@ -99,11 +199,73 @@ upstream sources leave behind. The typical post-`aggregate` cleanup.
 
 A single strategy applies to every value column:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.fill('hold');
 series.fill('linear');
 series.fill('zero');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, TimeSeries, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let series = TimeSeries::new(
+        "cpu",
+        (0..5).map(|i| i * min).collect(),
+        vec![
+            Column::optional("cpu", vec![None, Some(0.2), None, Some(0.6), None]),
+            Column::optional("host", vec![None, Some("a"), None, Some("b"), None]),
+        ],
+    )?;
+    let col = |s: &TimeSeries| -> Result<Vec<Option<f64>>, pond_rs::PondError> {
+        Ok(s.column("cpu")?.numbers()?.iter().collect())
+    };
+
+    // One rule for every column. The leading gap stays: nothing to carry.
+    let held = series.fill_all(Fill::Hold)?;
+    assert_eq!(
+        col(&held)?,
+        [None, Some(0.2), Some(0.2), Some(0.6), Some(0.6)]
+    );
+    let back = series.fill_all(Fill::Bfill)?;
+    assert_eq!(
+        col(&back)?,
+        [Some(0.2), Some(0.2), Some(0.6), Some(0.6), None]
+    );
+
+    // A rule per column; columns not named keep their gaps.
+    let mixed = series.fill(&[("cpu", Fill::Linear), ("host", Fill::Hold)])?;
+    assert_eq!(col(&mixed)?, [None, Some(0.2), Some(0.4), Some(0.6), None]);
+
+    // Fixed values.
+    let fixed = series.fill(&[
+        ("cpu", Fill::Value(Value::Number(0.0))),
+        ("host", Fill::Value(Value::String("unknown".into()))),
+    ])?;
+    assert_eq!(fixed.column("host")?.strings()?.get(0), Some("unknown"));
+
+    // Zero fills number columns; text columns keep their gaps.
+    let zeroed = series.fill_all(Fill::Zero)?;
+    assert_eq!(
+        col(&zeroed)?,
+        [Some(0.0), Some(0.2), Some(0.0), Some(0.6), Some(0.0)]
+    );
+    assert_eq!(zeroed.column("host")?.strings()?.get(0), None);
+    Ok(())
+}
+```
+
+`fill_all` is the one-rule form; `fill` takes a rule per column. pond-rs refuses an unknown column, `Linear` on a column that is not numbers, and a fixed value of the wrong kind; pond-ts lets these through.
+
+</TabItem>
+</Tabs>
 
 Per-column mapping targets specific columns; other columns pass
 through with their `undefined`s intact:
@@ -125,6 +287,9 @@ series.fill({ cpu: 0, host: 'unknown' });
 in one column. Both options cap how big a gap can be before fill
 gives up:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Count-based: gap of at most 3 cells fits the cap
 series.fill('hold', { limit: 3 });
@@ -136,6 +301,82 @@ series.fill('linear', { maxGap: '5m' });
 // Both — the more restrictive wins
 series.fill('linear', { limit: 3, maxGap: '5m' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A one-minute gap, then a five-minute outage.
+    let series = TimeSeries::new(
+        "cpu",
+        (0..9).map(|i| i * 60_000).collect(),
+        vec![Column::optional(
+            "cpu",
+            vec![
+                Some(1.0),
+                None,
+                Some(3.0),
+                Some(10.0),
+                None,
+                None,
+                None,
+                None,
+                Some(20.0),
+            ],
+        )],
+    )?;
+    let col = |s: &TimeSeries| -> Result<Vec<Option<f64>>, pond_rs::PondError> {
+        Ok(s.column("cpu")?.numbers()?.iter().collect())
+    };
+
+    // At most 3 cells: the 4-cell outage is left whole.
+    let held = series.fill_all_with(Fill::Hold, &FillLimits::none().limit(3))?;
+    assert_eq!(
+        col(&held)?,
+        [
+            Some(1.0),
+            Some(1.0),
+            Some(3.0),
+            Some(10.0),
+            None,
+            None,
+            None,
+            None,
+            Some(20.0)
+        ]
+    );
+
+    // At most 5 minutes from the value before to the value after.
+    let lined = series.fill_all_with(Fill::Linear, &FillLimits::none().max_gap("5m"))?;
+    assert_eq!(
+        col(&lined)?,
+        [
+            Some(1.0),
+            Some(2.0),
+            Some(3.0),
+            Some(10.0),
+            Some(12.0),
+            Some(14.0),
+            Some(16.0),
+            Some(18.0),
+            Some(20.0)
+        ]
+    );
+
+    // Both: the stricter wins.
+    let both = series.fill_all_with(Fill::Linear, &FillLimits::none().limit(3).max_gap("5m"))?;
+    assert_eq!(col(&both)?[4], None);
+    Ok(())
+}
+```
+
+`fill_with` and `fill_all_with` take the caps as `FillLimits`.
+
+</TabItem>
+</Tabs>
 
 **All-or-nothing semantics.** A gap either fits the caps or it
 doesn't:
@@ -160,11 +401,62 @@ const cpu = series.fill('linear', { maxGap: '5m' });
 
 ### Typical post-aggregate pipeline
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const hourly = series
   .aggregate(Sequence.every('1h'), { cpu: 'avg', host: 'last' })
   .fill({ cpu: 'linear', host: 'hold' }, { maxGap: '3h' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Fill, FillLimits, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let (min, h) = (60_000, 3_600_000);
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10 * min, 2 * h + 5 * min, 7 * h],
+        vec![
+            Column::required("cpu", vec![0.2, 0.4, 0.8, 0.5]),
+            Column::required("host", vec!["a", "a", "a", "a"]),
+        ],
+    )?;
+
+    let hourly = series
+        .aggregate(
+            &Sequence::every("1h")?,
+            &[Agg::of("cpu", Reducer::Avg), Agg::of("host", Reducer::Last)],
+        )?
+        .fill_with(
+            &[("cpu", Fill::Linear), ("host", Fill::Hold)],
+            &FillLimits::none().max_gap("3h"),
+        )?;
+    let cpu: Vec<_> = hourly.column("cpu")?.numbers()?.iter().collect();
+    // Hour 1 is filled; hours 3 to 6 are a 5-hour gap, left alone.
+    assert_eq!(
+        cpu,
+        [
+            Some(0.30000000000000004),
+            Some(0.55),
+            Some(0.8),
+            None,
+            None,
+            None,
+            None,
+            Some(0.5)
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### Multi-entity series — see `partitionBy`
 
@@ -176,9 +468,45 @@ against `host-B`'s value as a "neighbor."
 Use [`partitionBy(col)`](./reshape#partitionby) to scope `fill` to
 within each entity:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.partitionBy('host').fill({ cpu: 'linear' }).collect();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 60, 60, 120],
+        vec![
+            Column::optional("cpu", vec![Some(0.5), None, Some(0.9), Some(0.7)]),
+            Column::required("host", vec!["a", "a", "b", "a"]),
+        ],
+    )?;
+
+    // Without partitions, host a's gap is filled from host b's 0.9.
+    let mixed = series.fill(&[("cpu", Fill::Linear)])?;
+    assert_eq!(mixed.column("cpu")?.numbers()?.get(1), Some(0.9));
+
+    // Per host: a fills between its own 0.5 and 0.7.
+    let per_host = series
+        .partition_by(&["host"])?
+        .fill(&[("cpu", Fill::Linear)])?
+        .collect()?;
+    assert_eq!(per_host.column("cpu")?.numbers()?.get(1), Some(0.6));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 See [Concepts → Partitioning](../../pond-ts/concepts/partitioning)
 for the full hazard discussion.
@@ -217,10 +545,47 @@ duplicates of each other.
 
 Pair it with [`partitionBy(col)`](./reshape#partitionby):
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Per-host dedupe — same time AND same host is the duplicate key.
 const clean = events.partitionBy('host').dedupe({ keep: 'last' }).collect();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Keep, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    // Hosts a and b both report at minute 1.
+    let events = TimeSeries::new(
+        "cpu",
+        vec![0, min, min, 2 * min],
+        vec![
+            Column::required("cpu", vec![0.5, 0.4, 0.9, 0.7]),
+            Column::required("host", vec!["a", "a", "b", "a"]),
+        ],
+    )?;
+
+    // Bare dedupe treats a and b at minute 1 as duplicates.
+    assert_eq!(events.dedupe(Keep::Last)?.len(), 3);
+
+    // Per host: the same time AND the same host is the duplicate key.
+    let clean = events
+        .partition_by(&["host"])?
+        .dedupe(Keep::Last)?
+        .collect()?;
+    assert_eq!(clean.len(), 4);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### Resolution policies — `keep`
 
@@ -233,6 +598,9 @@ const clean = events.partitionBy('host').dedupe({ keep: 'last' }).collect();
 | `{ min: 'col' }`    | Keep the event with the smallest value at the named numeric column. Ties keep first.          |
 | `{ max: 'col' }`    | Keep the event with the largest value at the named numeric column.                            |
 | `(events) => Event` | Custom resolver. Receives all duplicates (length ≥ 2), returns one. Use for merge logic.      |
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // Throw on duplicates — useful in ingestion pipelines that want loud failures.
@@ -251,6 +619,52 @@ events.dedupe({
   },
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Keep, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    // Hosts a and b both report at minute 1.
+    let events = TimeSeries::new(
+        "cpu",
+        vec![0, min, min, 2 * min],
+        vec![
+            Column::required("cpu", vec![0.5, 0.4, 0.9, 0.7]),
+            Column::required("host", vec!["a", "a", "b", "a"]),
+        ],
+    )?;
+
+    let cpu = |s: &TimeSeries| -> Result<Vec<f64>, pond_rs::PondError> {
+        Ok(s.column("cpu")?.numbers()?.values().to_vec())
+    };
+
+    // Last wins (the default).
+    assert_eq!(cpu(&events.dedupe(Keep::Last)?)?, [0.5, 0.9, 0.7]);
+    assert_eq!(cpu(&events.dedupe(Keep::First)?)?, [0.5, 0.4, 0.7]);
+
+    // An error at the first repeated time: for pipelines that want loud failures.
+    assert!(events.dedupe(Keep::Error).is_err());
+
+    // Keep the highest-CPU row when two reports race at the same instant.
+    assert_eq!(
+        cpu(&events.dedupe(Keep::Max("cpu".into()))?)?,
+        [0.5, 0.9, 0.7]
+    );
+
+    // Drop every row at a repeated time.
+    assert_eq!(events.dedupe(Keep::Drop)?.len(), 2);
+    Ok(())
+}
+```
+
+pond-rs has no custom keep function yet. `Keep::Min` and `Keep::Max` must name a number or decimal column, checked before anything runs.
+
+</TabItem>
+</Tabs>
 
 ### Chains compose
 
@@ -276,11 +690,57 @@ series. `materialize` does exactly this: emit one **time-keyed** row
 per sequence bucket, populated from a chosen source event in the
 bucket, with `undefined` cells where no source event existed.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.materialize(Sequence.every('1m'));
 // → one row per minute. Empty buckets emit undefined for all
 //   value columns. No fill policy applied — that's a separate step.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{At, Column, Materialize, Pick, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![5_000, 50_000, 130_000, 250_000],
+        vec![Column::required("cpu", vec![0.1, 0.2, 0.3, 0.4])],
+    )?;
+
+    let grid = series.materialize(&Sequence::every("1m")?, Materialize::default())?;
+    // One time-keyed row per minute whose start falls in the series' range
+    // (5 s to 250 s); empty buckets give gaps.
+    assert_eq!(grid.key_name(), "time");
+    assert_eq!(grid.key().begin(), &[60_000, 120_000, 180_000, 240_000]);
+    let got: Vec<_> = grid.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(0.3), None, Some(0.4)]);
+
+    // Rows at each bucket's middle, from the reading nearest it, and a range
+    // chosen by hand (epoch milliseconds).
+    let nearest = series.materialize(
+        &Sequence::every("1m")?,
+        Materialize {
+            sample: At::Center,
+            pick: Pick::Nearest,
+            range: Some((0, 240_000)),
+        },
+    )?;
+    assert_eq!(nearest.key().begin(), &[30_000, 90_000, 150_000, 210_000]);
+    let got: Vec<_> = nearest.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.2), None, Some(0.3), None]);
+    Ok(())
+}
+```
+
+In Rust the options are a `Materialize` struct: `select` is called `pick`, and `range` is a pair of epoch milliseconds.
+
+</TabItem>
+</Tabs>
 
 `materialize` is the missing piece between `dedupe` and `fill`:
 
@@ -318,6 +778,9 @@ On a series carrying multiple entities, the partitioned variant
 auto-populates the partition column on every output row, including
 rows from buckets where the partition had no source event:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 events
   .partitionBy('host')
@@ -329,12 +792,67 @@ events
 // every event in a partition lies in a long-outage gap.
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, Materialize, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let events = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 60_000, 180_000, 200_000],
+        vec![
+            Column::required("cpu", vec![0.1, 0.5, 0.2, 0.4, 0.9]),
+            Column::required("host", vec!["a", "b", "a", "a", "b"]),
+        ],
+    )?;
+
+    let grid = events
+        .partition_by(&["host"])?
+        .materialize(&Sequence::every("1m")?, Materialize::default())?
+        .fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap("3m"))?
+        .collect()?;
+
+    // Every row carries its host, even where the host had no reading.
+    let rows: Vec<_> = grid
+        .rows()
+        .map(|r| {
+            (
+                r.begin(),
+                r.string("host").unwrap(),
+                r.number("cpu").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (0, Some("a"), Some(0.1)),
+            (60_000, Some("a"), Some(0.2)),
+            (60_000, Some("b"), None),
+            (120_000, Some("a"), Some(0.30000000000000004)),
+            (120_000, Some("b"), None),
+            (180_000, Some("a"), Some(0.4)),
+            (180_000, Some("b"), Some(0.9)),
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## End-to-end multi-entity cleaning pipeline \{#end-to-end\}
 
 The canonical multi-host cleaning chain — covers the three most
 common ingest hazards (cross-entity neighbor leaks, duplicate rows
 from retried polls, fabrication across long outages) in one
 pipeline:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const schema = [
@@ -361,6 +879,75 @@ const cleaned = raw
   // Materialize back to a regular TimeSeries.
   .collect();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, Keep, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A retried poll at 0 s for host a, short gaps, and a 38-minute
+    // silence for host b.
+    let raw = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 0, 60_000, 60_000, 120_000, 120_000, 2_400_000],
+        vec![
+            Column::optional(
+                "cpu",
+                vec![
+                    Some(0.5),
+                    Some(0.6),
+                    Some(0.9),
+                    None,
+                    Some(0.8),
+                    Some(0.7),
+                    None,
+                    Some(0.3),
+                ],
+            ),
+            Column::required("host", vec!["a", "a", "b", "a", "b", "a", "b", "b"]),
+        ],
+    )?;
+
+    let cleaned = raw
+        // Scope every following step to each host.
+        .partition_by(&["host"])?
+        // Collapse rows that share (time, host); keep the newest.
+        .dedupe(Keep::Last)?
+        // Fill cpu with straight lines, but only across short gaps.
+        .fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap("5m"))?
+        // Back to one series.
+        .collect()?;
+
+    let rows: Vec<_> = cleaned
+        .rows()
+        .map(|r| {
+            (
+                r.begin(),
+                r.string("host").unwrap(),
+                r.number("cpu").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (0, Some("a"), Some(0.6)), // the retry won
+            (0, Some("b"), Some(0.9)),
+            (60_000, Some("a"), Some(0.6499999999999999)),
+            (60_000, Some("b"), Some(0.8)),
+            (120_000, Some("a"), Some(0.7)),
+            (120_000, Some("b"), None), // the long silence stays a gap
+            (2_400_000, Some("b"), Some(0.3)),
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Each step removes one class of error:
 

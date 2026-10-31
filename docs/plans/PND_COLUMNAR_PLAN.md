@@ -21,6 +21,70 @@ the archive: "3C" historically meant both the batch rolling _output_ path
 
 ## Tasks
 
+### [PND-PARTBATCH] — Partition routing one pass per partition per chunk (DONE 2026-10-27)
+
+**Why.** The gRPC experiment revival (2026-10-27) re-benched its aggregator
+across pond-ts versions and found 0.20.0 (#175, column-native partition
+routing) cut throughput ~22% at 1000 hosts x 1000 ev/s, and 15-33% overall vs
+0.17. In-pond repro (`packages/core/scripts/perf-partition-rolling.mjs`): the
+chunked backing was 30-37% slower than `__backing: 'array'` with a fused
+rolling attached, equal with no listener. Cause: `#routeChunk` called
+`part._stageRows(store, [i])` per row, so every row paid an order check, a
+staging call, a re-entrancy guard, a retention pass, a one-row `'batch'` and a
+settle; the staged rows were then re-validated at flush.
+
+**What shipped.** `#routeChunk` buckets the chunk's rows per partition, then
+(1) `_stageRowsOpen` per partition: order check, stage the whole slice, open
+the partition's guard; (2) `_emitStagedEvent` for every row in source order;
+(3) `_stageRowsClose` per partition: retention, one `'batch'`, `'evict'`,
+settle, drain queued pushes (partitions close in the order of their last row in
+the chunk — Layer-2 review on #838 found that closing in first-seen order sent
+a partition `reduce` under `apply()` out of key order into the strict unified
+buffer). All partitions' guards are open during step 2, so
+a push made from a partition listener queues until that partition closes. Per-partition
+scratch slots are reused chunk to chunk (fresh `indices` arrays, not
+`length = 0`, which V8 runs as a slow runtime call; it was the hottest line).
+The pending-tier flush runs `validateAndNormalizeColumnar` with a new internal
+`trusted` option (no per-cell checks, no `Time` per key, no array re-freeze):
+rows there were already validated by the source.
+
+**Decision: source-order `'event'`, batched everything else.** Bucketed
+`'event'` fan-out was rejected again for the same reason #175 rejected it
+(strict `collect()` and the clock-triggered partitioned rolling need source
+order). Batched `'batch'` / retention / settle makes a routed chunk look to a
+partition exactly like a `pushMany` into it — the per-row behaviour was an
+artefact of the routing loop, not a contract (the non-strict per-event path
+still delivers one row per push, because its source fans out one event at a
+time; unchanged). Error handling changed on purpose: a throwing partition
+listener or an undeclared `groups` value no longer aborts routing for the
+rest of the chunk; the first error is thrown after every partition is closed.
+Pinned by the `[PND-PARTBATCH]` tests in
+`test/live/LivePartitionedSeries.columnar-routing.test.ts` (6 of 8 fail on
+the old code) and live-parity case `partition-pushmany` (only partition
+`'batch'` / `'evict'` counts and the partition `reduce`'s output count differ
+from the old build; every `'event'` is identical). An old-vs-new oracle over
+1,500 random strict partitioned sessions (collect, fused rolling, partition
+rolling, diff, per-partition events and evictions, retention variants) was
+identical apart from eviction grouping.
+
+**Numbers** (median of 4 alternating runs, noisy container; the unchanged
+`array` path moved up to ±17% between runs):
+
+| cell (+ fused rolling)     | before  | after   | auto / array before → after |
+| -------------------------- | ------- | ------- | --------------------------- |
+| 1000 hosts x 1 row/batch   | 1406 ms | 1145 ms | 1.47 → 1.21                 |
+| 1000 hosts x 10 rows/batch | 1219 ms | 946 ms  | 1.43 → 1.09                 |
+| 100 hosts x 10 rows/batch  | 1136 ms | 804 ms  | 1.55 → 0.94                 |
+
+No listener: 10 rows/batch 25-37% faster; 1 row/batch unchanged within noise.
+
+**Not closed:** with one row per partition per chunk the chunked path is still
+~20% behind the `Event[]` path when a rolling listens. What's left is the
+columnar design itself (rows are validated into columns, gathered into the
+partition's staging tier, then rebuilt as transient `Event`s for listeners,
+where the `Event[]` path builds one `Event` and shares it). Closing it needs
+[PND-COLOUT] / [PND-LROLL]-style column-native consumers, not routing work.
+
 ### [PND-COLOUT] — Column-native output (§A)
 
 The dominant remaining allocation slice at the live output boundary:
@@ -458,7 +522,267 @@ construction.
 
 **Remaining under [PND-BOXFREE]:** `fill` (four strategies, and it handles
 non-numeric kinds), `shift`, and `mapColumns` — the last of which takes a JS
-closure per cell and so needs a different answer, not just unboxing.
+closure per cell and so needs a different answer, not just unboxing. _(All
+three done 2026-10-19 — see the second-tranche section below.)_
+
+Measured 2026-10-19 while benchmarking pond-rs step 3a (1M rows, 2% gaps,
+`crates/pond-rs/bench/rowwise_pond_ts.mjs`): `shift` 56 ms,
+`fill('hold')` 52 ms, `fill('linear')` 75 ms against `diff` 8 ms. A CPU
+profile puts 51–54% of each in garbage collection; the rest is the
+`read(i)` loop, `float64ColumnFromArray`, and for `fill('linear')` the
+boxed times array `getTimes` builds from `beginAt(i)`. A throwaway port of
+`shift` to the packed path (the same ten lines as `diff`) measured
+63 → 8 ms. `fill` needs more care (non-numeric kinds, edge runs, limits),
+but the numeric strategies can read `values` and write `NumericOutput` the
+same way.
+
+### [PND-BOXFREE] — second tranche SHIPPED (`shift`, `fill`, `mapColumns`) — 2026-10-19
+
+Each now has an unboxed path for **packed number columns**, beside the
+untouched boxed loop that stays as the fallback (chunked storage, and for
+`fill` the text / boolean / array kinds):
+
+- **`shift`** — one typed `Float64Array`: `NaN` padding at the vacated end,
+  a `subarray` copy of the source when it is `allFinite`, otherwise a loop
+  that rewrites a stray `±Infinity` gap as `NaN` (the boxed round trip did
+  that via `read(i)`).
+- **`fill`** — `src.slice(0, n)`, the same gap walk on `v - v !== 0`
+  instead of `=== undefined`, `TypedArray.fill` for `hold` / `bfill` /
+  `zero` / `literal`, the identical interpolation expression for `linear`,
+  then one final pass that rewrites any non-finite cell as `NaN` and derives
+  `allFinite` (an unfilled gap, a `NaN` / `±Infinity` literal, or an
+  overflowing interpolation all read back as missing, as before). An
+  `allFinite` source returns immediately (no gap), and a column with no gap
+  filled is kept by reference, as before. `getTimes` now builds a
+  `Float64Array` rather than a `number[]` (both paths).
+- **`mapColumns`** — reads the buffer and writes a typed output; the
+  mapper still runs once per defined cell, in row order. So the closure
+  cost remains (the "different answer" above is still open if anyone needs
+  it), but the boxed read + boxed intermediate + rebuild are gone, and that
+  turned out to be most of the time.
+
+**Measured** (`packages/core/scripts/perf-fill-shift-map.mjs`, same data as
+the pond-rs comparison: 1M rows, ~2% gaps in runs of 1–4; 40 warm-up
+iterations, median of 15; each figure is one process, three processes per
+build; "before" = `main` at 3851ec0, "after" = this change):
+
+| operation (1M rows)  | before (ms)        | after (ms)         | ×                     |
+| -------------------- | ------------------ | ------------------ | --------------------- |
+| `shift(1)`           | 70.6 / 58.1 / 68.8 | 3.1 / 2.7 / 2.9    | 23.6×                 |
+| `shift(-3)`          | 53.5 / 65.7 / 61.0 | 2.7 / 2.7 / 2.8    | 22.5×                 |
+| `fill hold`          | 57.3 / 56.1 / 69.5 | 8.5 / 6.2 / 6.2    | 9.2×                  |
+| `fill bfill`         | 55.5 / 56.0 / 61.6 | 7.9 / 6.1 / 5.7    | 9.2×                  |
+| `fill zero`          | 58.2 / 56.3 / 58.2 | 6.9 / 6.1 / 6.1    | 9.5×                  |
+| `fill linear`        | 23.3 / 22.9 / 21.7 | 12.4 / 9.7 / 9.2   | 2.4×                  |
+| `fill linear` maxGap | 22.1 / 24.4 / 21.4 | 9.2 / 8.9 / 9.0    | 2.4×                  |
+| `fill hold` limit 2  | 63.0 / 62.8 / 63.7 | 5.8 / 5.5 / 5.9    | 10.9×                 |
+| `fill hold` (text)   | 26.1 / 26.5 / 26.6 | 30.4 / 23.8 / 26.0 | 1.0× (unchanged path) |
+| `mapColumns(v*2)`    | 69.0 / 70.4 / 66.1 | 6.7 / 5.0 / 5.0    | 13.9×                 |
+| `diff` (control)     | 4.6 / 8.5 / 7.4    | 5.7 / 9.0 / 6.1    | 1.2× (untouched)      |
+
+**Why the "before" `fill linear` here (~23 ms) is not the 75 ms the pond-rs
+bench reported — warm-up.** Same data generator, same `main` build. Running
+the pond-rs script (`crates/pond-rs/bench/rowwise_pond_ts.mjs`, 5 warm-up
+calls) on `main` here gives 78 / 66 / 79 ms; the same script with 40 warm-up
+calls gives 23 / 26 ms, matching this bench. Timing each call of the old
+`fill('linear')` from a cold start shows ~55–130 ms per call that, in one
+run, dropped to ~22 ms from about the 25th call on, and in another had not
+dropped by call 40. Old `fill('hold')` showed no such drop (~45–100 ms
+throughout). So the old linear path had a slow-then-fast curve and the two
+benches sampled opposite ends of it; why V8 speeds that loop up late was not
+investigated. The new path has no such cliff: the pond-rs script (5 warm-ups)
+on this branch gives `fill linear` 9–10 ms against 71–77 ms on `main`, and
+`shift` 3.5–4.3 ms against 53–62 ms, `fill hold` 9–13 ms against 49–60 ms.
+For code that calls `fill` once, the cold numbers are the realistic ones, so
+the real `fill linear` gain is nearer 8× than 2.4×.
+
+`fill linear` stays the slowest of the four strategies (~9.5 ms against
+~6 ms). It is the one that also builds the times array (`getTimes`, one
+`store.beginAt(i)` call per row); whether that is where the remaining time
+goes was not measured — a quick hold-vs-hold-with-`maxGap` comparison was
+too noisy in this container to say.
+
+**Tests:** `packages/core/test/operators-unboxed-fill-shift-map.test.ts`.
+Differential, not hand-written expectations: the same random data is built
+once packed (new path) and once split across two chunks via `concatSorted`
+(old boxed loop, verbatim), and every output must match cell for cell
+(`Object.is`, so `-0` counts), with the same `allFinite`, the same raw `NaN`
+spelling, and the same "replaced vs kept by reference" outcome. 150 random
+shapes × every shift offset; × 8 fill specs × 5 limits × 5 maxGaps; × 7
+mappers (incl. ones returning `NaN`, `Infinity`, a string, `undefined`),
+also checking the mapper sees the same values in the same order.
+Mutation-checked — each of these made the suite fail: shift not rewriting
+`±Infinity` as `NaN`; shift keeping `allFinite` despite padding; `fill`
+`limit` off by one; wrong trailing-gap span for `maxGap`; `fill` skipping
+the final `NaN` rewrite; `fill` rebuilding an untouched column; `mapColumns`
+calling the mapper on a gap; `mapColumns` keeping a non-finite result.
+
+### [PND-FILTERTAKE] — SHIPPED 2026-10-19 (`filter` copies kept rows; dense event cache)
+
+Found by the pond-rs R1b step 3b bench: `filter` rebuilt its whole column
+store from the kept `Event` objects (`#fromTrustedEvents` →
+`buildSeriesStoreFromEvents`). Two changes:
+
+1. **`filter` copies the kept rows out of each column.** The predicate still
+   gets `(event, index)`; kept row numbers go into an `Int32Array` and
+   `withRowSelection` (already used by `partitionBy`) copies those rows from
+   the key and every column. This alone was only ~1.5× (≈150 → ≈100 ms at
+   ~50% kept, 1M rows), which is how the second cost was found.
+2. **A series built from events holds them as a dense array, not a per-row
+   `Map`.** Keeping event identity meant building `Map<rowIndex, Event>` with
+   one entry per row — measured ~90 of the remaining ~125 ms (switching it
+   off for an experiment took `filter` to ~30 ms). `SeriesStore` gained
+   `_fromStoreAndAlignedEventsModulePrivate(store, events)` holding a frozen
+   dense array, checked before the `Map` in `eventAt`, and returned directly by
+   `toEvents()`. `buildSeriesStoreFromEvents` uses it too (copying a non-frozen
+   caller array first, since the `Map` it replaces was a snapshot), so every
+   `#fromTrustedEvents` caller gets it: `TimeSeries.fromEvents` on 1M events
+   ≈230 → ≈73 ms.
+
+Identity is unchanged: `filtered.at(j)` is still the source's own `Event`.
+`SeriesStore` is internal (not exported), so this is not an API change; the
+public `eventCache` option on `fromTrustedStore` keeps its validated `Map`.
+
+**Measured** (`packages/core/scripts/perf-filter.mjs`, same data as the
+pond-rs bench plus a text column; median of 15; three processes per build;
+before = `main` at 5b5c87e, after = this change), 40 warm-up calls:
+
+| operation (1M rows)        | before (ms)           | after (ms)         | ×    |
+| -------------------------- | --------------------- | ------------------ | ---- |
+| filter v > 500 (keeps 49%) | 145.6 / 155.5 / 163.9 | 30.1 / 33.9 / 32.7 | 4.8× |
+| filter keep all            | 290.3 / 282.4 / 307.6 | 57.9 / 54.7 / 73.8 | 5.0× |
+| filter keep 1%             | 44.0 / 40.1 / 40.0    | 11.4 / 11.2 / 11.4 | 3.5× |
+| filter keep none           | 58.2 / 38.0 / 37.2    | 11.3 / 10.8 / 11.1 | 3.4× |
+| … then `.events`           | 191.9 / 258.7 / 194.6 | 37.3 / 49.3 / 50.5 | 3.9× |
+| … then `sum(v)`            | 169.4 / 146.5 / 134.6 | 32.8 / 35.4 / 51.3 | 4.1× |
+
+With 5 warm-up calls the ratios are similar (3.2–5.2×, 8.3× for "then
+`.events`").
+
+**The pond-rs bench's 348–473 ms "before".** Its script (5 warm-ups) on
+this container: 17 runs on the build it measured (`main` at 3851ec0, before
+[PND-BOXFREE]) gave 132–175 ms in 15 runs and 294 / 312 ms in 2; with only
+the filter case kept in the script, 128–160 ms. 11 runs on the later `main`
+(5b5c87e) gave 121–166 ms. So that build and script _can_ read ~300 ms here,
+but only rarely, and never 348–473; what made every run slow on the pond-rs
+side was not found (warm-up count, data shape and build were ruled out: same
+script, same data, same build). On this change the same script gives 29–32 ms.
+
+**One storage difference, not a value difference.** A dictionary-encoded
+text column keeps the source's whole dictionary after `filter`
+(`StringColumn.sliceByIndices` shares it — the same as `slice` and
+`partitionBy`); the old rebuild re-encoded from the kept rows, which for a few
+kept rows meant plain text. Values read back the same, but `toArrow()` can now
+export the column as a dictionary listing values no kept row uses. Pinned by a
+test; compacting is the deferred `compactDictionary` op noted on
+`sliceByIndices`.
+
+Remaining floor: "keep none" (~11 ms) is the predicate walk over the source's
+events — the `Event`-taking predicate is the cost now, and a column-reading
+predicate form would be the next step if anyone needs it.
+
+**Tests:** `packages/core/test/TimeSeries.filter-columnar.test.ts` compares
+against the old path, still reachable as
+`TimeSeries.fromEvents(source.events.filter(pred), …)`, over time / timeRange
+/ interval keys × number / string / boolean / array columns with gaps, `-0`,
+repeated timestamps and empty series, × 9 predicates (incl. truthy
+non-booleans and a random one replayed on both sides); plus predicate call
+order, event identity, frozen `events`, a throwing predicate, chained ops, and
+the dense-store contract. Mutation-checked: wrong kept event, index off by
+one, strict `=== true` truthiness, dropping the snapshot copy, unfrozen
+`toEvents()` — each failed the suite.
+
+### [PND-ROLLDIFF] — SHIPPED (rolling `difference` on two monotone deques)
+
+Found by the pond-rs thread (R1b step 8f). Rolling `difference` kept the
+window in a sorted array (`rollingSortedArray`) and spliced each row in and
+out, so a row cost O(W) for a window of W rows. It now keeps two monotone
+deques, one for the largest value and one for the smallest (the method
+rolling `min` / `max` already use, and the one pond-rs uses), so a row costs
+amortised O(1) whatever the window.
+
+- **Same answers, `-0` included.** The sorted array answered `-0` for some
+  all-zero windows: its zeros went in and out at the front of their run
+  (last in, first out), and the answer was the last minus the first. Which
+  zero sits where depends on the window's history, not only its contents. A
+  stack of zero signs replays that exactly. Checked with `Object.is` against
+  the old build on 2,400 random calls (time and count windows, every
+  alignment, sequences, zeros of both signs; 2,937 of the old answers were
+  `-0`), and in `test/rolling-difference.test.ts` against the old state
+  driven by the same adds and removes. Mutation-checked: dropping the zero
+  stack fails the tests.
+- **Reorder sources keep the sorted array.** A `reorder` source with
+  retention can evict any row, which a deque can't handle, so
+  `rollingStateFor(..., 'sorted')` swaps in the sorted array for
+  `difference` as it already does for `min` / `max` ([PND-LIVFIX]). A test
+  in `livfix-reduce-reorder.test.ts` fails without the swap.
+- **Plain number arrays, rare compaction.** A first version reused
+  `rollingMonotoneDeque` and was slower than the old code on 1-row windows
+  (~230 vs ~155 ms): an object per row, and an array copy on almost every
+  row. Parallel number arrays and compacting only past 1,024 used entries
+  fixed that. `min` / `max` have the same cost ([PND-DEQUEALLOC]).
+- **Measured** (`scripts/perf-rolling-difference.mjs`, 1M rows one second
+  apart, values as pond-rs's `perf_reducers` example, median of 3
+  processes):
+
+  | window      | before  | after  |
+  | ----------- | ------- | ------ |
+  | 1 s (1 row) | 150 ms  | 127 ms |
+  | 5 min       | 354 ms  | 243 ms |
+  | 1 h         | 557 ms  | 261 ms |
+  | 1 day       | 11.25 s | 246 ms |
+
+  The pond-rs thread reported 4.2 s (1 h) and 96 s (1 day) for the old
+  code. Its own script (same rows, `fromJSON`, named output, one cold run,
+  with and without `--max-old-space-size=8000`) gives 0.43–0.45 s and
+  11.2–11.4 s here, and 0.17–0.22 s on the new code. Growth with the window
+  reproduces; the 96 s doesn't. That run was on a busy shared container,
+  which may account for it (not verified).
+
+- Rolling over a `Sequence` turned out to scan every row for every point,
+  for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
+
+### [PND-ROLLGRID] — SHIPPED (two cursors for grid rolling)
+
+`rolling(sequence, window, mapping)` filtered every row for every bucket,
+O(B·N) before any reducing (100k rows, 1-minute grid, 5-minute `avg`: 7.4 s).
+Bucket anchors strictly increase (a `BoundedSequence` is sorted and
+non-overlapping), so each window is a run of begin-sorted rows whose two ends
+only move forward. Now two cursors find each window (O(N + B)), and the result
+is built as typed key/value columns, not through row intake.
+
+**Decision: keep reducing each window afresh, not with sliding states.** The
+event-driven branch uses incremental rolling states (laned sums, double-double
+stdev); the grid branch always used the `aggregate` reducers (`reduce` over
+the window's values). Switching to states would be O(N + B) instead of
+O(N + B·W), but changes last bits (stdev on values near -1e6 moved in the
+12th digit) and broke 2 pond-rs parity cases that pin these bits. So each
+window is still reduced with `reduce`, reading packed number columns straight
+off the buffer. Cost O(N + B·W); a 1-hour window on a 1-minute grid over 100k
+rows (W = 3,600) takes 55 ms.
+
+Checked: 5,400 random cases (time / range / interval keys, repeated times,
+gaps, every alignment and sample point, narrow and wide windows, minSamples,
+15 reducers on numbers plus text reducers) give byte-identical JSON against
+the previous build; flipping one cursor test made 188 differ. Committed test
+`TimeSeries.rolling-sequence.test.ts` checks every window by brute force.
+
+Bench `scripts/perf-rolling-sequence.mjs` (median of 7 after 5 warm-ups,
+3 processes; old build 3 runs after 1 warm-up):
+
+| Case                                    | Before  | After  |
+| --------------------------------------- | ------- | ------ |
+| 100k rows, 1m grid, 5m avg              | 7.45 s  | 5.2 ms |
+| 100k rows, 1m grid, 1h avg              | 8.09 s  | 55 ms  |
+| 4 hosts partitioned, 1m grid, 5m avg    | 2.01 s  | 21 ms  |
+| 1M rows, 1m grid, 5m avg + stdev        | not run | 158 ms |
+| 100k rows, 1s grid, 1s window (W = 1)   | not run | 34 ms  |
+| 10k rows 100 s apart, 1s grid (1M bkts) | not run | 430 ms |
+
+"Not run": the old code needs O(B·N) = 10^10 or more checks there (hours).
+The sparse 1M-bucket case is now mostly making 1M `Interval` objects for the
+sequence and garbage collection; typed grids are part of the align /
+materialize work.
 
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 

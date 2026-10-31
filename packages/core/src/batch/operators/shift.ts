@@ -2,10 +2,12 @@ import {
   type Column,
   type ColumnarStore,
   type ColumnSchema,
+  Float64Column,
   float64ColumnFromArray,
   withColumnReplaced,
 } from '../../columnar/index.js';
 import type { SeriesSchema } from '../../schema/index.js';
+import { packedNumericSource } from './numeric-io.js';
 
 /**
  * **Step 4 — column-native `shift` (extracted operator).** Shifts each
@@ -56,6 +58,20 @@ export function shiftOp<S extends SeriesSchema, OutSchema extends SeriesSchema>(
   let result = store as unknown as ColumnarStore<ColumnSchema>;
   for (const name of cols) {
     const col: Column = store.columns.get(name)!;
+
+    // Unboxed path — [PND-BOXFREE]. Copies the source's `Float64Array`
+    // into a shifted typed buffer instead of boxing every cell.
+    const packed = packedNumericSource(col);
+    if (packed !== null) {
+      result = withColumnReplaced(
+        result,
+        name,
+        shiftPacked(packed.values, packed.allFinite, len, n),
+      );
+      continue;
+    }
+
+    // Fallback for chunked / non-numeric sources: unchanged.
     const out: (number | undefined)[] = new Array(len);
     for (let i = 0; i < len; i += 1) {
       const srcIdx = i - n;
@@ -71,4 +87,46 @@ export function shiftOp<S extends SeriesSchema, OutSchema extends SeriesSchema>(
     store: result as unknown as ColumnarStore<OutSchema>,
     schema: outSchema,
   };
+}
+
+/**
+ * Shifted copy of a packed numeric buffer: row `i` takes `src[i - n]`,
+ * or missing (`NaN`) when that row is out of range. A non-finite source
+ * cell is missing and is written as `NaN`, the one spelling of a gap —
+ * exactly what the boxed path's `read(i)` → `float64ColumnFromArray`
+ * round trip produced.
+ */
+function shiftPacked(
+  src: Float64Array,
+  srcAllFinite: boolean,
+  len: number,
+  n: number,
+): Float64Column {
+  const out = new Float64Array(len);
+  // Rows [lo, hi) take a source value; the rest are padding.
+  const lo = Math.min(len, Math.max(0, n));
+  const hi = Math.max(0, Math.min(len, len + n));
+  let allFinite = true;
+  if (lo > 0 || hi < len) {
+    out.fill(NaN, 0, lo);
+    out.fill(NaN, Math.max(lo, hi), len);
+    allFinite = false;
+  }
+  if (lo < hi) {
+    if (srcAllFinite) {
+      out.set(src.subarray(lo - n, hi - n), lo);
+    } else {
+      for (let i = lo; i < hi; i += 1) {
+        const v = src[i - n]!;
+        // `v - v !== 0` is true exactly for NaN and ±Infinity.
+        if (v - v === 0) {
+          out[i] = v;
+        } else {
+          out[i] = NaN;
+          allFinite = false;
+        }
+      }
+    }
+  }
+  return new Float64Column(out, len, allFinite);
 }

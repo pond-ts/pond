@@ -44,10 +44,12 @@ function buildScalarColumn(
  * Semantics (matching the row path):
  * - the reducer receives the keyed columns' values for the row
  *   (`undefined` for a missing cell), and returns a `ScalarValue`;
- * - the output column's kind is inferred from the **first row's**
- *   result (`number` / `boolean` / else `string`) — an empty series
- *   yields a `string` output column, matching the old `nextEvents[0]?`
- *   inference;
+ * - the output column's kind is inferred from the **first defined**
+ *   result (`number` / `boolean` / else `string`); a later result of
+ *   another kind throws. A series where every result is `undefined`
+ *   (or an empty series) yields a `string` output column. Until
+ *   [PND-COLLAPSEKIND] the first row alone decided, so an `undefined`
+ *   there made the column text and every later number was lost;
  * - **`append: false`** (default) drops the keyed columns and appends
  *   `output`; **`append: true`** keeps every value column and appends
  *   `output`.
@@ -73,7 +75,18 @@ export function collapseOp<
   append: boolean,
 ): { store: ColumnarStore<OutSchema>; schema: OutSchema } {
   const n = store.length;
-  const keyedCols = keys.map((k) => store.columns.get(k)!);
+  const keyedCols = keys.map((k) => {
+    const col = store.columns.get(k);
+    if (col === undefined) {
+      throw new TypeError(
+        `collapse: no column '${k}' (columns: ${schema
+          .slice(1)
+          .map((c) => c.name)
+          .join(', ')})`,
+      );
+    }
+    return col;
+  });
 
   const out: (ScalarValue | undefined)[] = new Array(n);
   for (let i = 0; i < n; i += 1) {
@@ -84,15 +97,28 @@ export function collapseOp<
     out[i] = reducer(values);
   }
 
-  // Output kind from the first row's result (matches the old
-  // `typeof nextEvents[0]?.get(output)` inference; empty ⇒ 'string').
-  const first = n > 0 ? out[0] : undefined;
-  const outKind =
-    typeof first === 'number'
+  // Output kind from the first defined result; every other defined result
+  // must match it (all undefined, or empty ⇒ 'string').
+  const kindOf = (v: ScalarValue) =>
+    typeof v === 'number'
       ? 'number'
-      : typeof first === 'boolean'
+      : typeof v === 'boolean'
         ? 'boolean'
         : 'string';
+  let outKind: 'number' | 'boolean' | 'string' | undefined;
+  for (let i = 0; i < n; i += 1) {
+    const v = out[i];
+    if (v === undefined) continue;
+    const kind = kindOf(v);
+    if (outKind === undefined) {
+      outKind = kind;
+    } else if (kind !== outKind) {
+      throw new TypeError(
+        `collapse: row ${i} gives a ${kind} but earlier rows gave a ${outKind}; every result must be one kind`,
+      );
+    }
+  }
+  outKind ??= 'string';
   const outColumn = buildScalarColumn(outKind, out);
 
   const keptDefs = append

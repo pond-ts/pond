@@ -4,11 +4,13 @@ import {
   type ColumnSchema,
   arrayColumnFromArray,
   booleanColumnFromArray,
+  Float64Column,
   float64ColumnFromArray,
   stringColumnFromArray,
   withColumnReplaced,
 } from '../../columnar/index.js';
 import type { SeriesSchema } from '../../schema/index.js';
+import { packedNumericSource } from './numeric-io.js';
 
 /**
  * A per-cell value transform: `(value) => newValue`, where the output
@@ -97,6 +99,21 @@ export function mapOp<S extends SeriesSchema>(
     const col = store.columns.get(name);
     if (col === undefined) continue;
     const kind = colKind.get(name)!;
+
+    // Unboxed ends for packed number columns — [PND-BOXFREE]. The mapper
+    // still runs once per defined cell (it is the caller's function), but
+    // the cells are read from and written to typed buffers rather than
+    // through `read(i)` and a boxed intermediate array.
+    const packed = kind === 'number' ? packedNumericSource(col) : null;
+    if (packed !== null) {
+      result = withColumnReplaced(
+        result,
+        name,
+        mapPacked(packed.values, n, fn),
+      );
+      continue;
+    }
+
     const out = new Array<unknown>(n);
     for (let i = 0; i < n; i += 1) {
       const v = col.read(i);
@@ -117,4 +134,35 @@ export function mapOp<S extends SeriesSchema>(
   }
 
   return { store: result as unknown as ColumnarStore<S>, schema };
+}
+
+/**
+ * `mapColumns` over a packed number column — [PND-BOXFREE]. Same rules
+ * as the boxed loop: the mapper is called, in row order, only on defined
+ * (finite) cells; a missing cell stays missing; a result that is not a
+ * finite number is stored as missing, as `float64ColumnFromArray` would.
+ */
+function mapPacked(
+  src: Float64Array,
+  n: number,
+  fn: ColumnMapper,
+): Float64Column {
+  const out = new Float64Array(n);
+  let allFinite = true;
+  for (let i = 0; i < n; i += 1) {
+    const v = src[i]!;
+    if (v - v !== 0) {
+      out[i] = NaN;
+      allFinite = false;
+      continue;
+    }
+    const mapped = fn(v);
+    if (typeof mapped === 'number' && mapped - mapped === 0) {
+      out[i] = mapped;
+    } else {
+      out[i] = NaN;
+      allFinite = false;
+    }
+  }
+  return new Float64Column(out, n, allFinite);
 }

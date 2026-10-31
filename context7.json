@@ -13,6 +13,7 @@
     "Series are immutable: every operator returns a new series. Rows must be time-ordered; pass `sort: true` to sort unsorted input on construction.",
     "Per-entity statistics: `series.partitionBy('host').rolling(...).collect()` — the partition key is re-injected as a column on collect.",
     "Charts read a pond series directly: `<ChartContainer width={800}><ChartRow height={240}><Layers><LineChart series={s} column=\"cpu\" /></Layers></ChartRow></ChartContainer>`; `width` is a pixel number or `'auto'`; a `useLiveSeries` snapshot is `null` before the first push — guard it. `@pond-ts/charts` peers on `pond-ts`, `@pond-ts/react` and React 18/19.",
-    "Financial studies append columns and preserve row count (warm-up rows are undefined): `import '@pond-ts/financial/fluent'` then `bars.sma({ period: 20 }).rsi({ period: 14 })`, or call `sma(bars, { period: 20 })` as a function."
+    "Financial studies append columns and preserve row count (warm-up rows are undefined): `import '@pond-ts/financial/fluent'` then `bars.sma({ period: 20 }).rsi({ period: 14 })`, or call `sma(bars, { period: 20 })` as a function.",
+    "pond-rs is the Rust crate (website/docs/pond-rs), not the TypeScript API: snake_case methods, `Agg::new(output, source, Reducer::Avg)` mappings, column kinds checked at run time (`series.column(\"cpu\")?.numbers()?`). Depend on it with `pond-rs = { git = \"https://github.com/pond-ts/pond\" }`; it is not on crates.io."
   ]
 }

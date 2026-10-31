@@ -1,0 +1,1585 @@
+---
+id: operations
+title: Operations
+sidebar_position: 4
+description: Everything pond-rs can do to a series today — rolling windows, fixed and calendar buckets, reducers, diff / rate / fill and friends, filter, slice, tail, reduce, map, select, rename, align, dedupe and join.
+---
+
+# Operations
+
+Every operation takes a series and returns a new one. Column names are
+plain strings, durations are short strings like `"500ms"`, `"30s"`, `"5m"`,
+`"1h"` or `"1d"`, and every call returns a `Result`.
+
+## Rolling windows
+
+`rolling(window, aggs)` looks back from each row: for a row at time `t` it
+reduces the rows with time in `(t - window, t]`. The result has the same
+rows and keys as the input, and **only the columns you ask for**: one per
+`Agg`. Every other column is dropped, as in pond-ts. To keep one, ask for it,
+for example `Agg::of("host", Reducer::Last)` (the row's own value, since the
+window ends at that row).
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::optional(
+            "load",
+            vec![Some(1.0), None, Some(3.0), Some(5.0)],
+        )],
+    )?;
+
+    let r = s.rolling(
+        "2s",
+        &[
+            Agg::new("load_avg", "load", Reducer::Avg),
+            Agg::new("load_n", "load", Reducer::Count),
+        ],
+    )?;
+
+    // At 3s the window (1s, 3s] holds 3.0 and 5.0; the gap at 1s is skipped.
+    assert_eq!(r.column("load_avg")?.numbers()?.get(3), Some(4.0));
+    assert_eq!(r.column("load_n")?.numbers()?.get(3), Some(2.0));
+    // At 1s the window (-1s, 1s] holds only 1.0.
+    assert_eq!(r.column("load_avg")?.numbers()?.get(1), Some(1.0));
+
+    // Only the asked-for columns come out; `load` itself is gone.
+    assert!(r.column("load").is_err());
+    let names: Vec<&str> = r.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["load_avg", "load_n"]);
+    Ok(())
+}
+```
+
+`Agg::new(output, source, reducer)` names the output column.
+`Agg::of(source, reducer)` reuses the source's name, like pond-ts's
+`{ load: 'avg' }`.
+
+### Where the window sits: `rolling_with`
+
+`rolling_with(window, aggs, Rolling { alignment, min_samples })` is
+`rolling` with two choices. `Rolling::default()` gives the same result as
+`rolling`.
+
+| `alignment`                     | For a row at time `t`, the window holds times in |
+| ------------------------------- | ------------------------------------------------ |
+| `Alignment::Trailing` (default) | `(t - window, t]`: the row and what came before  |
+| `Alignment::Leading`            | `[t, t + window)`: the row and what comes after  |
+| `Alignment::Centered`           | `[t - window/2, t + window/2)`: around the row   |
+
+Rows that share a time share a window. `min_samples: n` gives a gap in
+every output column for a row whose window holds fewer than `n` rows. Rows
+are counted whether their value is there or a gap. The default, 0, gives
+every row a value.
+
+### Windows of N rows: `rolling_rows`
+
+`rolling_rows(n, aggs, Rolling)` uses the `n` rows ending at each row (or
+starting at it, or around it), whatever their times. This is the "20-bar"
+window of a trading study: a time window of 20 days would hold fewer bars
+across a weekend or holiday. A centred window of an even `n` has one more
+row after than before. Near the ends of the series a window holds fewer
+rows; set `min_samples` to `n` to give those rows gaps instead.
+
+```rust
+use pond_rs::{Agg, Alignment, Column, Reducer, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let day = 86_400_000;
+    // Friday, Monday, Tuesday: two of the gaps are a weekend.
+    let s = TimeSeries::new(
+        "bars",
+        vec![0, 3 * day, 4 * day],
+        vec![Column::required("close", vec![10.0, 12.0, 14.0])],
+    )?;
+
+    // The last 2 bars, whatever the gap between them.
+    let sma = s.rolling_rows(
+        2,
+        &[Agg::new("sma", "close", Reducer::Avg)],
+        Rolling { min_samples: 2, ..Rolling::default() },
+    )?;
+    let got: Vec<_> = sma.column("sma")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(11.0), Some(13.0)]); // Friday has no bar before it
+
+    // The same over a 2-day time window: Monday's window misses Friday.
+    let by_time = s.rolling("2d", &[Agg::new("avg", "close", Reducer::Avg)])?;
+    let got: Vec<_> = by_time.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(12.0), Some(13.0)]);
+
+    // A leading window: each row and the 2 days after it.
+    let next = s.rolling_with(
+        "2d",
+        &[Agg::new("n", "close", Reducer::Count)],
+        Rolling { alignment: Alignment::Leading, ..Rolling::default() },
+    )?;
+    let got: Vec<_> = next.column("n")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(1.0), Some(2.0), Some(1.0)]);
+    Ok(())
+}
+```
+
+### A rolling window on a regular grid: `rolling_over`
+
+`rolling_over(&sequence, window, aggs, RollingOver)` gives one row per
+bucket of a `Sequence` rather than one per input row: for example a
+5-minute average, once a minute. The window is placed at each bucket's
+start (`sample: At::Center` or `At::End` move it) and lined up as
+`alignment` says. Each window is reduced as `aggregate` reduces a bucket,
+with the same reducers and rules. Buckets are picked as in
+[`align`](#regular-grids-align-and-materialize): those whose start (or
+`sample` point) falls in the series' time range, or in `range` if you give
+one. The result's key is the buckets, named `interval`.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, RollingOver, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // Readings every 30 seconds for 3 minutes.
+    let s = TimeSeries::new(
+        "cpu",
+        (0..7).map(|i| i * 30_000).collect(),
+        vec![Column::required("v", vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])],
+    )?;
+
+    // A 2-minute average, once a minute.
+    let r = s.rolling_over(
+        &Sequence::every("1m")?,
+        "2m",
+        &[Agg::new("v_avg", "v", Reducer::Avg)],
+        RollingOver::default(),
+    )?;
+    assert_eq!(r.key().begin(), &[0, minute, 2 * minute, 3 * minute]);
+    let got: Vec<_> = r.column("v_avg")?.numbers()?.iter().collect();
+    // At 2 minutes the window (0m, 2m] holds 2, 3, 4 and 5.
+    assert_eq!(got, [Some(1.0), Some(2.0), Some(3.5), Some(5.5)]);
+    Ok(())
+}
+```
+
+## Buckets: `aggregate`
+
+`aggregate(sequence, aggs)` puts each row in the bucket that holds it
+(`begin <= t < end`) and reduces each bucket to one row. Buckets run from
+the one holding the first row to the one holding the last, **including
+empty buckets in between**, so a missing hour shows up as a row rather than
+disappearing. An empty bucket gives `count` 0, `sum` 0 and a gap for every
+other reducer.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // Readings in minutes 0 and 2; nothing in minute 1.
+    let s = TimeSeries::new(
+        "req",
+        vec![0, 30_000, 2 * minute],
+        vec![Column::required("ms", vec![120.0, 80.0, 200.0])],
+    )?;
+
+    let per_minute = s.aggregate(
+        &Sequence::every("1m")?,
+        &[
+            Agg::new("n", "ms", Reducer::Count),
+            Agg::new("avg", "ms", Reducer::Avg),
+            Agg::new("p95", "ms", Reducer::Percentile(95.0)),
+        ],
+    )?;
+
+    assert_eq!(per_minute.len(), 3); // minute 1 is there, empty
+    let n: Vec<_> = per_minute.column("n")?.numbers()?.iter().collect();
+    let avg: Vec<_> = per_minute.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(n, [Some(2.0), Some(0.0), Some(1.0)]);
+    assert_eq!(avg, [Some(100.0), None, Some(200.0)]);
+    Ok(())
+}
+```
+
+### Fixed-length buckets
+
+`Sequence::every("15m")` gives 15-minute buckets lined up with Unix time 0
+(so on :00, :15, :30, :45 in UTC). `Sequence::every_ms(n)` takes
+milliseconds. `.with_anchor(t)` shifts the grid so a bucket starts at `t`.
+
+### Calendar buckets
+
+`Sequence::calendar(unit, time_zone)` gives calendar buckets in an IANA
+time zone: `"day"`, `"week"`, `"month"`, `"quarter"` or `"year"`. A New York
+day is 23 hours on the day the clocks go forward and 25 on the day they go
+back; months have their real lengths. Weeks start on Monday;
+`.with_week_start(7)` starts them on Sunday (ISO numbering, 1 = Monday).
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hour = 3_600_000_i64;
+    // Hourly sales for 50 hours from Saturday 24 October 2026, 00:00 in
+    // London (still summer time, so 23:00 UTC the day before).
+    let start = parse_time_in("2026-10-24", "Europe/London")?;
+    let times: Vec<i64> = (0..50).map(|h| start + h * hour).collect();
+    let s = TimeSeries::new(
+        "sales",
+        times,
+        vec![Column::required("units", vec![1.0; 50])],
+    )?;
+
+    let days = s.aggregate(
+        &Sequence::calendar("day", "Europe/London")?,
+        &[Agg::new("units", "units", Reducer::Sum)],
+    )?;
+    // UK clocks go back on Sunday 25 October, so that day has 25 hours.
+    let sums: Vec<_> = days.column("units")?.numbers()?.iter().collect();
+    assert_eq!(sums, [Some(24.0), Some(25.0), Some(1.0)]);
+    Ok(())
+}
+```
+
+Time-zone rules come from the time-zone database built into pond-rs
+(`pond_rs::tzdb_version()` says which release). pond-ts uses the one in its
+JavaScript engine; if the two releases disagree about a zone's history, the
+buckets will too.
+
+### Reducers
+
+| Reducer                   | Gives                                                    | Also works on               |
+| ------------------------- | -------------------------------------------------------- | --------------------------- |
+| `Count`                   | how many values (gaps not counted)                       | every kind                  |
+| `Sum`                     | total; 0 when there are no values                        | decimals (exact)            |
+| `Avg`                     | mean                                                     | decimals (as a number)      |
+| `Min`, `Max`              | smallest, largest                                        | decimals (exact)            |
+| `Difference`              | largest minus smallest (the spread)                      | decimals (exact)            |
+| `First`, `Last`           | first or last value in the window or bucket              | every kind (keeps the kind) |
+| `Keep`                    | the value if every value is the same, else a gap         | every kind (keeps the kind) |
+| `Median`, `Percentile(q)` | the middle value, or the `q`th percentile (0–100)        | decimals (as a number)      |
+| `Stdev`                   | standard deviation (population, divides by n)            | decimals (as a number)      |
+| `Unique`                  | the different values, as a sorted list                   | every kind                  |
+| `Top(n)`                  | the `n` most common values, as a list, most common first | every kind                  |
+| `Samples`                 | every value, as a list, in the order they came           | every kind                  |
+
+On text, true/false and list columns only `Count`, `First`, `Last`,
+`Keep`, `Unique`, `Top(n)` and `Samples` are allowed; anything else is an
+error naming the column. `Reducer::parse("p95")` and
+`"avg".parse::<Reducer>()` turn pond-ts's reducer names into a `Reducer`
+(`"keep"`, `"difference"`, `"unique"`, `"top3"`, `"samples"` too).
+
+The last three give a [list column](#list-columns). A bucket with no values
+gives an empty list, not a gap. If the source is itself a list column, its
+lists are joined first, so `["a", "b"]` and `["b"]` count as `a`, `b`, `b`.
+`Unique` puts numbers first, then text, then true/false; `Top(n)` breaks
+ties in that same order. Both treat `0` and `-0` as one value, written `0`;
+`Samples` keeps each value as it was. Decimals come out as plain numbers.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let s = TimeSeries::new(
+        "req",
+        vec![0, 10_000, 20_000, 30_000, minute],
+        vec![
+            Column::required("host", vec!["b", "a", "b", "b", "a"]),
+            Column::required("region", vec!["eu", "eu", "eu", "eu", "us"]),
+            Column::required("ms", vec![120.0, 80.0, 200.0, 90.0, 60.0]),
+        ],
+    )?;
+
+    let per_minute = s.aggregate(
+        &Sequence::every("1m")?,
+        &[
+            Agg::new("hosts", "host", Reducer::Unique),
+            Agg::new("busiest", "host", Reducer::Top(1)),
+            Agg::new("region", "region", Reducer::Keep),
+            Agg::new("spread", "ms", Reducer::Difference),
+        ],
+    )?;
+
+    let hosts: Vec<_> = per_minute.column("hosts")?.arrays()?.iter().collect();
+    let a = || Scalar::from("a");
+    let b = || Scalar::from("b");
+    assert_eq!(hosts, [Some(&[a(), b()][..]), Some(&[a()][..])]);
+    let busiest: Vec<_> = per_minute.column("busiest")?.arrays()?.iter().collect();
+    assert_eq!(busiest, [Some(&[b()][..]), Some(&[a()][..])]); // b came 3 times
+    let spread: Vec<_> = per_minute.column("spread")?.numbers()?.iter().collect();
+    assert_eq!(spread, [Some(120.0), Some(0.0)]);
+    let region: Vec<_> = per_minute.column("region")?.strings()?.iter().collect();
+    assert_eq!(region, [Some("eu"), Some("us")]);
+    Ok(())
+}
+```
+
+`Keep` compares numbers the way JavaScript's `===` does, so `0` and `-0`
+count as the same value. In `aggregate` and `reduce` it gives back the
+first one; in `rolling` it gives `0`, as pond-ts does.
+
+## Row by row
+
+These compare each row with the one before it, or carry a running value
+down the column. They take a list of columns; other columns pass through
+unchanged.
+
+| Call                            | Each row gets                                          |
+| ------------------------------- | ------------------------------------------------------ |
+| `diff(&cols)`                   | value minus the previous row's                         |
+| `rate(&cols)`                   | change per second of key time                          |
+| `pct_change(&cols)`             | change as a fraction of the previous value (not × 100) |
+| `shift(&cols, n)`               | the value from `n` rows up (negative `n`: rows down)   |
+| `cumulative(&[(col, reducer)])` | running `Sum`, `Min`, `Max` or `Count`                 |
+| `cumulative_with(col, closure)` | a running value of your own                            |
+| `fill(&[(col, Fill)])`          | gaps filled by a rule                                  |
+
+`diff`, `rate` and `pct_change` keep the first row (with a gap) and replace
+each named column. `diff_with` / `rate_with` / `pct_change_with` take a
+`Change`: `.first(FirstRow::Drop)` removes the first row, and
+`.output("name")` puts the result in a new column and keeps the source (one
+source column only). "Previous row" means the row directly above, not the
+last row with a value, so a gap on either side gives a gap.
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A counter read every 10 seconds; one reading is missing.
+    let s = TimeSeries::new(
+        "bytes",
+        vec![0, 10_000, 20_000, 30_000],
+        vec![Column::optional(
+            "total",
+            vec![Some(100.0), Some(400.0), None, Some(1_000.0)],
+        )],
+    )?;
+
+    let per_second = s.rate(&["total"])?;
+    let got: Vec<_> = per_second.column("total")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(30.0), None, None]);
+
+    let running = s.cumulative(&[("total", Reducer::Max)])?;
+    let got: Vec<_> = running.column("total")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(100.0), Some(400.0), Some(400.0), Some(1_000.0)]);
+    Ok(())
+}
+```
+
+### Filling gaps
+
+`Fill` says how: `Hold` (carry the last value forward), `Bfill` (take the
+next value), `Linear` (a straight line by time between the values either
+side; numbers only), `Zero`, or `Value(..)` (a fixed value of the column's
+kind). `FillLimits` caps which runs of gaps get filled; a run that is too
+long is left entirely as it was, never half filled.
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let times: Vec<i64> = (0..7).map(|m| m * minute).collect();
+    let s = TimeSeries::new(
+        "temp",
+        times,
+        vec![Column::optional(
+            "c",
+            vec![
+                Some(20.0),
+                None,
+                Some(22.0), // a 1-row gap
+                None,
+                None,
+                None,
+                Some(30.0), // a 3-row gap
+            ],
+        )],
+    )?;
+
+    // Fill straight lines, but only across gaps of at most 2 minutes
+    // (measured from the value before to the value after).
+    let filled =
+        s.fill_with(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
+    let got: Vec<_> = filled.column("c")?.numbers()?.iter().collect();
+    assert_eq!(
+        got,
+        [
+            Some(20.0),
+            Some(21.0),
+            Some(22.0),
+            None,
+            None,
+            None,
+            Some(30.0)
+        ]
+    );
+    Ok(())
+}
+```
+
+`fill_all(Fill::Hold, &limits)` applies one rule to every column.
+
+## Smoothing, bands and running totals
+
+These five work on one number column and keep every row (except
+`outliers` and `sample`, whose job is to pick rows).
+
+### Smoothing a column: `smooth`
+
+`smooth(column, &Smooth)` replaces the column with a smoothed version, or
+writes it to a new column with `.output(name)`. Either way the result
+column is optional, since smoothing can leave gaps. Pick a method, then add
+options:
+
+| Method                      | What it does                                                                          | Options it takes                        |
+| --------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------- |
+| `Smooth::ema(alpha)`        | exponential moving average: each value `v` gives `alpha * v + (1 - alpha) * previous` | `.warmup(rows)`, `.min_samples(values)` |
+| `Smooth::ema_span(span)`    | the same, with `alpha = 2 / (span + 1)` (the finance convention for "a 20-bar EMA")   | `.warmup(rows)`, `.min_samples(values)` |
+| `Smooth::moving_average(w)` | the mean of the values in a time window, as `rolling` with `Avg`                      | `.alignment(a)`, `.skip_missing()`      |
+| `Smooth::loess(span)`       | a local straight-line fit through the nearest `span` fraction (0 to 1) of the values  | `.skip_missing()`                       |
+
+All four take `.output(name)`. Giving a method an option it does not take
+is an error. For the EMA, a gap stays a gap and the average carries on
+from the last value; `.min_samples(n)` gives gaps until `n` values have
+been read, and `.warmup(n)` drops the first `n` rows from the result
+altogether. The moving average and loess fill a gap from the values around
+it by default; `.skip_missing()` leaves the gap. Loess compares every row
+with its neighbours, so its time grows with the square of the row count.
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::optional("v", vec![Some(2.0), Some(4.0), None, Some(8.0)])],
+    )?;
+
+    // alpha = 2 / (3 + 1) = 0.5; nothing until 2 values have been read.
+    let ema = s.smooth("v", &Smooth::ema_span(3.0).min_samples(2).output("ema"))?;
+    let got: Vec<_> = ema.column("ema")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(3.0), None, Some(5.5)]); // the gap stays a gap
+
+    // A 2-second average; the gap at 2s is filled from its window.
+    let avg = s.smooth("v", &Smooth::moving_average("2s").output("avg"))?;
+    let got: Vec<_> = avg.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(2.0), Some(3.0), Some(4.0), Some(8.0)]);
+
+    let kept = s.smooth("v", &Smooth::moving_average("2s").skip_missing())?;
+    assert_eq!(kept.column("v")?.numbers()?.get(2), None);
+    Ok(())
+}
+```
+
+### A normal band, and what falls outside it: `baseline` and `outliers`
+
+`baseline(column, window, sigma, Rolling)` works out a rolling mean and
+standard deviation over a time window and adds four columns: `avg`, `sd`,
+`upper` (`avg + sigma * sd`) and `lower` (`avg - sigma * sd`).
+`baseline_named` takes four names of your own instead. `Rolling` sets the
+window's alignment and minimum rows, as for
+[`rolling_with`](#where-the-window-sits-rolling_with). When every value in
+the window is the same, `sd` is 0 and `upper` / `lower` are gaps, since a
+band of zero width would flag every other value.
+
+`outliers(column, window, sigma, Rolling)` keeps only the rows outside that
+band, with all their columns. Gaps, flat windows and rows with no band are
+never outliers.
+
+```rust
+use pond_rs::{Column, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::required("cpu", vec![1.0, 1.0, 1.0, 9.0])],
+    )?;
+
+    let b = s.baseline("cpu", "4s", 1.0, Rolling::default())?;
+    let names: Vec<&str> = b.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "avg", "sd", "upper", "lower"]);
+    // The first three windows hold only 1s: flat, so no band.
+    assert_eq!(b.column("upper")?.numbers()?.get(2), None);
+    // The last window holds 1, 1, 1, 9: mean 3, deviation √12.
+    assert_eq!(b.column("avg")?.numbers()?.get(3), Some(3.0));
+
+    let odd = s.outliers("cpu", "4s", 1.0, Rolling::default())?;
+    assert_eq!(odd.key().begin(), &[3_000]);
+    Ok(())
+}
+```
+
+### A running total of your own: `scan`
+
+`scan(column, start, step)` walks down a number column with a Rust closure.
+`step(state, value, row)` returns the new state and this row's output. The
+state can be any type, so it can hold more than the output: a last low
+point and a total, say. `scan` replaces the column; `scan_to(column,
+output, start, step)` writes a new column and keeps the source. A gap does
+not call `step`: the row repeats the last output (or is a gap, before the
+first value). A non-finite output is a gap, so the column is optional.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "track",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![Column::optional(
+            "ele",
+            vec![Some(10.0), Some(12.0), None, Some(11.0), Some(14.0)],
+        )],
+    )?;
+
+    // Total climb: add each rise above the last point.
+    let gain = s.scan_to("ele", "gain", (f64::NAN, 0.0), |(last, total), v, _row| {
+        let total = if v > last { total + v - last } else { total };
+        ((v, total), total)
+    })?;
+    let got: Vec<_> = gain.column("gain")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.0), Some(2.0), Some(2.0), Some(2.0), Some(5.0)]);
+    assert!(gain.column("ele").is_ok()); // scan_to keeps the source
+    Ok(())
+}
+```
+
+### Picking some rows: `sample`
+
+`sample(Sample::Stride(n))` keeps every `n`th row (rows `n - 1`, `2n - 1`,
+…). `sample(Sample::Reservoir { size, seed })` keeps `size` rows picked at
+random, every row equally likely, in their order in the series. The same
+`seed` always picks the same rows, so a run can be repeated; pond-ts has no
+seed. A series with no more than `size` rows is kept whole.
+
+```rust
+use pond_rs::{Column, Sample, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "s",
+        (0..10).map(|i| i * 1_000).collect(),
+        vec![Column::required("v", (0..10).map(f64::from).collect::<Vec<_>>())],
+    )?;
+
+    assert_eq!(s.sample(Sample::Stride(4))?.key().begin(), &[3_000, 7_000]);
+
+    let a = s.sample(Sample::Reservoir { size: 3, seed: 7 })?;
+    let b = s.sample(Sample::Reservoir { size: 3, seed: 7 })?;
+    assert_eq!(a.len(), 3);
+    assert_eq!(a.key().begin(), b.key().begin()); // same seed, same rows
+    Ok(())
+}
+```
+
+### One entity at a time
+
+On a series holding several hosts or devices, these five mix their rows
+together. To run them on each host alone, split first with `partition_by`
+(see [Partitions](./partitions)): the partitioned series has `smooth`,
+`baseline`, `baseline_named`, `outliers`, `scan`, `scan_to` and `sample`
+too, as pond-ts's partitioned series does. Each one sees only its own
+host's rows, and the partitions run on several cores.
+
+- `scan` starts every partition from its own copy of the start value, and
+  the row number counts from 0 in each. The step must be `Fn` (it cannot
+  change outside state), because partitions run at the same time.
+- `sample(Sample::Stride(n))` counts rows within each partition. A
+  `Sample::Reservoir` seeds each partition from your seed and the
+  partition's place in order, so partitions pick separately, and the same
+  input and seed give the same rows every run.
+- `outliers` drops a partition that has no outliers left.
+
+```rust
+use pond_rs::{Column, Sample, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 1_000, 1_000, 2_000, 2_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b", "a", "b"]),
+            Column::required("v", vec![0.0, 100.0, 10.0, 100.0, 20.0, 100.0]),
+        ],
+    )?;
+    let hosts = s.partition_by(&["host"])?;
+
+    // Host a's EMA never sees host b's 100s.
+    let ema = hosts.smooth("v", &Smooth::ema(0.5).output("ema"))?.collect()?;
+    let rows: Vec<_> = ema
+        .rows()
+        .map(|r| (r.string("host").unwrap(), r.number("ema").unwrap()))
+        .collect();
+    assert!(rows.contains(&(Some("a"), Some(5.0))));
+
+    // A running total that restarts for each host.
+    let total = hosts
+        .scan_to("v", "total", 0.0, |sum, v, _row| (sum + v, sum + v))?
+        .collect()?;
+    let last: Vec<_> = total.rows().skip(4).map(|r| r.number("total").unwrap()).collect();
+    assert_eq!(last, [Some(30.0), Some(300.0)]);
+
+    // Two rows from each host, the same two every run.
+    let a = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    let b = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    assert_eq!(a.len(), 4);
+    assert_eq!(a.key().begin(), b.key().begin());
+    Ok(())
+}
+```
+
+Smoothing the partition column itself splits the rows again by the new
+values, as `map` does.
+
+## Picking rows
+
+`slice(range)` picks rows by position, with negative positions counting
+from the end, as JavaScript's `slice` does. `filter(closure)` keeps the rows
+for which the closure returns `Ok(true)`; the closure gets a `Row` and can
+use `?` on its lookups.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b"]),
+            Column::optional(
+                "load",
+                vec![Some(0.2), None, Some(0.9), Some(0.7)],
+            ),
+        ],
+    )?;
+
+    assert_eq!(s.slice(-2..).key().begin(), &[2_000, 3_000]); // the last two
+    assert_eq!(s.slice(1..3).len(), 2);
+
+    let busy = s.filter(|r| Ok(r.number("load")?.is_some_and(|v| v > 0.5)))?;
+    assert_eq!(busy.key().begin(), &[2_000, 3_000]);
+
+    // Faster for big series: look the column up once, then index by row.
+    let host = s.column("host")?.strings()?;
+    let only_a = s.filter(|r| Ok(host.get(r.index()) == Some("a")))?;
+    assert_eq!(only_a.len(), 2);
+    Ok(())
+}
+```
+
+`tail("60m")` keeps the rows in the last stretch of time: those that start
+**after** the last row's time minus 60 minutes, so a row exactly 60 minutes
+before the last one is left out. `first()` and `last()` give the first and
+last row, or `None` for an empty series.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let s = TimeSeries::new(
+        "price",
+        vec![0, 30 * min, 60 * min, 90 * min],
+        vec![Column::required("close", vec![10.0, 12.0, 14.0, 13.0])],
+    )?;
+
+    // The last row is at 90 minutes; the last hour is after 30 minutes.
+    let hour = s.tail("60m")?;
+    assert_eq!(hour.key().begin(), &[60 * min, 90 * min]);
+
+    let last = s.last().expect("not empty");
+    assert_eq!(last.begin(), 90 * min);
+    assert_eq!(last.number("close")?, Some(13.0));
+    Ok(())
+}
+```
+
+## One row for the whole series: `reduce`
+
+`reduce(&aggs)` boils the whole series down to one value per `Agg`, with
+the same reducers and rules as `aggregate` (as if the whole series were one
+bucket). It returns a `Reduced`, which you read by output name:
+`number`, `string`, `boolean` and `decimal` check the kind, `get` gives a
+`Value` of any kind. A gap is `Ok(None)`; an empty series gives `count` 0,
+`sum` 0 and gaps for the rest.
+
+With `tail`, this answers "what are things like right now" without
+computing a rolling window at every row of the history:
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let s = TimeSeries::new(
+        "price",
+        vec![0, 30 * min, 60 * min, 90 * min],
+        vec![
+            Column::required("symbol", vec!["A", "A", "A", "A"]),
+            Column::required("close", vec![10.0, 12.0, 14.0, 13.0]),
+        ],
+    )?;
+
+    let now = s.tail("60m")?.reduce(&[
+        Agg::new("mean", "close", Reducer::Avg),
+        Agg::new("close", "close", Reducer::Last),
+        Agg::new("symbol", "symbol", Reducer::First),
+    ])?;
+    assert_eq!(now.number("mean")?, Some(13.5)); // (14 + 13) / 2
+    assert_eq!(now.number("close")?, Some(13.0));
+    assert_eq!(now.string("symbol")?, Some("A"));
+    assert!(now.number("symbol").is_err()); // text, not a number
+    Ok(())
+}
+```
+
+## Finding rows
+
+These look up one row, or answer a yes/no question, without building a new
+series. Each is the pond-ts call of the same name.
+
+| Call                         | Gives                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `at(i)`                      | the row at position `i`; `-1` is the last row. `None` past either end   |
+| `bisect(key)`                | the position where `key` would go: the first row not before it          |
+| `includes_key(key)`          | whether a row has exactly that key                                      |
+| `at_or_before(key)`          | the row with exactly that key, else the last row before it              |
+| `at_or_after(key)`           | the first row not before the key                                        |
+| `nearest(key)`               | the row whose start is closest; a tie goes to the earlier row           |
+| `find(test)`                 | the first row for which the closure returns `Ok(true)`                  |
+| `some(test)` / `every(test)` | whether the closure is true for any row / for all rows; both stop early |
+
+A key is an `EventKey`; a plain `i64` time works as one. For other key
+kinds, build one with `EventKey::time_range(begin, end)` or
+`EventKey::interval(label, begin, end)`, both of which return an error if
+`begin` is after `end`. `row.key()` gives a row's key back as an
+`EventKey`. Lookups by key are binary searches, so they stay fast on big
+series.
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_500],
+        vec![Column::required("load", vec![0.2, 0.9, 0.4])],
+    )?;
+
+    assert_eq!(s.at(-1).unwrap().begin(), 2_500); // the last row
+    assert_eq!(s.bisect(1_200), 2); // between rows 1 and 2
+    assert!(s.includes_key(1_000));
+    assert!(!s.includes_key(1_200));
+
+    assert_eq!(s.at_or_before(1_200).unwrap().begin(), 1_000);
+    assert_eq!(s.at_or_after(1_200).unwrap().begin(), 2_500);
+    assert!(s.at_or_before(-5).is_none()); // every row is after it
+
+    // 1,750 is 750 ms from both 1,000 and 2,500: the earlier row wins.
+    assert_eq!(s.nearest(1_750).unwrap().begin(), 1_000);
+    // Outside the series: the last row.
+    assert_eq!(s.nearest(99_000).unwrap().begin(), 2_500);
+
+    let first_busy = s.find(|r| Ok(r.number("load")? > Some(0.5)))?;
+    assert_eq!(first_busy.unwrap().key(), EventKey::time(1_000));
+    assert!(s.every(|r| Ok(r.number("load")?.is_some()))?);
+
+    // A backwards range is refused when the key is built.
+    assert!(EventKey::time_range(2_000, 1_000).is_err());
+    Ok(())
+}
+```
+
+## Picking a time span
+
+These keep the rows in a stretch of time. Every test includes both ends.
+A span is an `EventKey` (usually `EventKey::time_range(begin, end)?`), so a
+span whose start is after its end is refused when it is built.
+
+| Call                 | Keeps                                                                            |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `within(begin, end)` | rows wholly inside `begin..=end` (an error if `begin > end`)                     |
+| `contained_by(span)` | rows wholly inside `span`                                                        |
+| `overlapping(span)`  | rows that touch `span` at all, keys unchanged                                    |
+| `trim(span)`         | the same rows as `overlapping`, with time ranges and intervals clipped to `span` |
+| `before(t)`          | rows that end strictly before `t`                                                |
+| `after(t)`           | rows that start strictly after `t`                                               |
+
+For a series keyed by moments, `contained_by`, `overlapping` and `trim`
+keep the same rows. They differ when rows are spans:
+
+```rust
+use pond_rs::{Column, EventKey, TimeRangeKeys, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Three jobs, each running from begin to end.
+    let jobs = TimeSeries::from_time_ranges(
+        "jobs",
+        TimeRangeKeys {
+            begin: vec![0, 2, 8],
+            end: vec![10, 5, 9],
+        },
+        vec![Column::required("id", vec!["a", "b", "c"])],
+    )?;
+    let span = EventKey::time_range(3, 20)?;
+
+    // Wholly inside 3..=20: only c.
+    assert_eq!(jobs.contained_by(span.clone()).len(), 1);
+    // Touching it at all: all three.
+    assert_eq!(jobs.overlapping(span.clone()).len(), 3);
+
+    // Clipped to start at 3. a (now 3..10) and b (now 3..5) start together,
+    // so the rows are re-sorted by end: b first.
+    let clipped = jobs.trim(span);
+    let ids: Vec<_> = clipped.column("id")?.strings()?.iter().collect();
+    assert_eq!(ids, [Some("b"), Some("a"), Some("c")]);
+    assert_eq!(clipped.key().begin(), &[3, 3, 8]);
+
+    assert_eq!(jobs.before(6).len(), 1); // b ends at 5
+    assert_eq!(jobs.after(1).len(), 2); // b and c start after 1
+    Ok(())
+}
+```
+
+`trim` re-sorts only when clipping put two rows that now start together in
+the wrong order, as above. pond-ts had a bug here: it left them out of
+order, which broke later lookups. It was fixed in pond-ts at the same time.
+
+Four more calls look at the whole series' span, from the first start to the
+latest end:
+
+| Call                 | Gives                                                           |
+| -------------------- | --------------------------------------------------------------- |
+| `time_range()`       | that span as an `EventKey`, or `None` for an empty series       |
+| `overlaps(span)`     | whether it touches `span` (`false` for an empty series)         |
+| `contains(span)`     | whether it wholly contains `span` (`false` for an empty series) |
+| `intersection(span)` | the shared part, or `None` if they do not overlap               |
+
+To compare two series, pass the other's span:
+`b.time_range().is_some_and(|r| a.overlaps(r))`.
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let a = TimeSeries::new("a", vec![0, 5_000, 10_000], vec![Column::required("v", vec![1.0, 2.0, 3.0])])?;
+    let b = TimeSeries::new("b", vec![8_000, 20_000], vec![Column::required("v", vec![4.0, 5.0])])?;
+
+    assert_eq!(a.time_range(), Some(EventKey::time_range(0, 10_000)?));
+    assert!(b.time_range().is_some_and(|r| a.overlaps(r)));
+    assert!(!a.contains(b.time_range().unwrap()));
+    assert_eq!(
+        a.intersection(b.time_range().unwrap()),
+        Some(EventKey::time_range(8_000, 10_000)?)
+    );
+
+    // Rows of a inside the shared part: just the one at 10 s.
+    assert_eq!(a.within(8_000, 10_000)?.len(), 1);
+    Ok(())
+}
+```
+
+## Changing columns
+
+- `map_numbers(col, |v| ..)` applies a function to every value of a number
+  column. Gaps stay gaps and are not passed in; a `NaN` result becomes a
+  gap. `map_strings`, `map_booleans` and `map_decimals` do the same for the
+  other kinds.
+- `with_column(Column)` adds a column you built yourself; it must be as
+  long as the series.
+- `select(&cols)` keeps only the named columns (in their existing order),
+  `rename(&[(from, to)])` renames them, and `as_time(At::Begin)` turns an
+  interval or time-range key into a plain time.
+
+```rust
+use pond_rs::{Agg, At, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "t",
+        vec![0, 30_000, 60_000],
+        vec![
+            Column::optional("celsius", vec![Some(20.0), None, Some(25.0)]),
+            Column::required("site", vec!["x", "x", "y"]),
+        ],
+    )?;
+
+    let f = s.map_numbers("celsius", |c| c * 1.8 + 32.0)?;
+    assert_eq!(f.column("celsius")?.numbers()?.get(0), Some(68.0));
+
+    // Add a column computed from another one.
+    let celsius = s.column("celsius")?.numbers()?;
+    let hot: Vec<Option<bool>> =
+        celsius.iter().map(|c| c.map(|c| c > 22.0)).collect();
+    let with_hot = s.with_column(Column::optional("hot", hot))?;
+    assert_eq!(with_hot.column("hot")?.booleans()?.get(2), Some(true));
+
+    // Per-minute averages, renamed, keyed by each minute's start.
+    let per_minute = s
+        .aggregate(
+            &Sequence::every("1m")?,
+            &[Agg::of("celsius", Reducer::Avg)],
+        )?
+        .rename(&[("celsius", "avg_c")])?
+        .as_time(At::Begin)?;
+    assert_eq!(per_minute.key_name(), "time");
+    assert_eq!(per_minute.key().begin(), &[0, 60_000]);
+    assert_eq!(per_minute.select(&["avg_c"])?.columns().len(), 1);
+    Ok(())
+}
+```
+
+## Changing the key
+
+These change what kind of key a series has, or move every time. The value
+columns are shared with the original, not copied.
+
+| Call                                  | Does                                                                                    |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `as_time(At::Begin)`                  | turns ranges or intervals into moments (`Begin`, `Center` or `End`)                     |
+| `as_time_range()`                     | turns each row into a time range over the same stretch; a moment `t` becomes `t` to `t` |
+| `as_interval(label)`                  | the same, as intervals all carrying `label` (a number or text)                          |
+| `as_interval_with(\|range, row\| ..)` | the same, with each row's label from a closure                                          |
+| `offset_time("-1h")`                  | moves every time by a fixed amount; `offset_time_ms(n)` takes milliseconds              |
+
+Labels must all be numbers or all text, and number labels must be finite.
+A value column already named `timeRange` or `interval` is an error, since
+the new key would take that name.
+
+```rust
+use pond_rs::{Column, Label, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hour = 3_600_000;
+    let s = TimeSeries::new(
+        "load",
+        vec![0, hour],
+        vec![Column::required("v", vec![1.0, 2.0])],
+    )?;
+
+    let ranges = s.as_time_range()?;
+    assert_eq!(ranges.key_name(), "timeRange");
+    assert_eq!(ranges.key().end().unwrap(), &[0, hour]); // zero-length spans
+
+    // Label each row by its hour of the day.
+    let labelled = s.as_interval_with(|range, _row| (range.begin() / hour).to_string())?;
+    assert_eq!(labelled.key_name(), "interval");
+    assert_eq!(labelled.at(1).unwrap().key().label(), Some(&Label::from("1")));
+
+    // Readings stamped an hour late: move them back.
+    let fixed = s.offset_time("-1h")?;
+    assert_eq!(fixed.key().begin(), &[-hour, 0]);
+
+    assert!(s.as_interval(f64::INFINITY).is_err()); // labels must be finite
+    Ok(())
+}
+```
+
+## List columns
+
+A list column holds a list of values in each row (see
+[Series and columns](./series-and-columns#value-columns-five-kinds)). Five
+calls work on one:
+
+| Call                                   | Does                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| `array_contains(col, value)`           | keeps the rows whose list holds `value`                               |
+| `array_contains_all(col, &values)`     | keeps the rows whose list holds every one of `values`                 |
+| `array_contains_any(col, &values)`     | keeps the rows whose list holds at least one of `values`              |
+| `array_aggregate(col, reducer, &opts)` | reduces each row's list to one value (`Count`, `Max`, `First`, …)     |
+| `array_explode(col, &opts)`            | one row per list element, each keeping its row's key and other values |
+
+Matching works like JavaScript's `includes`: `0` matches `-0`, and kinds
+never mix, so `1` does not match `"1"`. A gap or an empty list never
+matches. `array_aggregate`'s number reducers use only the list's numbers;
+`Count` counts every element. `ArrayOptions { output, kind }` says where
+the result goes: by default it replaces the list column, and
+`output: Some(name)` adds a new column and keeps the list.
+
+```rust
+use pond_rs::{ArrayOptions, Column, Reducer, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "requests",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::optional(
+                "tags",
+                vec![
+                    Some(vec![Scalar::from("web"), "eu".into()]),
+                    None,
+                    Some(vec!["db".into()]),
+                ],
+            ),
+            Column::required(
+                "ms",
+                vec![vec![Scalar::from(12.0), 30.0.into()], vec![], vec![7.0.into()]],
+            ),
+        ],
+    )?;
+
+    assert_eq!(s.array_contains("tags", "web")?.key().begin(), &[0]);
+    let any = s.array_contains_any("tags", &["db".into(), "eu".into()])?;
+    assert_eq!(any.key().begin(), &[0, 2_000]);
+
+    // The slowest call in each request, as a new column.
+    let worst = s.array_aggregate(
+        "ms",
+        Reducer::Max,
+        &ArrayOptions { output: Some("worst".into()), ..ArrayOptions::default() },
+    )?;
+    let got: Vec<_> = worst.column("worst")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(30.0), None, Some(7.0)]); // an empty list gives a gap
+
+    // One row per tag; the key repeats.
+    let tags = s.array_explode("tags", &ArrayOptions::default())?;
+    assert_eq!(tags.key().begin(), &[0, 0, 2_000]);
+    let names: Vec<_> = tags.column("tags")?.strings()?.iter().collect();
+    assert_eq!(names, [Some("web"), Some("eu"), Some("db")]);
+    Ok(())
+}
+```
+
+List columns also pass through `select`, `rename`, `filter`, `slice`,
+`shift`, `fill` (`Hold`, `Bfill` or a fixed list), `align`, `materialize`,
+`dedupe`, `join` and the JSON readers and writers (except
+`from_columns_json`, as in pond-ts). In `aggregate`, `rolling` and `reduce`
+they take `Count`, `First`, `Last`, `Keep`, `Unique`, `Top(n)` and
+`Samples` (the last three join the lists). `row.array(col)?` and
+`map_arrays` read and change them.
+
+Arrow files hold list columns whose elements are all one kind; see
+[Arrow and JSON](./arrow#list-columns). A list column cannot be a partition
+column (`partition_by` gives an error).
+
+## Regular grids: `align` and `materialize`
+
+Sensors rarely report on the second. Both of these give one row per bucket
+of a `Sequence`, so the result lines up on a regular grid. They differ in
+where each row's values come from:
+
+- **`align`** asks "what was the value at this moment?" With
+  `AlignMethod::Hold` (the default) that is the latest reading at or before
+  the grid point. With `AlignMethod::Linear`, number columns follow a
+  straight line between the readings either side (time-keyed series only).
+  The result is keyed by interval, like `aggregate`.
+- **`materialize`** asks "which reading fell in this bucket?" It takes one
+  row from each bucket (`Pick::Last` by default, or `First`, or `Nearest`
+  to the sample point) and leaves gaps where a bucket had none. The result
+  is keyed by time.
+
+Neither reduces: unlike `aggregate`, nothing is averaged. Every value
+column comes out optional, since a grid point can have no value.
+
+```rust
+use pond_rs::{Align, AlignMethod, Column, Materialize, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Readings at 0 s, 2.5 s and 4 s.
+    let s = TimeSeries::new("temp", vec![0, 2_500, 4_000], vec![
+        Column::required("c", vec![10.0, 15.0, 18.0]),
+    ])?;
+    let every_second = Sequence::every("1s")?;
+
+    // Hold: the latest reading at or before each second.
+    let held = s.align(&every_second, Align::default())?;
+    assert_eq!(held.key().begin(), &[0, 1_000, 2_000, 3_000, 4_000]);
+    let got: Vec<_> = held.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(10.0), Some(10.0), Some(15.0), Some(18.0)]);
+
+    // Linear: a straight line between the readings either side.
+    let linear = Align { method: AlignMethod::Linear, ..Align::default() };
+    let lined = s.align(&every_second, linear)?;
+    let got: Vec<_> = lined.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(12.0), Some(14.0), Some(16.0), Some(18.0)]);
+
+    // Materialize: the reading that fell in each one-second bucket, if any.
+    let picked = s.materialize(&every_second, Materialize::default())?;
+    assert_eq!(picked.key_name(), "time");
+    let got: Vec<_> = picked.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), None, Some(15.0), None, Some(18.0)]);
+    Ok(())
+}
+```
+
+Both take options as a struct whose `Default` is pond-ts's default, so you
+set only what you change:
+
+- `sample`: which point of each bucket is used, `At::Begin` (default),
+  `At::Center` or `At::End`. For `materialize` this is also the row's time.
+- `range`: `Some((begin, end))` in epoch milliseconds to cover a chosen
+  span instead of the series' own first-to-last range.
+
+Calendar sequences work too: `Sequence::calendar("day", "Europe/London")`
+gives one row per local day. To align many hosts or symbols, partition
+first: `series.partition_by(&["host"])?.align(..)?` gives each host its own
+grid (see [Partitions](./partitions)).
+
+## Duplicate times: `dedupe`
+
+`dedupe(keep)` collapses rows that share a key (the same time; for time
+ranges and intervals, the same start, end and label). `Keep` says which row
+survives:
+
+| `Keep`           | Keeps                                                         |
+| ---------------- | ------------------------------------------------------------- |
+| `Last` (default) | the last of the rows                                          |
+| `First`          | the first                                                     |
+| `Min("col")`     | the one with the smallest value in a number or decimal column |
+| `Max("col")`     | the one with the largest                                      |
+| `Drop`           | none of them                                                  |
+| `Error`          | nothing: returns an error at the first repeated key           |
+
+For `Min` and `Max`, a gap loses to any value, and on a tie the earlier row
+wins.
+
+```rust
+use pond_rs::{Column, Keep, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // The same minute reported twice, with different quality scores.
+    let s = TimeSeries::new("feed", vec![0, 60_000, 60_000, 120_000], vec![
+        Column::required("price", vec![100.0, 101.0, 101.5, 102.0]),
+        Column::required("quality", vec![0.9, 0.4, 0.8, 0.9]),
+    ])?;
+
+    let last = s.dedupe(Keep::Last)?;
+    assert_eq!(last.column("price")?.numbers()?.values(), &[100.0, 101.5, 102.0]);
+
+    let best = s.dedupe(Keep::Max("quality".into()))?;
+    assert_eq!(best.column("price")?.numbers()?.get(1), Some(101.5));
+
+    let none = s.dedupe(Keep::Drop)?;
+    assert_eq!(none.len(), 2);
+
+    // Use Error to check an assumption: "this feed never repeats a time".
+    assert!(s.dedupe(Keep::Error).is_err());
+    Ok(())
+}
+```
+
+## Stacking series: `concat`
+
+`TimeSeries::concat(&[&a, &b, …])` puts the rows of several series into one,
+sorted by key. Rows that share a key keep the order of the list, then their
+order within each series. The series must match: the same key, and the
+same columns in the same order with the same kinds (decimals also the same
+number of places). A column is required in the result only if it is
+required in every input. The result takes the first series' name.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let monday = TimeSeries::new("cpu", vec![0, 2_000], vec![Column::required("v", vec![1.0, 3.0])])?;
+    let tuesday = TimeSeries::new(
+        "cpu",
+        vec![1_000, 2_000],
+        vec![Column::optional("v", vec![None, Some(4.0)])],
+    )?;
+
+    let both = TimeSeries::concat(&[&monday, &tuesday])?;
+    assert_eq!(both.key().begin(), &[0, 1_000, 2_000, 2_000]);
+    let got: Vec<_> = both.column("v")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(1.0), None, Some(3.0), Some(4.0)]); // at 2s, monday first
+    assert!(!both.column("v")?.is_required()); // tuesday's column has gaps
+
+    let other = TimeSeries::new("cpu", vec![0], vec![Column::required("w", vec![1.0])])?;
+    assert!(TimeSeries::concat(&[&monday, &other]).is_err()); // different columns
+    Ok(())
+}
+```
+
+## One column from several: `collapse`
+
+`collapse(&columns, output, f)` replaces some columns with one, worked out
+row by row by your closure. `f` gets the
+[row](./series-and-columns#reading-a-whole-row) and returns
+`Ok(Some(Scalar))`, or `Ok(None)` for a gap. The other columns are kept, and
+`output` comes last. `collapse_keep` keeps the source columns too. The
+output's kind is the kind of the first value that is not a gap, and every
+other value must be that kind. A number that is not finite (a division by
+zero, say) is stored as a gap.
+
+```rust
+use pond_rs::{Column, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "net",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b"]),
+            Column::required("sent", vec![10.0, 30.0, 5.0]),
+            Column::required("lost", vec![1.0, 3.0, 0.0]),
+        ],
+    )?;
+
+    let ratio = |r: &pond_rs::Row| {
+        Ok(match (r.number("lost")?, r.number("sent")?) {
+            (Some(l), Some(s)) => Some(Scalar::Number(l / s)),
+            _ => None,
+        })
+    };
+    let loss = s.collapse(&["sent", "lost"], "loss", ratio)?;
+    let names: Vec<&str> = loss.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["host", "loss"]);
+    let got: Vec<_> = loss.column("loss")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.1), Some(0.1), Some(0.0)]);
+
+    let kept = s.collapse_keep(&["sent", "lost"], "loss", ratio)?;
+    assert_eq!(kept.columns().len(), 4);
+    Ok(())
+}
+```
+
+## Long rows into wide ones: `pivot_by_group`
+
+Data often arrives "long": one row per host per time, with a `host` column.
+`pivot_by_group(group, value, &Pivot)` turns it "wide": one row per time and
+one column per host, named `<group value>_<value column>` (`a_cpu`,
+`b_cpu`). A time with no row for a host gets a gap there. The series must be
+keyed by time, and every new column is optional.
+
+Two rows with the same time and host are an error unless
+`Pivot::default().aggregate(reducer)` says how to combine them (`Avg`,
+`First`, `Last`, or `Count` on numbers: the result must keep the value
+column's kind). `.groups(["a", "b"])` fixes the columns and their order: a
+listed host with no rows still gets a column, and a host not on the list is
+an error. Without it, the hosts found become columns in sorted order.
+
+Group names are written as JavaScript writes them, so a number group `1.5`
+gives `1.5_cpu` and a gap gives `undefined_cpu`, as in pond-ts.
+
+```rust
+use pond_rs::{Column, Pivot, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let long = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 0, 1_000],
+        vec![
+            Column::required("host", vec!["b", "a", "a", "a"]),
+            Column::required("cpu", vec![0.5, 0.2, 0.4, 0.3]),
+        ],
+    )?;
+
+    // Host a reported twice at 0s.
+    assert!(long.pivot_by_group("host", "cpu", &Pivot::default()).is_err());
+
+    let wide = long.pivot_by_group("host", "cpu", &Pivot::default().aggregate(Reducer::Last))?;
+    assert_eq!(wide.key().begin(), &[0, 1_000]);
+    let a: Vec<_> = wide.column("a_cpu")?.numbers()?.iter().collect();
+    let b: Vec<_> = wide.column("b_cpu")?.numbers()?.iter().collect();
+    assert_eq!(a, [Some(0.4), Some(0.3)]);
+    assert_eq!(b, [Some(0.5), None]); // no row for b at 1s
+
+    let fixed = long.pivot_by_group(
+        "host",
+        "cpu",
+        &Pivot::default().aggregate(Reducer::Avg).groups(["a", "b", "c"]),
+    )?;
+    let names: Vec<&str> = fixed.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["a_cpu", "b_cpu", "c_cpu"]); // c has no rows, still a column
+    Ok(())
+}
+```
+
+## Putting series side by side: `join`
+
+`join` puts the columns of two series next to each other, matching rows by
+key. The key and the series name come from the left series. The left
+series' value columns come first, then the right's, and every value column
+comes out optional, since a row may be missing on one side.
+
+`JoinType` picks which rows survive:
+
+| `how`             | Keeps                          |
+| ----------------- | ------------------------------ |
+| `Outer` (default) | every key found on either side |
+| `Inner`           | only keys found on both sides  |
+| `Left`            | every row of the left series   |
+| `Right`           | every row of the right series  |
+
+```rust
+use pond_rs::{Column, Join, JoinType, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000],
+        vec![Column::required("cpu", vec![0.5, 0.6, 0.7])],
+    )?;
+    let mem = TimeSeries::new(
+        "mem",
+        vec![1_000, 2_000, 3_000],
+        vec![Column::required("mem", vec![40.0, 41.0, 42.0])],
+    )?;
+
+    // Only the times both have.
+    let both = cpu.join(&mem, Join { how: JoinType::Inner, ..Join::default() })?;
+    assert_eq!(both.key().begin(), &[1_000, 2_000]);
+    assert_eq!(both.name(), "cpu"); // the left series' name
+
+    // Every time either has; the missing side is a gap.
+    let all = cpu.join(&mem, Join::default())?;
+    assert_eq!(all.key().begin(), &[0, 1_000, 2_000, 3_000]);
+    let mem_col: Vec<_> = all.column("mem")?.numbers()?.iter().collect();
+    assert_eq!(mem_col, [None, Some(40.0), Some(41.0), Some(42.0)]);
+    let cpu_col: Vec<_> = all.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(cpu_col, [Some(0.5), Some(0.6), Some(0.7), None]);
+    Ok(())
+}
+```
+
+The rules, all as in pond-ts:
+
+- **Keys must match exactly.** A reading at 1,000 ms does not pair with one
+  at 1,001 ms. To join readings that are close but not equal, put both on
+  the same grid first with [`align` or `materialize`](#regular-grids-align-and-materialize).
+- **Both series need the same kind of key**: time with time, time range
+  with time range, interval with interval. The key names may differ.
+- **Repeated keys pair one to one, in order.** If time 5 appears twice on
+  the left and three times on the right, you get two matched rows and one
+  right-only row, not 2 × 3 = 6 rows. Use [`dedupe`](#duplicate-times-dedupe)
+  first if you want one row per time.
+- **Interval labels.** Interval keys match on begin, end and label. Text
+  labels compare the way JavaScript's `localeCompare` does in English (so
+  `"a"` sorts before `"B"`, and the two ways of writing `é` in Unicode are the
+  same label). Number labels sort before text ones. An outer join that would
+  mix number labels from one side with text labels from the other is an
+  error.
+
+### Two series with the same column name
+
+If both series have a column called `value`, the join refuses by default
+and names the column. `OnConflict::Prefix` renames each repeated column to
+`<prefix>_<name>`, one prefix per series; columns that are not repeated
+keep their names. You can also [`rename`](#changing-columns) one side
+yourself first.
+
+```rust
+use pond_rs::{Column, Join, OnConflict, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let a = TimeSeries::new(
+        "a",
+        vec![0, 1_000],
+        vec![
+            Column::required("value", vec![1.0, 2.0]),
+            Column::required("a_only", vec![9.0, 9.0]),
+        ],
+    )?;
+    let b = TimeSeries::new("b", vec![0, 1_000], vec![Column::required("value", vec![3.0, 4.0])])?;
+
+    let err = a.join(&b, Join::default()).unwrap_err();
+    assert!(err.to_string().contains("duplicate column names: value"));
+
+    let joined = a.join(
+        &b,
+        Join {
+            on_conflict: OnConflict::Prefix(vec!["a".into(), "b".into()]),
+            ..Join::default()
+        },
+    )?;
+    let names: Vec<_> = joined.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["a_value", "a_only", "b_value"]);
+    Ok(())
+}
+```
+
+### More than two: `join_many`
+
+`TimeSeries::join_many(&[&a, &b, &c], options)` joins left to right, as
+repeated `join` calls with the same `how`. Repeated names are found across
+all the series first, so `Prefix` takes one prefix per series. A list of
+one series comes back unchanged; an empty list is an error.
+
+```rust
+use pond_rs::{Column, Join, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let times = vec![0, 1_000];
+    let cpu = TimeSeries::new("cpu", times.clone(), vec![Column::required("cpu", vec![0.5, 0.6])])?;
+    let mem = TimeSeries::new("mem", times.clone(), vec![Column::required("mem", vec![40.0, 41.0])])?;
+    let disk = TimeSeries::new("disk", times, vec![Column::required("disk", vec![7.0, 8.0])])?;
+
+    let wide = TimeSeries::join_many(&[&cpu, &mem, &disk], Join::default())?;
+    let names: Vec<_> = wide.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "mem", "disk"]);
+    assert_eq!(wide.len(), 2);
+    Ok(())
+}
+```
+
+`join` runs on one thread. When every row of a side lands in the output once
+and in order (always the left side of a `Left` join, and both sides when the
+keys match one for one), that side's columns are shared rather than copied.
+To bring across only some columns, [`select`](#changing-columns) them on
+the other side first. `join` is not on `PartitionedSeries`.
+
+## Along a number column instead of time
+
+Some questions are about a value, not about time: how far into a run,
+which power zone, how fast. These two group or slide along a number
+column. Both return a `Table`: plain columns of the same length with no
+key, read by name with `column(name)` as on a series.
+
+### Bins: `by_column`
+
+`by_column(column, &Bins, aggs)` puts each row into a bin by its value in
+`column` and reduces each bin with the same reducers and rules as
+`aggregate`. The result has one row per bin, in order, with columns `start`
+and `end` (the bin's range) and then one per `Agg`. This gives histograms,
+splits per kilometre and time in each heart-rate or power zone.
+
+| Bins                               | Bin `i` holds                                                                                        | Which bins are given                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `Bins::width(w)`                   | `[i * w, (i + 1) * w)`                                                                               | lowest bin with a row to highest, empty ones included |
+| `Bins::width_from(w, origin)`      | `[origin + i * w, origin + (i + 1) * w)`                                                             | the same                                              |
+| `Bins::edges([e0, e1, …])`         | `[e_i, e_i+1)`: a value on an edge goes in the bin above                                             | all of them                                           |
+| `Bins::edges_upper_inclusive([…])` | `(e_i, e_i+1]`: a value on an edge goes in the bin below (and `e0` in bin 0), as zones usually count | all of them                                           |
+
+A row whose value is a gap, or outside the edges, is in no bin.
+
+```rust
+use pond_rs::{Agg, Bins, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading a second on a ride.
+    let s = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![
+            Column::required("watts", vec![90.0, 100.0, 150.0, 200.0, 260.0]),
+            Column::required("km", vec![0.2, 0.7, 1.1, 1.6, 3.4]),
+        ],
+    )?;
+
+    // Seconds in each power zone; 100 and 200 W count in the zone below.
+    let zones = s.by_column(
+        "watts",
+        &Bins::edges_upper_inclusive([0.0, 100.0, 200.0, 300.0]),
+        &[Agg::new("seconds", "watts", Reducer::Count)],
+    )?;
+    assert_eq!(zones.column("start")?.numbers()?.values(), &[0.0, 100.0, 200.0]);
+    assert_eq!(zones.column("seconds")?.numbers()?.values(), &[2.0, 2.0, 1.0]);
+
+    // Average power per kilometre; km 2 has no rows but still gets a row.
+    let splits = s.by_column("km", &Bins::width(1.0), &[Agg::new("avg", "watts", Reducer::Avg)])?;
+    assert_eq!(splits.column("start")?.numbers()?.values(), &[0.0, 1.0, 2.0, 3.0]);
+    let avg: Vec<_> = splits.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(avg, [Some(95.0), Some(175.0), None, Some(260.0)]);
+    Ok(())
+}
+```
+
+### A window along a column: `rolling_by_column`
+
+`rolling_by_column(column, radius, aggs)` is a rolling window along a
+number column, such as distance, instead of time. For each row it reduces
+the rows whose value is within `radius` of its own: `[x - radius, x +
+radius]`. The column must never go down (gaps aside); a row whose value is
+a gap gets each reducer's empty value (`count` 0, `sum` 0, a gap otherwise).
+`rolling_by_column_at(column, radius, &centers, aggs)` gives one row per
+point in `centers` instead, such as the points along a chart's axis;
+`centers` must not go down either. Each window is reduced as `rolling`
+reduces a window.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "run",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("km", vec![0.0, 0.4, 1.1, 1.3]),
+            Column::required("pace", vec![300.0, 310.0, 290.0, 280.0]),
+        ],
+    )?;
+
+    // At 0.4 km the window [-0.1, 0.9] holds 0 and 0.4 km.
+    let band = s.rolling_by_column("km", 0.5, &[Agg::new("pace", "pace", Reducer::Avg)])?;
+    assert_eq!(band.len(), 4);
+    assert_eq!(band.column("pace")?.numbers()?.values(), &[305.0, 305.0, 285.0, 285.0]);
+
+    // The same, once at each whole kilometre.
+    let at = s.rolling_by_column_at(
+        "km",
+        0.5,
+        &[0.0, 1.0, 2.0],
+        &[Agg::new("pace", "pace", Reducer::Avg), Agg::new("n", "pace", Reducer::Count)],
+    )?;
+    let pace: Vec<_> = at.column("pace")?.numbers()?.iter().collect();
+    assert_eq!(pace, [Some(305.0), Some(285.0), None]); // nothing within 0.5 km of 2 km
+    assert_eq!(at.column("n")?.numbers()?.values(), &[2.0, 2.0, 0.0]);
+    Ok(())
+}
+```
+
+## Keyed by distance instead of time: `by_value`
+
+`by_value(axis)` turns a series into a `ValueSeries`, keyed by a number
+column instead of time: a run keyed by distance, an option chain keyed by
+strike price. The axis column must have no gaps and never go down (repeats
+are fine). It leaves the value columns, the time key is dropped, and every
+other column is kept without copying. `ValueSeries::new(name, axis_name,
+axis, columns)` builds one directly.
+
+A `ValueSeries` answers two questions, both by binary search:
+
+| Call                     | Gives                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `nearest_index(x)`       | the row whose axis value is closest to `x` (the earlier one on a tie; `None` if empty) |
+| `slice_by_value(lo, hi)` | the rows with axis values from `lo` up to, but not including, `hi`                     |
+
+It also has `axis()`, `axis_name()`, `column(name)`, `columns()` and
+`schema()`, and reads and writes JSON (see
+[Arrow and JSON](./arrow#value-series)). It has no time calls
+(`aggregate`, `rolling`, …), since an axis is not a clock; to bin or roll
+along distance, use [`by_column` / `rolling_by_column`](#along-a-number-column-instead-of-time)
+on the time series.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let run = TimeSeries::new(
+        "run",
+        vec![0, 60_000, 120_000, 180_000],
+        vec![
+            Column::required("km", vec![0.0, 0.2, 0.45, 0.7]),
+            Column::required("hr", vec![120.0, 135.0, 142.0, 150.0]),
+        ],
+    )?;
+
+    let by_km = run.by_value("km")?;
+    assert_eq!(by_km.axis(), &[0.0, 0.2, 0.45, 0.7]);
+    assert!(by_km.column("km").is_err()); // the axis is the key now
+
+    // Heart rate nearest 0.4 km.
+    let i = by_km.nearest_index(0.4).unwrap();
+    assert_eq!(by_km.column("hr")?.numbers()?.get(i), Some(142.0));
+
+    // The first 0.35 km.
+    let start = by_km.slice_by_value(0.0, 0.35);
+    assert_eq!(start.column("hr")?.numbers()?.values(), &[120.0, 135.0]);
+
+    // A distance that goes down cannot be an axis.
+    let back = TimeSeries::new("run", vec![0, 1_000], vec![Column::required("km", vec![1.0, 0.5])])?;
+    assert!(back.by_value("km").is_err());
+    Ok(())
+}
+```
+
+## What is not here yet
+
+Nothing from pond-ts's batch core is missing now. Financial studies come
+next, then the live layer.

@@ -1,3 +1,4 @@
+import { onSourceSettle } from './settle.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -64,30 +65,37 @@ declare function queueMicrotask(callback: () => void): void;
  * eviction is independent — it drives reducer-state removes but
  * does not itself fire the trigger.
  *
- * **Post-retention emission via deferred microtask.** A push
- * that triggers retention fires `'event'` per row, then runs
- * `applyRetention()`, then fires `'batch'` and `'evict'`. To
- * emit a snapshot reflecting the post-retention buffer state,
- * `LiveReduce` defers the trigger fire to a `queueMicrotask`
- * scheduled in the `'event'` handler. By the time the microtask
- * runs, all synchronous `'event'` / `'evict'` callbacks for the
- * push have completed and reducer state is consistent with the
- * source's current buffer.
+ * **Post-retention emission at the end of each push.** A push
+ * fires `'event'` per row, then runs retention, then fires
+ * `'batch'` and `'evict'`. To emit a snapshot reflecting the
+ * post-retention buffer, `LiveReduce` holds its trigger fire until
+ * the root series' end-of-push hook, which runs once after
+ * `'evict'`, still inside the push. So every `push()` /
+ * `pushMany()` / `pushJson()` call emits synchronously, before it
+ * returns, whether or not the caller awaits between pushes
+ * ([PND-REDUCETICK]; earlier versions used a microtask, so pushes
+ * with no `await` between them shared one emission).
  *
  * One implication: `Trigger.event()` semantics differ from
  * `LiveRollingAggregation`'s. A `pushMany(rows)` of K rows fires
- * ONE deferred emission, not K. (Each individual `push()` is one
- * row → one emission, identical.) For most users this is the
- * more useful semantic — the snapshot represents
+ * ONE emission, not K, and `Trigger.count(n)` emits floor(K / n)
+ * times with the same post-push value. (Each individual `push()`
+ * is one row → one emission, identical.) For most users this is
+ * the more useful semantic — the snapshot represents
  * "state-after-this-push," not "state-after-each-row-mid-push."
  * Users wanting per-row emissions should reach for
  * `LiveRollingAggregation` over a buffer-sized window instead.
  *
+ * An event that reaches it outside any push (construction replay,
+ * an upstream reduce's replay emission, or a custom `LiveSource`
+ * without the end-of-push hook) is emitted on a microtask instead.
+ *
  * **Construction-time replay.** Sources with existing buffer
  * content at construction replay through `#ingest`. With
- * `Trigger.event()` this fires ONE deferred emission after
- * replay completes (not N events under the new microtask
- * defer). Test pin: `it('replay emits one deferred event ...')`.
+ * `Trigger.event()` this fires ONE emission on a microtask
+ * after construction (listeners attach after the constructor
+ * returns); a push before that microtask merges into it. Test
+ * pin: `it('replay emits ONE deferred event ...')`.
  *
  * **Caveat — `ordering: 'reorder'` source mode.** `LiveReduce`
  * processes events in arrival order, not sorted-by-timestamp
@@ -124,7 +132,10 @@ declare function queueMicrotask(callback: () => void): void;
  * bound (no removes ever fire). Today every pond LiveSource that
  * evicts also marks itself with `EMITS_EVICT` (`LiveSeries`,
  * `LiveView` with eviction); future LiveSource implementations
- * must preserve this contract.
+ * must preserve this contract. The one internal eviction that is
+ * silent on `'evict'` — a `window` view trimming itself — reaches a
+ * reduce through the view's internal `_onTrim` channel instead
+ * ([PND-REDUCETRIM]).
  *
  * Public API: constructed via `live.reduce(mapping, opts?)` on
  * `LiveSeries` / `LiveView`. User code doesn't import this class
@@ -183,11 +194,12 @@ export class LiveReduce<
   #lastClockBucketIdx: number | undefined;
   #countSinceLastEmit: number;
   /**
-   * Deferred emission state. Trigger fires are deferred to a
-   * microtask so retention has finished running and `'evict'`
-   * callbacks have processed. `#pendingEmitKey` is set on each
-   * `#ingest` and cleared by the microtask flush; the most-recent
-   * key wins (we emit one snapshot per pushMany).
+   * Deferred emission state. Trigger fires are held until the end
+   * of the push (settle hook; a microtask outside any push) so
+   * retention has finished running and `'evict'` callbacks have
+   * processed. `#pendingEmitKey` is set on each `#ingest` and
+   * cleared by the flush; the most-recent key wins (we emit one
+   * snapshot per pushMany).
    */
   #pendingEmitKey: any | undefined;
   #pendingEmitTs: number;
@@ -197,6 +209,11 @@ export class LiveReduce<
   readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribeEvent: () => void;
   readonly #unsubscribeEvict: (() => void) | undefined;
+  /** [PND-REDUCETRIM] A `window` view's silent trims; `undefined` for other sources. */
+  readonly #unsubscribeTrim: (() => void) | undefined;
+  /** [PND-REDUCETICK] Root series' end-of-push hook; `undefined` if the source has none. */
+  readonly #unsubscribeSettle: (() => void) | undefined;
+  readonly #source: LiveSource<S>;
   #disposed: boolean;
 
   // Pipeline counters for {@link LiveReduce.stats}.
@@ -211,6 +228,7 @@ export class LiveReduce<
     options: LiveRollingOptions = {},
   ) {
     this.name = source.name;
+    this.#source = source;
     this.#trigger = options.trigger ?? { kind: 'event' };
     this.#lastClockBucketIdx = undefined;
     this.#countSinceLastEmit = 0;
@@ -280,12 +298,39 @@ export class LiveReduce<
         },
       );
     }
+
+    // [PND-REDUCETRIM] A `window` view trims itself without `'evict'`;
+    // it tells a reduce through this internal channel, after the event.
+    const trimSource = source as {
+      _onTrim?: (
+        fn: (events: ReadonlyArray<EventForSchema<S>>) => void,
+      ) => () => void;
+    };
+    this.#unsubscribeTrim =
+      typeof trimSource._onTrim === 'function'
+        ? trimSource._onTrim((trimmed) => {
+            for (const ev of trimmed) this.#evictOne(ev);
+          })
+        : undefined;
+
+    // [PND-REDUCETICK] Emit at the end of each push, after retention and
+    // `'evict'`, through the root series' settle hook. Subscribed after
+    // the replay above, so a construction replay still emits on a
+    // microtask (listeners are attached after the constructor returns).
+    this.#unsubscribeSettle = onSourceSettle(source, () => {
+      if (this.#pendingEmitKey !== undefined) this.#flushPendingEmit();
+    });
   }
 
   // ── LiveSource<Out> contract ────────────────────────────────
 
   get length(): number {
     return this.#outputEvents.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#source, fn);
   }
 
   at(index: number): EventForSchema<Out> | undefined {
@@ -327,12 +372,13 @@ export class LiveReduce<
    *   non-empty source — phrased uniformly with sibling classes'
    *   stats() docs. Never decreases.
    * - `evictions`: total events removed from reducer state via
-   *   the source's `'evict'` channel. Events that predated this
+   *   the source's `'evict'` channel, or trimmed by a `window` view
+   *   source ([PND-REDUCETRIM]). Events that predated this
    *   `LiveReduce` (already past the FIFO evict cursor) don't count.
    *   Never decreases.
    * - `emissions`: total output events fired. Never decreases.
    *   For `Trigger.event`, a single `pushMany(K)` fires ONE
-   *   deferred emission (see class JSDoc) — `emissions` may be
+   *   emission (see class JSDoc) — `emissions` may be
    *   strictly less than `eventsObserved`.
    * - `bufferSize`: current count of events in reducer state
    *   (= `eventsObserved - evictions`). Tracks the source's
@@ -366,6 +412,8 @@ export class LiveReduce<
     this.#disposed = true;
     this.#unsubscribeEvent();
     this.#unsubscribeEvict?.();
+    this.#unsubscribeTrim?.();
+    this.#unsubscribeSettle?.();
   }
 
   // ── Private ─────────────────────────────────────────────────
@@ -386,33 +434,43 @@ export class LiveReduce<
     }
 
     // For Trigger.count, increment per-event so we don't lose
-    // count progress across deferred microtasks (a pushMany of K
+    // count progress across deferred flushes (a pushMany of K
     // rows must increment K times, not 1). Other triggers settle
     // their state in the deferred flush.
     if (this.#trigger.kind === 'count') {
       this.#countSinceLastEmit++;
     }
 
-    // Schedule a deferred emission via microtask. By the time it
-    // runs, retention has applied AND `'evict'` callbacks have
-    // processed → reducer state is consistent with source's
-    // current buffer. Per-pushMany this fires once regardless of
-    // K rows; the most-recent key wins. See class JSDoc.
+    // Hold the emission until the end of the push (settle hook), when
+    // retention has applied AND `'evict'` callbacks have processed →
+    // reducer state is consistent with source's current buffer.
+    // Per-pushMany this fires once regardless of K rows; the
+    // most-recent key wins. See class JSDoc.
     this.#pendingEmitKey = event.key();
     this.#pendingEmitTs = event.begin();
+    // Inside a push the root series' settle hook flushes this at the end
+    // of the push, before any microtask runs. The microtask is the
+    // backstop for events that arrive outside any push: construction
+    // replay, an upstream reduce's own replay emission, or a source
+    // without the hook. After a settle flush it finds nothing pending.
+    // Only the microtask clears the flag ([PND-REDUCEMICRO]): if a settle
+    // flush cleared it, every push of a synchronous loop would queue one
+    // more microtask, each holding this reduce until the loop ends.
     if (!this.#microtaskScheduled) {
       this.#microtaskScheduled = true;
-      queueMicrotask(() => this.#flushPendingEmit());
+      queueMicrotask(() => {
+        this.#microtaskScheduled = false;
+        this.#flushPendingEmit();
+      });
     }
   }
 
   /**
-   * Microtask flush: runs after the current synchronous push
-   * completes, including any retention-driven `'evict'` callbacks.
-   * Reducer state is post-retention by this point.
+   * Flush the pending emission: from the settle hook at the end of a
+   * push (after any retention-driven `'evict'` callbacks), or from the
+   * backstop microtask. Reducer state is post-retention by this point.
    */
   #flushPendingEmit(): void {
-    this.#microtaskScheduled = false;
     const key = this.#pendingEmitKey;
     const ts = this.#pendingEmitTs;
     this.#pendingEmitKey = undefined;

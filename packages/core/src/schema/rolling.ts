@@ -14,6 +14,16 @@ export type RollingSchema<S extends SeriesSchema, Mapping> = readonly [
   ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
 ];
 
+/**
+ * Schema for `rolling(window, mapping, { append: true })`: the source
+ * schema kept whole, with the rolled output columns after it.
+ */
+export type RollingAppendSchema<S extends SeriesSchema, Mapping> = readonly [
+  S[0],
+  ...ValueColumnsForSchema<S>,
+  ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
+];
+
 // ---------------------------------------------------------------------------
 // Fused multi-window rolling — formerly in types-fused-rolling.ts
 // ---------------------------------------------------------------------------
