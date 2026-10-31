@@ -38,21 +38,53 @@ export type ColumnValues =
   | { readonly kind: 'boolean'; readonly v: Int8Array }
   | { readonly kind: 'string'; readonly v: (string | undefined)[] };
 
-function readColumn(col: Column, kind: CheckedKind, n: number): ColumnValues {
+/**
+ * Rows `[start, end)` of `col`, as values in flight. Never marked
+ * {@link fresh}, even when copied: one read serves every use of the
+ * column in a tree, so no step may write over it.
+ */
+function readColumn(
+  col: Column,
+  kind: CheckedKind,
+  start: number,
+  end: number,
+): ColumnValues {
+  const n = end - start;
   if (kind === 'number') {
     const packed = packedNumericSource(col);
-    if (packed !== null) return { kind, v: packed.values.subarray(0, n) };
+    if (packed !== null) {
+      const raw = packed.values.subarray(start, end);
+      if (packed.allFinite) return { kind, v: raw };
+      // A gap may be stored as ±Infinity (a column built with
+      // `fromColumns` keeps what it was given); in flight every gap is
+      // NaN. Copy only when there is an infinity, never write the source.
+      let inf = false;
+      for (let i = 0; i < n; i += 1) {
+        const x = raw[i]!;
+        if (x - x !== 0 && x === x) {
+          inf = true;
+          break;
+        }
+      }
+      if (!inf) return { kind, v: raw };
+      const v = new Float64Array(n);
+      for (let i = 0; i < n; i += 1) {
+        const x = raw[i]!;
+        v[i] = x - x === 0 ? x : NaN;
+      }
+      return { kind, v };
+    }
     const v = new Float64Array(n);
     for (let i = 0; i < n; i += 1) {
-      const x = col.read(i);
-      v[i] = typeof x === 'number' ? x : NaN;
+      const x = col.read(start + i);
+      v[i] = typeof x === 'number' && x - x === 0 ? x : NaN;
     }
     return { kind, v };
   }
   if (kind === 'boolean') {
     const v = new Int8Array(n);
     for (let i = 0; i < n; i += 1) {
-      const x = col.read(i);
+      const x = col.read(start + i);
       v[i] = x === true ? 1 : x === false ? 0 : -1;
     }
     return { kind, v };
@@ -62,12 +94,14 @@ function readColumn(col: Column, kind: CheckedKind, n: number): ColumnValues {
     const dict = col.dictionary!;
     const idx = col.indices;
     const ok = col.validity;
-    for (let i = 0; i < n; i += 1)
-      v[i] = ok === undefined || ok.isDefined(i) ? dict[idx[i]!] : undefined;
+    for (let i = 0; i < n; i += 1) {
+      const r = start + i;
+      v[i] = ok === undefined || ok.isDefined(r) ? dict[idx[r]!] : undefined;
+    }
     return { kind, v };
   }
   for (let i = 0; i < n; i += 1) {
-    const x = col.read(i);
+    const x = col.read(start + i);
     v[i] = typeof x === 'string' ? x : undefined;
   }
   return { kind, v };
@@ -82,15 +116,28 @@ function dictionaryTest(
   col: Column,
   keep: (s: string) => boolean,
   gap: 0 | 1,
-  n: number,
+  start: number,
+  end: number,
+  tables: Map<ExprNode, Int8Array>,
+  node: ExprNode,
 ): Int8Array | null {
   if (!(col instanceof StringColumn) || col.indices === undefined) return null;
-  const table = Int8Array.from(col.dictionary!, (s) => (keep(s) ? 1 : 0));
+  // One table per expression node, kept across the stretches `find` /
+  // `some` / `every` evaluate.
+  let table = tables.get(node);
+  if (table === undefined) {
+    const dict = col.dictionary!;
+    table = new Int8Array(dict.length);
+    for (let k = 0; k < dict.length; k += 1) table[k] = keep(dict[k]!) ? 1 : 0;
+    tables.set(node, table);
+  }
   const idx = col.indices;
   const ok = col.validity;
-  const out = new Int8Array(n);
-  for (let i = 0; i < n; i += 1)
-    out[i] = ok === undefined || ok.isDefined(i) ? table[idx[i]!]! : gap;
+  const out = new Int8Array(end - start);
+  for (let i = 0; i < out.length; i += 1) {
+    const r = start + i;
+    out[i] = ok === undefined || ok.isDefined(r) ? table[idx[r]!]! : gap;
+  }
   return out;
 }
 
@@ -125,21 +172,31 @@ const cell = (c: ColumnValues, i: number): unknown =>
   c.kind === 'boolean' ? c.v[i] === 1 : c.v[i];
 
 /**
- * `node` over the store's value columns. The caller checks it first
- * ({@link checkStoreExpr}); this assumes a well-kinded tree.
+ * `node` over rows `[start, end)` of the store's value columns, reading
+ * only the columns it names. The caller checks it first; this assumes a
+ * well-kinded tree. `tables` keeps per-node dictionary tables between
+ * calls on the same store.
  */
 export function evaluateColumns(
   node: ExprNode,
   store: ColumnarStore<ColumnSchema>,
   kinds: ReadonlyMap<string, CheckedKind>,
+  start = 0,
+  end = store.length,
+  tables = new Map<ExprNode, Int8Array>(),
 ): ColumnValues {
-  const n = store.length;
+  const n = end - start;
   const cache = new Map<string, ColumnValues>();
   const walk = (x: ExprNode): ColumnValues => {
     if ('col' in x) {
       let c = cache.get(x.col);
       if (c === undefined) {
-        c = readColumn(store.columns.get(x.col)!, kinds.get(x.col)!, n);
+        c = readColumn(
+          store.columns.get(x.col)!,
+          kinds.get(x.col)!,
+          start,
+          end,
+        );
         cache.set(x.col, c);
       }
       return c;
@@ -234,7 +291,10 @@ export function evaluateColumns(
         store.columns.get(arg.col)!,
         (s) => set.has(s),
         0,
-        n,
+        start,
+        end,
+        tables,
+        x,
       );
       return v === null ? null : { kind: 'boolean', v };
     }
@@ -253,7 +313,10 @@ export function evaluateColumns(
         store.columns.get(other.col)!,
         (s) => (s === want) === eq,
         eq ? 0 : 1,
-        n,
+        start,
+        end,
+        tables,
+        x,
       );
       return v === null ? null : { kind: 'boolean', v };
     }
@@ -479,6 +542,21 @@ export function evaluateStoreExpr(
   where: string,
   want?: CheckedKind,
 ): ColumnValues {
+  return prepareStoreExpr(node, store, schema, where, want)(0, store.length);
+}
+
+/**
+ * Checks `node` against the schema once, then evaluates any row range
+ * `[start, end)` of the store on demand (for `find` / `some` / `every`,
+ * which look at growing stretches).
+ */
+export function prepareStoreExpr(
+  node: ExprNode,
+  store: ColumnarStore<ColumnSchema>,
+  schema: readonly { name: string; kind: string }[],
+  where: string,
+  want?: CheckedKind,
+): (start: number, end: number) => ColumnValues {
   const columns = exprColumns(schema);
   const kind = checkExpr(node, columns, where);
   if (want !== undefined && kind !== want) {
@@ -493,7 +571,9 @@ export function evaluateStoreExpr(
     if (c.kind === 'number' || c.kind === 'string' || c.kind === 'boolean')
       kinds.set(c.name, c.kind);
   }
-  return evaluateColumns(node, store, kinds);
+  const tables = new Map<ExprNode, Int8Array>();
+  return (start, end) =>
+    evaluateColumns(node, store, kinds, start, end, tables);
 }
 
 /** Evaluated values as a column; gaps where `keepGapsOf` has them, when given. */

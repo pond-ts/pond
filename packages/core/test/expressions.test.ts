@@ -165,6 +165,70 @@ describe('long series', () => {
   });
 });
 
+describe('gaps stored as infinities (fromColumns)', () => {
+  // fromColumns adopts a Float64Array as is, so a gap may be ±Infinity.
+  const raw = new Float64Array([Infinity, -Infinity, 1]);
+  const inf = TimeSeries.fromColumns({
+    name: 'inf',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ] as const,
+    columns: {
+      time: new Float64Array([0, 1, 2]),
+      v: raw,
+    },
+  });
+  it('reads them as gaps, as functions do', () => {
+    expect(inf.at(0)!.get('v')).toBeUndefined();
+    expect(inf.filter(col('v').gt(0)).length).toBe(1);
+    expect(inf.filter(col('v').lt(0)).length).toBe(0);
+    expect(inf.filter(col('v').isMissing()).length).toBe(2);
+    expect(inf.some(col('v').gt(0))).toBe(true);
+    expect(inf.every(col('v').isMissing().not())).toBe(false);
+    const filled = inf.withColumn('f', col('v').fill(5));
+    expect(filled.toJSON().rows.map((r) => r[2])).toEqual([5, 5, 1]);
+    const abs = inf.withColumn('a', col('v').abs());
+    expect(abs.toJSON().rows.map((r) => r[2] ?? null)).toEqual([null, null, 1]);
+    expect(abs.reduce({ a: 'count' })).toEqual({ a: 1 });
+    // A copied read serves both uses of `v`; neither may write over it.
+    expect(
+      inf
+        .withColumn('x', col('v').add(1).add(col('v')))
+        .toJSON()
+        .rows.map((r) => r[2] ?? null),
+    ).toEqual([null, null, 3]);
+    expect(
+      inf
+        .withColumn('x', col('v').neg().add(col('v')))
+        .toJSON()
+        .rows.map((r) => r[2] ?? null),
+    ).toEqual([null, null, 0]);
+    // The adopted buffer is not rewritten.
+    expect([...raw]).toEqual([Infinity, -Infinity, 1]);
+  });
+});
+
+describe('find / some / every on a large dictionary column', () => {
+  it('build the dictionary table once', () => {
+    const n = 50_000;
+    const big = new TimeSeries({
+      name: 'labels',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'id', kind: 'string' },
+      ] as const,
+      rows: Array.from(
+        { length: n },
+        (_, i) => [i, `id${i % 20_000}`] as [number, string],
+      ),
+    });
+    expect(big.some(col('id').eq('nope'))).toBe(false);
+    expect(big.find(col('id').in(['id19999']))?.begin()).toBe(19_999);
+    expect(big.every(col('id').ne('nope'))).toBe(true);
+  });
+});
+
 describe('live filter on views and aggregations', () => {
   it('matches the function form', () => {
     const live = new LiveSeries({ name: 'l', schema });
