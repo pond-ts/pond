@@ -40,7 +40,9 @@ use std::sync::Arc;
 
 use serde_json::{Value as Json, json};
 
-use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn, Value};
+#[cfg(any(feature = "live", test))]
+use crate::column::Value;
+use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{ColumnDef, ColumnKind};
 
@@ -845,6 +847,7 @@ fn compare(op: Op, a: &Vals<'_>, b: &Vals<'_>, n: usize) -> Vec<i8> {
     }
 }
 
+#[cfg(any(feature = "live", test))]
 fn arith(op: Op) -> fn(f64, f64) -> f64 {
     match op {
         Op::Add => |x, y| x + y,
@@ -1074,6 +1077,7 @@ pub(crate) fn kept_rows(values: &Vals<'_>) -> Vec<usize> {
 // ─── Per-row evaluation (live layer) ────────────────────────────────
 
 /// One row's value; `None` is a gap.
+#[cfg(any(feature = "live", test))]
 #[derive(Debug, Clone, PartialEq)]
 enum Cell<'a> {
     Number(f64),
@@ -1082,10 +1086,12 @@ enum Cell<'a> {
 }
 
 /// `e` (already [`check`]ed) on one row, reading cells through `get`.
+#[cfg(any(feature = "live", test))]
 pub(crate) fn evaluate_row<'a>(e: &'a Expr, get: &dyn Fn(&str) -> Option<&'a Value>) -> bool {
     matches!(row_value(e, get), Some(Cell::Boolean(true)))
 }
 
+#[cfg(any(feature = "live", test))]
 fn row_value<'a>(e: &'a Expr, get: &dyn Fn(&str) -> Option<&'a Value>) -> Option<Cell<'a>> {
     match &*e.0 {
         Node::Col(name) => match get(name)? {
