@@ -18,6 +18,7 @@ use pond_rs::{
 use serde_json::Value;
 
 use crate::callbacks::{self, Callbacks};
+use crate::study::StudyTarget;
 
 /// What a call returns.
 pub enum Outcome {
@@ -49,6 +50,7 @@ pub(crate) fn pond<T>(r: pond_rs::Result<T>) -> Res<T> {
 
 /// The ops a `partitionBy` step can run (the arms of `shared_op!`).
 pub const PARTITIONED_OPS: &[&str] = &[
+    "study",
     "rolling",
     "aggregate",
     "diff",
@@ -70,6 +72,7 @@ pub const PARTITIONED_OPS: &[&str] = &[
 /// The ops [`call`] runs without functions or row lookups; those are
 /// [`crate::callbacks::OPS`].
 pub const OPS: &[&str] = &[
+    "study",
     "rolling",
     "aggregate",
     "diff",
@@ -154,7 +157,7 @@ impl<'a> Args<'a> {
     }
 }
 
-fn column_names(v: &Value) -> Option<Vec<&str>> {
+pub(crate) fn column_names(v: &Value) -> Option<Vec<&str>> {
     match v {
         Value::String(s) => Some(vec![s.as_str()]),
         Value::Array(a) => a.iter().map(Value::as_str).collect(),
@@ -173,7 +176,7 @@ fn choice<'a>(op: &str, o: &'a Value, field: &str, allowed: &[&'a str]) -> Res<&
     }
 }
 
-fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
+pub(crate) fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
     match &o[field] {
         Value::Null => Ok(None),
         v => whole_number(v)
@@ -185,7 +188,7 @@ fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
 
 /// A whole number within JavaScript's exact range. `-0` (sent as
 /// `{"f64": "-0"}`) is 0, as JavaScript reads it.
-fn whole_number(v: &Value) -> Option<i64> {
+pub(crate) fn whole_number(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| {
         decode_f64(v)
             .filter(|n| n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15)
@@ -204,7 +207,7 @@ pub fn decode_f64(v: &Value) -> Option<f64> {
     }
 }
 
-fn scalar(v: &Value) -> Res<Scalar> {
+pub(crate) fn scalar(v: &Value) -> Res<Scalar> {
     match v {
         Value::String(s) => Ok(Scalar::String(s.clone())),
         Value::Bool(b) => Ok(Scalar::Boolean(*b)),
@@ -214,10 +217,29 @@ fn scalar(v: &Value) -> Res<Scalar> {
     }
 }
 
-fn sequence(v: &Value) -> Res<Sequence> {
+/// A duration: pond-ts's text (`"5m"`), or a number of milliseconds (as
+/// pond-ts's `DurationInput`), written as text for pond-rs. `None` when `v`
+/// is neither; a number that is not a positive whole number of ms is an
+/// error (pond-rs keys are whole ms).
+pub(crate) fn duration(v: &Value) -> Res<Option<String>> {
+    if let Value::String(s) = v {
+        return Ok(Some(s.clone()));
+    }
+    match decode_f64(v) {
+        Some(n) if n > 0.0 && n.fract() == 0.0 && n <= 8.64e15 => {
+            Ok(Some(format!("{}ms", n as i64)))
+        }
+        Some(_) => Err(format!(
+            "a duration in ms must be a positive whole number, got {v}"
+        )),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn sequence(v: &Value) -> Res<Sequence> {
     let s = &v["sequence"];
-    if let Some(every) = s["every"].as_str() {
-        return pond(Sequence::every(every));
+    if let Some(every) = duration(&s["every"])? {
+        return pond(Sequence::every(&every));
     }
     let (Some(unit), Some(zone)) = (s["calendar"].as_str(), s["timeZone"].as_str()) else {
         return Err(format!("expected a Sequence, got {v}"));
@@ -233,13 +255,18 @@ fn sequence(v: &Value) -> Res<Sequence> {
 }
 
 /// `{ out: 'avg' }` or `{ out: { from, using } }`, in key order.
-fn mapping(op: &str, v: &Value) -> Res<Vec<Agg>> {
+pub(crate) fn mapping(op: &str, v: &Value) -> Res<Vec<Agg>> {
     let Some(map) = v.as_object() else {
         return Err(format!("{op}: expected a mapping object, got {v}"));
     };
     map.iter()
         .map(|(output, spec)| match spec {
             Value::String(r) => Ok(Agg::of(output, pond(Reducer::parse(r))?)),
+            // pond-ts takes a function as a reducer; pond-rs has named ones only.
+            _ if spec.get("fn").is_some() || spec["using"].get("fn").is_some() => Err(format!(
+                "{op}: mapping entry '{output}': a function reducer is not supported by \
+                 @pond-ts/rs (pond-rs has named reducers only)"
+            )),
             _ => match (spec["from"].as_str(), spec["using"].as_str()) {
                 (Some(from), Some(using)) => {
                     Ok(Agg::new(output, from, pond(Reducer::parse(using))?))
@@ -285,7 +312,7 @@ fn range(op: &str, o: &Value) -> Res<Option<(i64, i64)>> {
     }
 }
 
-fn fill_strategy(v: &Value) -> Res<Fill> {
+pub(crate) fn fill_strategy(v: &Value) -> Res<Fill> {
     Ok(match v {
         Value::String(s) => match s.as_str() {
             "hold" => Fill::Hold,
@@ -309,8 +336,8 @@ fn fill_limits(o: &Value) -> Res<FillLimits> {
     if let Some(n) = opt_count("fill", o, "limit")? {
         limits = limits.limit(n);
     }
-    if let Some(gap) = o["maxGap"].as_str() {
-        limits = limits.max_gap(gap);
+    if let Some(gap) = duration(&o["maxGap"])? {
+        limits = limits.max_gap(&gap);
     }
     Ok(limits)
 }
@@ -344,8 +371,8 @@ fn smooth_options(a: &Args, method: &str, o: &Value) -> Res<pond_rs::Smooth> {
             (None, Some(s)) => Smooth::ema_span(s),
             _ => return Err("smooth: ema needs exactly one of alpha or span".into()),
         },
-        "movingAverage" => match o["window"].as_str() {
-            Some(w) => Smooth::moving_average(w),
+        "movingAverage" => match duration(&o["window"])? {
+            Some(w) => Smooth::moving_average(&w),
             None => return Err("smooth: movingAverage needs a window".into()),
         },
         "loess" => match decode_f64(&o["span"]) {
@@ -483,10 +510,11 @@ macro_rules! shared_op {
     ($target:expr, $a:expr) => {{
         let a: &Args = $a;
         match a.op {
-            "rolling" => Some(if let Some(window) = a.get(0).as_str() {
+            "study" => Some($target.run_study(&crate::study::study_call(a)?)),
+            "rolling" => Some(if let Some(window) = duration(a.get(0))? {
                 let o = a.options(2)?;
                 let aggs = mapping(a.op, a.get(1))?;
-                pond($target.rolling_with(window, &aggs, rolling_options(a.op, o)?))
+                pond($target.rolling_with(&window, &aggs, rolling_options(a.op, o)?))
             } else if let Some(rows) =
                 whole_number(&a.get(0)["count"]).and_then(|n| u64::try_from(n).ok())
             {
@@ -495,7 +523,7 @@ macro_rules! shared_op {
                 pond($target.rolling_rows(rows as usize, &aggs, rolling_options(a.op, o)?))
             } else {
                 let seq = sequence(a.get(0))?;
-                let window = a.str(1, "a window duration")?;
+                let window = duration(a.get(1))?.ok_or_else(|| a.bad(1, "a window duration"))?;
                 let o = a.options(3)?;
                 let r = rolling_options(a.op, o)?;
                 let options = RollingOver {
@@ -505,7 +533,7 @@ macro_rules! shared_op {
                     range: range(a.op, o)?,
                 };
                 let aggs = mapping(a.op, a.get(2))?;
-                pond($target.rolling_over(&seq, window, &aggs, options))
+                pond($target.rolling_over(&seq, &window, &aggs, options))
             }),
             "aggregate" => {
                 let seq = sequence(a.get(0))?;
@@ -693,7 +721,10 @@ pub fn call<C: Callbacks>(
             )
         }
         "byColumn" | "rollingByColumn" => value_axis(input, &a)?,
-        "tail" => s(pond(input.tail(a.str(0, "a duration")?))?),
+        "tail" => {
+            let d = duration(a.get(0))?.ok_or_else(|| a.bad(0, "a duration"))?;
+            s(pond(input.tail(&d))?)
+        }
         "overlapping" => s(input.overlapping(event_key(a.get(0))?)),
         "containedBy" => s(input.contained_by(event_key(a.get(0))?)),
         "trim" => s(input.trim(event_key(a.get(0))?)),

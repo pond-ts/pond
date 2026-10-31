@@ -4083,6 +4083,108 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - J2: studies through the catalog (`study(name, options)` plus named
       helpers from the catalog table) and `LiveSeries`. Check: study and
       live parity fixtures through JS.
+      - J2a outcome (2026-10-31): studies and calendars
+        (`crates/pond-wasm/src/study.rs`). `series.study(name, options)`
+        is a dispatcher op (so it also runs as a `partitionBy` step, per
+        group); index.js adds one method per catalog name from
+        `study_names()` on `TimeSeries` and `PartitionedSeries`;
+        `studies()` / `studyInfo()` return the catalog JSON exactly
+        (`undefined` for no such study, as pond-ts `studyDescriptor`).
+        `TradingCalendar` lives in a second Rust table (`free()` +
+        finalizer) and crosses as `{"calendar": id}` in `sessions`;
+        `fromRules(rules, { from, to })`, `fromSessions`, the lookups,
+        `tagSessions`, plus `generateSessions`. Decisions: (1) options a
+        study does not have are ignored, as pond-ts's runtime does
+        (Python refuses them as its rule for an unexpected keyword; in JS
+        a shared `{ high, low, close, volume }` object handed to several
+        studies is an ordinary idiom, and pond-ts's types already refuse
+        a typo); (2) calendar lookups take a date only as `YYYY-MM-DD`,
+        as the Python bridge (the fixture's 32 other texts are checked to
+        throw); (3) instants are whole ms. Fixed on the way: a number as
+        a duration (`rolling(60000, …)`, `Sequence.every(60000)`, the
+        `rolling(sequence, window)` window, `tail`, the smooth window) was
+        refused, and a number `maxGap` was silently ignored (every gap
+        filled); `numbers()` returned a non-finite value (a
+        gap to pond-rs) as itself instead of NaN, which hid gaps from
+        study output checks. Check (`test/studies.mjs`, CI `js-bridge`):
+        study parity 3,702 matched bit for bit + 827 errors agree + 526
+        known refusals (the Rust harness's counts), a planted 1-ulp change
+        fails all but 560 cases (those with no finite non-zero output);
+        oracle 220/220 within 5e-10; 109/109 descriptors equal pond-ts's,
+        109/109 run from their method with defaults; calendar parity
+        110/110. Speed, 1M one-minute bars, series in / out, bridge vs
+        `@pond-ts/financial` (`scripts/perf-studies.mjs`): sma 4.5 vs
+        45.7 ms, ema 2.6 vs 13.0, rsi 10.9 vs 40.9, bollinger 24.8 vs
+        98.9, macd 18.3 vs 91.8, atr 9.3 vs 31.1, sessionVwap 9.9 vs
+        85.4. Size 6.9 MB raw, 1.26 MB brotli. J2b: `LiveSeries`.
+      - J2b outcome (2026-10-31): `LiveSeries`
+        (`crates/pond-wasm/src/live.rs`, plain Rust, and `live_js.rs`, the
+        exports; pond-rs's `live` feature now on in pond-wasm). One owner
+        per root series in a thread-local table; nodes are u32 handles;
+        builders go through one dispatcher (op name + JSON args, functions
+        as `{"fn": k}`) like the batch ops. JS classes carry pond-ts's
+        names (`LiveSeries`, `LiveView`, `LiveAggregation`,
+        `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, the
+        `LivePartitioned*` set). Decisions: (1) listeners run after the
+        Rust push returns, from its list of outputs, not from inside
+        pond-rs's callbacks: a listener can then call the bridge (read,
+        build, push) without re-entering a borrowed series; a push from a
+        listener is queued until the current one is done, and listener
+        errors are isolated with the first rethrown (pond-ts's emit); (2)
+        a node function that throws does not stop the push: outputs are
+        delivered, then its first exception is rethrown; over history the
+        node is removed and the exception rethrown; a function that pushes
+        into its own series gets a "busy" error, never a panic; (3)
+        number-only rows take dedicated exports (`push1/2/3`, a
+        Float64Array batch through `push_series` when ordered and finite)
+        and everything else takes JSON; a random-rows differential checks
+        both paths agree; (4) `apply(factory)` records the chain once and
+        repeats it per partition (no per-partition JS factory, which would
+        need a JS call per new partition inside pond-rs's push); (5) a
+        reduce built over history emits its first value from a microtask,
+        skipped if a push came first, as pond-ts defers it. Differences
+        kept: a disposed node cannot be read; `pushJson` has no
+        `timeZone`; pushes go into the root only; `cumulative` takes one
+        function column (pond-rs's `cumulative_with`); `toTimeSeries`
+        takes no name; partitioned fused rolling stats have no
+        `windowsCount`; a `map` cell of the wrong type is a gap; a fold
+        result that is not a number is NaN. Review (PR #870) fixes: a
+        partition's `clear` / `pushJson` reached the root (now every push
+        and `clear` on a non-root series is refused; pond-ts pushes into
+        the partition itself, which pond-rs's partitions do not take);
+        `pushJson` from a listener was not queued (now as `pushMany`;
+        `clear` runs at once, both as pond-ts); node functions were held
+        in wasm-bindgen's table, so one referring to its series kept it
+        alive for good (now kept in the series' own JS array and called
+        through one shared callback by series id + index; a gc test pins
+        it); node kinds were looked up by `constructor.name` (broke
+        subclasses and minifiers; now a field); a second `dispose()` and
+        `on()` after dispose threw (now no-ops, as pond-ts). Also
+        differences, documented: a node function cannot even read its own
+        series during a push (the series is borrowed); reducers are names
+        only (pond-rs has no function reducer; pond-ts takes one); keys are
+        whole ms. Not changed: the function schema cache compares the
+        column list on each call; a pointer check would need pond-rs to
+        expose the event's `Arc` schema. Check (`test/live.mjs`, CI
+        `js-bridge`): pond-ts's own fixture generator
+        (`buildLiveFixture`) run against the bridge, compared with the
+        committed fixture: 71/71 cases, 7,961 outputs and 3,596 final rows
+        bit for bit, 40 errors agree, the Rust harness's 2 refused nodes
+        and 1 refused push; plus 13 checks for throwing functions,
+        re-entrancy, the fast path (ordered and unordered random rows),
+        partitions, listener order, gc and leaks (a planted strong hold on
+        the functions, an unqueued `pushJson` and an unchecked partition
+        `clear` each fail them). Planted mistakes: map off by
+        1e-12 fails 2 cases + extras, filter inverted fails 16, a -0 to 0
+        change on the fast path fails only the extras (2 fixture cases are
+        number-only). Speed, 1M events, bridge vs pond-ts
+        (`scripts/perf-live.mjs`): push 250 vs 1593 ms, pushMany (1,000 a
+        batch) 39 vs 111, rolling 1m avg + 1m buckets 570 vs 2943 (push) /
+        365 vs 835 (pushMany), plus a listener on every rolling update
+        1338 vs 2647 / 642 vs 875. pond-ts's `push` with
+        `retention: { maxAge }` costs ~25 us an event (100k events 2.4 s),
+        so the bench runs without retention. Size 7.5 MB raw, 1.39 MB
+        brotli (+0.6 MB, +130 KB). Next J3.
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where

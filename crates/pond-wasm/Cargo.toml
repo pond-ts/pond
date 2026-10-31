@@ -13,8 +13,9 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# No threads in WebAssembly: pond-rs without its `parallel` feature.
-pond-rs = { path = "../pond-rs", default-features = false }
+# No threads in WebAssembly: pond-rs without its `parallel` feature; with
+# `live` for `LiveSeries`.
+pond-rs = { path = "../pond-rs", default-features = false, features = ["live"] }
 # preserve_order: a pond-ts mapping's key order sets the output columns
 # order. float_roundtrip: numbers read as the exact f64 JavaScript wrote.
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

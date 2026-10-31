@@ -7,7 +7,7 @@
 // Pointed at pond-ts instead (with a no-op `free` and `alive`), every line
 // passes but the `joinMany([])` one.
 import assert from 'node:assert/strict';
-import { Time, TimeRange, TimeSeries, alive } from '../index.js';
+import { Sequence, Time, TimeRange, TimeSeries, alive } from '../index.js';
 
 const series = () =>
   new TimeSeries({
@@ -261,6 +261,46 @@ assert.equal(
   1743298200000,
 );
 g.free();
+
+// A duration may be a number of ms, as pond-ts's `DurationInput`.
+{
+  const s = series();
+  const same = (a, b) => {
+    assert.deepEqual(a.toJSON().rows, b.toJSON().rows);
+    a.free();
+    b.free();
+  };
+  same(s.rolling(2000, { v: 'avg' }), s.rolling('2s', { v: 'avg' }));
+  same(
+    s.rolling(Sequence.every(1000), 2000, { v: 'sum' }),
+    s.rolling(Sequence.every('1s'), '2s', { v: 'sum' }),
+  );
+  same(
+    s.aggregate(Sequence.every(2000), { v: 'sum' }),
+    s.aggregate(Sequence.every('2s'), { v: 'sum' }),
+  );
+  same(s.tail(1000), s.tail('1s'));
+  for (const bad of [0, -1000, NaN])
+    assert.throws(() => s.rolling(bad, { v: 'avg' }));
+  s.free();
+}
+
+// A number maxGap is milliseconds, as pond-ts: rows are 1000 ms apart, so
+// 500 fills nothing and 2000 fills the gap.
+{
+  const g = gappy();
+  for (const [gap, filled] of [
+    [500, undefined],
+    ['500ms', undefined],
+    [2000, 2],
+    ['2s', 2],
+  ]) {
+    const f = g.fill({ v: 'linear' }, { maxGap: gap });
+    assert.equal(f.at(1).get('v'), filled, `maxGap ${gap}`);
+    f.free();
+  }
+  g.free();
+}
 
 assert.equal(alive(), 0, 'series left in memory');
 console.log('inputs through @pond-ts/rs: all match pond-ts');

@@ -9,6 +9,9 @@
 
 pub mod callbacks;
 pub mod dispatch;
+pub mod live;
+mod live_js;
+pub mod study;
 
 use std::cell::RefCell;
 
@@ -27,7 +30,7 @@ thread_local! {
     static SERIES: RefCell<Vec<Option<TimeSeries>>> = const { RefCell::new(Vec::new()) };
 }
 
-fn store(s: TimeSeries) -> u32 {
+pub(crate) fn store(s: TimeSeries) -> u32 {
     SERIES.with(|t| {
         let mut t = t.borrow_mut();
         match t.iter().position(Option::is_none) {
@@ -53,7 +56,7 @@ fn with<T>(id: u32, f: impl FnOnce(&TimeSeries) -> Res<T>) -> Res<T> {
     })
 }
 
-fn err(e: String) -> JsError {
+pub(crate) fn err(e: String) -> JsError {
     JsError::new(&e)
 }
 
@@ -224,7 +227,7 @@ fn column(def: &Value, col: JsValue, rows: usize) -> Res<Column> {
     })
 }
 
-fn js_scalar(v: JsValue) -> Res<Scalar> {
+pub(crate) fn js_scalar(v: JsValue) -> Res<Scalar> {
     if let Some(n) = v.as_f64() {
         Ok(Scalar::Number(n))
     } else if let Some(s) = v.as_string() {
@@ -294,7 +297,12 @@ pub fn series_numbers(id: u32, column: &str) -> Result<Float64Array, JsError> {
     with(id, |s| {
         let c = s.column(column).map_err(|e| e.to_string())?;
         let n = c.numbers().map_err(|e| e.to_string())?;
-        Ok(Float64Array::from(n.values()))
+        if n.all_finite() {
+            return Ok(Float64Array::from(n.values()));
+        }
+        // pond-rs reads any non-finite value as a gap; a gap is NaN here.
+        let v: Vec<f64> = n.iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+        Ok(Float64Array::from(&v[..]))
     })
     .map_err(err)
 }
@@ -309,11 +317,11 @@ pub fn series_times(id: u32) -> Result<Float64Array, JsError> {
     .map_err(err)
 }
 
-fn set(o: &Object, k: &str, v: &JsValue) {
+pub(crate) fn set(o: &Object, k: &str, v: &JsValue) {
     let _ = Reflect::set(o, &JsValue::from_str(k), v);
 }
 
-fn literal(v: &Option<Literal>) -> JsValue {
+pub(crate) fn literal(v: &Option<Literal>) -> JsValue {
     match v {
         None => JsValue::NULL,
         Some(Literal::Number(x)) => JsValue::from_f64(*x),
@@ -352,8 +360,13 @@ fn to_object(s: &TimeSeries) -> JsValue {
 }
 
 fn schema(s: &TimeSeries) -> Array {
-    s.schema()
-        .into_iter()
+    defs_js(s.schema())
+}
+
+/// Column definitions as pond-ts writes a schema (`required: false` only
+/// on an optional value column).
+pub(crate) fn defs_js(defs: impl IntoIterator<Item = pond_rs::ColumnDef>) -> Array {
+    defs.into_iter()
         .map(|def| {
             let d = Object::new();
             set(&d, "name", &JsValue::from_str(&def.name));
@@ -502,8 +515,16 @@ impl JsCallbacks {
     /// Call `fns[k]`, keeping an exception.
     fn call(&self, k: usize, args: &[JsValue]) -> Res<JsValue> {
         let f = self.get(k)?;
-        let list: Array = args.iter().collect();
-        f.apply(&JsValue::UNDEFINED, &list).map_err(|e| {
+        let this = &JsValue::UNDEFINED;
+        // call1..3 rather than apply: building an argument array per row
+        // cost several times the call itself.
+        let r = match args {
+            [a] => f.call1(this, a),
+            [a, b] => f.call2(this, a, b),
+            [a, b, c] => f.call3(this, a, b, c),
+            _ => f.apply(this, &args.iter().collect()),
+        };
+        r.map_err(|e| {
             self.thrown.borrow_mut().get_or_insert(e);
             "a function argument threw".to_string()
         })
@@ -615,4 +636,85 @@ pub fn partitioned_methods() -> Array {
 #[wasm_bindgen]
 pub fn pond_rs_version() -> String {
     pond_rs::VERSION.to_string()
+}
+
+// ---- studies and trading calendars ([`study`]) ------------------------------
+
+fn parse(text: &str, what: &str) -> Result<Value, JsError> {
+    serde_json::from_str(text).map_err(|e| err(format!("{what}: {e}")))
+}
+
+/// Every study's name, in catalog order.
+#[wasm_bindgen]
+pub fn study_names() -> Array {
+    study::study_names().map(JsValue::from_str).collect()
+}
+
+/// The catalog as pond-ts's descriptors, JSON text.
+#[wasm_bindgen]
+pub fn studies_json() -> String {
+    study::studies().to_string()
+}
+
+/// One study's descriptor as JSON text (`null` for no such study).
+#[wasm_bindgen]
+pub fn study_info_json(name: &str) -> String {
+    study::study_info(name).to_string()
+}
+
+/// pond-ts `TradingCalendar.fromRules(rules, range)`, both as JSON text.
+#[wasm_bindgen]
+pub fn calendar_from_rules(rules: &str, range: &str) -> Result<u32, JsError> {
+    study::from_rules(&parse(rules, "rules")?, &parse(range, "range")?)
+        .map(study::calendar_store)
+        .map_err(err)
+}
+
+/// pond-ts `generateSessions(rules, range)`: the sessions as JSON text.
+#[wasm_bindgen]
+pub fn generate_sessions(rules: &str, range: &str) -> Result<String, JsError> {
+    study::generate(&parse(rules, "rules")?, &parse(range, "range")?)
+        .map(|v| v.to_string())
+        .map_err(err)
+}
+
+/// pond-ts `TradingCalendar.fromSessions(sessions, { timeZone })`.
+#[wasm_bindgen]
+pub fn calendar_from_sessions(sessions: &str, time_zone: Option<String>) -> Result<u32, JsError> {
+    study::from_sessions(&parse(sessions, "sessions")?, time_zone.as_deref())
+        .map(study::calendar_store)
+        .map_err(err)
+}
+
+/// Drop a calendar. Safe to call twice.
+#[wasm_bindgen]
+pub fn calendar_free(id: u32) {
+    study::calendar_free(id);
+}
+
+/// How many calendars are alive (for leak checks).
+#[wasm_bindgen]
+pub fn calendars_alive() -> u32 {
+    study::calendars_alive()
+}
+
+/// A calendar lookup by pond-ts's name, the argument as JSON text; the
+/// answer as JSON text.
+#[wasm_bindgen]
+pub fn calendar_query(id: u32, op: &str, arg: &str) -> Result<String, JsError> {
+    let arg = parse(arg, op)?;
+    study::calendar(id)
+        .and_then(|c| study::calendar_query(&c, op, &arg))
+        .map(|v| v.to_string())
+        .map_err(err)
+}
+
+/// pond-ts `calendar.tagSessions(series, options)`: the new series' id.
+#[wasm_bindgen]
+pub fn calendar_tag_sessions(id: u32, series: u32, options: &str) -> Result<u32, JsError> {
+    let options = parse(options, "tagSessions")?;
+    let c = study::calendar(id).map_err(err)?;
+    with(series, |s| study::tag_sessions(&c, s, &options))
+        .map(store)
+        .map_err(err)
 }

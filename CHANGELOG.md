@@ -248,6 +248,41 @@ include new features and type-level changes; patch bumps are strictly additive.
   synchronised rolling output is text (the partition value as pond-ts
   writes it, `" undefined"` for a row without one), which pond-ts declares
   with the source column's type but also fills with text.
+- **Financial studies in `@pond-ts/rs`** ([PND-RUST-R4] step J2a, not
+  published yet). Every study in pond-rs's catalog runs as
+  `series.study(name, options)` or as its own method with pond-ts's name and
+  options (`s.sma({ period: 20 })`, `s.bollinger({ period: 20, stdDev: 2 })`,
+  as `@pond-ts/financial/fluent` mounts them), also on a `partitionBy` view
+  (per group). `studies()` and `studyInfo(name)` give pond-ts's catalog
+  descriptors. A cut-down `TradingCalendar` (`fromRules`, `fromSessions`,
+  the lookups, `tagSessions`; times in ms) plus `generateSessions` feed
+  `sessionVwap` / `pivotPoints` as `sessions: calendar`, a `Session[]` list
+  or `session: 'column'`. Options a study does not have are ignored, as in
+  pond-ts; calendar lookups take only `YYYY-MM-DD` text as a date (pond-ts
+  compares any text with session dates as text), as the Python bridge does.
+  1M bars against `@pond-ts/financial`: `sma` 4.5 vs 45.7 ms, `rsi` 10.9 vs
+  40.9, `bollinger` 24.8 vs 98.9, `sessionVwap` 9.9 vs 85.4.
+- **`LiveSeries` in `@pond-ts/rs`** ([PND-RUST-R4] step J2b): pond-rs's
+  live layer through WebAssembly, with pond-ts's class and method names —
+  `LiveSeries` (`push`, `pushMany`, `pushJson`, `clear`, `on`), `filter`
+  (function or expression), `map`, `select`, `sample`, `window`, `diff` /
+  `rate` / `pctChange`, `fill`, `cumulative`, `aggregate` (`closed`,
+  `snapshot`, `hasOpenBucket`), `rolling` (one window or several fused),
+  `reduce`, and `partitionBy` with `collect`, `apply`, per-partition
+  rolling and `toMap`. `on(type, fn)` returns an unsubscribe function, as
+  in pond-ts. Every case of pond-ts's live parity fixture gives the same
+  outputs and final rows bit for bit (`test/live.mjs`). Differences: a
+  disposed node cannot be read; `pushJson` takes no `timeZone`; pushes and
+  `clear` go to the root series only (not one partition); a node function
+  cannot read its own series during a push; reducers are names only (no
+  function `using`); keys are whole ms; `apply` records its chain once (it
+  cannot branch per partition); `cumulative` takes one function column;
+  `toTimeSeries` takes no name; partitioned fused rolling stats have no
+  `windowsCount`; a `map` cell of the wrong type is a gap. 1M
+  events, bridge vs pond-ts: `push` 250 vs 1593 ms, `pushMany` (batches
+  of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
+  1-minute buckets 570 vs 2943, the same with a listener on every rolling
+  update 1338 vs 2647.
 
 ### Changed
 
@@ -286,6 +321,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`@pond-ts/rs` takes a number of milliseconds as a duration**, as
+  pond-ts does: `rolling(60000, …)`, `rolling(sequence, 60000, …)`,
+  `Sequence.every(60000)`, `tail` and a moving-average `smooth` window
+  threw "expected a Sequence" or "must be a duration"; worse, a number
+  `maxGap` in `fill` was silently ignored, so every gap was filled. A
+  fractional number of ms, or one past ±8.64e15 ms (pond-rs's time limit),
+  is refused. Also
+  `numbers(column)` now gives NaN for every gap: a non-finite value, which
+  pond-rs reads as a gap, came back as itself.
 - **pond-rs: numeric group names match JavaScript exactly.** A number
   halfway between two shortest spellings (`667962307169479.25`) named its
   pivot column, live partition and array group key by rounding up, where
