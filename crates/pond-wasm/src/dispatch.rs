@@ -157,7 +157,7 @@ impl<'a> Args<'a> {
     }
 }
 
-fn column_names(v: &Value) -> Option<Vec<&str>> {
+pub(crate) fn column_names(v: &Value) -> Option<Vec<&str>> {
     match v {
         Value::String(s) => Some(vec![s.as_str()]),
         Value::Array(a) => a.iter().map(Value::as_str).collect(),
@@ -176,7 +176,7 @@ fn choice<'a>(op: &str, o: &'a Value, field: &str, allowed: &[&'a str]) -> Res<&
     }
 }
 
-fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
+pub(crate) fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
     match &o[field] {
         Value::Null => Ok(None),
         v => whole_number(v)
@@ -188,7 +188,7 @@ fn opt_count(op: &str, o: &Value, field: &str) -> Res<Option<usize>> {
 
 /// A whole number within JavaScript's exact range. `-0` (sent as
 /// `{"f64": "-0"}`) is 0, as JavaScript reads it.
-fn whole_number(v: &Value) -> Option<i64> {
+pub(crate) fn whole_number(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| {
         decode_f64(v)
             .filter(|n| n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15)
@@ -207,7 +207,7 @@ pub fn decode_f64(v: &Value) -> Option<f64> {
     }
 }
 
-fn scalar(v: &Value) -> Res<Scalar> {
+pub(crate) fn scalar(v: &Value) -> Res<Scalar> {
     match v {
         Value::String(s) => Ok(Scalar::String(s.clone())),
         Value::Bool(b) => Ok(Scalar::Boolean(*b)),
@@ -236,7 +236,7 @@ pub(crate) fn duration(v: &Value) -> Res<Option<String>> {
     }
 }
 
-fn sequence(v: &Value) -> Res<Sequence> {
+pub(crate) fn sequence(v: &Value) -> Res<Sequence> {
     let s = &v["sequence"];
     if let Some(every) = duration(&s["every"])? {
         return pond(Sequence::every(&every));
@@ -255,13 +255,18 @@ fn sequence(v: &Value) -> Res<Sequence> {
 }
 
 /// `{ out: 'avg' }` or `{ out: { from, using } }`, in key order.
-fn mapping(op: &str, v: &Value) -> Res<Vec<Agg>> {
+pub(crate) fn mapping(op: &str, v: &Value) -> Res<Vec<Agg>> {
     let Some(map) = v.as_object() else {
         return Err(format!("{op}: expected a mapping object, got {v}"));
     };
     map.iter()
         .map(|(output, spec)| match spec {
             Value::String(r) => Ok(Agg::of(output, pond(Reducer::parse(r))?)),
+            // pond-ts takes a function as a reducer; pond-rs has named ones only.
+            _ if spec.get("fn").is_some() || spec["using"].get("fn").is_some() => Err(format!(
+                "{op}: mapping entry '{output}': a function reducer is not supported by \
+                 @pond-ts/rs (pond-rs has named reducers only)"
+            )),
             _ => match (spec["from"].as_str(), spec["using"].as_str()) {
                 (Some(from), Some(using)) => {
                     Ok(Agg::new(output, from, pond(Reducer::parse(using))?))
@@ -307,7 +312,7 @@ fn range(op: &str, o: &Value) -> Res<Option<(i64, i64)>> {
     }
 }
 
-fn fill_strategy(v: &Value) -> Res<Fill> {
+pub(crate) fn fill_strategy(v: &Value) -> Res<Fill> {
     Ok(match v {
         Value::String(s) => match s.as_str() {
             "hold" => Fill::Hold,
