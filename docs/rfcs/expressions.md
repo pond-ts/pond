@@ -1,7 +1,8 @@
 # RFC: Column expressions
 
-**Status:** draft for review. Not a commitment until PLAN.md adopts a phase
-(see [CLAUDE.md → Strategic RFCs](../../CLAUDE.md)).
+**Status:** adopted 2026-10-31 (pjm17971: "Let's build"). Phases E1 and E2
+are PLAN.md task [PND-EXPR]; breakout plan
+[`PND_EXPR_PLAN.md`](../plans/PND_EXPR_PLAN.md).
 
 **Relationship to PLAN.md:** would sit beside the pond-rs bridges
 ([PND-RUST-R4] in [`PND_RUST_PLAN.md`](../plans/PND_RUST_PLAN.md)); pjm17971
@@ -204,3 +205,7 @@ Bridge J2 (studies, `LiveSeries`, column handoff for functions) follows E2.
    `col('a').fill(col('b'))`)? Proposed: keep today's rule for
    `mapColumns`, and use `withColumn` for anything that should fill.
 4. **`when`.** Include in v1 or wait for a request?
+
+**Decided (pjm17971, 2026-10-31):** 1, 2 and 3 as proposed (plain
+`col('name')` checked at run time; `col` / `lit`; a gap stays a gap in
+`mapColumns`, `withColumn` fills). 4: `when` is in v1.
