@@ -262,6 +262,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   compares any text with session dates as text), as the Python bridge does.
   1M bars against `@pond-ts/financial`: `sma` 4.5 vs 45.7 ms, `rsi` 10.9 vs
   40.9, `bollinger` 24.8 vs 98.9, `sessionVwap` 9.9 vs 85.4.
+- **`LiveSeries` in `@pond-ts/rs`** ([PND-RUST-R4] step J2b): pond-rs's
+  live layer through WebAssembly, with pond-ts's class and method names —
+  `LiveSeries` (`push`, `pushMany`, `pushJson`, `clear`, `on`), `filter`
+  (function or expression), `map`, `select`, `sample`, `window`, `diff` /
+  `rate` / `pctChange`, `fill`, `cumulative`, `aggregate` (`closed`,
+  `snapshot`, `hasOpenBucket`), `rolling` (one window or several fused),
+  `reduce`, and `partitionBy` with `collect`, `apply`, per-partition
+  rolling and `toMap`. `on(type, fn)` returns an unsubscribe function, as
+  in pond-ts. Every case of pond-ts's live parity fixture gives the same
+  outputs and final rows bit for bit (`test/live.mjs`). Differences: a
+  disposed node cannot be read; `pushJson` takes no `timeZone`; pushes and
+  `clear` go to the root series only (not one partition); a node function
+  cannot read its own series during a push; reducers are names only (no
+  function `using`); keys are whole ms; `apply` records its chain once (it
+  cannot branch per partition); `cumulative` takes one function column;
+  `toTimeSeries` takes no name; partitioned fused rolling stats have no
+  `windowsCount`; a `map` cell of the wrong type is a gap. 1M
+  events, bridge vs pond-ts: `push` 250 vs 1593 ms, `pushMany` (batches
+  of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
+  1-minute buckets 570 vs 2943, the same with a listener on every rolling
+  update 1338 vs 2647.
 
 ### Changed
 
