@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventForSchema, LiveSource, SeriesSchema } from 'pond-ts';
 import type { SnapshotSource, UseSnapshotOptions } from './useSnapshot.js';
+import { onSourceChange } from './changeSignal.js';
 
 /**
  * Subscribe to a live source and return only the latest event.
@@ -56,7 +57,7 @@ export function useLatest<S extends SeriesSchema>(
       }
     };
 
-    const unsub = source.on('event', () => {
+    const unsub = onSourceChange(source, 'event', () => {
       if (throttleMs === 0) {
         const s = sourceRef.current;
         if (s && s.length > 0) {
