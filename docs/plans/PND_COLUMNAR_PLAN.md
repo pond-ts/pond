@@ -730,6 +730,102 @@ amortised O(1) whatever the window.
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
 
+### [PND-ALIGNHOLD] / [PND-DEDUPEMAP] — SHIPPED (align / materialize / dedupe on columns)
+
+Logged from pond-rs R1b step 5, picked up from the Codex PR #810
+investigation. `align` (hold) did a `new Time`, a binary search through
+`atOrBefore` and a whole `Event` per bucket; `linear` and `materialize`
+walked `series.events`; `dedupe` built a string per row and a `Map` of
+arrays, then rebuilt the store from the kept `Event`s; all three outputs
+went back through row intake. Now (`batch/operators/align.ts`,
+`batch/operators/dedupe.ts`):
+
+- Each op picks a **source row number per output row** off the key buffers
+  (`-1` = none) and gathers every column with one `sliceByIndices`.
+  `linear` also keeps the second row and the ratio and interpolates number
+  columns straight from the column; an overflowing interpolation is stored
+  as missing, as row intake did ([PND-NANREP]).
+- `hold` restates `atOrBefore(new Time(t))` over the buffers:
+  `compareEventKeys` order (`begin`, then `end`, then the key kind's name
+  against `'time'` — so a zero-length interval key at `t` counts as before
+  `Time(t)` and a zero-length time range as after), and only a time key can
+  equal `Time(t)`. Sample times rise strictly (a `BoundedSequence` is
+  sorted, non-overlapping, positive-length), so one forward cursor finds
+  the same rows as the binary search.
+- `dedupe`: rows are sorted by key, so equal `begin`/`end` are runs. The
+  exception is interval labels: inside one span, two different strings can
+  compare equal (precomposed vs decomposed `é`) and interleave, so a span
+  with more than one row groups by `String(label)` in first-seen order, as
+  the old `Map` did. Each group is resolved in the old branch order, so an
+  invalid `keep` still throws only when a duplicate exists, with the same
+  message. A custom `keep` function keeps the old event path.
+- **Typed fixed grids.** After the above, building 1M `Interval`s for the
+  grid was ~80% of a 1M-bucket `align`. `Sequence._fixedGridModulePrivate`
+  lays out a fixed-step grid as `begin` / `end` buffers using `bounded`'s
+  own index range (shared `#fixedIndexRange`), checks `new Interval` /
+  `BoundedSequence`'s rules on each bucket, and returns `undefined` — so
+  the caller takes `bounded()` and gets its exact error — for a calendar
+  grid, an empty grid, rounding that makes buckets empty or overlapping
+  (step 3 at 2^53), or indices past 2^52. A `-0` first index is kept so a
+  `-0` anchor stays `-0`. `materialize` never builds interval keys, since a
+  `BoundedSequence` with mixed label types is fine there.
+- Partitioned `materialize` filled each empty bucket's partition columns
+  by mapping every event; it now uses a literal fill on the column
+  (`_fillLiteralModulePrivate`, which writes the value as given — public
+  `fill({ host: 'hold' })` would read `'hold'` as a strategy name).
+
+**Decision: event identity in `dedupe`.** The old path built every source
+`Event` (`this.events`) and rebuilt the result from them, so
+`result.at(j) === source.at(i)` for every kept row (`concat` pins the same
+rule in a test). Building every `Event` up front would cost most of the
+win, so the result's store instead **asks the source store for row `i`'s
+event** (`SeriesStore` `#delegate`, set by `_selectRowsModulePrivate`): the
+event is built once, in the source, whichever side asks first. The cost is
+that the result keeps the source store alive, where the old result kept
+its `Event`s alive instead.
+
+Checked: 700 random series (time / time-range / interval keys incl.
+zero-length keys, repeated keys, number and text interval labels incl.
+both `é` forms, `-0`, missing cells, values near ±1.7e308) give identical
+JSON against the previous build for `align` (hold / linear × 3 sample
+points × 8 fixed grids incl. step 0.3, `-0` and 2^40 anchors, plus 4
+bounded sequences incl. mixed labels and an empty one, plus a wider range),
+`materialize` (3 selects × the same grids), 16 `dedupe` policies incl.
+invalid ones and custom functions (identity compared where every event was
+built first), and partitioned `align` / `materialize` / `dedupe` with
+partition values `'hold'` / `'linear'` and booleans. Planted bugs caught:
+flipping the key-kind tie (139/150 series differ), treating interval labels
+as runs (30/150), `<=` in materialize's cursor (148/150), ignoring the kind
+tie for interval keys only (45/150). The `begin[prev] === begin[idx]` check
+in `linear` can't fire (prev < t ≤ idx) and was kept as in the old code.
+New `test/TimeSeries.grid-columnar.test.ts` covers the fixed-grid fallback
+errors, `-0` anchor, hold vs `atOrBefore` for every key kind, linear
+overflow, label grouping, `keep` validation, identity, and a partition
+named `'hold'`.
+
+Bench `scripts/perf-grid.mjs` (median of 7 after 3 warm-ups; old build 5
+after 2):
+
+| Case                                     | Before | After  |
+| ---------------------------------------- | ------ | ------ |
+| align hold, 1M rows → 1 s grid           | 3.62 s | 60 ms  |
+| align linear (center), 1M → 1 s          | 905 ms | 75 ms  |
+| materialize last, 1M → 1 s               | 743 ms | 37 ms  |
+| materialize nearest, 1M → 1 s            | 783 ms | 40 ms  |
+| align hold, 1M → 1 min                   | 86 ms  | 5.8 ms |
+| materialize last, 1M → 1 min             | 54 ms  | 6.5 ms |
+| align hold, 10k rows → 600k buckets      | 1.37 s | 26 ms  |
+| materialize, 10k rows → 600k buckets     | 406 ms | 15 ms  |
+| dedupe last, 1M rows, 10% repeats        | 1.18 s | 49 ms  |
+| dedupe first                             | 1.05 s | 42 ms  |
+| dedupe max v                             | 1.16 s | 65 ms  |
+| dedupe, no repeats                       | 1.23 s | 38 ms  |
+| partitioned align, 4 × 100k              | 2.31 s | 754 ms |
+| partitioned dedupe + materialize, 4×100k | 2.83 s | 1.40 s |
+
+The partitioned cases are now mostly `TimeSeries.concat` re-sorting the
+pieces ([PND-CONCATSORT], next).
+
 ### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
 
 From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,

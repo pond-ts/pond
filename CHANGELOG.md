@@ -495,6 +495,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`align`, `materialize` and `dedupe` work on columns** ([PND-ALIGNHOLD],
+  [PND-DEDUPEMAP]) instead of building an `Event` per bucket or row. Each
+  picks a source row per output row from the key buffers and copies columns
+  by those row numbers; a fixed-step `Sequence` grid is laid out as number
+  buffers instead of one `Interval` per bucket. Same output and errors. On
+  1M rows: `align` (hold) onto a 1 s grid 3.6 s → 60 ms, `linear` 905 → 75
+  ms, `materialize` 743 → 37 ms, `dedupe` with 10% repeats 1.18 s → 49 ms.
+  Partitioned `materialize` fills empty buckets' partition columns on the
+  column too. A kept row's `Event` is still the same object as the source
+  row's. Trade-off: a `dedupe` result now holds a reference to the source
+  series' store (that is how it hands back the source's `Event`s), so the
+  source's memory isn't freed while the result is alive, even when dedupe
+  dropped most rows.
 - **`arrayAggregate` and `arrayExplode` work on the array column directly**
   ([PND-ARRAYSLOW]) instead of building an `Event` per row and re-reading
   rows; the key and other columns are shared (aggregate) or gathered once

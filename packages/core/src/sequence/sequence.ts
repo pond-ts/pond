@@ -10,7 +10,7 @@ import { TimeZone, assertCalendarUnit } from '../core/time-zone.js';
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
 import { Interval } from '../core/interval.js';
-import { toTimeRange } from '../core/time-range.js';
+import { toTimeRange, type TimeRange } from '../core/time-range.js';
 import type { TemporalLike, TimestampInput } from '../core/temporal.js';
 import { normalizeTimestamp } from '../core/temporal.js';
 
@@ -156,6 +156,81 @@ export class Sequence {
     return this.#timeZone;
   }
 
+  /** First and last bucket index `bounded` realizes on a fixed grid. */
+  #fixedIndexRange(
+    requested: TimeRange,
+    sample: SequenceSample,
+    coverage: SequenceCoverage,
+  ): [number, number] {
+    const stepMs = this.#stepMs!;
+    const anchorMs = this.#anchorMs!;
+    const sampleOffset =
+      coverage === 'overlap'
+        ? 0
+        : sample === 'center'
+          ? stepMs / 2
+          : sample === 'end'
+            ? stepMs
+            : 0;
+    const firstIndex =
+      coverage === 'overlap'
+        ? Math.floor((requested.begin() - anchorMs) / stepMs)
+        : sample === 'end'
+          ? Math.floor((requested.begin() - sampleOffset - anchorMs) / stepMs) +
+            1
+          : Math.ceil((requested.begin() - sampleOffset - anchorMs) / stepMs);
+    const lastIndex = Math.floor(
+      (requested.end() - sampleOffset - anchorMs) / stepMs,
+    );
+    return [firstIndex, lastIndex];
+  }
+
+  /**
+   * @internal The buckets `bounded(range, { sample, coverage })` would
+   * realize, as `begin` / `end` buffers, without building an `Interval` per
+   * bucket. Each bucket's label is its `begin`. `undefined` for a calendar
+   * sequence, or when `bounded` would throw (a step too small to move a
+   * timestamp, buckets that overlap after rounding, a non-finite edge): the
+   * caller then calls `bounded` and gets its error.
+   */
+  static _fixedGridModulePrivate(
+    sequence: Sequence,
+    range: TemporalLike,
+    sample: SequenceSample,
+    coverage: SequenceCoverage,
+  ): { begin: Float64Array; end: Float64Array } | undefined {
+    if (sequence.#kind !== 'fixed') return undefined;
+    const stepMs = sequence.#stepMs!;
+    const anchorMs = sequence.#anchorMs!;
+    const [firstIndex, lastIndex] = sequence.#fixedIndexRange(
+      toTimeRange(range),
+      sample,
+      coverage,
+    );
+    // Past 2^52 the `index += 1` walk in `bounded` stops being exact, and
+    // a huge grid should fail (or not) exactly as `bounded` does.
+    if (!(Math.abs(firstIndex) < 2 ** 52 && Math.abs(lastIndex) < 2 ** 52)) {
+      return undefined;
+    }
+    const count = Math.max(0, lastIndex - firstIndex + 1);
+    if (count > 2 ** 27) return undefined;
+    const begin = new Float64Array(count);
+    const end = new Float64Array(count);
+    for (let k = 0; k < count; k += 1) {
+      // `firstIndex` itself at k = 0 keeps a `-0` index (`Math.ceil(-0.5)`)
+      // as `bounded`'s walk does, so a `-0` anchor stays `-0`.
+      const start = anchorMs + (k === 0 ? firstIndex : firstIndex + k) * stepMs;
+      const stop = start + stepMs;
+      // `new Interval` and `BoundedSequence`'s checks, restated.
+      if (!Number.isFinite(start) || !Number.isFinite(stop)) return undefined;
+      if (stop <= start) return undefined;
+      if (k > 0 && start < end[k - 1]!) return undefined;
+      begin[k] = start;
+      end[k] = stop;
+    }
+    return { begin, end };
+  }
+
   /**
    * Example: `sequence.bounded(new TimeRange({ start, end }))`.
    * Realizes a finite `BoundedSequence` over the supplied range.
@@ -227,24 +302,10 @@ export class Sequence {
       // the bucket containing `requested.begin()`. The trailing test is
       // `begin <= requested.end()`, which is what `lastIndex` already
       // computes at a zero offset, so only the leading edge moves.
-      const sampleOffset =
-        coverage === 'overlap'
-          ? 0
-          : sample === 'center'
-            ? stepMs / 2
-            : sample === 'end'
-              ? stepMs
-              : 0;
-      const firstIndex =
-        coverage === 'overlap'
-          ? Math.floor((requested.begin() - anchorMs) / stepMs)
-          : sample === 'end'
-            ? Math.floor(
-                (requested.begin() - sampleOffset - anchorMs) / stepMs,
-              ) + 1
-            : Math.ceil((requested.begin() - sampleOffset - anchorMs) / stepMs);
-      const lastIndex = Math.floor(
-        (requested.end() - sampleOffset - anchorMs) / stepMs,
+      const [firstIndex, lastIndex] = this.#fixedIndexRange(
+        requested,
+        sample,
+        coverage,
       );
 
       for (let index = firstIndex; index <= lastIndex; index += 1) {
