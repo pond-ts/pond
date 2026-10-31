@@ -21,7 +21,7 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
   answer as the function it replaces"; `scripts/perf-expr.mjs`.
 - **E2, pond-rs + bridges:** `Expr` in pond-rs, JSON form through
   `@pond-ts/rs` and `pond_rs`; the core parity fixture gains expression
-  cases. Split: E2a pond-rs crate (done, below), E2b the two bridges.
+  cases. Split: E2a pond-rs crate, E2b the two bridges (both done, below; one PR, #867).
 - **E3:** more operations only when a friction report asks.
 
 ## E1 outcome (PR #865, merged 2026-10-31; Codex fixes #866)
@@ -71,3 +71,27 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
 - Speed lesson: arithmetic behind a function pointer was 3x slower than a
   generic closure (no inlining); `iter().any` over 1M floats is 2x slower
   than a blocked `fold`.
+
+## E2b outcome (bridges, same PR #867)
+
+- `@pond-ts/rs`: `Expr` / `col` / `lit` / `when` in `index.js` (same
+  builder as pond-ts), sent to Rust as `{"expr": tree}`; pond-wasm routes
+  `filter` / `find` / `some` / `every` / `mapColumns` / `withColumn` to the
+  pond-rs expression methods. `mapColumns` may mix expressions and
+  functions: expressions run first on the input (they read the columns as
+  before any mapping), then each function on its own column. The parity
+  test builds every expression with the bridge's own builder.
+  `scripts/perf-expr.mjs` (1M rows, ms, function / expression / pond-ts
+  expression): filter `v > 0` 917 / 14 / 28; two columns + text 969 / 21 /
+  30; sparse 935 / 3.8 / 11; `some` 944 / 4.6 / 8.5; `mapColumns` 260 /
+  5.3 / 20; `withColumn` - / 3.6 / 8.2.
+- `pond_rs` (Python): `Expr` with operators (`== != > >= < <=`, `& | ~`,
+  `+ - * /`, unary `-`, `abs()`) and methods (`and_`, `or_`, `not_`,
+  `is_in`, … since `and` / `or` / `not` / `in` are Python keywords); `bool(expr)`
+  raises, so `a and b` cannot silently drop a side. Accepted by `filter`,
+  `find`, `some`, `every`, `map`, `with_column`, live `filter`, and the new
+  `map_columns` (a mapping, as pond-ts `mapColumns`; needed so several
+  expressions read the columns as before any mapping). 1M rows: filter 360
+  vs 9.7 ms, `map` 162 vs 2.3 ms.
+- Not in the JS bridge: live `filter` (the bridge has no `LiveSeries` until
+  J2).

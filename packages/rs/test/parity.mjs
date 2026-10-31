@@ -13,8 +13,15 @@ import {
   TimeRange,
   Interval,
   alive,
+  col,
+  lit,
+  when,
 } from '../index.js';
-import { closure } from '../../core/scripts/parity/cases.mjs';
+import { closure, exprOf, usePond } from '../../core/scripts/parity/cases.mjs';
+
+// Expression cases build their trees with this package's `col` / `lit` /
+// `when`, so the fixture checks the bridge's builder too.
+usePond({ col, lit, when });
 
 const FIXTURE = fileURLToPath(
   new URL('../../core/test/fixtures/parity.json', import.meta.url),
@@ -103,6 +110,7 @@ function arg(v) {
     if ('sequence' in v) return new Sequence(v.sequence);
     if ('f64' in v) return number(v.f64);
     if ('fn' in v) return closure(v.fn);
+    if ('expr' in v) return exprOf(v.expr);
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, arg(x)]));
   }
   return v;
@@ -286,7 +294,7 @@ function check(c, got) {
 
 function adjust(c) {
   // [PND-MAPREQ]: pond-rs marks a mapped column that gained a gap optional.
-  if (c.id === 'mapColumns-overflow') {
+  if (c.id === 'mapColumns-overflow' || c.id === 'mapColumns-expr-overflow') {
     const expected = structuredClone(c.expected);
     expected.schema[1].required = false;
     return { ...c, expected };

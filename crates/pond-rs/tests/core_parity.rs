@@ -806,7 +806,27 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 spec.iter().map(|(k, v)| (k.clone(), expr_arg(v))).collect();
             let pairs: Vec<(&str, &pond_rs::Expr)> =
                 exprs.iter().map(|(k, e)| (k.as_str(), e)).collect();
-            input.map_exprs(&pairs)
+            // As the function cases: pond-ts keeps a mapped column
+            // required even when it gets a gap ([PND-MAPREQ]).
+            return Some(
+                input
+                    .map_exprs(&pairs)
+                    .map(|s| {
+                        let mut json = to_json(&s);
+                        match case.id.as_str() {
+                            "mapColumns-expr-overflow" => {
+                                assert_eq!(json.schema[1].required, Some(false));
+                                json.schema[1].required = None;
+                            }
+                            "mapColumns-expr-required" => {
+                                assert_ne!(json.schema[1].required, Some(false));
+                            }
+                            _ => {}
+                        }
+                        Outcome::from(json)
+                    })
+                    .map_err(|e| e.to_string()),
+            );
         }
         "withColumn" if case.args[1].get("expr").is_some() => {
             let name = case.args[0].as_str().expect("column name");

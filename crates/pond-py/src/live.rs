@@ -674,6 +674,7 @@ type Values = (Vec<ColumnDef>, Vec<Option<Value>>);
 #[derive(Clone)]
 enum Step {
     Filter(Callable),
+    FilterExpr(pond_rs::Expr),
     Map(Callable),
     Select(Vec<String>),
     Sample(usize),
@@ -822,6 +823,7 @@ fn build(
     let r = Arc::clone(raised);
     Ok(match step {
         Step::Filter(f) => live.filter(from, filter_fn(Arc::clone(f), r))?.id(),
+        Step::FilterExpr(e) => live.filter_expr(from, e)?.id(),
         Step::Map(f) => live.map(from, map_fn(Arc::clone(f), r))?.id(),
         Step::Select(cols) => live.select(from, &refs(cols))?.id(),
         Step::Sample(n) => live.sample(from, Sample::Stride(*n))?.id(),
@@ -1120,8 +1122,12 @@ macro_rules! live_builders {
             /// A view of the events `f(event)` accepts. Built over what this
             /// node holds now, then kept up to date. An exception in `f`
             /// leaves the event out and is raised when the call (the push)
-            /// returns; the push itself has happened.
+            /// returns; the push itself has happened. `f` may be an `Expr`
+            /// (`col("v") > 0`), which runs with no Python call per event.
             fn filter(&self, py: Python<'_>, f: Bound<'_, PyAny>) -> PyResult<PyLiveNode> {
+                if let Some(e) = crate::expr::as_expr(&f) {
+                    return self.step(py, Step::FilterExpr(e));
+                }
                 let f = callable(&f)?;
                 self.step(py, Step::Filter(f))
             }

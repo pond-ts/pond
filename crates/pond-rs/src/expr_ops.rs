@@ -123,6 +123,12 @@ impl TimeSeries {
     /// replacement (pond-ts `mapColumns` with several entries).
     pub fn map_exprs(&self, columns: &[(&str, &Expr)]) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::map_exprs";
+        if columns.is_empty() {
+            return Err(crate::PondError::InvalidData {
+                call: CALL,
+                message: "needs at least one column".into(),
+            });
+        }
         let defs = self.value_defs();
         let mut out = self.columns().to_vec();
         for &(name, value) in columns {
@@ -181,5 +187,43 @@ impl TimeSeries {
         let data = expr::column_of(expr::evaluate(value, self), None);
         self.with_column(Column::from_data(name.to_string(), data, false))
             .map_err(|e| e.renamed(CALL))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Column, TimeSeries, col};
+
+    /// `find` / `some` / `every` look at stretches of 1,024 rows, then
+    /// 2,048, … : a match in a later stretch must report its own row, the
+    /// same as the closure version.
+    #[test]
+    fn stretches_find_rows_past_the_first() {
+        let n = 200_000;
+        let s = TimeSeries::new(
+            "s",
+            (0..n as i64).collect(),
+            vec![Column::required("v", (0..n).map(|i| i as f64).collect::<Vec<_>>())],
+        )
+        .unwrap();
+        for at in [0, 1023, 1024, 1025, 3071, 3072, 3073, 70_000, n - 1, n] {
+            let k = at as f64;
+            let hit = col("v").eq(k);
+            let by_fn = s
+                .find(|r| Ok(r.number("v")? == Some(k)))
+                .unwrap()
+                .map(|r| r.index());
+            let by_expr = s.find_expr(&hit).unwrap().map(|r| r.index());
+            assert_eq!(by_expr, by_fn, "find at {at}");
+            assert_eq!(by_expr, (at < n).then_some(at), "find at {at}");
+            assert_eq!(s.some_expr(&hit).unwrap(), at < n, "some at {at}");
+            assert_eq!(s.every_expr(&hit.not()).unwrap(), at >= n, "every at {at}");
+        }
+    }
+
+    #[test]
+    fn map_exprs_needs_a_column() {
+        let s = TimeSeries::new("s", vec![0], vec![Column::required("v", vec![1.0])]).unwrap();
+        assert!(s.map_exprs(&[]).is_err());
     }
 }

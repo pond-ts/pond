@@ -3790,6 +3790,32 @@ const CASES = [
       },
     ],
   ],
+  // A required column stays required when nothing becomes a gap…
+  [
+    'mapColumns-expr-required',
+    'dense',
+    'mapColumns',
+    [{ value: { expr: { op: 'mul', args: [{ col: 'value' }, { lit: 2 }] } } }],
+  ],
+  // …and an overflow turns cells into gaps ([PND-MAPREQ] in pond-ts).
+  [
+    'mapColumns-expr-overflow',
+    'dense',
+    'mapColumns',
+    [
+      {
+        value: {
+          expr: {
+            op: 'add',
+            args: [
+              { op: 'mul', args: [{ col: 'value' }, { lit: 1e308 }] },
+              { lit: 1e308 },
+            ],
+          },
+        },
+      },
+    ],
+  ],
   [
     'mapColumns-expr-fill-keeps-gap',
     'gappy',

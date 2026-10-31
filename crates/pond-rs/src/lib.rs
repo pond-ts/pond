@@ -218,7 +218,7 @@ pub use column::{
 };
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
-pub use expr::{Expr, Literal, Op, col, lit, when};
+pub use expr::{Expr, Literal, col, lit, when};
 pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
 pub use join::{Join, JoinType, OnConflict};
 pub use json::{JsonOptions, KeyOrder, RowFormat};

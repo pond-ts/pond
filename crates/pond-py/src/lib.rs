@@ -11,6 +11,7 @@ mod arrow_io;
 mod calendar;
 mod callback;
 mod convert;
+mod expr;
 mod live;
 mod partition;
 mod row;
@@ -77,6 +78,7 @@ fn pond_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(study::studies, m)?)?;
     m.add_function(wrap_pyfunction!(study::study_info, m)?)?;
     live::register(m)?;
+    expr::register(m)?;
     m.add("tzdb_version", ::pond_rs::tzdb_version())?;
     Ok(())
 }

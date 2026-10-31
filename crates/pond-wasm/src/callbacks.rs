@@ -2,6 +2,10 @@
 //! `every`, `mapColumns`, `scan`, `collapse`, `asInterval` with a
 //! function) and the row lookups (`at`, `bisect`, `nearest`, …).
 //!
+//! An expression argument (`col('v').gt(0)`) arrives as `{"expr": tree}`,
+//! the JSON tree pond-ts's `Expr.toJSON()` writes, and runs in pond-rs
+//! with no function calls at all.
+//!
 //! A function argument arrives as `{"fn": k}`: the `k`th function the
 //! caller passed, called through [`Callbacks`]. pond-rs's closures cannot
 //! fail (or fail with pond-rs's own error), so a function that throws is
@@ -10,7 +14,7 @@
 
 use std::sync::Mutex;
 
-use pond_rs::{ColumnKind, EventKey, Label, PartitionedSeries, Scalar, TimeSeries};
+use pond_rs::{ColumnKind, EventKey, Expr, Label, PartitionedSeries, Scalar, TimeSeries};
 use serde_json::Value;
 
 use crate::dispatch::{Args, Outcome, Res, event_key, pond};
@@ -107,6 +111,11 @@ pub fn fn_ref(v: &Value) -> Option<usize> {
     v.get("fn")?.as_u64().map(|k| k as usize)
 }
 
+/// `{"expr": tree}`: an expression argument, read from its JSON tree.
+pub fn expr_ref(v: &Value) -> Option<Res<Expr>> {
+    v.get("expr").map(|tree| pond(Expr::from_value(tree)))
+}
+
 fn function(a: &Args, i: usize) -> Res<usize> {
     fn_ref(a.get(i)).ok_or_else(|| a.bad(i, "a function"))
 }
@@ -163,6 +172,15 @@ pub(crate) fn call<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Option
 }
 
 fn tests<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcome> {
+    if let Some(e) = expr_ref(a.get(0)) {
+        let e = e?;
+        return match a.op {
+            "filter" => pond(input.filter_expr(&e)).map(Outcome::Series),
+            "find" => pond(input.find_expr(&e)).map(|r| Outcome::Row(r.map(|r| r.index()))),
+            "some" => pond(input.some_expr(&e)).map(Outcome::Bool),
+            _ => pond(input.every_expr(&e)).map(Outcome::Bool),
+        };
+    }
     let k = function(a, 0)?;
     let failure = Failure::default();
     // After a failure the function is not called again, and the answer
@@ -196,16 +214,34 @@ fn tests<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcome> {
 
 fn map_columns<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcome> {
     let Some(spec) = a.get(0).as_object() else {
-        return Err(a.bad(0, "a mapping { column: function }"));
+        return Err(a.bad(0, "a mapping { column: function or expression }"));
     };
     if spec.is_empty() {
         return Err("mapColumns() requires at least one column".into());
     }
-    let failure = Failure::default();
-    let mut out = input.clone();
+    // Expressions read the columns as they were before any mapping (as
+    // pond-ts), so they run first, on the input; each function reads only
+    // its own column, which no expression touched.
+    let mut exprs = Vec::new();
     for (column, f) in spec {
-        let k =
-            fn_ref(f).ok_or_else(|| format!("mapColumns: '{column}' must map to a function"))?;
+        if let Some(e) = expr_ref(f) {
+            exprs.push((column.as_str(), e?));
+        }
+    }
+    let mut out = if exprs.is_empty() {
+        input.clone()
+    } else {
+        let pairs: Vec<(&str, &Expr)> = exprs.iter().map(|(c, e)| (*c, e)).collect();
+        pond(input.map_exprs(&pairs))?
+    };
+    let failure = Failure::default();
+    for (column, f) in spec {
+        if f.get("expr").is_some() {
+            continue;
+        }
+        let k = fn_ref(f).ok_or_else(|| {
+            format!("mapColumns: '{column}' must map to a function or expression")
+        })?;
         let kind = out
             .schema()
             .into_iter()

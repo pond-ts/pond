@@ -458,9 +458,50 @@ def boolean(s, row, column):
     return row[column]
 
 
+import operator
+
+# pond-ts op names -> the Python operator that builds them (each operator
+# calls the method of the same rule, so both are covered).
+EXPR_OPS = {
+    "eq": operator.eq, "ne": operator.ne, "gt": operator.gt, "ge": operator.ge,
+    "lt": operator.lt, "le": operator.le, "and": operator.and_, "or": operator.or_,
+    "add": operator.add, "sub": operator.sub, "mul": operator.mul, "div": operator.truediv,
+}
+
+
+def expr_of(tree):
+    """A pond-ts expression tree, built with pond_rs's own builder."""
+    if "col" in tree:
+        return pond_rs.col(tree["col"])
+    if "lit" in tree:
+        return pond_rs.lit(tree["lit"])
+    args = [expr_of(a) for a in tree["args"]]
+    op = tree["op"]
+    if op in EXPR_OPS:
+        return EXPR_OPS[op](*args)
+    if op == "when":
+        return pond_rs.when(*args)
+    if op == "in":
+        return args[0].is_in(tree["values"])
+    if op == "not":
+        return ~args[0]
+    if op == "neg":
+        return -args[0]
+    if op == "abs":
+        return abs(args[0])
+    if op == "isMissing":
+        return args[0].is_missing()
+    if op == "fill":
+        return args[0].fill(args[1])
+    raise AssertionError(f"unknown expression op {op}")
+
+
 def row_test(spec, s):
     """A filter / find test spec (cases.mjs `closure`) as a Python
     function of a row."""
+
+    if "expr" in spec:
+        return expr_of(spec["expr"])
 
     def test(row):
         if "column" in spec:
@@ -696,7 +737,12 @@ def run(case):
         if not args[0]:
             raise pond_rs.PondError("map needs a column")  # stand-in: pond_rs maps one column per call
         out = s
+        exprs = {c: expr_of(m["expr"]) for c, m in args[0].items() if "expr" in m}
+        if exprs:
+            out = s.map_columns(exprs)
         for column, mapper in args[0].items():
+            if "expr" in mapper:
+                continue
             m = mapper["fn"]
             if m == "upper":
                 f = lambda v: v.upper()  # noqa: E731
@@ -707,7 +753,7 @@ def run(case):
                 f = lambda v, mul=mul, add=add: v * mul + add  # noqa: E731
             out = out.map(column, f)
         got = outcome_series(out)
-        if case["id"] == "mapColumns-overflow":
+        if case["id"] in ("mapColumns-overflow", "mapColumns-expr-overflow"):
             # pond-ts keeps a mapped column marked required even when the
             # mapping leaves a gap ([PND-MAPREQ]); pond-rs makes it
             # optional. Check that, then compare as pond-ts has it.
@@ -731,8 +777,11 @@ def run(case):
         "rename": lambda: s.rename(args[0]),
         "asTime": lambda: s.as_time((args[0] if args else {}).get("at", "begin")),
         "slice": lambda: s.slice(*args),
-        "filter": lambda: s.filter(row_test(args[0]["fn"], s)),
-        "withColumn": lambda: s.with_column(args[0], [cell_number(v) for v in args[1]]),
+        "filter": lambda: s.filter(row_test(args[0].get("fn", args[0]), s)),
+        "withColumn": lambda: s.with_column(
+            args[0],
+            expr_of(args[1]["expr"]) if isinstance(args[1], dict) else [cell_number(v) for v in args[1]],
+        ),
         "collapse": lambda: s.collapse(args[0], args[1], collapse_fn(args[2]["fn"], s), keep=bool(len(args) > 3 and args[3].get("append"))),
         "concat": lambda: TimeSeries.concat([s] + [series(a["series"]) for a in args[0]]),
         "join": lambda: s.join(series(args[0]["series"]), **join_kwargs(args[1] if len(args) > 1 else None)),

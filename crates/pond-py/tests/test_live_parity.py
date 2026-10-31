@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_core_parity import REPO, cell_number, compare_cell
+from test_core_parity import REPO, cell_number, compare_cell, expr_of
 
 from pond_rs import LiveSeries, Sequence
 
@@ -170,6 +170,8 @@ def options_of(o):
 
 def predicate(spec):
     spec = spec["fn"]
+    if "expr" in spec:
+        return expr_of(spec["expr"])
     if "missing" in spec:
         col = spec["missing"]
         return lambda e: e[col] is None

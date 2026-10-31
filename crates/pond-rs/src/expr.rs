@@ -60,7 +60,7 @@ pub enum Literal {
 /// An operation an [`Expr`] can name; the JSON form uses pond-ts's names
 /// (`"isMissing"`, `"in"`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Op {
+pub(crate) enum Op {
     /// Equal.
     Eq,
     /// Not equal.
@@ -324,7 +324,8 @@ impl Expr {
         self.bin(Op::Fill, value)
     }
 
-    /// The JSON form, as pond-ts `toJSON()` gives it:
+    /// The JSON form: the same tree as pond-ts `toJSON()`, though a whole
+    /// number is written `0.0` where JavaScript writes `0`:
     /// `{"op":"gt","args":[{"col":"v"},{"lit":0.0}]}`.
     pub fn to_json(&self) -> String {
         self.to_value().to_string()

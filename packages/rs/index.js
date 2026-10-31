@@ -30,6 +30,116 @@ export class Sequence {
   }
 }
 
+// ---- column expressions ([PND-EXPR]) -------------------------------------
+
+const literal = (v, where) => {
+  const ok =
+    (typeof v === 'number' && Number.isFinite(v)) ||
+    typeof v === 'string' ||
+    typeof v === 'boolean';
+  if (!ok)
+    throw new TypeError(
+      `${where}: expected a finite number, text or true/false, got ${String(v)}`,
+    );
+  return v;
+};
+const node = (v) =>
+  v instanceof Expr ? v.node : { lit: literal(v, 'lit(value)') };
+
+/**
+ * A per-row rule written as data, as pond-ts `col('v').gt(0)`. It runs
+ * inside pond-rs over whole columns, with no JavaScript call per row.
+ * `toJSON()` gives the same tree as pond-ts's.
+ */
+export class Expr {
+  constructor(n) {
+    this.node = n;
+    Object.freeze(this);
+  }
+  #op(op, ...rest) {
+    return new Expr({ op, args: [this.node, ...rest.map(node)] });
+  }
+  eq(x) {
+    return this.#op('eq', x);
+  }
+  ne(x) {
+    return this.#op('ne', x);
+  }
+  gt(x) {
+    return this.#op('gt', x);
+  }
+  ge(x) {
+    return this.#op('ge', x);
+  }
+  lt(x) {
+    return this.#op('lt', x);
+  }
+  le(x) {
+    return this.#op('le', x);
+  }
+  in(values) {
+    if (!Array.isArray(values))
+      throw new TypeError('in(values): values must be an array');
+    return new Expr({ op: 'in', args: [this.node], values: [...values] });
+  }
+  and(x) {
+    return this.#op('and', x);
+  }
+  or(x) {
+    return this.#op('or', x);
+  }
+  not() {
+    return this.#op('not');
+  }
+  add(x) {
+    return this.#op('add', x);
+  }
+  sub(x) {
+    return this.#op('sub', x);
+  }
+  mul(x) {
+    return this.#op('mul', x);
+  }
+  div(x) {
+    return this.#op('div', x);
+  }
+  neg() {
+    return this.#op('neg');
+  }
+  abs() {
+    return this.#op('abs');
+  }
+  isMissing() {
+    return this.#op('isMissing');
+  }
+  fill(x) {
+    return this.#op('fill', x);
+  }
+  toJSON() {
+    return this.node;
+  }
+}
+
+/** The value of column `name` in each row. */
+export function col(name) {
+  if (typeof name !== 'string')
+    throw new TypeError('col(name): name must be a string');
+  return new Expr({ col: name });
+}
+
+/** A fixed value: `lit(100).sub(col('pct'))`. */
+export function lit(value) {
+  return new Expr({ lit: literal(value, 'lit(value)') });
+}
+
+/** `then` where `condition` is true, else `otherwise` (a gap counts as false). */
+export function when(condition, then, otherwise) {
+  return new Expr({
+    op: 'when',
+    args: [node(condition), node(then), node(otherwise)],
+  });
+}
+
 const ms = (t, what) => {
   const v = t instanceof Date ? t.getTime() : t;
   if (typeof v !== 'number' || !Number.isFinite(v))
@@ -202,6 +312,7 @@ function encode(v, fns) {
   if (v instanceof Time) return { time: v.timestamp };
   if (v instanceof TimeRange) return { timeRange: [v.start, v.endMs] };
   if (v instanceof Interval) return { interval: [v.value, v.start, v.endMs] };
+  if (v instanceof Expr) return { expr: v.node };
   if (typeof v === 'function' || v instanceof Given)
     return { fn: fns.push(v instanceof Given ? v.value : v) - 1 };
   if (typeof v === 'number') {

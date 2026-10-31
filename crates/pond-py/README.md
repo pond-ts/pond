@@ -57,6 +57,13 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
 - **Errors** are `pond_rs.PondError` (a `ValueError`), naming the call and
   the column; a value of the wrong type (text where a number is needed) is a
   `TypeError`.
+- **Expressions** (`from pond_rs import col, lit, when`) write a per-row
+  rule as data, so it runs inside pond-rs with no Python call per row:
+  `s.filter((col("v") / col("w") > 10) & (col("host") == "h3"))`. Accepted
+  by `filter`, `find`, `some`, `every`, `map`, `map_columns`,
+  `with_column` and live `filter`; on 1M rows a filter takes about 10 ms
+  where a Python function takes about 360 ms. Combine with `&`, `|`, `~`
+  (not `and` / `or` / `not`). Same rules and JSON tree as pond-ts `col`.
 - **Python functions** work where a rule is yours: `filter(lambda row: …)`,
   `map(column, f)`, `scan(column, step, init)`, `collapse(...)`,
   `as_interval(lambda row: …)`. An exception inside one comes out as itself.
