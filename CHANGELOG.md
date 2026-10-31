@@ -511,6 +511,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
   a gap check.
 
+### Fixed
+
+- **Column expressions** (follow-up to [PND-EXPR], from a Codex review): a
+  number column built with `fromColumns` may store a gap as `±Infinity`;
+  expressions now read it as a gap, as functions do (before, `gt(0)` kept
+  such a row and `abs()` produced a column that counted gaps as values).
+  `find` / `some` / `every` with an expression now build a text column's
+  dictionary lookup once instead of once per stretch (1M rows, 400k distinct
+  labels, no match: 780 → 7 ms) and read only the columns the expression
+  names (8 unused text columns: 90 → 4 ms).
+
 ## [0.75.0] — 2026-10-19
 
 ### Changed

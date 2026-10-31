@@ -160,7 +160,11 @@ import {
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
 import { Expr, type ExprKind } from '../core/expression.js';
-import { columnOf, evaluateStoreExpr } from './operators/expression.js';
+import {
+  columnOf,
+  evaluateStoreExpr,
+  prepareStoreExpr,
+} from './operators/expression.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -5143,11 +5147,16 @@ export class TimeSeries<S extends SeriesSchema> {
   #firstIndex(expr: Expr, where: string, want: 0 | 1): number {
     const store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
     const n = store.length;
-    if (n === 0) {
-      // Still check the expression against the schema.
-      this.#matches(expr, where, store);
-      return -1;
-    }
+    // Checked once (also for an empty series); each stretch reads only
+    // the columns the expression names, and dictionary tables are built
+    // once for all stretches.
+    const evaluate = prepareStoreExpr(
+      expr.node,
+      store,
+      this.schema,
+      where,
+      'boolean',
+    );
     let size = 1024;
     for (
       let start = 0;
@@ -5155,25 +5164,20 @@ export class TimeSeries<S extends SeriesSchema> {
       start += size, size = Math.min(size * 2, 65536)
     ) {
       const end = Math.min(n, start + size);
-      const i = this.#matches(
-        expr,
-        where,
-        withRowRange(store, start, end),
-      ).indexOf(want);
-      if (i >= 0) return start + i;
+      const v = evaluate(start, end).v as Int8Array;
+      // A gap (-1) fails the test, as `undefined` does in a function.
+      for (let i = 0; i < v.length; i += 1) {
+        if ((v[i] === 1 ? 1 : 0) === want) return start + i;
+      }
     }
     return -1;
   }
 
   /** Per row, 1 where the true/false expression holds, else 0. */
-  #matches(
-    expr: Expr,
-    where: string,
-    store = this.#store.store as unknown as ColumnarStore<ColumnSchema>,
-  ): Int8Array {
+  #matches(expr: Expr, where: string): Int8Array {
     const values = evaluateStoreExpr(
       expr.node,
-      store,
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
       this.schema,
       where,
       'boolean',
