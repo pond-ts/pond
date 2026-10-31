@@ -142,6 +142,9 @@ jobs:
       - name: Expressions the fixture does not cover
         run: node packages/rs/test/expr.mjs
 
+      - name: Financial study and calendar parity through JS
+        run: node packages/rs/test/studies.mjs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest

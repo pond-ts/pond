@@ -313,6 +313,7 @@ function encode(v, fns) {
   if (v instanceof TimeRange) return { timeRange: [v.start, v.endMs] };
   if (v instanceof Interval) return { interval: [v.value, v.start, v.endMs] };
   if (v instanceof Expr) return { expr: v.node };
+  if (v instanceof TradingCalendar) return { calendar: v.id };
   if (typeof v === 'function' || v instanceof Given)
     return { fn: fns.push(v instanceof Given ? v.value : v) - 1 };
   if (typeof v === 'number') {
@@ -361,6 +362,8 @@ function prepare(op, args, schema) {
     out[0] = (begin, end, i) => f(new TimeRange([begin, end]), i);
   } else if (op === 'scan') {
     out[2] = new Given(args[2]);
+  } else if (op === 'study' && args[1]?.anchor instanceof Date) {
+    out[1] = { ...args[1], anchor: args[1].anchor.getTime() };
   }
   return out;
 }
@@ -628,6 +631,149 @@ for (const op of wasm.supported_methods()) {
   };
 }
 
+// ---- financial studies ([PND-RUST-R4] J2a) ---------------------------------
+
+// One method per catalog study, pond-ts's name (`s.rsi({ period: 14 })`),
+// as `@pond-ts/financial/fluent` mounts them; each is `study(name, options)`.
+for (const name of wasm.study_names()) {
+  TimeSeries.prototype[name] = function (options) {
+    return this.call('study', name, options);
+  };
+  PartitionedSeries.prototype[name] = function (options) {
+    return this.study(name, options);
+  };
+}
+
+/** Every study's descriptor, as pond-ts's `@pond-ts/financial/catalog` `STUDIES` (without `run`). */
+export function studies() {
+  return JSON.parse(wasm.studies_json());
+}
+
+/** One study's descriptor (pond-ts `studyDescriptor(name)`), or `undefined`. */
+export function studyInfo(name) {
+  return JSON.parse(wasm.study_info_json(String(name))) ?? undefined;
+}
+
+const calendarFinalizer = new FinalizationRegistry((id) =>
+  wasm.calendar_free(id),
+);
+const asMs = (t) => (t instanceof Date ? t.getTime() : t);
+const range = (r) => ({ from: asMs(r?.from), to: asMs(r?.to) });
+const session = (s) => s ?? undefined;
+
+/** pond-ts `generateSessions(rules, { from, to })`: the sessions rules give, unchecked. */
+export function generateSessions(rules, dates) {
+  return JSON.parse(
+    wasm.generate_sessions(JSON.stringify(rules), JSON.stringify(range(dates))),
+  );
+}
+
+/**
+ * Exchange sessions, as pond-ts `TradingCalendar` (cut down: no sequences,
+ * no discontinuity provider). Build with `fromRules` or `fromSessions`;
+ * pass it to a session study as `sessions`, or tag bars with
+ * `tagSessions`. Lives in WebAssembly memory: `free()` when done.
+ */
+export class TradingCalendar {
+  #id;
+  /** @internal */
+  constructor(token, id) {
+    if (token !== TOKEN)
+      throw new TypeError(
+        'use TradingCalendar.fromRules or TradingCalendar.fromSessions',
+      );
+    this.#id = id;
+    calendarFinalizer.register(this, id, this);
+  }
+  /** Sessions from `rules` (`{ timeZone, open, close, weekmask?, breaks?, holidays?, earlyCloses? }`) over `{ from, to }`. */
+  static fromRules(rules, dates) {
+    return new TradingCalendar(
+      TOKEN,
+      wasm.calendar_from_rules(
+        JSON.stringify(rules),
+        JSON.stringify(range(dates)),
+      ),
+    );
+  }
+  /** A calendar from `Session`s (`{ date, open, close, breaks? }`, times in ms), checked and sorted. */
+  static fromSessions(sessions, options = {}) {
+    return new TradingCalendar(
+      TOKEN,
+      wasm.calendar_from_sessions(
+        JSON.stringify([...sessions]),
+        options.timeZone ?? undefined,
+      ),
+    );
+  }
+  /** @internal The calendar's slot in WebAssembly memory. */
+  get id() {
+    if (this.#id === undefined) throw new Error('this calendar was freed');
+    return this.#id;
+  }
+  /** Release the calendar's memory now. */
+  free() {
+    if (this.#id === undefined) return;
+    calendarFinalizer.unregister(this);
+    wasm.calendar_free(this.#id);
+    this.#id = undefined;
+  }
+  #q(op, arg) {
+    return JSON.parse(
+      wasm.calendar_query(this.id, op, JSON.stringify(arg ?? null)),
+    );
+  }
+  /** All sessions, ascending by open. */
+  sessions() {
+    return this.#q('sessions');
+  }
+  get length() {
+    return this.#q('length');
+  }
+  /** The exchange's zone (the rules' zone), or `undefined`. */
+  get timeZone() {
+    return this.#q('timeZone') ?? undefined;
+  }
+  /** The session on `date` (`YYYY-MM-DD`; other text throws), or `undefined`. */
+  sessionOn(date) {
+    return session(this.#q('sessionOn', date));
+  }
+  isTradingDay(date) {
+    return this.#q('isTradingDay', date);
+  }
+  /** The session whose `[open, close)` holds the time (ms), or `undefined`. */
+  sessionContaining(instant) {
+    return session(this.#q('sessionContaining', asMs(instant)));
+  }
+  /** Inside a session and not in one of its breaks. */
+  isOpen(instant) {
+    return this.#q('isOpen', asMs(instant));
+  }
+  /** Sessions overlapping `{ start, end }` (ms), ascending. */
+  sessionsInRange(r) {
+    return this.#q('sessionsInRange', {
+      start: asMs(r?.start),
+      end: asMs(r?.end),
+    });
+  }
+  /** The first session after a time (ms) or a date (`YYYY-MM-DD`). */
+  nextSession(ref) {
+    return session(this.#q('nextSession', asMs(ref)));
+  }
+  /** The last session before a time (ms) or a date (`YYYY-MM-DD`). */
+  previousSession(ref) {
+    return session(this.#q('previousSession', asMs(ref)));
+  }
+  /** `series` with a session-id column (each row's session open, a gap in closed time). */
+  tagSessions(series, options = {}) {
+    return new TimeSeries(
+      TOKEN,
+      wasm.calendar_tag_sessions(this.id, series.id, JSON.stringify(options)),
+    );
+  }
+}
+
 export const version = wasm.pond_rs_version();
 /** @internal How many series are alive in WebAssembly memory. */
 export const alive = () => wasm.series_alive();
+/** @internal How many calendars are alive in WebAssembly memory. */
+export const calendarsAlive = () => wasm.calendars_alive();
