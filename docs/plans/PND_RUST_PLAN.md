@@ -4295,6 +4295,21 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts. Built 2026-10-31 (see
       the J3 outcome above); waits on the first manual publish.
+      Review (PR #875) fixes: the rs publish step skips with a warning
+      while `npm view @pond-ts/rs` gives E404 (a tag pushed before the
+      manual first publish no longer goes red after six packages ship;
+      other `npm view` failures still fail); release and CI js-bridge
+      pin Rust 1.97.0 and `build.sh` builds `--locked`; `engines` is
+      `>=20.19` (`require` of an ES module); esbuild and playwright are
+      root devDependencies (they were only hoisted transitive deps);
+      Rollup needs a plugin for `new URL(…, import.meta.url)` (docs said
+      it did not); no types yet, documented with the `declare module`
+      workaround.
+    - [PND-RSTYPES] (open): `index.d.ts` for `@pond-ts/rs`. Types are
+      not generated (the JS layer is hand-written over a JSON
+      dispatcher), so they would be written by hand, reusing pond-ts's
+      option and schema types where the shapes are the same, and checked
+      with `tsc` against a file of calls taken from the parity tests.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core

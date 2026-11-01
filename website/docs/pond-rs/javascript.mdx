@@ -19,7 +19,8 @@ npm install @pond-ts/rs
 
 ## In Node
 
-Node 20 or newer. Import it like any ES module; the WebAssembly is loaded
+Node 20.19 or newer. Import it like any ES module (`require` works too,
+as Node loads an ES module with `require` from 20.19); the WebAssembly is loaded
 while the import runs, so there is nothing to wait for:
 
 ```js
@@ -66,9 +67,10 @@ for the browser take the browser one.
 
   `vite build` then copies the `.wasm` file into `dist/assets`.
 
-- **webpack 5, Parcel, Rollup**: they understand
+- **webpack 5, Parcel**: they understand
   `new URL('./pkg/pond_wasm_bg.wasm', import.meta.url)` and copy the
-  file; webpack 5 has top-level `await` on by default.
+  file; webpack 5 has top-level `await` on by default. **Rollup** needs a
+  plugin for that, such as `@web/rollup-plugin-import-meta-assets`.
 - **esbuild**: bundle with `--format=esm --target=es2022`, then copy
   `node_modules/@pond-ts/rs/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
   (esbuild leaves the `new URL` as is, so the file is looked for next to
@@ -87,6 +89,17 @@ with `new Function` where that is allowed; under a policy without
 `'unsafe-eval'` it uses a plain loop instead, with the same output, about
 as fast as pond-ts's. Both are tested in headless Chromium, the second
 under `script-src 'self' 'wasm-unsafe-eval'`.
+
+## TypeScript
+
+The package ships no type declarations yet (they are planned). In
+TypeScript under `strict`, importing it fails with TS7016 ("Could not find
+a declaration file for module '@pond-ts/rs'"). Until types ship, declare
+the module in a `.d.ts` file of your own, which types it as `any`:
+
+```ts
+declare module '@pond-ts/rs';
+```
 
 ## How it differs from pond-ts
 

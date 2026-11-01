@@ -37,9 +37,12 @@ jobs:
       # need no Rust for `npm ci` / `npm run verify`. It is built and tested
       # here, before anything is published, and published after the
       # workspaces with the same version.
+      # Pinned (and the same as CI's js-bridge job), so a new stable Rust
+      # cannot block a pond-ts release; bump both together.
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.0
           targets: wasm32-unknown-unknown
 
       # Must match the wasm-bindgen version crates/pond-wasm pins.
@@ -67,6 +70,19 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public --provenance --workspaces
 
+      # npm trusted publishing can only be set up for a package that
+      # already exists, so @pond-ts/rs's first publish is made by hand
+      # (packages/rs/README.md, "Publishing"). Until then this step skips
+      # with a warning instead of failing after the workspaces have shipped.
       - name: Publish @pond-ts/rs to npm
-        run: npm publish --access public --provenance
         working-directory: packages/rs
+        run: |
+          if ! out=$(npm view @pond-ts/rs name 2>&1); then
+            if grep -q E404 <<<"$out"; then
+              echo "::warning title=@pond-ts/rs not published::@pond-ts/rs is not on npm yet, and trusted publishing needs the package to exist. Publish it once by hand and set up its trusted publisher (release.yml); the next tag then publishes it. Steps: https://github.com/pond-ts/pond/tree/main/packages/rs#publishing"
+              exit 0
+            fi
+            echo "$out"
+            exit 1
+          fi
+          npm publish --access public --provenance

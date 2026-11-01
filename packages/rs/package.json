@@ -31,7 +31,7 @@
     "test:browser": "node test/browser.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "license": "MIT",
   "homepage": "https://pond-ts.org/docs/pond-rs/",

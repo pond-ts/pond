@@ -296,7 +296,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   fallback. Checked in headless Chromium against the Node build, with and
   without that CSP. 7.5 MB `.wasm`, 1.39 MB with brotli. Docs: a
   JavaScript tab on the pond-rs pages, a "From JavaScript" page and a
-  speed table against pond-ts.
+  speed table against pond-ts. Needs Node 20.19 or newer. No TypeScript
+  declarations yet (planned); `declare module '@pond-ts/rs'` meanwhile.
 
 ### Changed
 

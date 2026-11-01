@@ -6,8 +6,9 @@
 // `script-src 'self' 'wasm-unsafe-eval'`, where `new Function` is refused
 // and toJSON takes its plain-loop fallback.
 //
-// Needs the package built (./build.sh), esbuild and playwright (root
-// devDependencies) and a Playwright Chromium (`npx playwright install
+// Needs the package built (./build.sh), esbuild and playwright (declared
+// in the root package.json's devDependencies, so the root `npm ci`
+// installs them) and a Playwright Chromium (`npx playwright install
 // chromium`, or CHROMIUM_PATH set to another Chromium).
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';

@@ -776,11 +776,12 @@ pond-ts: `packages/rs/README.md`. Docs:
 
 ---
 
-## pond-rs (Rust crate, unpublished)
+## pond-rs (Rust crate)
 
 A native Rust implementation of pond's core, in progress (RFC
 [pond-rs.md](docs/rfcs/pond-rs.md), plan
-[PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md)). Not on crates.io yet.
+[PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md)). On crates.io as `pond-rs`
+(API docs on docs.rs).
 Results are checked bit for bit against pond-ts by `crates/pond-rs/tests/`.
 The authority is `crates/pond-rs/src/lib.rs`. Cargo feature `parallel` (on by
 default, not on wasm32) computes a call's output columns on several cores

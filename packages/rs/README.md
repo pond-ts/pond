@@ -34,7 +34,8 @@ cpu.free();
 
 ## Node and browsers
 
-- **Node 20 or newer** (also Deno and Bun): `import` it; the WebAssembly is
+- **Node 20.19 or newer** (also Deno and Bun): `import` it (or `require` it:
+  it is an ES module, which `require` loads from Node 20.19); the WebAssembly is
   read and compiled while the import runs, so nothing needs awaiting.
 - **Browsers**: the same import and the same API. The package fetches its
   `.wasm` file with a top-level `await`, so the import resolves once it is
@@ -43,8 +44,10 @@ cpu.free();
   - **Vite**: `build: { target: 'es2022' }` (top-level `await`) and
     `optimizeDeps: { exclude: ['@pond-ts/rs'] }` (pre-bundling loses the
     `.wasm` file). `vite build` copies the `.wasm` into `dist/assets`.
-  - **webpack 5, Parcel, Rollup**: they copy the file named by
+  - **webpack 5, Parcel**: they copy the file named by
     `new URL('./pkg/pond_wasm_bg.wasm', import.meta.url)` themselves.
+    **Rollup** needs a plugin for that, such as
+    `@web/rollup-plugin-import-meta-assets`.
   - **esbuild**: `--format=esm --target=es2022`, then copy
     `pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`.
   - **No bundler**: an import map with `"@pond-ts/rs"` pointing at this
@@ -54,6 +57,19 @@ cpu.free();
     output); both are tested in headless Chromium.
 - **Size**: `pkg/pond_wasm_bg.wasm` is 7.5 MB, 1.39 MB with brotli; the
   JS is ~88 KB (~19 KB brotli). Serve the `.wasm` as `application/wasm`.
+
+## TypeScript
+
+No type declarations yet (a `.d.ts` is planned: [PND-RSTYPES] in
+`PLAN.md`). In TypeScript, `import … from '@pond-ts/rs'` fails with
+TS7016 ("Could not find a declaration file") under `strict` /
+`noImplicitAny`. Until then, declare the module yourself, which types it
+as `any`:
+
+```ts
+// pond-rs.d.ts
+declare module '@pond-ts/rs';
+```
 
 ## How it differs from pond-ts
 
@@ -206,11 +222,34 @@ node test/tojson.mjs     # toJSON against pond-ts's (npm run build --workspace=p
 node test/browser.mjs    # the browser build in headless Chromium, with and without a strict CSP
 ```
 
-`test/browser.mjs` needs the root devDependencies (`esbuild`, `playwright`)
-and a Playwright Chromium (`npx playwright install chromium`, or
-`CHROMIUM_PATH` pointing at another Chromium).
+`test/browser.mjs` needs `esbuild` and `playwright` (root devDependencies,
+installed by the root `npm ci`) and a Playwright Chromium (`npx playwright
+install chromium`, or `CHROMIUM_PATH` pointing at another Chromium).
 
-Publishing: the `Publish` workflow (`.github/workflows/release.yml`) builds
-and tests this package on every `v*` tag and publishes it after the
-workspaces. It is not an npm workspace, so the root `npm ci` / `npm run
-verify` need no Rust; its version must equal pond-ts's (CI checks).
+## Publishing
+
+The `Publish` workflow (`.github/workflows/release.yml`) builds and tests
+this package on every `v*` tag, before anything is published, and
+publishes it after the workspaces. It is not an npm workspace, so the root
+`npm ci` / `npm run verify` need no Rust; its version must equal pond-ts's
+(CI checks), so bump it with the others.
+
+**First publish is by hand.** npm trusted publishing can only be set up
+for a package that already exists ("The package you're configuring must
+already exist on the npm registry",
+[`npm trust`](https://docs.npmjs.com/cli/v11/commands/npm-trust)). Until
+`@pond-ts/rs` is on npm, the workflow's publish step skips with a warning
+(the other packages still publish, and the job stays green). To bootstrap:
+
+1. Publish once from a machine logged into npm with 2FA, as a member of
+   the `@pond-ts` scope: a placeholder (a folder with a `package.json`
+   naming `@pond-ts/rs` at a version below the next release, e.g.
+   `0.0.1`), or this package (`./build.sh`, then
+   `npm publish --access public`; that version then has no provenance).
+2. On npmjs.com, `@pond-ts/rs` → Settings → Trusted Publisher → GitHub
+   Actions: organization `pond-ts`, repository `pond`, workflow
+   `release.yml`, no environment. Or
+   `npm trust github @pond-ts/rs --file release.yml --allow-publish`.
+3. Push the next `v*` tag within 2 days: npm expires a trusted publisher
+   configuration that has not completed a publish within 2 days
+   ([trusted publishers](https://docs.npmjs.com/trusted-publishers/)).

@@ -114,9 +114,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      # The release job's Rust (release.yml); bump both together.
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.0
           targets: wasm32-unknown-unknown
 
       # Must match the wasm-bindgen version crates/pond-wasm pins.
