@@ -1519,65 +1519,14 @@ export class TimeSeries<S extends SeriesSchema> {
     const dataColumns = this.schema.slice(1);
     const width = dataColumns.length;
 
-    // [PND-ROWSOUT] Write rows from the columns, no per-row `Event`.
-    const direct = this.#rowsFromColumns(
-      rowFormat === 'object'
-        ? (key, cells, i) => {
-            const row: Record<string, unknown> = {
-              [keyColumn.name]: jsonKeyFromColumn(key, i, rowFormat),
-            };
-            for (let c = 0; c < width; c += 1) {
-              row[dataColumns[c]!.name] = serializeJsonValue(cells[c]!.read(i));
-            }
-            return Object.freeze(row);
-          }
-        : (key, cells, i) => {
-            const row: unknown[] = new Array(width + 1);
-            row[0] = jsonKeyFromColumn(key, i, rowFormat);
-            for (let c = 0; c < width; c += 1) {
-              row[c + 1] = serializeJsonValue(cells[c]!.read(i));
-            }
-            return Object.freeze(row);
-          },
-      (event) => {
-        const data = event.data();
-        if (rowFormat === 'object') {
-          const row: Record<string, unknown> = {
-            [keyColumn.name]: serializeJsonKey(
-              keyColumn.kind,
-              event.key(),
-              rowFormat,
-            ),
-          };
-          for (const column of dataColumns) {
-            row[column.name] = serializeJsonValue(
-              data[column.name as keyof typeof data],
-            );
-          }
-          return Object.freeze(row);
-        }
-        const row: unknown[] = [
-          serializeJsonKey(keyColumn.kind, event.key(), rowFormat),
-        ];
-        for (let c = 0; c < width; c += 1) {
-          row.push(
-            serializeJsonValue(data[dataColumns[c]!.name as keyof typeof data]),
-          );
-        }
-        return Object.freeze(row);
-      },
-    );
-    if (direct !== undefined) {
-      const out: TimeSeriesJsonOutputArray<SeriesSchema> = {
-        name: this.name,
-        schema: this.schema as SeriesSchema,
-        rows: direct as unknown as TimeSeriesJsonOutputArray<SeriesSchema>['rows'],
-      };
-      return out;
-    }
-
-    if (rowFormat === 'object') {
-      const rows = this.events.map((event) => {
+    // The event-based row writer: rows whose `Event` already exists, and
+    // the whole export when `#rowsFromColumns` declines. Array rows push
+    // cells in place; the earlier shape built a second throwaway array per
+    // row and spread it into the first, which made tuple rows measurably
+    // slower than object rows — see `scripts/perf-to-json.mjs`.
+    const fromEvent = (event: EventForSchema<S>): unknown => {
+      const data = event.data();
+      if (rowFormat === 'object') {
         const row: Record<string, unknown> = {
           [keyColumn.name]: serializeJsonKey(
             keyColumn.kind,
@@ -1585,30 +1534,13 @@ export class TimeSeries<S extends SeriesSchema> {
             rowFormat,
           ),
         };
-        const data = event.data();
-
         for (const column of dataColumns) {
           row[column.name] = serializeJsonValue(
             data[column.name as keyof typeof data],
           );
         }
-
-        return Object.freeze(row) as JsonObjectRowForSchema<SeriesSchema>;
-      });
-
-      return {
-        name: this.name,
-        schema: this.schema as SeriesSchema,
-        rows,
-      };
-    }
-
-    // One array per row, cells pushed in place. The earlier shape built a
-    // second throwaway array per row (`dataColumns.map(...)`) and spread it
-    // into the first, which made tuple rows measurably slower than object
-    // rows — see `scripts/perf-to-json.mjs`.
-    const rows = this.events.map((event) => {
-      const data = event.data();
+        return Object.freeze(row);
+      }
       const row: unknown[] = [
         serializeJsonKey(keyColumn.kind, event.key(), rowFormat),
       ];
@@ -1617,15 +1549,41 @@ export class TimeSeries<S extends SeriesSchema> {
           serializeJsonValue(data[dataColumns[c]!.name as keyof typeof data]),
         );
       }
-      return Object.freeze(row) as unknown as JsonRowForSchema<SeriesSchema>;
-    });
+      return Object.freeze(row);
+    };
+
+    // [PND-ROWSOUT] Write rows from the columns, no per-row `Event`.
+    const rows =
+      this.#rowsFromColumns<unknown>(
+        rowFormat === 'object'
+          ? (key, cells, i) => {
+              const row: Record<string, unknown> = {
+                [keyColumn.name]: jsonKeyFromColumn(key, i, rowFormat),
+              };
+              for (let c = 0; c < width; c += 1) {
+                row[dataColumns[c]!.name] = serializeJsonValue(
+                  cells[c]!.read(i),
+                );
+              }
+              return Object.freeze(row);
+            }
+          : (key, cells, i) => {
+              const row: unknown[] = new Array(width + 1);
+              row[0] = jsonKeyFromColumn(key, i, rowFormat);
+              for (let c = 0; c < width; c += 1) {
+                row[c + 1] = serializeJsonValue(cells[c]!.read(i));
+              }
+              return Object.freeze(row);
+            },
+        fromEvent,
+      ) ?? this.events.map(fromEvent);
 
     // Annotated local rather than a bare literal: the implementation
-    // signature's `<any>` instantiation doesn't accept the tuple rows directly.
+    // signature's `<any>` instantiation doesn't accept the rows directly.
     const out: TimeSeriesJsonOutputArray<SeriesSchema> = {
       name: this.name,
       schema: this.schema as SeriesSchema,
-      rows,
+      rows: rows as unknown as TimeSeriesJsonOutputArray<SeriesSchema>['rows'],
     };
     return out;
   }
@@ -6411,35 +6369,24 @@ export class TimeSeries<S extends SeriesSchema> {
   toPoints(): ReadonlyArray<PointRowForSchema<S>> {
     const valueCols = this.schema.slice(1) as ReadonlyArray<{ name: string }>;
     const width = valueCols.length;
+    const fromEvent = (event: EventForSchema<S>): PointRowForSchema<S> => {
+      const row: Record<string, unknown> = { ts: event.begin() };
+      const data = event.data() as Record<string, unknown>;
+      for (const col of valueCols) {
+        row[col.name] = data[col.name];
+      }
+      return Object.freeze(row) as PointRowForSchema<S>;
+    };
     // [PND-ROWSOUT] Write rows from the columns, no per-row `Event`.
-    const direct = this.#rowsFromColumns(
-      (keys, cells, i) => {
+    const rows =
+      this.#rowsFromColumns((keys, cells, i) => {
         const row: Record<string, unknown> = { ts: keys.beginAt(i) };
         for (let c = 0; c < width; c += 1) {
           row[valueCols[c]!.name] = cells[c]!.read(i);
         }
         return Object.freeze(row) as PointRowForSchema<S>;
-      },
-      (event) => {
-        const row: Record<string, unknown> = { ts: event.begin() };
-        const data = event.data() as Record<string, unknown>;
-        for (const col of valueCols) {
-          row[col.name] = data[col.name];
-        }
-        return Object.freeze(row) as PointRowForSchema<S>;
-      },
-    );
-    if (direct !== undefined) return Object.freeze(direct);
-    return Object.freeze(
-      this.events.map((event) => {
-        const row: Record<string, unknown> = { ts: event.begin() };
-        const data = event.data() as Record<string, unknown>;
-        for (const col of valueCols) {
-          row[col.name] = data[col.name];
-        }
-        return Object.freeze(row) as PointRowForSchema<S>;
-      }),
-    );
+      }, fromEvent) ?? this.events.map(fromEvent);
+    return Object.freeze(rows);
   }
 
   /**

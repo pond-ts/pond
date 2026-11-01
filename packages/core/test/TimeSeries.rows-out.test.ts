@@ -52,7 +52,8 @@ describe('row exports read the columns [PND-ROWSOUT]', () => {
         partial.at(4);
         expect(columnPath).toEqual(out(all));
         expect(columnPath).toEqual(out(partial));
-        // -0 survives, gaps are null in JSON and undefined in points.
+        // Gaps are null in JSON and undefined in points (toEqual above also
+        // tells -0 from 0; this line checks the serialized text).
         expect(JSON.stringify(columnPath)).toBe(JSON.stringify(out(all)));
       });
     }
