@@ -192,7 +192,8 @@ schema validation as `TimeSeries`. Eviction runs after each push to
 honor retention. Column-shaped batches come in as a `TimeSeries`
 (`pushSeries`, usually fed by `TimeSeries.fromColumns`); on the
 chunked backing the batch's own columns become one chunk, unchecked
-per row and uncopied.
+per row and uncopied (a `slice()` of a much bigger series is copied
+first, so it doesn't keep its parent alive).
 
 `live.toTimeSeries()` snapshots to a batch series — the standard
 crossing point between layers.
@@ -712,10 +713,11 @@ Decided 2026-11-01 ([PND-LPUSHCOL]): `live.pushSeries(ts)`, not a
 `pushColumns(columns)`. `fromColumns` stays the one door that turns
 typed arrays into a series (adoption, gap and ordering rules live
 there once); pond-rs's `push_series` has the same shape; and the
-measured saving a raw-columns method could add over
-`pushSeries(fromColumns(...))` is at most `fromColumns`' own ~1 µs per
-call. The batch's buffers are shared with the live series, not copied
-(see `docs/plans/PND_LIVE_PLAN.md`).
+saving a raw-columns method could add over
+`pushSeries(fromColumns(...))` is at most `fromColumns`' own cost,
+~2 µs per call (`fromColumns` alone at one row per push in
+`perf-live-push-series.mjs`). The batch's buffers are shared with the
+live series, not copied (see `docs/plans/PND_LIVE_PLAN.md`).
 
 ### Patterns we deliberately don't generalize
 

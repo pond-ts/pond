@@ -72,8 +72,8 @@ import {
 } from './live-chunked-storage.js';
 import { validateAndNormalizeColumnar } from '../batch/validate.js';
 import { ColumnarStore } from '../columnar/store.js';
-import type { Column } from '../columnar/column.js';
-import type { KeyColumn } from '../columnar/key-column.js';
+import { Float64Column, type Column } from '../columnar/column.js';
+import { TimeKeyColumn, type KeyColumn } from '../columnar/key-column.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
@@ -221,6 +221,36 @@ type BatchListener<S extends SeriesSchema> = (
 type EvictListener<S extends SeriesSchema> = (
   events: ReadonlyArray<EventForSchema<S>>,
 ) => void;
+
+/**
+ * @internal A compact copy of a `pushSeries` batch's time key and value
+ * columns (`columns` is updated in place; the key is returned). Number
+ * columns and the key copy their buffer with one `slice`, which measured
+ * several times faster than a per-row gather; other kinds gather.
+ * Exported for tests only (not from the package index).
+ */
+export function copyBatch(
+  key: TimeKeyColumn,
+  columns: Map<string, Column>,
+  n: number,
+): TimeKeyColumn {
+  let rows: Int32Array | undefined;
+  for (const [name, col] of columns) {
+    if (col instanceof Float64Column) {
+      columns.set(
+        name,
+        new Float64Column(col._values.slice(0, n), n, col.allFinite),
+      );
+      continue;
+    }
+    if (rows === undefined) {
+      rows = new Int32Array(n);
+      for (let i = 0; i < n; i += 1) rows[i] = i;
+    }
+    columns.set(name, col.sliceByIndices(rows));
+  }
+  return TimeKeyColumn.fromValidatedSubarray(key.begin.slice(0, n), n);
+}
 
 // ── LiveSeries ──────────────────────────────────────────────────
 
@@ -561,9 +591,13 @@ export class LiveSeries<S extends SeriesSchema> {
    * Pushes a batch `TimeSeries` as one batch: the same checks, ordering,
    * retention and `'event'` / `'batch'` / `'evict'` listeners as
    * {@link LiveSeries.pushMany} of its rows, and the same all-or-nothing
-   * rule (a refused batch stores nothing). It is how column-shaped data
+   * rule (a refused batch stores nothing; the one exception, shared with
+   * `pushMany`, is a `partitionBy` router error on a default series,
+   * which comes after the batch is stored). It is how column-shaped data
    * gets into a live series: build the batch with
-   * `TimeSeries.fromColumns` (typed arrays in) and push it.
+   * `TimeSeries.fromColumns` (typed arrays in) and push it. "Its rows"
+   * assumes the batch's rows and columns agree, which every validating
+   * constructor guarantees (`TimeSeries.fromEvents` doesn't check).
    *
    * **Where it is faster.** On a default series (`ordering: 'strict'`,
    * `time` key) the batch's columns are stored as they are, with no
@@ -572,7 +606,7 @@ export class LiveSeries<S extends SeriesSchema> {
    * against `pushMany`'s 18.7 ms (`scripts/perf-live-push-series.mjs`).
    * Two things bring back an `Event` per row and most of `pushMany`'s
    * cost: a listener on `'event'` or `'batch'` (a `window()`, `filter()`
-   * or other view built on the series is one; ~1.4x), and the other
+   * or other view built on the series is one; ~1.3-1.4x), and the other
    * storage mode (`ordering: 'drop'` / `'reorder'`, or a `timeRange` /
    * `interval` key), where the batch's rows go through `pushMany`'s row
    * path (~1x). Results are the same either way. For one row at a time
@@ -581,20 +615,31 @@ export class LiveSeries<S extends SeriesSchema> {
    * **Matching.** The batch's key kind must be the live series' (the
    * key column's name may differ). Value columns are matched by name, in
    * any order, and must have the live column's kind; a missing or extra
-   * column is refused. A gap in a column the live schema marks required
-   * is refused, naming the row, whatever the batch's own schema says.
-   * Rows inside the batch are already in order (a `TimeSeries` is
-   * sorted); against the rows held, `ordering` applies as in `pushMany`.
+   * column is refused. (The parameter's type asks for this series'
+   * schema, so in TypeScript the by-name matching matters for a batch
+   * whose schema is only known at run time, passed with a cast.) A gap
+   * in a column the live schema marks required is refused, naming the
+   * first such row, whatever the batch's own schema says. Rows inside the
+   * batch are already in order (a `TimeSeries` is sorted); against the
+   * rows held, `ordering` applies as in `pushMany`.
    *
    * **The batch's buffers are shared, not copied.** On a default series
    * the live series keeps the batch's key and number columns, and
    * `fromColumns` keeps the `Float64Array`s it was given, so the live
    * series ends up holding your arrays. Don't write to, reuse or pool a
-   * pushed `Float64Array` while its rows are still in the series; push
-   * `buf.slice(0, n)` (or a `number[]`, which `fromColumns` copies) if
-   * you reuse buffers. A `Float64Array` that is a view into a bigger
-   * buffer (say, one transferred worker message holding every column)
-   * keeps that whole buffer alive until the rows leave the series.
+   * pushed `Float64Array` while its rows are still in the series: rows are
+   * not checked again, so a write changes rows already stored and can
+   * leave their keys out of order (lookups such as `atOrBefore` then go
+   * wrong, and a later `toTimeSeries()` throws), while a row already read
+   * with `at()` keeps its old value. If you reuse buffers, push
+   * `buf.slice(0, n)` (or a `number[]`, which `fromColumns` copies). A
+   * push made from inside a listener is queued and reads the batch when it
+   * runs, whatever the storage mode, so leave its arrays alone until then.
+   * One case is copied: a batch whose key sits in a buffer more than twice
+   * the size of all its columns (a `slice()` of a bigger series, which
+   * shares its parent's buffers), so a small batch never keeps a big
+   * parent alive. Views into a buffer about the batch's size
+   * (one worker message holding every column) are kept as they are.
    *
    * **NaN and other non-finite numbers** in a batch from `fromColumns`
    * are gaps, because that is how `fromColumns` reads them (`pushMany`
@@ -627,13 +672,20 @@ export class LiveSeries<S extends SeriesSchema> {
     }
     this.#guarded(() => {
       const columns = this.#checkSeries(series);
-      // Re-wrap the batch's own key and value columns against this
-      // series' schema: O(columns), no row is read or copied.
-      const store = ColumnarStore.fromTrustedStore(
-        this.schema,
-        series.keyColumn() as KeyColumn,
-        columns,
-      );
+      let key = series.keyColumn() as KeyColumn;
+      // The chunked backing keeps the batch's buffers. A `slice()` shares
+      // its parent's, so keeping it would keep the whole parent alive:
+      // copy a batch whose key sits in a buffer over twice the size of
+      // all its columns.
+      if (
+        this.#chunked &&
+        key.begin.buffer.byteLength > 16 * series.length * this.schema.length
+      ) {
+        key = copyBatch(key as TimeKeyColumn, columns, series.length);
+      }
+      // Re-wrap the key and value columns against this series' schema:
+      // O(columns), no row is read or copied.
+      const store = ColumnarStore.fromTrustedStore(this.schema, key, columns);
       if (this.#chunked) {
         this.#commitChunk(store);
         return;
@@ -695,6 +747,9 @@ export class LiveSeries<S extends SeriesSchema> {
     // Required is judged by this series' schema, not the batch's:
     // `fromColumns` doesn't enforce `required`, so the batch's flag
     // proves nothing. No validity bitmap means every cell is defined.
+    // Name the first bad cell in row order, as `pushMany` does.
+    let badRow = Infinity;
+    let badCol = 0;
     for (let j = 1; j < live.length; j += 1) {
       const def = live[j]!;
       if (def.required === false) continue;
@@ -704,9 +759,15 @@ export class LiveSeries<S extends SeriesSchema> {
         continue;
       }
       let i = 0;
-      while (validity.isDefined(i)) i += 1;
+      while (i < badRow && validity.isDefined(i)) i += 1;
+      if (i < badRow) {
+        badRow = i;
+        badCol = j;
+      }
+    }
+    if (badCol > 0) {
       throw new ValidationError(
-        `pushSeries: row ${i} col ${j} (${def.name}) is required`,
+        `pushSeries: row ${badRow} col ${badCol} (${live[badCol]!.name}) is required`,
       );
     }
     return columns;

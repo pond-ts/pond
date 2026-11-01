@@ -12,6 +12,7 @@
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=rows
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=series
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=views
+//   node --expose-gc scripts/perf-live-push-series.mjs --heap=slice
 //
 // Cost model (N rows per push, C columns):
 //   pushSeries, default series: O(C) shape check + O(1) per number column
@@ -21,6 +22,8 @@
 //     O(N) Events + pushMany's per-row loop, so ≈ pushMany.
 //   An 'event' / 'batch' listener (a window() view is one) builds an
 //     Event per row on either path.
+//   A batch whose key sits in a buffer over twice the batch's size (a
+//     slice() of a bigger series) is copied first: + O(N·C).
 
 import { performance } from 'node:perf_hooks';
 import { LiveSeries, TimeSeries } from '../dist/index.js';
@@ -141,6 +144,42 @@ const live =
 const heapMode = process.argv
   .find((a) => a.startsWith('--heap='))
   ?.slice('--heap='.length);
+
+if (heapMode === 'slice') {
+  // Seed a live series with the last 100 rows of a 1M-row history, then
+  // let the history go: the live series should hold ~100 rows, not 1M.
+  // Built inside a function and measured on a later tick, so nothing on
+  // the stack still points at the history.
+  const n = 1_000_000;
+  const l = new LiveSeries({ name: 's', schema });
+  (() => {
+    const history = TimeSeries.fromColumns({
+      name: 'history',
+      schema,
+      columns: {
+        time: Float64Array.from({ length: n }, (_, i) => i * STEP),
+        price: new Float64Array(n).fill(100),
+        size: new Float64Array(n).fill(1),
+      },
+    });
+    l.pushSeries(history.slice(n - 100, n));
+  })();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  globalThis.gc?.();
+  globalThis.gc?.();
+  const m = process.memoryUsage();
+  console.log(
+    JSON.stringify({
+      heap: {
+        mode: heapMode,
+        windowSize: l.length,
+        heapUsedMB: Number((m.heapUsed / 1048576).toFixed(1)),
+        arrayBuffersMB: Number((m.arrayBuffers / 1048576).toFixed(1)),
+      },
+    }),
+  );
+  process.exit(0);
+}
 
 if (heapMode) {
   const per = 1_000;
@@ -318,6 +357,41 @@ scenario('Float64Array .slice() first, 16/push', b16, live(), {
     size: c.columns.size.slice(),
   }),
 });
+
+/* ── Slices of one big series (copied before storing) ──────────────── */
+{
+  const big = TimeSeries.fromColumns({
+    name: 'big',
+    schema,
+    columns: {
+      time: Float64Array.from({ length: TOTAL }, (_, i) => i * STEP),
+      price: Float64Array.from({ length: TOTAL }, (_, i) => 100 + (i % 97) / 4),
+      size: Float64Array.from({ length: TOTAL }, (_, i) => (i % 7) + 1),
+    },
+  });
+  const per = 1_600;
+  const ranges = [];
+  for (let start = 0; start < TOTAL; start += per) {
+    const end = Math.min(TOTAL, start + per);
+    ranges.push({ start, end, rows: big.slice(start, end).toRows() });
+  }
+  const pushMany = benchmark(() => {
+    const l = new LiveSeries({ name: 's', schema });
+    for (const r of ranges) l.pushMany(r.rows);
+  });
+  const pushSeries = benchmark(() => {
+    const l = new LiveSeries({ name: 's', schema });
+    for (const r of ranges) l.pushSeries(big.slice(r.start, r.end));
+  });
+  const row = {
+    label: 'slices of one 100k series, 1,600/push (copied)',
+    pushManyMs: pushMany,
+    pushSeriesMs: pushSeries,
+    speedup: Number((pushMany / pushSeries).toFixed(1)),
+  };
+  results.push(row);
+  console.error(JSON.stringify(row));
+}
 
 /* ── No-op pushes ─────────────────────────────────────────────────── */
 {

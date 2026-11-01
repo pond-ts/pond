@@ -222,47 +222,65 @@ fn main() -> Result<(), pond_rs::PondError> {
 </TabItem>
 </Tabs>
 
-`pushSeries` behaves exactly like `pushMany` of the batch's rows: the same
-ordering rules, retention, listeners and errors, and a refused batch stores
-nothing. The batch must be keyed the same way as the live series and have
-its value columns, matched by name in any order, each of the same kind. A
-gap in a column the live schema requires is refused, naming the row, even if
-the batch's own schema called the column optional.
+`pushSeries` follows `pushMany`'s rules for the batch's rows: the same
+ordering, retention and listeners, the same refusals, and a refused batch
+stores nothing. (One exception, which `pushMany` shares: on a default series
+with `partitionBy`, a partition error, such as a row for a group the
+partitions don't declare, is thrown after the batch is stored.) The batch
+must be keyed the same way as the live series and have exactly its value
+columns, no more, each of the same kind. Columns are matched by name, in any
+order; in TypeScript the parameter's type already asks for the live series'
+schema, so that matters for a batch whose schema is only known at run time.
+A gap in a column the live schema requires is refused, naming the first such
+row, even if the batch's own schema called the column optional.
 
 **It is faster only on a default series** (`ordering: 'strict'`, a `time`
 key). There the batch's columns are stored as they are: no row tuples, no
 check per cell, no event object per row. Anything listening for single
-events brings the event objects back, and with them most of `pushMany`'s
-cost; that includes a `window()`, `filter()` or other view built on the
-series. Under `ordering: 'drop'` or `'reorder'`, or with a `timeRange` or
-`interval` key, the batch goes through `pushMany`'s row path, so the speed
-is the same.
+events or batches brings the event objects back, and with them most of
+`pushMany`'s cost; that includes a `window()`, `filter()` or other view
+built on the series. Under `ordering: 'drop'` or `'reorder'`, or with a
+`timeRange` or `interval` key, the batch goes through `pushMany`'s row path,
+so the speed is the same.
 
 100,000 rows of `time` + two numbers, pushed both ways into a default series
 (ms, the middle of three runs on one 4-core Linux machine, Node 22,
 2026-11-01; `scripts/perf-live-push-series.mjs`; the `pushSeries` times
-include building each batch with `fromColumns`; the row-path cases vary by
-up to a fifth between runs):
+include building each batch with `fromColumns`; "Faster" is the middle of
+the three runs' own ratios; the row-path cases vary by up to a third between
+runs):
 
-| Case                                        | `pushMany` | `pushSeries` | Faster          |
-| ------------------------------------------- | ---------- | ------------ | --------------- |
-| Batches of 1,600 rows                       | 18.7       | 1.6          | 12×             |
-| One batch of 100,000                        | 14.7       | 0.9          | 17×             |
-| Batches of 1,600, keep the last 10,000      | 17.4       | 1.2          | 15×             |
-| Batches of 16                               | 56         | 21           | 2.6×            |
-| One row at a time                           | 359        | 436          | `pushMany` 1.2× |
-| Batches of 1,600 with a `window()` view     | 72         | 53           | 1.4×            |
-| Batches of 1,600, `ordering: 'drop'`        | 69         | 62           | 1.1×            |
-| Batches of 1,600, plus a text `host` column | 25.5       | 4.4          | 5.8×            |
+| Case                                        | `pushMany` | `pushSeries` | Faster         |
+| ------------------------------------------- | ---------- | ------------ | -------------- |
+| Batches of 1,600 rows                       | 18.7       | 1.6          | 12×            |
+| One batch of 100,000                        | 14.7       | 0.9          | 16×            |
+| Batches of 1,600, keep the last 10,000      | 17.4       | 1.2          | 14.5×          |
+| Batches of 16                               | 56         | 21           | 2.5×           |
+| One row at a time                           | 359        | 436          | about the same |
+| Batches of 1,600 with a `window()` view     | 72         | 53           | 1.3×           |
+| Batches of 1,600, `ordering: 'drop'`        | 69         | 62           | 1.1×           |
+| Batches of 1,600, plus a text `host` column | 25.5       | 4.4          | 5.8×           |
 
 :::warning[The live series keeps your arrays]
 On a default series the live series holds the batch's `Float64Array`s
 themselves, not copies (`fromColumns` adopts them, and `pushSeries` keeps
 what `fromColumns` built). Don't write to, reuse or pool a pushed array
-while its rows are still in the series. If you reuse buffers, push
-`buf.slice(0, n)`; that copy is cheap next to `pushMany`. A `Float64Array`
-that is a view into a bigger buffer (say, one transferred message holding
-every column) keeps that whole buffer alive until its rows leave the series.
+while its rows are still in the series. The rows aren't checked again, so a
+write changes rows already stored and can leave their times out of order:
+lookups such as `atOrBefore` then give wrong answers and a later
+`toTimeSeries()` throws, while a row you already read with `at()` keeps its
+old value. If you reuse buffers, push `buf.slice(0, n)`; that copy is cheap
+next to `pushMany`. A push made from inside a listener waits until the
+current push ends and reads the batch then, so leave its arrays alone until
+it has run.
+
+One case is copied for you: a batch whose time column sits in a buffer more
+than twice the batch's size, such as `history.slice(-100)` of a big series
+(a slice shares its parent's buffers). Keeping it would keep all of
+`history` alive. A batch whose columns are views into one buffer about its
+own size, like a single worker message holding every column, is kept as it
+is.
+
 :::
 
 A non-finite number (`NaN`, `Infinity`) is a gap here, as `fromColumns`

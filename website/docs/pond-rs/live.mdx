@@ -92,8 +92,12 @@ storage without building an event per row, which is what makes it fast:
 one million rows in batches of 1,000 take about half the time of
 `push_many` (and about a third less than pond-ts's `pushMany`; see Speed
 below). pond-ts's
-[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries) is
-the same call with the same rules.
+[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries) takes
+the same batch under the same rules, but keeps the batch's arrays instead of
+copying them, so it hasn't been timed against `push_series`. One difference:
+on a series with partitions, pond-rs refuses a batch with a row for an
+undeclared group before storing anything, where pond-ts stores the batch and
+then throws.
 
 ```rust
 use pond_rs::live::LiveSeries;

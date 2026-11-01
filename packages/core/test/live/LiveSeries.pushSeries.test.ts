@@ -16,6 +16,7 @@ import {
   TimeSeries,
   ValidationError,
 } from '../../src/index.js';
+import { copyBatch } from '../../src/live/live-series.js';
 
 type AnyLive = LiveSeries<any>;
 type AnySeries = TimeSeries<any>;
@@ -544,6 +545,37 @@ describe('pushSeries required columns, judged by the live schema', () => {
     }
   });
 
+  it('names the first bad cell in row order, as pushMany does', () => {
+    // Gaps at row 3 of `a` and row 1 of `b`: pushMany meets row 1 first.
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'a', kind: 'number' },
+      { name: 'b', kind: 'number' },
+    ] as const;
+    const batch = TimeSeries.fromColumns({
+      name: 'b',
+      schema,
+      columns: {
+        time: new Float64Array([0, 1, 2, 3]),
+        a: new Float64Array([1, 1, 1, NaN]),
+        b: new Float64Array([1, NaN, 1, 1]),
+      },
+    });
+    const viaSeries = new LiveSeries({ name: 'x', schema });
+    expect(() => viaSeries.pushSeries(batch)).toThrow(
+      new ValidationError('pushSeries: row 1 col 2 (b) is required'),
+    );
+    const viaMany = new LiveSeries({ name: 'x', schema });
+    expect(() =>
+      viaMany.pushMany([
+        [0, 1, 1],
+        [1, 1, undefined],
+        [2, 1, 1],
+        [3, undefined, 1],
+      ] as never),
+    ).toThrow(new ValidationError('row 1 col 2 (b) is required'));
+  });
+
   it('refuses null in a required number column (number[] input)', () => {
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     const ts = TimeSeries.fromColumns({
@@ -668,7 +700,7 @@ describe('pushSeries value kinds beyond fromColumns', () => {
 });
 
 describe('pushSeries shares the batch buffers on the chunked backing', () => {
-  it('a write to a pushed Float64Array shows in the series (the contract)', () => {
+  it('a write to a pushed Float64Array shows in rows not yet read', () => {
     const price = new Float64Array([1, 2, 3]);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     live.pushSeries(
@@ -714,6 +746,104 @@ describe('pushSeries shares the batch buffers on the chunked backing', () => {
       price[2] = 99;
       expect(live.at(2)!.get('price')).toBe(3);
     }
+  });
+
+  /** A batch whose columns are views into one buffer of `bytes`. */
+  function viewsBatch(n: number, bytes: number) {
+    const buf = new ArrayBuffer(bytes);
+    const time = new Float64Array(buf, 0, n);
+    const price = new Float64Array(buf, n * 8, n);
+    const size = new Float64Array(buf, n * 16, n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 1000;
+      price[i] = i;
+      size[i] = 1;
+    }
+    const venue = Array.from({ length: n }, () => 'a');
+    const batch = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: { time, price, size, venue },
+    });
+    return { batch, price };
+  }
+
+  it('keeps views into a buffer up to twice the batch (a worker message)', () => {
+    // 4 rows x 4 columns x 8 bytes x 2 = 256.
+    const { batch, price } = viewsBatch(4, 256);
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    live.pushSeries(batch);
+    price[3] = 99;
+    expect(live.toTimeSeries().at(3)!.get('price')).toBe(99);
+  });
+
+  it('copies views into a bigger buffer, so they do not keep it alive', () => {
+    const { batch, price } = viewsBatch(4, 264);
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    live.pushSeries(batch);
+    const rows = batch.toRows();
+    price[3] = 99;
+    expect(live.toTimeSeries().toRows()).toEqual(rows);
+    expect(live.toTimeSeries().at(3)!.get('price')).toBe(3);
+  });
+
+  it('copies a slice of a bigger series', () => {
+    const n = 2_000;
+    const time = Float64Array.from({ length: n }, (_, i) => i * 1000);
+    const price = Float64Array.from({ length: n }, (_, i) => i);
+    const big = TimeSeries.fromColumns({
+      name: 'history',
+      schema: SCHEMA,
+      columns: {
+        time,
+        price,
+        size: new Float64Array(n).fill(1),
+        venue: Array.from({ length: n }, (_, i) => `v${i % 3}`),
+      },
+    });
+    const seed = big.slice(n - 100, n);
+    const viaMany = new LiveSeries({ name: 'x', schema: SCHEMA });
+    viaMany.pushMany(seed.toRows() as never);
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    live.pushSeries(seed);
+    time[n - 1] = 0;
+    price[n - 1] = -1;
+    expect(live.toTimeSeries().toRows()).toEqual(
+      viaMany.toTimeSeries().toRows(),
+    );
+  });
+
+  it('the copy owns every buffer, a dictionary string column included', () => {
+    const n = 2_000;
+    const big = TimeSeries.fromColumns({
+      name: 'history',
+      schema: SCHEMA,
+      columns: {
+        time: Float64Array.from({ length: n }, (_, i) => i * 1000),
+        price: new Float64Array(n).fill(1),
+        size: new Float64Array(n).fill(1),
+        venue: Array.from({ length: n }, (_, i) => `v${i % 3}`),
+      },
+    });
+    const seed = big.slice(n - 100, n);
+    const venue = seed.column('venue') as unknown as { indices?: Int32Array };
+    // The slice's columns are views into the parent's buffers.
+    expect(venue.indices!.buffer.byteLength).toBe(n * 4);
+    const columns = new Map(
+      ['price', 'size', 'venue'].map((name) => [
+        name,
+        seed.column(name as 'price') as any,
+      ]),
+    );
+    const key = copyBatch(seed.keyColumn() as any, columns, 100);
+    expect(key.begin.buffer.byteLength).toBe(100 * 8);
+    for (const name of ['price', 'size']) {
+      expect(columns.get(name)._values.buffer.byteLength).toBe(100 * 8);
+    }
+    expect(columns.get('venue').indices.buffer.byteLength).toBe(100 * 4);
+    expect(
+      Array.from({ length: 100 }, (_, i) => columns.get('venue').read(i)),
+    ).toEqual(Array.from({ length: 100 }, (_, i) => `v${(n - 100 + i) % 3}`));
   });
 });
 
