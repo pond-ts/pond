@@ -1,0 +1,39 @@
+# node v22.22.0, 2026-10-15
+
+## 1. pushMany, 1,600-row batches, 1M rows
+profiled 283 ms of workload
+
+self time, top 10:
+   55.4%  validateAndNormalizeColumnar batch/validate.js:226
+   27.2%  Time core/time.js:13
+    4.7%  assertCellKind batch/validate.js:30
+    4.6%  #pushManyColumnar live/live-series.js:477
+    2.3%  #locate live/live-chunked-storage.js:246
+    1.4%  assertFiniteTimestamps columnar/key-column.js:43
+    1.1%  fromTrustedStore columnar/store.js:66
+    0.6%  TimeKeyColumn columnar/key-column.js:63
+    0.5%  #commitChunk live/live-series.js:547
+    0.4%  pushMany live/live-series.js:345
+
+total time (own code + what it calls):
+   99.7%  pushMany live/live-series.js:345
+   89.0%  validateAndNormalizeColumnar batch/validate.js:226
+   27.2%  normalizeKey batch/validate.js:110
+
+## 2. live.window() view kept up to date, 50k-event window, 160-row pushes
+profiled 9427 ms of workload
+
+self time, top 10:
+   98.2%  #applyEviction live/live-view.js:502
+    0.5%  (anonymous) live/live-view.js:94
+    0.2%  #commitChunk live/live-series.js:547
+    0.1%  Event core/event.js:23
+    0.1%  at live/live-chunked-storage.js:258
+    0.1%  Time core/time.js:13
+    0.1%  #pushManyColumnar live/live-series.js:477
+    0.1%  validateAndNormalizeColumnar batch/validate.js:226
+    0.1%  #applyRetention live/live-series.js:1241
+    0.1%  materializeEventsFromStore live/live-chunked-storage.js:51
+
+total time (own code + what it calls):
+   99.9%  pushMany live/live-series.js:345

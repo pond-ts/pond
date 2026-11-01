@@ -222,6 +222,107 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
+### [PND-LSNAP] — Columnar `toTimeSeries()`
+
+**Source:** the offscreen-stream spike (2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3), which streamed ticks into a `LiveSeries` in a worker and drew them at
+120 fps.
+
+`toTimeSeries()` rebuilds row by row. The chunked store already holds
+columns, but `snapshot()` (`live-chunked-storage.ts:366-390`) makes one
+array per row, then a `TimeSeries` that validates every row again. Its own
+comment calls the columnar version "a deferred follow-up; snapshot isn't
+the hot path." For a live chart it is. Node, snapshot plus reading the
+price column out: 60 ms at 60k rows, 542 ms at 600k, 3.9 s at 3M, against
+1.7 / 16 / 91 ms to copy the same stored chunks' columns (spike
+`results/node.txt` section 1). In the browser (cloud) the `snapshot`
+pipeline spent 4 ms a frame reading at 10k points and 27 ms at 60k, so it
+runs out of a 120 fps frame's 8.3 ms somewhere between. This is the data
+side of the 31.6 fps SciChart-suite finding under
+[PND-LIVELYR](PND_CHARTS_PLAN.md).
+
+Shape to consider: concat the stored chunks into a trusted `TimeSeries`
+(the comment already names `concatSorted(chunks)`). Check it against the
+dashboard A/B that promoted `LiveView.column()` (Decisions, 2026-10-10): a
+fast snapshot may change which path live charts should use.
+
+Scope: cheaper, not free. A snapshot still copies the whole window (the
+spike's plain column copy took 16 ms at 600k rows, twice a 120 fps
+frame), and the chart side's `fromTimeSeries` reads one value at a time
+until [PND-COLAPI] lands. So this serves throttled snapshots (React's
+`useSnapshot` refreshes every 100 ms) and modest windows; a chart reading
+a large window every frame needs the appended-columns route below.
+
+The spike's other need, a public "just appended, as columns" event, is the
+existing [PND-COLOUT](PND_COLUMNAR_PLAN.md). The spike used the internal
+`_onChunk` in its place, because the public `'batch'` / `'event'`
+listeners make an `Event` per tick (`#commitChunk`,
+`live-series.ts:759-762`).
+
+### [PND-LVWIN] — `live.window()` gets slower per tick as the window grows
+
+**Source:** offscreen-stream spike §4. A `LiveView` from `live.window(…)`
+keeps its window as an `Event[]` and, on every arriving event, evicts with
+`this.#events.splice(0, count)` (`live-view.ts:181-187` →
+`#applyEviction`, `live-view.ts:730-736`). Once the window is full, every
+tick evicts about one event, and each `splice` shifts the whole array. A
+CPU profile of a 50k-event window puts 98% of the time in
+`#applyEviction` (spike `results/profile.txt` section 2).
+
+Node, cost of one 16 ms push once the window is full, ranges across three
+runs (spike `results/node.txt` section 3, `results/node-window-reruns.txt`):
+
+| window (events) | 10k ticks/s (160 a push), no view / view | 100k ticks/s (1,600 a push), no view / view |
+| --------------- | ---------------------------------------- | ------------------------------------------- |
+| 1k              | 0.11–0.18 / 0.48–0.71 ms                 | 0.43–1.05 / 4.6–13 ms                       |
+| 10k             | 0.04–0.06 / 2.3–6.9 ms                   | 0.51–0.79 / 6.3–68 ms                       |
+| 50k             | 0.03–0.07 / **24–34 ms**                 | 0.27–0.62 / **271–326 ms**                  |
+| 100k            | 0.03–0.06 / **56–77 ms**                 | 0.29–0.58 / **368–398 ms**                  |
+
+A push every 16 ms has to be taken in within 16 ms. In the browser
+(cloud) the `view` pipeline at 10k ticks/s with a 10 s window (100k
+points) spent the whole second ingesting, took in 1,846 of 10,000 ticks a
+second and drew no frame.
+
+Fix: a head index into the array, compacted occasionally (the spike's
+`Ring` in `engine.ts` is the pattern), instead of `splice` per event. This
+fixes keeping the view up to date, not reading it: `keyColumn()` /
+`column()` gather from the `Event[]` on every call (64 ms at 600k rows in
+Node, 4 ms a frame at 60k points in the browser). The
+count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
+go through the same array. Attaching the view also turns on per-tick
+`Event` creation in the source, since the view listens to `'event'`.
+
+### [PND-LVCHAIN] — Views chained after a window view never evict
+
+**Source:** found while building the [PND-LVWIN] fix (2026-10-15). A
+`LiveView` mirrors its source's evictions by listening to the source's
+`'evict'` event (`live-view.ts:200-214`). A window view drops events in
+`#applyEviction` (`live-view.ts:730-736`), which never emits `'evict'`; it
+emits only when mirroring its own source. So a child of a window view
+(`live.window('1m').filter(p)`, `.map(f)`, `.select(…)`) hears nothing
+when events leave the window, and keeps every event it was ever given. A
+retention-capped source doesn't help: by the time the source evicts an
+event, the window has already dropped it, so the window view finds
+nothing to mirror and emits nothing either.
+
+Checked against `dist` built from `main` (f5d09ef, and again on dd4443b
+2026-10-31 with the same numbers): a `LiveSeries` with
+`retention: { maxAge: '1m' }`, `w = live.window('1s')`,
+`f = w.filter(() => true)`, 10,000 events 10 ms apart: `w.length` 101,
+`f.length` 10,000; `w.eventRate()` 101, `f.eventRate()` 10,000. The
+pattern is meant to work (`LiveView.window-count-rate.test.ts:164-188`
+tests `window('1m').filter(…).eventRate()`), but that test pushes three
+events, none old enough to leave the window.
+
+Fix to consider: have window eviction emit `'evict'` with the dropped
+events (a slice only when a listener is attached). That changes what a
+window view's `'evict'` listeners see (today they fire only for mirrored
+source evictions), so it needs a CHANGELOG `Changed` line. The other
+option, documenting `filter().window()` as the only safe order, leaves the
+existing test's pattern broken.
+
 ### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits — **fixed 2026-10-25**
 
 Found 2026-10-25 by a review of the pond-rs R3 plan, reproduced on main

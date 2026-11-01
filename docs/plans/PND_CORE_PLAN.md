@@ -139,6 +139,19 @@ the reference **protobuf columnar codec** (packed-double blob →
 record and design rationale: the "Wire format + columnar ingress" section of
 [docs/archive/charts-wave-2026.md](../archive/charts-wave-2026.md).
 
+**Spike evidence (offscreen-stream, 2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§5–6):** a binary WebSocket feed at up to 1M ticks/s into a worker. The
+network and server were never the limit (a Node client took 6M ticks,
+144 MB, in about 2 s). In the browser, a socket on the drawing worker
+limited intake on a 4-core cloud box; with the socket on its own worker a
+`LiveSeries` took in 994k ticks/s there, and on an M1 Pro a `LiveSeries`
+took in 1M ticks/s with an 11 ms delay without that help. Per tick, the
+`LiveSeries` push is the expensive step: `pushMany` takes rows only and
+costs 11–21× a typed copy in Node. The columnar `LiveSeries` push this
+task's streaming append needs is filed as
+[PND-LPUSHCOL](PND_LIVE_PLAN.md), with the profile.
+
 ### [PND-TSVAR] — `TimeSeries<S>` variance refactor + `toJSON` narrowing — CLOSED (no refactor needed)
 
 **Outcome.** Both halves are done, and neither needed the class-wide variance
