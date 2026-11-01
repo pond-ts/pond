@@ -286,6 +286,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
+  `{ rowFormat: 'object' }`.** It used to build each row cell by cell
+  across the WebAssembly boundary, which made it slower than pond-ts's
+  own. Now the series comes across once as whole columns and the rows are
+  built in JavaScript. Output is unchanged (the same tree as pond-ts's,
+  `-0` kept, gaps as `null`), and `rowFormat: 'object'` now gives keyed
+  rows as in pond-ts (it was ignored). 1M rows: one number column 227 →
+  37 ms (pond-ts 220), four number columns 430 → 56 (216), a number, a
+  text and a boolean column 593 → 74 (235), time-range keys 627 → 64
+  (224). Where generated code is not allowed (a CSP without
+  `'unsafe-eval'`, `--disallow-code-generation-from-strings`) it falls back
+  to a plain loop with the same output, about as fast as pond-ts's.
 - **pond-rs: live layer does less work per event.** A top-to-bottom
   instruction-count review (callgrind, 23 `perf_live` cases) found that a
   bare push spent about 45% of its instructions in malloc/free, that a
@@ -483,6 +495,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`arrayAggregate` and `arrayExplode` work on the array column directly**
+  ([PND-ARRAYSLOW]) instead of building an `Event` per row and re-reading
+  rows; the key and other columns are shared (aggregate) or gathered once
+  (explode). Same output, same errors. On 100k rows: `arrayAggregate` count
+  637 → 8 ms, median 734 → 16 ms; `arrayExplode` 792 → 68 ms. Building and
+  gathering array columns also stops re-validating cells it already owns
+  (`filter` on a series with an array column: 96 → 17 ms), and `median` /
+  percentiles sort short lists by insertion (same order).
+- **`keep`, `difference`, `unique`, `top${N}` and `samples` read the column
+  directly** in `reduce` and `aggregate`, instead of going through `Event`s
+  (whole-series `reduce`) or a per-bucket reducer state (`aggregate`). Same
+  answers. On 1M rows, `reduce` with `difference` 104 → 3.5 ms, `unique`
+  139 → 9 ms, `top3` 124 → 19 ms, `keep` stops at the first value that
+  differs (95 ms → under 0.01 ms). Every other reducer in `reduce` also stops
+  building `Event`s when it has no column kernel.
 - **`rolling(sequence, window, mapping)` no longer scans every row for every
   grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,
   so finding windows costs O(rows + buckets) instead of O(rows × buckets). A

@@ -730,6 +730,123 @@ amortised O(1) whatever the window.
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
 
+### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
+
+From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,
+built a frozen row per event and re-read the rows; `arrayExplode` built one
+row per element and went through strict `new TimeSeries` intake. Now:
+
+- `arrayAggregate` reads the array column, reduces each cell, and shares the
+  key and every other column. For built-in reducers a cell is passed as
+  `defined` directly (an array cell can hold only finite numbers, strings and
+  booleans, so the row path's filtering removed nothing). One visible
+  difference from the row path: with `as:`, the untouched array column is
+  the input's own column, so `out.at(i).get('tags') === src.at(i).get('tags')`
+  (before: an equal copy). Within one series every row still has its own
+  array; `select` / `rename` already shared columns this way.
+- `arrayExplode` numbers the output rows, gathers the key and the other
+  columns once (`withRowSelection`; replace mode drops the array column
+  first), and builds the element column directly.
+- Kind errors keep their exact text (`row N col C: expected …`) via
+  `assertCellKind` per output cell — the pond-rs parity fixture pins these
+  messages. An `as:` naming an existing column keeps the old row path, so
+  its error is unchanged too.
+- `arrayColumnFromOwnedCells` builds an `ArrayColumn` from cells the caller
+  owns, skipping the constructor's element validation and copy. Gathers
+  (`sliceByRange` / `sliceByIndices`, chunked gather and compaction) still
+  give **every result row its own copy** of the array, with a plain element
+  loop (on V8 `slice()` of a frozen array is ~4x slower: 250k small cells
+  236 vs 53 ms). `aggregate` uses it for its already-copied array results.
+- `median` / percentile `reduce` and bucket snapshots sort lists of up to 32
+  numbers by insertion (`sortedNumbers`): stable like the comparator sort, so
+  `-0` / `0` order is unchanged (test compares 2,000 random lists).
+
+**Decision: keep one array per row.** Sharing the source's frozen cell
+between gathered rows (what Codex's prototype did) would make explode and
+gathers ~2x faster again, but `keep` (and other by-reference comparisons,
+[PND-ARRAYKEY]) would then see two rows holding the same array. Planting
+that sharing made 22 of 300 oracle series differ. Left for Peter: either
+accept sharing, or first make array comparison by value ([PND-ARRAYKEY]),
+after which sharing is invisible.
+
+Checked: 300 random series (time / range / interval keys, number / text /
+mixed lists, empty and missing cells, signed zeros) give identical JSON —
+values, schema and error text — against the previous build for 17 reducers
+(incl. custom) × 3 columns × both modes, 12 explode variants each, plus
+aggregates of `keep` / `unique` over exploded and filtered array columns.
+
+Bench `scripts/perf-array-ops.mjs`, 100k rows (median of 7 after 5 warm-ups,
+middle of 3 processes; busy machine):
+
+| Case                            | Before | After  |
+| ------------------------------- | ------ | ------ |
+| arrayAggregate nums count       | 637 ms | 8.3 ms |
+| arrayAggregate nums avg         | 663 ms | 16 ms  |
+| arrayAggregate nums median      | 734 ms | 16 ms  |
+| arrayAggregate nums unique      | 1.08 s | 137 ms |
+| arrayAggregate nums first       | 654 ms | 11 ms  |
+| arrayAggregate tags count       | 471 ms | 20 ms  |
+| arrayExplode tags               | 792 ms | 68 ms  |
+| arrayExplode nums               | 879 ms | 114 ms |
+| arrayExplode tags (keep array)  | 1.24 s | 127 ms |
+| aggregate 1s unique (array out) | 127 ms | 85 ms  |
+| filter half (array gather)      | 96 ms  | 17 ms  |
+
+Not done: `arrayContains*` (identity, see PLAN.md), and the packed list
+layout (offsets + one value buffer) Codex measured — a storage decision.
+
+### [PND-REDUCECELLS] — SHIPPED (column kernels for keep / difference / unique / top / samples)
+
+From the Codex PR #810 investigation: these five reducers had no column
+kernel, so whole-series `reduce` built every `Event` first, and `aggregate`
+fed a fresh reducer state per bucket. New optional `ReducerDef.reduceCellRange
+(col, start, end)` works on any column kind: packed numbers and dictionary
+strings are read off their buffers (`keep` stops at the first differing
+value; `difference` is a min/max scan; `top` counts runs of equal values once;
+dictionary strings count codes, then decode), everything else reads cells and
+calls `reduce` (`reducers/cells.ts`). `reduce` uses it; `aggregate` plans it
+as a `'cells'` column; `reduce`'s fallback for any other reducer reads the
+column instead of `Event`s (an `Event`'s data reads the same column).
+
+Ranges of up to 4,096 cells (`SORT_RANGE_MAX`) sort a copy of their values
+for `unique` / `top` instead of hashing: on 60-row buckets the typed sort was
+4x faster than a `Set` per bucket (35 vs 133–157 ms over 1M values). Bigger
+ranges keep the hash, which wins when values repeat (whole-column `unique`
+on 100 distinct values: 9 ms).
+
+Checked: 400 random series (signed zeros, gaps, 1 / 4 / 1,000 distinct
+values, dictionary and plain strings, booleans, arrays, empty) give
+identical JSON from `reduce` and `aggregate` against the previous build for
+10 reducers on 4 columns, plus a custom reducer; a planted miscount made 105
+differ. Unit test `reducer-cell-kernels.test.ts` checks every range of each
+column shape against `reduce`, including a dictionary that holds one string
+under two codes (public intake never builds one, so the oracle can't).
+
+Bench `scripts/perf-reducers-cells.mjs`, 1M rows (100 distinct numbers, 4
+hosts; median of 7 after 5 warm-ups, middle of 3 processes; busy machine,
+±20%):
+
+| Case                          | Before | After  |
+| ----------------------------- | ------ | ------ |
+| reduce v keep                 | 95 ms  | < 0.01 |
+| reduce v difference           | 104 ms | 3.5 ms |
+| reduce v unique               | 139 ms | 9.1 ms |
+| reduce v top3                 | 124 ms | 19 ms  |
+| reduce v samples              | 133 ms | 22 ms  |
+| reduce host unique            | 103 ms | 8.6 ms |
+| reduce host top3              | 109 ms | 14 ms  |
+| aggregate 1m v keep           | 17 ms  | 6.9 ms |
+| aggregate 1m v unique         | 283 ms | 156 ms |
+| aggregate 1m v top3           | 303 ms | 213 ms |
+| aggregate 1s v top3           | 2.99 s | 1.61 s |
+| reduce, all-distinct v unique | 420 ms | 441 ms |
+| reduce, all-distinct v top3   | 768 ms | 627 ms |
+
+Not fixed here: all-distinct values (hashing a million keys is the cost,
+as Codex warned; no gain), and `aggregate` with ~1 row per bucket (1s grid),
+where making 1M `Interval`s and validating / copying 1M array cells for the
+output column dominate — the array-column and grid PRs address those.
+
 ### [PND-ROLLGRID] — SHIPPED (two cursors for grid rolling)
 
 `rolling(sequence, window, mapping)` filtered every row for every bucket,

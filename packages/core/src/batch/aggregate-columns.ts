@@ -12,7 +12,7 @@ import {
   ColumnarStore,
   Float64Column,
   IntervalKeyColumn,
-  arrayColumnFromArray,
+  arrayColumnFromOwnedCells,
   bitmapByteCount,
   stringColumnFromArray,
   validityFromBits,
@@ -175,8 +175,22 @@ type ColumnarAggregatePlan =
   | { kind: 'boundary'; column: Column; which: 'first' | 'last' }
   | {
       /**
-       * Everything else — `unique` / `top` / `samples` / `keep` /
-       * `difference`, a reducer over a non-number or chunked column, or a
+       * `keep` / `difference` / `unique` / `top${N}` / `samples`: the
+       * reducer's range kernel over any column (`reduceCellRange`) — the
+       * answer its bucket state would give, read off the column.
+       */
+      kind: 'cells';
+      column: Column;
+      reduce: (
+        col: Column,
+        start: number,
+        end: number,
+      ) => ColumnValue | undefined;
+    }
+  | {
+      /**
+       * Everything else — a built-in reducer with no range kernel for this
+       * column (e.g. `sum` over a chunked or non-number column), or a
        * custom function: the reducer's own bucket state, fed this
        * column's cells in order. The same values in the same order the
        * row path feeds it, so the answer is what this column alone gets.
@@ -199,10 +213,11 @@ type ColumnarAggregatePlan =
  *   `ReducerDef.definedBoundary`). That is what lets a partitioned
  *   `aggregate`, whose auto-injected partition-column reducer is
  *   `'first'`, take this path;
- * - every other column (`unique` / `top` / `samples` / `keep` /
- *   `difference`, a reducer over a non-number or chunked column, a
- *   custom function) feeds its reducer's bucket state, as the row path
- *   does.
+ * - `keep` / `difference` / `unique` / `top${N}` / `samples` take their
+ *   range kernel (`reduceCellRange`) over any column kind;
+ * - every other column (a reducer with no range kernel for it, such as
+ *   `sum` over a chunked or non-number column, or a custom function)
+ *   feeds its reducer's bucket state, as the row path does.
  *
  * This used to be all-or-nothing: one column of the third kind sent the
  * whole call to the row path, where `sum` / `avg` lose the blocked
@@ -246,6 +261,15 @@ function planColumnarAggregate(
       continue;
     }
 
+    if (def?.reduceCellRange !== undefined) {
+      plans.push({
+        kind: 'cells',
+        column: source,
+        reduce: def.reduceCellRange,
+      });
+      continue;
+    }
+
     plans.push({ kind: 'state', column: source, reducer: spec.reducer });
   }
   return plans;
@@ -272,6 +296,8 @@ function reduceBucket(
     if (plan.kind === 'reduce') {
       // A non-finite result (an overflow) is missing — same as every
       // reducer result path (`finiteOrMissing`, [PND-NANREP]).
+      out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
+    } else if (plan.kind === 'cells') {
       out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
     } else if (plan.kind === 'state') {
       // `bucketStateFor` applies the non-finite policy in and out.
@@ -530,8 +556,10 @@ export function tryAggregateColumnarStore(
         column = stringColumnFromArray(stringBufs[c]!);
         break;
       default:
-        column = arrayColumnFromArray(
-          arrayBufs[c]! as Parameters<typeof arrayColumnFromArray>[0],
+        // Each cell is this function's own frozen copy, already checked by
+        // `assertCellKind` — no second validation or copy.
+        column = arrayColumnFromOwnedCells(
+          arrayBufs[c]! as Array<ArrayValue | undefined>,
         );
         break;
     }

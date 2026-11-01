@@ -14,7 +14,7 @@
 //! pond-ts's equivalent is the same calls on a `TimeSeries` built from the
 //! same rows (`aggregate(Sequence.every('1m'), { v: 'keep' })`, …).
 
-use std::time::Instant;
+mod common;
 
 use pond_rs::{Agg, Column, DecimalColumn, Reducer, Sequence, TimeSeries};
 
@@ -41,24 +41,6 @@ fn make() -> TimeSeries {
         ],
     )
     .unwrap()
-}
-
-fn median(mut xs: Vec<f64>) -> f64 {
-    xs.sort_by(f64::total_cmp);
-    xs[xs.len() / 2]
-}
-
-fn time<T>(mut f: impl FnMut() -> T) -> f64 {
-    f();
-    median(
-        (0..7)
-            .map(|_| {
-                let t = Instant::now();
-                std::hint::black_box(f());
-                t.elapsed().as_secs_f64() * 1e3
-            })
-            .collect(),
-    )
 }
 
 fn main() {
@@ -92,12 +74,27 @@ fn main() {
             reducer,
             Reducer::Unique | Reducer::Top(_) | Reducer::Samples
         );
+        let time = |col: &str, f: &dyn Fn() -> Box<dyn common::Dump>| {
+            common::time_case(&format!("{name}, {col}"), 7, f)
+        };
         let row = [
-            Some(time(|| s.aggregate(&minute, &aggs).unwrap())),
-            Some(time(|| s.aggregate(&second, &aggs).unwrap())),
-            Some(time(|| s.rolling("5m", &aggs).unwrap())),
-            (!lists).then(|| time(|| s.rolling("1d", &aggs).unwrap())),
-            Some(time(|| s.reduce(&aggs).unwrap())),
+            Some(time("agg 1m", &|| {
+                Box::new(s.aggregate(&minute, &aggs).unwrap())
+            })),
+            Some(time("agg 1s", &|| {
+                Box::new(s.aggregate(&second, &aggs).unwrap())
+            })),
+            Some(time("rolling 5m", &|| {
+                let out = s.rolling("5m", &aggs).unwrap();
+                // samples over 5 minutes: ~280 values a row, too big to write out
+                if matches!(reducer, Reducer::Samples) {
+                    Box::new(common::ListDigest(out))
+                } else {
+                    Box::new(out)
+                }
+            })),
+            (!lists).then(|| time("rolling 1d", &|| Box::new(s.rolling("1d", &aggs).unwrap()))),
+            Some(time("reduce", &|| Box::new(s.reduce(&aggs).unwrap()))),
         ];
         let cells: Vec<String> = row
             .iter()

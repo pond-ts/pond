@@ -68,6 +68,15 @@ cpu.free();
   after `tagSessions`). Lookups take a date only as `YYYY-MM-DD` text and
   throw on other text, where pond-ts compares any text with session dates
   as text and quietly finds nothing (or the wrong neighbour).
+- **`toJSON()`** gives pond-ts's tree, `{ rowFormat: 'object' }` included,
+  but its rows are not frozen. The key column is always named `time`,
+  `timeRange` or `interval` (a custom key name in the schema is ignored),
+  which shows in object rows. Column names pond-ts refuses as reserved
+  (`__proto__`, `constructor`) are taken, and are plain fields of an object
+  row. It builds rows with generated code (`new Function`); where that is
+  not allowed (`--disallow-code-generation-from-strings`, a CSP without
+  `'unsafe-eval'`) it falls back to a plain loop with the same output, about
+  as fast as pond-ts's.
 - **Durations** may be text (`'5m'`) or a whole number of ms (`60000`); a
   fractional number of ms, or one past ±8.64e15 ms, which pond-ts takes,
   is refused.
@@ -166,4 +175,5 @@ node test/parity.mjs     # pond-ts's core parity fixture through this package
 node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
 node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
 node test/live.mjs       # pond-ts's live parity fixture
+node test/tojson.mjs     # toJSON against pond-ts's (npm run build --workspace=pond-ts first)
 ```
