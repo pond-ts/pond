@@ -233,12 +233,13 @@ type EvictListener<S extends SeriesSchema> = (
  * @internal `pushSeries` copies a batch of this many rows or fewer on the
  * chunked backing without checking it. V8 keeps a typed array of 64 bytes
  * or less (8 numbers) inside its own heap, and the first read of its
- * `.buffer` moves it out: about 1 µs and ~175 bytes kept for good, per
- * array. For arrays made for the push (the usual case) copying a batch
- * that small takes about as long as that first read and keeps less
- * memory. (Arrays whose buffer was already read, such as the same arrays
- * pushed again into a new series, pay the copy, ~1.5 µs a push, where the
- * check would cost ~0.4.)
+ * `.buffer` moves it out: about 1 µs, and ~175 bytes more for as long as
+ * the array lives (here, as long as its rows stay in the series). For
+ * arrays made for the push (the usual case) copying a batch that small
+ * takes about as long as that first read and keeps less memory. (Arrays
+ * whose buffer was already read, such as the same arrays pushed again
+ * into a new series, pay the copy, ~1.5 µs a push, where the check would
+ * cost ~0.1-0.4.)
  */
 const ALWAYS_COPY_ROWS = 8;
 
@@ -803,18 +804,19 @@ export class LiveSeries<S extends SeriesSchema> {
    * and reads the batch when it runs, whatever the storage mode, so leave
    * its arrays alone until then.
    *
-   * Two kinds of batch are copied for you. A batch of 8 rows or fewer:
-   * copying it takes about as long as checking it and keeps less memory.
-   * And a batch that would keep much more memory alive than its rows
-   * need, so a small batch never keeps a big parent alive: one whose
-   * arrays sit in buffers more than twice the size its rows need, or whose
-   * text column carries more than twice as many distinct strings as it
-   * has rows (the copy then keeps only the strings its rows use). A
-   * `slice()` of a bigger series is like that, since it shares its
-   * parent's buffers and strings, and so is one re-keyed with
-   * `asTime({ at: 'center' })`. Columns that are views into one buffer
-   * about the batch's size (one worker message holding every column) are
-   * kept as they are.
+   * Two kinds of batch are copied for you. Any batch of 8 rows or fewer: for
+   * arrays made fresh for the push, copying costs about what deciding
+   * whether to copy would, and keeps less memory (arrays pushed before pay
+   * ~1.5 µs a push for the copy). And a batch that would keep much more
+   * memory alive than its rows need, so a small batch never keeps a big
+   * parent alive: one whose arrays sit in buffers more than twice the size
+   * its rows need, or whose text column carries more than twice as many
+   * distinct strings as it has rows (the copy then keeps only the strings
+   * its rows use). A `slice()` of a bigger series is like that, since it
+   * shares its parent's buffers and strings, and so is one re-keyed with
+   * `asTime({ at: 'center' })`. Columns that are views into one buffer about
+   * the batch's size (one worker message holding every column) are kept as
+   * they are.
    *
    * **NaN and other non-finite numbers** in a batch from `fromColumns`
    * are gaps, because that is how `fromColumns` reads them (`pushMany`
@@ -851,7 +853,7 @@ export class LiveSeries<S extends SeriesSchema> {
       // The chunked backing keeps the batch's buffers. A `slice()` shares
       // its parent's, so keeping it would keep the whole parent alive:
       // copy a batch that holds much more than its rows need, and any
-      // batch of 8 rows or fewer, where copying is cheaper overall.
+      // batch of 8 rows or fewer (see ALWAYS_COPY_ROWS for why).
       if (
         this.#chunked &&
         (series.length <= ALWAYS_COPY_ROWS ||

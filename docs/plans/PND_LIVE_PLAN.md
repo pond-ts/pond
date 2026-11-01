@@ -382,11 +382,25 @@ copied; see the decision below); `.slice()` first at 16 rows, 1.26× and
 slices of one series, 0.72× and 1.01× (bb4aeade's samples 1.7–6.3 ms, noisy);
 and slices of the hosts series, 1.12–1.27× at 16 rows and 1.15–1.24× at
 1,600. A focused probe running both builds in one process, alternated 15
-times, put the 1,600-row hosts slices at 0.99–1.05× (level) and the 16-row
-ones at 0.90–1.43× (each such copy now trims the dictionary, ~1.2 µs a
-push).
+times, put the 1,600-row hosts slices at 0.99–1.05× (level). The 16-row ones
+are typically ~1.3× slower: of 13 such probe runs (three here, ten in the
+Layer 2 review of #878), 11 sat at 1.15–1.70× and two at 0.92. That is ~2–3 µs
+a push over bb4aeade; the dictionary trim each such copy now does measures
+~1.3 µs alone, and the rest wasn't broken down.
 Earlier, the Layer 2 fix had moved 1,600-row slices of one series from
 0.33–0.51 ms (kept) to 1.5–1.7 ms (copied).
+
+Three cases added after the Layer 2 review of #878, so the script reaches
+both paths of the dictionary trim (see the copy, below). Slices of a 100k
+series whose text column has 10,000 hosts; every slice's dictionary is past
+twice its rows, so every copy trims it. Final build, median of three runs, not
+run against bb4aeade:
+
+| Case                                          | pushMany | pushSeries | Faster |
+| --------------------------------------------- | -------- | ---------- | ------ |
+| 1,600-row slices, 1,600 hosts each (table)    | 34.7     | 9.85       | 3.5×   |
+| 1,600-row slices, 160 hosts, each ×10 (table) | 24.3     | 4.95       | 4.7×   |
+| 16-row slices (`Map`)                         | 59.3     | 63.3       | 0.9×   |
 
 Retained memory. A full 100k window holds the same both ways (8.4 MB heap,
 2.3 MB array buffers); views into a buffer twice the batch's size double the
@@ -438,17 +452,17 @@ with an `'event'` listener: 160-164 vs 157-172 ms).
   - **8 rows or fewer: copy without checking** (`ALWAYS_COPY_ROWS`). V8
     keeps a typed array of 64 bytes or less (8 numbers) inside its own heap
     and gives it a separate buffer only when `.buffer` is first read:
-    0.70–1.0 µs and ~175 bytes kept for good per array (against 0.05–0.06
-    µs to make the array without the read; from 9 numbers up the buffer
-    exists from the start and a read costs ~0.1 µs). A check reads every
-    column's buffer. For arrays made for the push, copying took about what
-    the Layer 2 key-only check (one read) took (100k rows from fresh arrays,
-    four processes per build alternating, ranges overlap at 1, 2, 4, 8, 9
-    and 16 rows a push; e.g. 1 row 590–661 ms against 597–673), and keeps
-    less memory (above). Reading every column's buffer instead, at
+    0.70–1.0 µs and ~175 bytes more per array for as long as the array lives
+    (against 0.05–0.06 µs to make the array without the read; from 9 numbers
+    up the buffer exists from the start and a read costs ~0.1 µs). A check
+    reads every column's buffer. For arrays made for the push, copying took
+    about what the Layer 2 key-only check (one read) took (100k rows from
+    fresh arrays, four processes per build alternating, ranges overlap at 1,
+    2, 4, 8, 9 and 16 rows a push; e.g. 1 row 590–661 ms against 597–673), and
+    keeps less memory (above). Reading every column's buffer instead, at
     e9cd6440, had measured slower than the key-only check (1 row 578–642
     against 533–582, alternating, one session). Arrays whose buffer was
-    already read pay the copy where a check would cost ~0.4 µs: the full
+    already read pay the copy where a check would cost ~0.1–0.4 µs: the full
     script's one-row case, which pushes the same arrays into each new
     series, is 1.34–1.37× slower.
   - **Otherwise copy when the batch holds more than twice what its rows
@@ -470,13 +484,25 @@ with an `'event'` listener: 160-164 vs 157-172 ms).
     text column whose dictionary outgrows its rows then keeps only the
     entries its rows use (`compactDictionary`: a lookup table over the
     dictionary when the column has 256 rows or more and the dictionary is
-    at most 8 times the rows, measured 1.3–5× faster than a `Map` there
-    when most rows hold distinct values and about even when a few values
-    repeat; a `Map` otherwise).
+    at most 8 times the rows, a `Map` otherwise). In a copy of the loop
+    (20k calls, three rounds, both orders) the table was 2–4× faster than
+    a `Map` when most rows hold distinct values, and 1.1–1.6× slower, a few
+    µs a call, when the rows repeat a few dozen values or fewer, since the
+    `Map` then stays small. Which case applies isn't known before the loop
+    and the table's win is the bigger one, so it stays. End to end, one
+    build with and without the table (15 alternating pairs, three runs;
+    slices of a 100k series with 10,000 hosts): 1,600-row slices of mostly
+    distinct hosts took 0.42–0.48× the time, slices repeating each host ten
+    rows 0.88–0.90×, and 300-row slices using ~10 hosts each 0.89–1.13×
+    (level). Outside the limits the table loses badly: 16 rows of a
+    50,000-entry dictionary ~60 µs against ~1 µs. The 16-row slices row
+    above would catch that: in that case, one process alternating, a build
+    without the limits took 239–248 ms against 71–73.
 
   Cost: level with bb4aeade apart from the rows named under **Measured**.
-  The walk costs ~0.1 µs a call. Its first version (a `Set` and two closures
-  per call) took 0.375 µs and showed as 13% at 16 rows a push; the plain
+  The walk costs ~0.1 µs a call when the same batch is checked again and
+  again, and 0.2–0.4 µs across many distinct small batches (Layer 2 timing on
+  #878). Its first version (a `Set` and two closures per call) took 0.375 µs and showed as 13% at 16 rows a push; the plain
   list that replaced it was O(C²) on wide batches; the last-buffer rule is
   O(C). `fromArrow` of a 1,000-column builder-built table: +87 µs a push.
 
@@ -516,8 +542,9 @@ wire-batching producer yet)" (`docs/notes/columnar-arc-assessment-2026-06.md`).
 Tests: `test/live/LiveSeries.pushSeries.test.ts` (differential vs `pushMany`
 over 8 configurations × 3 retentions × with/without listeners, 40 seeds each,
 plus targeted cases; 12 of 12 planted bugs caught, 6 of 6 more for the
-review fixes, and 45 of 45 on the final copy rule after the Codex pass and
-the two reviews of its fix), `test/columnar/StringColumn.test.ts`
+review fixes, 45 of 45 on the final copy rule after the Codex pass and
+the two reviews of its fix, and 4 of 4 more from the Layer 2 review of #878),
+`test/columnar/StringColumn.test.ts`
 (`compactDictionary`, both lookup paths),
 `test-d/live-push-series.test-d.ts`, `live-chunked-storage.test.ts`.
 

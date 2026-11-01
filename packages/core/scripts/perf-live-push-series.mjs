@@ -461,6 +461,42 @@ function sliceScenario(label, big, s, per) {
     hostSchema,
     16,
   );
+  // 10,000 hosts: every slice's dictionary is past twice its rows, so every
+  // copy trims it. At 1,600 rows the trim uses the lookup table (dictionary
+  // within 8x the rows); at 16 rows it uses the Map, since filling a
+  // 10,000-entry table for 16 rows would cost more than it saves. 'distinct'
+  // slices use 1,600 different hosts each; 'repeating' ones 160, each ten
+  // rows in a row, where the table is a little slower than a Map.
+  const manyHosts = (hostOf) =>
+    TimeSeries.fromColumns({
+      name: 'hosts',
+      schema: hostSchema,
+      columns: {
+        time: Float64Array.from({ length: TOTAL }, (_, i) => i * STEP),
+        cpu: Float64Array.from({ length: TOTAL }, (_, i) => 100 + (i % 97) / 4),
+        requests: Float64Array.from({ length: TOTAL }, (_, i) => (i % 7) + 1),
+        host: Array.from({ length: TOTAL }, (_, i) => hostOf(i)),
+      },
+    });
+  const distinct = manyHosts((i) => `api-${i % 10_000}`);
+  sliceScenario(
+    'slices of a 10,000-host series, distinct, 1,600/push',
+    distinct,
+    hostSchema,
+    1_600,
+  );
+  sliceScenario(
+    'slices of a 10,000-host series, repeating, 1,600/push',
+    manyHosts((i) => `api-${Math.floor(i / 10) % 10_000}`),
+    hostSchema,
+    1_600,
+  );
+  sliceScenario(
+    'slices of a 10,000-host series, 16/push',
+    distinct,
+    hostSchema,
+    16,
+  );
 }
 
 /* ── No-op pushes ─────────────────────────────────────────────────── */

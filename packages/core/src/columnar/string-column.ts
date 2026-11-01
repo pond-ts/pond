@@ -358,11 +358,14 @@ export function compactDictionary(column: StringColumn): StringColumn {
   if (dictionary === undefined) return column;
   const kept: string[] = [];
   const out = new Int32Array(length);
-  // A lookup table over the whole dictionary measured faster than a Map
-  // from 256 rows while the dictionary is at most 8 times the rows (1.3-5x
-  // when the rows hold mostly distinct values, about even when a few values
-  // repeat); fewer rows or a bigger dictionary, filling the table costs
-  // more than it saves.
+  // From 256 rows, with the dictionary at most 8 times the rows, a lookup
+  // table over the whole dictionary measured 2-4x faster than a Map when
+  // the rows hold mostly distinct values, and 1.1-1.6x slower (a few µs a
+  // call) when they repeat a few dozen values or fewer, since the Map then
+  // stays small. That can't be known before the loop, and the table's win
+  // is the bigger one. Fewer rows or a bigger dictionary, filling the table
+  // costs more than it saves (16 rows of a 50,000-entry dictionary: ~60 µs
+  // against ~1 µs).
   if (length >= 256 && dictionary.length <= 8 * length) {
     const remap = new Int32Array(dictionary.length).fill(-1);
     for (let i = 0; i < length; i += 1) {

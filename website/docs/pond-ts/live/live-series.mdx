@@ -280,17 +280,21 @@ made from inside a listener waits until the current push ends and reads the
 batch then, so leave its arrays alone until it has run.
 
 Two kinds of batch are copied for you. A batch of 8 rows or fewer is always
-copied: at that size copying takes about as long as checking it and keeps
-less memory. And a batch that would keep much more memory alive than its own
-rows need, such as `history.slice(-100)` of a big series, is copied too. A
-slice shares its parent's buffers, and its text columns share the parent's
-whole list of distinct strings, so keeping it would keep all of `history`
-alive (`asTime({ at: 'center' })` on a slice still shares the number
-columns). `pushSeries` copies a batch whose arrays sit in buffers more than
-twice the size its rows need, or whose text column carries more than twice as
-many distinct strings as it has rows; the copy keeps only the strings its
-rows use. A batch whose columns are views into one buffer about its own size,
-like a single worker message holding every column, is kept as it is.
+copied: for arrays you made for that push, copying costs about what deciding
+whether to copy would, and keeps less memory (arrays you push a second time
+pay about 1.5 µs a push for the copy). And a batch that would keep much more
+memory alive than its own rows need, such as `history.slice(-100)` of a big
+series, is copied too. A slice shares its parent's buffers, and its text
+columns share the parent's whole list of distinct strings, so keeping it
+would keep all of `history` alive (`asTime({ at: 'center' })` on a slice
+still shares the number columns). `pushSeries` copies a batch whose arrays
+sit in buffers more than twice the size its rows need, or whose text column
+carries more than twice as many distinct strings as it has rows. In that
+second case the copy keeps only the strings its rows use; a copy made for
+another reason keeps the list as it is, which then holds at most twice as
+many strings as rows. A batch whose columns are views into one buffer about
+its own size, like a single worker message holding every column, is kept as
+it is.
 
 :::
 

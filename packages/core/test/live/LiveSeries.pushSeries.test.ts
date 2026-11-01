@@ -699,14 +699,36 @@ describe('pushSeries value kinds beyond fromColumns', () => {
     [2000, true, ['c'], 'h2'],
   ] as const;
 
+  // 12 rows as well as 3: a default series copies a batch of 8 rows or
+  // fewer, so only the longer batch keeps its own boolean and array columns.
+  const twelve = Array.from({ length: 12 }, (_, i) => [
+    i * 1000,
+    i % 3 !== 1,
+    i % 4 === 1 ? undefined : i % 2 === 0 ? [`t${i}`] : [`t${i}`, 'x'],
+    i % 2 === 0 ? 'h1' : 'h2',
+  ]);
+
   it('boolean and array columns land the same as pushMany', () => {
-    for (const opts of [{}, { ordering: 'reorder' }] as const) {
-      const a = new LiveSeries({ name: 'x', schema, ...opts });
-      const b = new LiveSeries({ name: 'x', schema, ...opts });
-      a.pushMany(rows as never);
-      b.pushSeries(new TimeSeries({ name: 'b', schema, rows: rows as never }));
-      expect(b.toRows()).toEqual(a.toRows());
+    for (const batch of [rows, twelve]) {
+      for (const opts of [{}, { ordering: 'reorder' }] as const) {
+        const a = new LiveSeries({ name: 'x', schema, ...opts });
+        const b = new LiveSeries({ name: 'x', schema, ...opts });
+        a.pushMany(batch as never);
+        b.pushSeries(
+          new TimeSeries({ name: 'b', schema, rows: batch as never }),
+        );
+        expect(b.toRows()).toEqual(a.toRows());
+      }
     }
+    // The 12-row batch is kept as it is, not copied.
+    const kept = new TimeSeries({ name: 'b', schema, rows: twelve as never });
+    const columns = new Map(
+      ['ok', 'tags', 'host'].map((name) => [
+        name,
+        kept.column(name as 'ok') as any,
+      ]),
+    );
+    expect(batchHoldsExtra(kept.keyColumn() as any, columns, 12)).toBe(false);
   });
 
   it('a dictionary-encoded string column reads back', () => {
@@ -1217,6 +1239,8 @@ describe('pushSeries copies a batch that holds more than its rows need', () => {
       [200, 401, true],
       [16, 32, false],
       [16, 33, true],
+      [5, 10, false],
+      [5, 11, true],
     ] as const) {
       const { big } = history(1_000, distinct);
       const parent = big.column('venue') as any;
@@ -1228,6 +1252,22 @@ describe('pushSeries copies a batch that holds more than its rows need', () => {
       expect(Array.from({ length: rows }, (_, i) => copied.read(i))).toEqual(
         Array.from({ length: rows }, (_, i) => `v${i}`),
       );
+    }
+  });
+
+  it('a tail of 8 rows or fewer is copied with its dictionary trimmed', () => {
+    for (const k of [5, 8]) {
+      const { big, venue } = history(2_000, 900);
+      const parent = big.column('venue') as any;
+      const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+      live.pushSeries(big.slice(2_000 - k, 2_000));
+      // Had the live series kept the slice's indices or the parent's
+      // dictionary, these writes would show in rows not yet read.
+      parent.indices.fill(0);
+      parent.dictionary.fill('changed');
+      expect(
+        Array.from({ length: k }, (_, i) => live.at(i)!.get('venue')),
+      ).toEqual(venue.slice(2_000 - k));
     }
   });
 
