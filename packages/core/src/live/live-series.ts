@@ -37,6 +37,7 @@ import type { IntervalInput, TimeRangeInput } from '../core/temporal.js';
 import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
+  ON_SIGNAL,
   type AggregateMap,
   type AggregateSchema,
   type DiffSchema,
@@ -292,6 +293,17 @@ export class LiveSeries<S extends SeriesSchema> {
   /** [PND-REDUCETICK] End-of-push listeners; see `settle.ts`. */
   readonly #onSettle: ListenerSet<() => void> = new ListenerSet();
   /**
+   * [PND-HOOKSIGNAL] Payload-free change signals (see `[ON_SIGNAL]`).
+   * Unlike `'event'` / `'evict'` listeners, these never make the chunked
+   * backing build `Event`s.
+   */
+  readonly #onEventSignal: ListenerSet<() => void> = new ListenerSet();
+  readonly #onEvictSignal: ListenerSet<() => void> = new ListenerSet();
+  /** Rows the last `#applyRetention` removed (whether or not materialized). */
+  #lastEvictCount = 0;
+  /** Rows staged by the open `_stageRowsOpen`, read by `_stageRowsClose`. */
+  #stagedCount = 0;
+  /**
    * [PND-LIVFIX] Re-entrancy guard. `> 0` while a push is fanning out to
    * listeners. A push that arrives from inside a listener (`#dispatchDepth
    * > 0`) is queued on `#pendingPushes` and run after the outer push has
@@ -510,6 +522,22 @@ export class LiveSeries<S extends SeriesSchema> {
   _onSettle(fn: () => void): () => void {
     this.#onSettle.add(fn);
     return () => this.#onSettle.delete(fn);
+  }
+
+  /**
+   * @internal [PND-HOOKSIGNAL] Payload-free change signal for consumers
+   * that only need to know *that* the series changed (the React hooks).
+   * `fn` runs with no argument once per push in which `type`'s channel
+   * delivered at least one row, at the point of that channel's last call:
+   * for `'event'`, after the push's rows are stored and before retention;
+   * for `'evict'`, where `'evict'` fires (retention, the age sweep,
+   * `clear()`). Subscribing never makes the chunked backing build `Event`s,
+   * which an `'event'` / `'evict'` listener does for every row.
+   */
+  [ON_SIGNAL](type: 'event' | 'evict', fn: () => void): () => void {
+    const set = type === 'event' ? this.#onEventSignal : this.#onEvictSignal;
+    set.add(fn);
+    return () => set.delete(fn);
   }
 
   push(...rows: RowForSchema<S>[]): void {
@@ -805,6 +833,7 @@ export class LiveSeries<S extends SeriesSchema> {
     }
 
     if (added.length === 0) return;
+    this.#dispatch(this.#onEventSignal, undefined, errors);
 
     // `#applyRetention` updates `#statsEvicted` internally and returns
     // the materialized evicted events only when an `'evict'` listener
@@ -814,6 +843,9 @@ export class LiveSeries<S extends SeriesSchema> {
     this.#dispatch(this.#onBatch, added, errors);
     if (evicted.length > 0) {
       this.#dispatch(this.#onEvict, evicted, errors);
+    }
+    if (this.#lastEvictCount > 0) {
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
     }
     rethrowFirst(errors);
   }
@@ -976,6 +1008,7 @@ export class LiveSeries<S extends SeriesSchema> {
 
     chunked.stageRows(source, indices);
     this.#statsIngested += k;
+    this.#stagedCount = k;
     const added =
       k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
         ? materializeEventsFromStoreAt(source, indices, this.schema)
@@ -1002,9 +1035,17 @@ export class LiveSeries<S extends SeriesSchema> {
   _stageRowsClose(added: EventForSchema<S>[] | null, errors: unknown[]): void {
     let failure: { error: unknown } | undefined;
     try {
+      // The router has fired every staged row's `'event'` by now; the
+      // payload-free signal stands in for the last of them.
+      if (this.#stagedCount > 0) {
+        this.#dispatch(this.#onEventSignal, undefined, errors);
+      }
       const evicted = this.#applyRetention();
       if (added) this.#dispatch(this.#onBatch, added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+      if (this.#lastEvictCount > 0) {
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+      }
       if (errors.length > 0) failure = { error: errors[0] };
     } catch (error) {
       failure = { error };
@@ -1064,6 +1105,7 @@ export class LiveSeries<S extends SeriesSchema> {
     if (added) {
       for (const ev of added) this.#dispatch(this.#onEvent, ev, errors);
     }
+    if (n > 0) this.#dispatch(this.#onEventSignal, undefined, errors);
 
     // Retention always runs. It updates `#statsEvicted` internally and
     // returns the materialized evicted events only when an `'evict'`
@@ -1072,6 +1114,9 @@ export class LiveSeries<S extends SeriesSchema> {
 
     if (added) this.#dispatch(this.#onBatch, added, errors);
     if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+    if (this.#lastEvictCount > 0) {
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
+    }
     rethrowFirst(errors);
   }
 
@@ -1144,11 +1189,15 @@ export class LiveSeries<S extends SeriesSchema> {
       }
 
       if (added.length === 0) return;
+      this.#dispatch(this.#onEventSignal, undefined, errors);
 
       const evicted = this.#applyRetention();
 
       this.#dispatch(this.#onBatch, added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+      if (this.#lastEvictCount > 0) {
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+      }
       rethrowFirst(errors);
     });
   }
@@ -1205,12 +1254,19 @@ export class LiveSeries<S extends SeriesSchema> {
     this.#statsEvicted += i;
     if (this.#onEvict.size === 0) {
       this.#storage.dropPrefix(i);
+      if (this.#onEvictSignal.size === 0) return;
+      this.#guarded(() => {
+        const errors: unknown[] = [];
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+        rethrowFirst(errors);
+      });
       return;
     }
     const evicted = this.#storage.evictPrefix(i);
     this.#guarded(() => {
       const errors: unknown[] = [];
       this.#dispatch(this.#onEvict, evicted, errors);
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
       rethrowFirst(errors);
     });
   }
@@ -1297,6 +1353,7 @@ export class LiveSeries<S extends SeriesSchema> {
       this.#statsEvicted += evicted.length;
       const errors: unknown[] = [];
       this.#dispatch(this.#onEvict, evicted, errors);
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
       rethrowFirst(errors);
     }
   }
@@ -1985,6 +2042,7 @@ export class LiveSeries<S extends SeriesSchema> {
    * chunked backing's retention hot path).
    */
   #applyRetention(): ReadonlyArray<EventForSchema<S>> {
+    this.#lastEvictCount = 0;
     let evictCount = 0;
     const len = this.#storage.length;
 
@@ -2005,6 +2063,7 @@ export class LiveSeries<S extends SeriesSchema> {
     if (evictCount === 0) return [];
 
     this.#statsEvicted += evictCount;
+    this.#lastEvictCount = evictCount;
     if (this.#onEvict.size === 0) {
       this.#storage.dropPrefix(evictCount);
       return [];

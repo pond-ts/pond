@@ -1835,6 +1835,74 @@ medians. `packages/financial/scripts/perf-agent-queries.mjs` (500k bars): the
 
 ---
 
+### Per-row `Event` leftovers — [PND-HOOKSIGNAL] / [PND-SPANFILTER] / [PND-ROWSOUT] / [PND-GROUPEVENTS]
+
+Logged 2026-10-31 from Peter's list of methods that build one `Event` per
+row when they could work on columns. Three groups:
+
+1. **Forced by the method's promise** (they hand the caller an `Event`):
+   `at`, `first`, `last`, `atOrBefore`, `atOrAfter`, `nearest`, iteration,
+   `toArray`, `.events`, live `'event'` listeners. Cost is per row read, not
+   per row stored. Stays as is.
+2. **Leftovers that could work on columns**: `concat` ([PND-CONCATSORT],
+   owned by the Codex-speedups work), `toJSON`/`toRows`/`toObjects`/
+   `toPoints` ([PND-ROWSOUT]), the key-only selectors
+   ([PND-SPANFILTER]), `groupBy`/`pivotByGroup` ([PND-GROUPEVENTS]).
+   Already logged elsewhere: [PND-ALIGNHOLD], [PND-DEDUPEMAP],
+   [PND-SMOOTHSLOW], [PND-ARRAYSLOW].
+3. **Live layer**: built-in operators listen for `'event'`
+   ([PND-COLOUT]); the React hooks do too, only as a change signal
+   ([PND-HOOKSIGNAL]).
+
+Rules for every PR in this set: output and behaviour stay exactly as now
+(including `Event` identity where it holds today, e.g. `after(t).at(0) ===
+series.at(k)`), each PR carries before/after timings, and Peter OKs each
+merge. pond-rs mirrors pond-ts output, so any change visible in output is
+flagged to the pond-rs side.
+
+Baseline (2026-10-31, 1M rows, `time`/`cpu`/`host` with 8 hosts, fresh
+series per run, median of 5): `toColumns` 190 ms; `toJSON` 1,523 ms;
+`toRows` 2,238 ms; `toObjects` 1,352 ms; `toPoints` 1,446 ms; `slice` 1 ms;
+`before` 1,239 ms; `after` 1,236 ms; `tail('100s')` 1,079 ms; `within`
+1,174 ms; `overlapping` 1,490 ms; `containedBy` 1,189 ms; `groupBy` 2,446
+ms; `pivotByGroup` 3,320 ms. Most of each key-only selector's time is
+building the `Event`s, which the series then caches, so a second call on
+the same series is cheaper.
+
+Live hook baseline (200k rows into a `maxEvents: 10_000` buffer, column
+backing, median of 7):
+
+| batch | no listener | `'event'` | `'event'` + `'evict'` |
+| ----: | ----------: | --------: | --------------------: |
+|     1 |      458 ms |    488 ms |                610 ms |
+|    10 |      102 ms |    183 ms |                230 ms |
+|   100 |       37 ms |     77 ms |                141 ms |
+|  1000 |       25 ms |     64 ms |                126 ms |
+
+**[PND-HOOKSIGNAL] shipped** : `LiveSeries[ON_SIGNAL]('event' |
+'evict', fn)` (registered symbol `pond-ts:onSignal`, internal, not exported)
+fires `fn` with no argument once per push in which the channel delivered
+rows, at the point of the channel's last call: for `'event'` after the rows
+are stored and before retention (on both backings and on the partition
+staging path, in `_stageRowsClose`), for `'evict'` where `'evict'` fires
+(retention, `_sweepAge`, `clear()`). The hooks use it when the source offers
+it and fall back to `on()` otherwise. Why the same moment matters: with
+`throttle: 0`, `useSnapshot` / `useLatest` read the series inside the
+callback, so a later point (after retention) would change what they show.
+Sharp edge kept, not fixed: because `'event'` fires before retention,
+`useSnapshot(live, { throttle: 0 })` can show more rows than `maxEvents`
+(maxEvents 2, push 3 rows: the snapshot has 3, the series 2). `useEventRate`
+is unchanged: its `window()` view stores `Event`s, so its listener on the
+view costs nothing measurable (138 vs 125–146 ms, noise). After, same bench
+(two runs):
+
+| batch | no listener |  signal | signal + evict | `'event'` + `'evict'` |
+| ----: | ----------: | ------: | -------------: | --------------------: |
+|     1 |  402–449 ms | 410–427 |        422–467 |               545–601 |
+|    10 |  101–107 ms | 106–115 |        105–112 |               211–236 |
+|   100 |    31–36 ms |   32–36 |          36–40 |               130–136 |
+|  1000 |       24 ms |   20–25 |          25–36 |               108–142 |
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly

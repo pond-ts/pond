@@ -1035,6 +1035,29 @@ consumer signal. Plan:
   Friction-gated: no consumer has asked yet.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
+- **[PND-HOOKSIGNAL]** — The React hooks `useSnapshot`, `useLatest` and
+  `useLiveVersion` subscribe to `'event'` (and `useLiveVersion` to
+  `'evict'`) only as a "something changed" signal, but on the column-native
+  `LiveSeries` backing any such listener makes every push build one `Event`
+  per row (and one per evicted row). Measured: 200k rows pushed in batches
+  of 1000 into a 10k-row buffer take 25 ms with no listener, 64 ms with an
+  `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
+  payload-free change signal the hooks use when the source offers it.
+  `useEventRate` gains nothing (its window view stores `Event`s anyway).
+- **[PND-SPANFILTER]** — `before`, `after`, `tail`, `within`,
+  `overlapping` and `containedBy` run `filter(fn)` with a test on the key
+  alone, so the first call on a series builds an `Event` for every row:
+  ~1.1–1.5 s on 1M rows, against ~1 ms for `slice` over the same rows.
+  Fix: read the stored begin/end times (binary search where the rows are
+  sorted by the tested time) and select rows, keeping the result's events
+  identical (`===`) to the source's as `filter` does.
+- **[PND-ROWSOUT]** — `toJSON`, `toRows`, `toObjects` and `toPoints` build
+  an `Event` per row: 1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s.
+  Fix: write each row from the columns directly.
+- **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
+  groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
+  1M rows with 8 groups. Fix: group row numbers from the column and gather
+  each group's columns, as `partitionBy` does.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
