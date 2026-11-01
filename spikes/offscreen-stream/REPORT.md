@@ -598,7 +598,9 @@ breakout plans:
 3. **[PND-LPUSHCOL] — Columns into `LiveSeries`** (live layer). A push
    that takes one typed array per column through the existing column
    ingest, skipping the per-row checks and the `Time` object per tick.
-   Adds a method to `LiveSeries`. §5.
+   Adds a method to `LiveSeries`. §5. Shipped 2026-11-01 as
+   `LiveSeries.pushSeries(TimeSeries)` (#876), which takes the columns
+   through `TimeSeries.fromColumns`.
 4. **[PND-STREAMDRAW] — A streaming draw for scrolling live charts**
    (charts). Buckets filled as ticks arrive, for line/area charts whose
    window scrolls. The m4 path stays for still, zoomed and hovered views.

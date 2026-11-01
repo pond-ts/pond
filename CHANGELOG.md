@@ -99,6 +99,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`LiveSeries.pushSeries(series)`** ([PND-LPUSHCOL]) pushes a batch
+  `TimeSeries` into a live series as one batch: the column-shaped way in.
+  Data that arrives as typed arrays goes
+  `live.pushSeries(TimeSeries.fromColumns({ name, schema, columns }))`, with
+  no row tuples. It follows `pushMany`'s rules for the batch's rows (same
+  ordering, retention, listeners and refusals; a refused batch stores
+  nothing, except that a `partitionBy` error on a default series is thrown
+  after the batch is stored, as with `pushMany`). The batch must be keyed the
+  same way and carry exactly the live series' value columns, matched by name
+  in any order, each of the same kind; a gap in a column the live schema
+  requires is refused, naming the first such row. On a default series
+  (`strict`, `time` key) the batch's columns are stored as they are, with no
+  per-row check and no event object per row: 100,000 rows in batches of 1,600
+  take 1.6 ms against `pushMany`'s 17.9 ms (2.3× faster in batches of 16). A
+  `window()` or other view on the series brings the per-row events back
+  (about 1.3×), and `drop` / `reorder` series or `timeRange` / `interval`
+  keys take `pushMany`'s row path (about the same speed). **The live series
+  keeps the batch's `Float64Array`s, not copies**, so don't write to or reuse
+  a pushed buffer while its rows are retained (push `buf.slice(0, n)`
+  instead): a write changes stored rows and can leave their times out of
+  order. A batch that would keep much more memory alive than its rows need
+  (a `slice()` of a much bigger series, which shares the parent's buffers and
+  text dictionaries) is copied first, so it doesn't keep its parent alive.
+  The same rules as pond-rs's `push_series`, apart
+  from that `partitionBy` case (pond-rs refuses the whole batch).
 - **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
   per-row rules as data instead of functions, e.g.
   `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
@@ -196,8 +221,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   watches it, the columns are copied straight into storage with no event
   built per row ([PND-RUSTLIVEBATCH]): one million rows in batches of 1,000
   take about half the time of `push_many` and about a third less than
-  pond-ts's `pushMany` on the same machine. pond-ts has no column-shaped
-  push.
+  pond-ts's `pushMany` on the same machine. pond-ts's `LiveSeries.pushSeries`
+  (above) takes the same batch, but keeps its arrays instead of copying them,
+  so the two haven't been timed against each other.
 - **pond-rs: ready for crates.io.** The crate has package metadata, a
   README, three runnable examples (`quickstart`, `rsi`, `live_stream`) and
   API docs for every public item, with a docs.rs front page and the `live`
@@ -305,6 +331,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
+  `{ rowFormat: 'object' }`.** It used to build each row cell by cell
+  across the WebAssembly boundary, which made it slower than pond-ts's
+  own. Now the series comes across once as whole columns and the rows are
+  built in JavaScript. Output is unchanged (the same tree as pond-ts's,
+  `-0` kept, gaps as `null`), and `rowFormat: 'object'` now gives keyed
+  rows as in pond-ts (it was ignored). 1M rows: one number column 227 →
+  37 ms (pond-ts 220), four number columns 430 → 56 (216), a number, a
+  text and a boolean column 593 → 74 (235), time-range keys 627 → 64
+  (224). Where generated code is not allowed (a CSP without
+  `'unsafe-eval'`, `--disallow-code-generation-from-strings`) it falls back
+  to a plain loop with the same output, about as fast as pond-ts's.
 - **pond-rs: live layer does less work per event.** A top-to-bottom
   instruction-count review (callgrind, 23 `perf_live` cases) found that a
   bare push spent about 45% of its instructions in malloc/free, that a
@@ -502,6 +540,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`arrayAggregate` and `arrayExplode` work on the array column directly**
+  ([PND-ARRAYSLOW]) instead of building an `Event` per row and re-reading
+  rows; the key and other columns are shared (aggregate) or gathered once
+  (explode). Same output, same errors. On 100k rows: `arrayAggregate` count
+  637 → 8 ms, median 734 → 16 ms; `arrayExplode` 792 → 68 ms. Building and
+  gathering array columns also stops re-validating cells it already owns
+  (`filter` on a series with an array column: 96 → 17 ms), and `median` /
+  percentiles sort short lists by insertion (same order).
+- **`keep`, `difference`, `unique`, `top${N}` and `samples` read the column
+  directly** in `reduce` and `aggregate`, instead of going through `Event`s
+  (whole-series `reduce`) or a per-bucket reducer state (`aggregate`). Same
+  answers. On 1M rows, `reduce` with `difference` 104 → 3.5 ms, `unique`
+  139 → 9 ms, `top3` 124 → 19 ms, `keep` stops at the first value that
+  differs (95 ms → under 0.01 ms). Every other reducer in `reduce` also stops
+  building `Event`s when it has no column kernel.
 - **`rolling(sequence, window, mapping)` no longer scans every row for every
   grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,
   so finding windows costs O(rows + buckets) instead of O(rows × buckets). A
@@ -594,6 +647,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   `event.get(output)` is typed `number | undefined` (on `TimeSeries` and
   `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
   a gap check.
+
+### Changed
+
+- **`useSnapshot`, `useLatest` and `useLiveVersion` no longer make a
+  `LiveSeries` build an `Event` per pushed row** ([PND-HOOKSIGNAL]). They
+  listened for `'event'` (and `useLiveVersion` for `'evict'`) only to learn
+  that something changed, which made the column-native backing build an
+  `Event` for every pushed and evicted row. They now use an internal change
+  signal that fires at the same moments with no payload. 200k rows into a
+  10k-row buffer, batches of 1,000, with `useLiveVersion`'s subscriptions:
+  108–141 ms → 25–36 ms (no listener: 24 ms). `useSnapshot` and `useLatest`
+  return the same values. `useLiveVersion`'s token still changes on every
+  change but now advances once per push rather than once per row (it was
+  always meant to be compared, not counted). Views, aggregations and rolling
+  sources work as before.
 
 ### Fixed
 

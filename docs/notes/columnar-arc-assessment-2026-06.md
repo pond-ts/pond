@@ -135,7 +135,10 @@ frame at ≤64 hosts). Do not resurrect without a consumer at ceiling.
 ### Deliberately staying dead
 
 Worth keeping dead, with the evidence that killed each: `pushColumns`
-public API (no wire-batching producer yet), `groupBy` columnarization
+public API (no wire-batching producer yet; **superseded 2026-11-01**:
+the offscreen-stream spike measured row intake as the cost, and column
+push shipped as `LiveSeries.pushSeries(TimeSeries)`, see [PND-LPUSHCOL]
+in `docs/plans/PND_LIVE_PLAN.md`), `groupBy` columnarization
 (measured worst-case regression; `partitionBy().apply()` is the
 recommended pattern), count-window reorder corral (non-monotonic
 overlay), reorder-mode columnar backing (V2 commitment),

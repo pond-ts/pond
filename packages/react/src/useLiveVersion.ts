@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import type { LiveSource, SeriesSchema } from 'pond-ts';
+import { onSourceChange } from './changeSignal.js';
 
 // The capability marker pond-ts stamps on evict-emitting sources
 // (`LiveSeries`, `LiveView`). It's a registered symbol
@@ -13,7 +14,8 @@ export interface UseLiveVersionOptions {
    * Minimum interval between React notifications, in ms. The version
    * counter bumps *immediately* on every source change (no buffering);
    * `throttle` only bounds how often React is told to re-render.
-   * `0` notifies synchronously per change. Default 100.
+   * `0` notifies synchronously per change (one push, or one eviction,
+   * is one change). Default 100.
    */
   throttle?: number;
 }
@@ -26,7 +28,8 @@ export interface UseLiveVersionOptions {
  * keyed on the view never re-runs. This hook gives React a
  * monotonically-increasing version that changes (at most once per
  * `throttle`) whenever the source mutates — the missing invalidation
- * trigger. Read columns straight off the live view, keyed on the
+ * trigger. Treat it as an opaque token: compare it, don't count with it
+ * (how far it advances per change is not part of the contract). Read columns straight off the live view, keyed on the
  * returned version:
  *
  * ```tsx
@@ -78,17 +81,13 @@ export function useLiveVersion<S extends SeriesSchema>(
       subscribe(cb: () => void): () => void {
         listeners.add(cb);
         if (unsubSource === null) {
-          const unsubEvent = source.on('event', onChange);
+          const unsubEvent = onSourceChange(source, 'event', onChange);
           // Also track eviction (clear / retention prune) on sources that
           // emit it — otherwise a `clear()` with no following append leaves
           // a column reader stale.
           let unsubEvict: (() => void) | undefined;
           if (EMITS_EVICT in source) {
-            unsubEvict = (
-              source as unknown as {
-                on(type: 'evict', fn: () => void): () => void;
-              }
-            ).on('evict', onChange);
+            unsubEvict = onSourceChange(source, 'evict', onChange);
           }
           unsubSource = () => {
             unsubEvent();

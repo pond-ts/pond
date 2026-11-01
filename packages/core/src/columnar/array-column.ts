@@ -23,8 +23,6 @@ import {
   type ValidityBitmap,
   validateColumnLength,
   validityFromPredicate,
-  validityGatherByIndices,
-  validitySliceByRange,
 } from './validity.js';
 
 /**
@@ -47,6 +45,25 @@ function isArrayValue(value: unknown): value is ArrayValue {
   }
   return true;
 }
+
+/**
+ * A fresh, unfrozen copy of an array cell. An element loop: on V8,
+ * `slice()` of a frozen array is ~4x slower (250k small cells: 236 vs 53 ms).
+ */
+export function copyCell(cell: ArrayValue): ArrayValue {
+  const n = cell.length;
+  const out = new Array<ArrayValue[number]>(n);
+  for (let i = 0; i < n; i += 1) out[i] = cell[i]!;
+  return out as unknown as ArrayValue;
+}
+
+/**
+ * Module-private key that only {@link arrayColumnFromOwnedCells} passes:
+ * the constructor then skips its element validation and per-cell copy
+ * (the caller has done both, or made the cells itself). Not exported, so
+ * no outside caller can reach the unchecked path.
+ */
+const OWNED_CELLS: unique symbol = Symbol('ArrayColumn.ownedCells');
 
 /**
  * Array-kind value column. Currently single-mode (fallback). The
@@ -74,6 +91,7 @@ export class ArrayColumn {
     options: {
       fallback: ReadonlyArray<ArrayValue | undefined>;
       validity?: ValidityBitmap;
+      [OWNED_CELLS]?: true;
     },
   ) {
     validateColumnLength(length, 'ArrayColumn');
@@ -87,6 +105,12 @@ export class ArrayColumn {
       throw new RangeError(
         `ArrayColumn: validity length ${validity.length} does not match column length ${length}`,
       );
+    }
+    if (options[OWNED_CELLS] === true) {
+      this.length = length;
+      this.fallback = options.fallback;
+      if (validity !== undefined) this.validity = validity;
+      return;
     }
     if (validity !== undefined) {
       // If validity is supplied, every row it marks as defined must
@@ -135,7 +159,7 @@ export class ArrayColumn {
       if (cell !== undefined && Array.isArray(cell)) {
         // Copy and freeze. Elements are primitives so shallow freeze
         // is sufficient.
-        ownedFallback[i] = Object.freeze(cell.slice() as ArrayValue);
+        ownedFallback[i] = Object.freeze(copyCell(cell as ArrayValue));
       } else {
         // Validation already established this is OK only when validity
         // marks the row invalid; leave the slot undefined.
@@ -191,31 +215,61 @@ export class ArrayColumn {
     if (outLength === 0) {
       return new ArrayColumn(0, { fallback: [] });
     }
-    const validity = validitySliceByRange(this.validity, lo, hi, this.length);
-    const fallback = this.fallback.slice(lo, hi);
-    return new ArrayColumn(outLength, {
-      fallback,
-      ...(validity !== undefined ? { validity } : {}),
-    });
+    // Fresh copies of this column's (already valid) cells: each result row
+    // gets its own array, as the validating constructor would make.
+    const out = new Array<ArrayValue | undefined>(outLength);
+    for (let i = 0; i < outLength; i += 1) {
+      const cell = this.read(lo + i);
+      out[i] = cell === undefined ? undefined : copyCell(cell);
+    }
+    return arrayColumnFromOwnedCells(out);
   }
 
   sliceByIndices(sourceRowIndices: Int32Array): ArrayColumn {
     const outLength = sourceRowIndices.length;
-    const validity = validityGatherByIndices(
-      this.validity,
-      sourceRowIndices,
-      this.length,
-    );
+    // Fresh copies of this column's (already valid) cells — one per result
+    // row, even when an index repeats, as the validating constructor would
+    // make.
     const out = new Array<ArrayValue | undefined>(outLength);
     for (let i = 0; i < outLength; i += 1) {
-      const idx = sourceRowIndices[i]!;
-      out[i] = idx >= 0 && idx < this.length ? this.fallback[idx] : undefined;
+      const cell = this.read(sourceRowIndices[i]!);
+      out[i] = cell === undefined ? undefined : copyCell(cell);
     }
-    return new ArrayColumn(outLength, {
-      fallback: out,
-      ...(validity !== undefined ? { validity } : {}),
-    });
+    return arrayColumnFromOwnedCells(out);
   }
+}
+
+/**
+ * Builds an `ArrayColumn` from cells the caller **owns**: every defined
+ * cell is a valid `ArrayValue` (finite numbers, strings, booleans) that no
+ * one else holds a reference to — a reducer's fresh result, or a copy the
+ * caller just made. Each cell is frozen in place; the constructor's
+ * element validation and defensive copy are skipped, which is most of the
+ * cost of building a large array column. `undefined` slots become missing
+ * cells.
+ *
+ * Do **not** pass cells read from another column without copying them:
+ * sharing one array between two rows would make them `===`, which the
+ * reference-comparing reducers (`keep`, `unique` on arrays) can see.
+ */
+export function arrayColumnFromOwnedCells(
+  cells: Array<ArrayValue | undefined>,
+): ArrayColumn {
+  const length = cells.length;
+  let missing = false;
+  for (let i = 0; i < length; i += 1) {
+    const cell = cells[i];
+    if (cell === undefined) missing = true;
+    else Object.freeze(cell);
+  }
+  const validity = missing
+    ? validityFromPredicate(length, (i) => cells[i] !== undefined)
+    : undefined;
+  return new ArrayColumn(length, {
+    fallback: cells,
+    ...(validity !== undefined ? { validity } : {}),
+    [OWNED_CELLS]: true,
+  });
 }
 
 /**
