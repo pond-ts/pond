@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
 TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
 cargo build --manifest-path "$ROOT/Cargo.toml" -p pond-wasm --lib \
-  --target wasm32-unknown-unknown --profile wasm-release
+  --target wasm32-unknown-unknown --profile wasm-release --locked
 rm -rf pkg
 wasm-bindgen --target web --out-dir pkg \
   "$TARGET_DIR/wasm32-unknown-unknown/wasm-release/pond_wasm.wasm"
