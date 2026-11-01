@@ -93,7 +93,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   requires is refused, naming the first such row. On a default series
   (`strict`, `time` key) the batch's columns are stored as they are, with no
   per-row check and no event object per row: 100,000 rows in batches of 1,600
-  take 1.6 ms against `pushMany`'s 18.7 ms (2.5× faster in batches of 16). A
+  take 1.6 ms against `pushMany`'s 19.7 ms (2.2× faster in batches of 16). A
   `window()` or other view on the series brings the per-row events back
   (about 1.3×), and `drop` / `reorder` series or `timeRange` / `interval`
   keys take `pushMany`'s row path (about the same speed). **The live series

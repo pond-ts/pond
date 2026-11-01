@@ -964,8 +964,8 @@ Robustness debt plus the queued composition workstreams. Plan:
   refusing the whole batch first as pond-rs does. Needs Peter's call; detail
   in `docs/plans/PND_LIVE_PLAN.md`.
 - **[PND-AGESCAN]** — `maxAge` retention finds its cutoff by walking rows from
-  the front (`#applyRetention`), about 4 ms per 100k rows when each push drops
-  ~1,600 (`maxEvents` costs nothing measurable). Rows are held in key order,
+  the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
+  ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
   so a binary search would do. Measured 2026-11-01 in
   `perf-live-push-series.mjs`.
 - **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has

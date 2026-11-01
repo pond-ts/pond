@@ -332,7 +332,8 @@ flag proves nothing: `fromColumns` doesn't enforce it, [PND-COLSREQ]), shape
 checked even on an empty batch.
 
 **Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, middle of three
-runs, 4-core Linux, Node 22.22, 2026-11-01; pushSeries includes `fromColumns`):
+runs, 4-core Linux, Node 22.22, 2026-11-01, build 58d75170, before the review
+fixes; pushSeries includes `fromColumns`):
 
 | Case                                  | pushMany | pushSeries | fromColumns alone |
 | ------------------------------------- | -------- | ---------- | ----------------- |
@@ -356,10 +357,19 @@ runs, 4-core Linux, Node 22.22, 2026-11-01; pushSeries includes `fromColumns`):
 includes it: garbage left by the scenario before it, since the script doesn't
 force a collection between samples. Not a real floor.
 
-After the Layer 2 review (below), three more runs on the final build: every
-row above stayed within its run-to-run spread, and the new scenario, 1,600-row
-`slice()`s of one 100k series, which `pushSeries` now copies, took 4.9 ms
-(2.1–5.0) against `pushMany`'s 18.5 (0.5 ms before the copy).
+After the Layer 2 review (below), the final build (5a16db27) and 58d75170 ran
+three times each, alternating, so both builds saw the same machine state. The
+two builds' `pushSeries` ranges overlapped on 16 of the 21 rows. Of the other
+five, the final build was faster on three (`drop`, `reorder`, `.slice()` first
+at 1,600/push; 6–10%, not explained by the change, so likely drift) and slower
+on two: 100k empty calls (about 8 ns more per call) and the new scenario,
+1,600-row `slice()`s of one 100k series, which `pushSeries` now copies:
+1.5–1.7 ms against 0.33–0.51 before the copy (`pushMany` 17.5–22.0). One row at
+a time the two builds matched (383–453 against 366–443 ms; `pushMany` faster in
+5 of the 6 runs, middle ratio 1.1×). Two sequential sets of runs before this
+(final build 456–478, the earlier build 395–423) had suggested the fix cost
+~10% there; alternating the builds showed that was drift between sessions. The
+docs table uses the final build's alternating runs.
 
 Retained heap for a full 100k window is the same both ways (8.4 MB heap,
 2.3 MB array buffers); pushing views into a buffer twice the batch's size
@@ -377,8 +387,8 @@ run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
   and ordering rules live in one place; pond-rs has the same shape
   (`push_series`, and it turned down `push_columns`); the most a raw-columns
   method could save over `pushSeries(fromColumns(...))` is `fromColumns`' own
-  cost, ~2 µs per call (`fromColumns` alone at one row per push, 175–182 ms
-  per 100k calls). Shipping both would be two verbs for one thing.
+  cost, ~2 µs per call (`fromColumns` alone at one row per push, 172–212 ms
+  per 100k calls across both builds' alternating runs). Shipping both would be two verbs for one thing.
 - **Share the batch's buffers, don't copy.** Pond never writes a column
   buffer; the caller is the only possible writer, which is the contract
   `fromColumns` already documents. A defensive copy (the `.slice()` rows
@@ -394,10 +404,14 @@ run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
   as one worker message holding every column, are still kept. The check reads
   the key's `.buffer`, which costs about 1 µs the first time it is read on a
   fresh typed array (1M fresh arrays of up to 8 numbers: ~1 µs each with the
-  read, ~0.05 µs without): noise at 1,600 rows a push, about 10–25% on one-row
-  pushes (100k fresh one-row batches: 481–504 ms before, 532–625 after), which
-  the docs already steer to `push`. Always copying batches of up to 8 rows
-  instead measured slower still (576–607).
+  read, ~0.05 µs without): noise at 1,600 rows a push, about 10–20% on one-row
+  pushes made from fresh arrays (100k one-row batches, the two builds
+  alternating, medians of 7: 436–464 ms before, 505–530 after), which the docs
+  already steer to `push`. Reusing the same arrays every push it is about
+  2–11% (medians 379–417 ms before, 412–424 after; +11%, +2%, +9% pair by
+  pair). Always copying batches of up to 8 rows instead measured 576–607 in an
+  earlier sequential session, no better than the check in that session
+  (532–625).
 - **Per-row backings accept the batch** rather than refusing it: the method
   then works in every ordering mode and key kind (as pond-rs's does), at
   `pushMany`'s speed.

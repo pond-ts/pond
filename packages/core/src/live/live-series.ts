@@ -603,10 +603,10 @@ export class LiveSeries<S extends SeriesSchema> {
    * `time` key) the batch's columns are stored as they are, with no
    * per-row check and no `Event` per row, so a large batch costs about
    * what `fromColumns` costs: 100k rows in batches of 1,600 took 1.6 ms
-   * against `pushMany`'s 18.7 ms (`scripts/perf-live-push-series.mjs`).
+   * against `pushMany`'s 19.7 ms (`scripts/perf-live-push-series.mjs`).
    * Two things bring back an `Event` per row and most of `pushMany`'s
    * cost: a listener on `'event'` or `'batch'` (a `window()`, `filter()`
-   * or other view built on the series is one; ~1.3-1.4x), and the other
+   * or other view built on the series is one; ~1.3-1.5x), and the other
    * storage mode (`ordering: 'drop'` / `'reorder'`, or a `timeRange` /
    * `interval` key), where the batch's rows go through `pushMany`'s row
    * path (~1x). Results are the same either way. For one row at a time
