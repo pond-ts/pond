@@ -154,6 +154,7 @@ import {
   withColumnReplaced,
   withColumnsRenamed,
   withColumnsSelected,
+  arrayColumnFromOwnedCells,
   withKeyColumn,
   withRowRange,
   withRowSelection,
@@ -167,7 +168,7 @@ import {
 } from './operators/expression.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
-import { validateAndNormalize } from './validate.js';
+import { assertCellKind, validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
 import {
@@ -681,10 +682,11 @@ function aggregateValues(
  * reducer)`. When the reducer defines `reduceColumn` and the column
  * is a packed `Float64Column`, skip `series.events` materialization
  * + the row-API `defined` / `numeric` filter passes; walk the
- * underlying typed array directly. Falls back to `null` for the
- * caller to take the row-API path otherwise (mixed kinds, chunked
- * storage, reducers that don't have a column fast path like
- * `first` / `last`).
+ * underlying typed array directly; `keep` / `difference` / `unique` /
+ * `top${N}` / `samples` use their `reduceCellRange` kernel on any column.
+ * Otherwise `{ ok: false }`: the caller reads the column's cells
+ * (`columnCells`) and runs the reducer over them, still without building
+ * `Event`s.
  */
 function tryReduceColumnFastPath(
   reducer: AggregateReducer,
@@ -692,12 +694,36 @@ function tryReduceColumnFastPath(
 ): { ok: true; value: ColumnValue | undefined } | { ok: false } {
   if (!isBuiltInAggregateReducer(reducer)) return { ok: false };
   if (column === undefined) return { ok: false };
+  const def = resolveReducer(reducer);
+  // `keep` / `difference` / `unique` / `top${N}` / `samples`: a range
+  // kernel over any column kind or storage.
+  if (def.reduceCellRange !== undefined) {
+    return {
+      ok: true,
+      value: finiteOrMissing(def.reduceCellRange(column, 0, column.length)),
+    };
+  }
   if (column.kind !== 'number' || column.storage !== 'packed') {
     return { ok: false };
   }
-  const def = resolveReducer(reducer);
   if (def.reduceColumn === undefined) return { ok: false };
   return { ok: true, value: finiteOrMissing(def.reduceColumn(column)) };
+}
+
+/**
+ * Every cell of `column` in row order — the values `series.events`' data
+ * would give (an `Event`'s data reads the same column), without building
+ * the `Event`s.
+ */
+function columnCells(
+  column: import('../columnar/index.js').Column,
+): Array<ColumnValue | undefined> {
+  const length = column.length;
+  const values = new Array<ColumnValue | undefined>(length);
+  for (let i = 0; i < length; i += 1) {
+    values[i] = column.read(i) as ColumnValue | undefined;
+  }
+  return values;
 }
 
 function isBuiltInAggregateReducer(
@@ -1077,12 +1103,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * aligned length).
    *
    * **`Float64Array` inputs are adopted, not copied** (zero-copy — the point of
-   * the fast path): the resulting series' columns alias the caller's buffers.
-   * Mutating an adopted buffer after construction mutates the series. Pass a
-   * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied. (**`ordering: 'reorder'` disables the
-   * adoption** — a reorder needs its own buffers, so every column is copied
-   * when sorting.)
+   * the fast path): the resulting series' columns alias the caller's buffers,
+   * the key column's included. Mutating an adopted buffer after construction
+   * mutates the series. Pass a fresh buffer (e.g. straight off a decode) if
+   * this matters; `number[]` columns are always copied. (**`ordering:
+   * 'reorder'` disables the adoption** — a reorder needs its own buffers, so
+   * every column is copied when sorting.) {@link LiveSeries.pushSeries} keeps
+   * the same buffers on a default live series, so the rule lasts as long as
+   * the rows stay in that series.
    *
    * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
    * `atTime`, range queries) rely on it — so an out-of-order columnar input
@@ -2820,10 +2848,14 @@ export class TimeSeries<S extends SeriesSchema> {
         this.column(columnOrMapping),
       );
       if (fastPath.ok) return fastPath.value;
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[columnOrMapping as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(columnOrMapping);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[columnOrMapping as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       return applyAggregateReducer(reducer!, values);
     }
 
@@ -2840,10 +2872,14 @@ export class TimeSeries<S extends SeriesSchema> {
         result[col.output] = fastPath.value;
         continue;
       }
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[col.source as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(col.source);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[col.source as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       result[col.output] = applyAggregateReducer(col.reducer, values);
     }
     return result;
@@ -5947,6 +5983,86 @@ export class TimeSeries<S extends SeriesSchema> {
           ),
     ) as unknown as SeriesSchema;
 
+    // [PND-ARRAYSLOW] Walk the array column directly and build only the
+    // output column; the key and every other column are shared as they are.
+    const store = this.#store.store;
+    const source = store.columns.get(col);
+    // An `as` that names an existing column keeps the row path, so its
+    // error stays the one row intake gives.
+    const nameTaken =
+      appendMode && this.schema.some((c) => c.name === outputName);
+    if (source !== undefined && !nameTaken) {
+      const n = store.length;
+      const out = new Array<ColumnValue | undefined>(n);
+      const def = isBuiltInAggregateReducer(reducer)
+        ? resolveReducer(reducer)
+        : null;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (!Array.isArray(arr)) {
+          out[i] = undefined;
+        } else if (def !== null) {
+          // An array cell holds only finite numbers, strings and booleans,
+          // so `aggregateValues`' filtering leaves `defined` = the cell and
+          // `numeric` = its numbers. Reducers copy before sorting.
+          const cell = arr as ReadonlyArray<ColumnValue>;
+          let allNumbers = true;
+          for (let j = 0; j < cell.length; j += 1) {
+            if (typeof cell[j] !== 'number') {
+              allNumbers = false;
+              break;
+            }
+          }
+          const numeric = allNumbers
+            ? (cell as ReadonlyArray<number>)
+            : (cell.filter((v) => typeof v === 'number') as number[]);
+          const result = finiteOrMissing(def.reduce(cell, numeric));
+          // The array-output built-ins (unique / samples / top) build a new
+          // array today; if one ever handed back its input, the output
+          // column would share the source's array, so copy it here.
+          out[i] =
+            result === cell || result === numeric
+              ? ((result as ArrayValue).slice() as unknown as ArrayValue)
+              : result;
+        } else {
+          out[i] = applyAggregateReducer(
+            reducer,
+            arr as ReadonlyArray<ColumnValue>,
+          );
+        }
+      }
+      // Same kind check, and the same error, as the row intake this used
+      // before (only the output column can be wrong).
+      const outputIndex = resultSchema.findIndex((c) => c.name === outputName);
+      for (let i = 0; i < n; i += 1) {
+        assertCellKind(outputKind, out[i], i, outputIndex);
+      }
+      // A built-in reducer's array result is a fresh array nobody else
+      // holds; a custom reducer's may not be, so it is copied.
+      const outColumn =
+        outputKind === 'array' && def !== null
+          ? arrayColumnFromOwnedCells(out as Array<ArrayValue | undefined>)
+          : columnFromValuesByKind(outputKind, out);
+      const columns = new Map<string, ColumnarColumn>();
+      for (let c = 1; c < resultSchema.length; c += 1) {
+        const name = resultSchema[c]!.name;
+        columns.set(
+          name,
+          name === outputName ? outColumn : store.columns.get(name)!,
+        );
+      }
+      const outStore = ColumnarStore.fromTrustedStore(
+        resultSchema as unknown as ColumnSchema,
+        store.keys,
+        columns,
+      );
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        resultSchema,
+        outStore as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
+
     const resultRows = this.events.map((event) => {
       const data = event.data();
       const arr = data[col as keyof typeof data] as ArrayValue | undefined;
@@ -6017,6 +6133,73 @@ export class TimeSeries<S extends SeriesSchema> {
             column.name === col ? outputColumn : column,
           ),
     ) as unknown as SeriesSchema;
+
+    // [PND-ARRAYSLOW] One pass to number the output rows, one gather of the
+    // key and the other columns, and the element column built directly —
+    // no `Event`s and no row intake.
+    const store = this.#store.store;
+    const source = store.columns.get(col);
+    // An `as` that names an existing column keeps the row path, so its
+    // error stays the one row intake gives.
+    const nameTaken =
+      appendMode && this.schema.some((c) => c.name === outputName);
+    if (source !== undefined && !nameTaken) {
+      const n = store.length;
+      let total = 0;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (Array.isArray(arr)) total += arr.length;
+      }
+      const rowOf = new Int32Array(total);
+      const elements = new Array<ColumnValue>(total);
+      let k = 0;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (!Array.isArray(arr)) continue;
+        for (let j = 0; j < arr.length; j += 1) {
+          rowOf[k] = i;
+          elements[k] = arr[j]!;
+          k += 1;
+        }
+      }
+      // The row intake this used before rejected an element that doesn't
+      // fit `kind`; so does this, with the same error.
+      const outputIndex = resultSchema.findIndex((c) => c.name === outputName);
+      for (let i = 0; i < total; i += 1) {
+        assertCellKind(outputKind, elements[i], i, outputIndex);
+      }
+      const elementColumn = columnFromValuesByKind(outputKind, elements);
+      // Replace mode drops the array column before the gather (no copying
+      // of arrays that are about to be thrown away).
+      const kept = appendMode
+        ? store
+        : withColumnsSelected(
+            store,
+            store.schema
+              .slice(1)
+              .map((c) => c.name)
+              .filter((name) => name !== col),
+          );
+      const gathered = withRowSelection(kept, rowOf);
+      const columns = new Map<string, ColumnarColumn>();
+      for (let c = 1; c < resultSchema.length; c += 1) {
+        const name = resultSchema[c]!.name;
+        columns.set(
+          name,
+          name === outputName ? elementColumn : gathered.columns.get(name)!,
+        );
+      }
+      const outStore = ColumnarStore.fromTrustedStore(
+        resultSchema as unknown as ColumnSchema,
+        gathered.keys,
+        columns,
+      );
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        resultSchema,
+        outStore as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
 
     const resultRows: unknown[][] = [];
     for (const event of this.events) {

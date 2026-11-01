@@ -37,6 +37,7 @@ import type { IntervalInput, TimeRangeInput } from '../core/temporal.js';
 import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
+  ON_SIGNAL,
   type AggregateMap,
   type AggregateSchema,
   type DiffSchema,
@@ -72,6 +73,14 @@ import {
 } from './live-chunked-storage.js';
 import { validateAndNormalizeColumnar } from '../batch/validate.js';
 import { ColumnarStore } from '../columnar/store.js';
+import {
+  BooleanColumn,
+  Float64Column,
+  type Column,
+} from '../columnar/column.js';
+import { StringColumn, compactDictionary } from '../columnar/string-column.js';
+import { bitmapByteCount } from '../columnar/validity.js';
+import { TimeKeyColumn, type KeyColumn } from '../columnar/key-column.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
@@ -220,6 +229,115 @@ type EvictListener<S extends SeriesSchema> = (
   events: ReadonlyArray<EventForSchema<S>>,
 ) => void;
 
+/**
+ * @internal Whether a `pushSeries` batch would keep more memory alive
+ * than its rows need, so the chunked backing should copy it first. True
+ * when the buffers behind its arrays (each buffer counted once, so one
+ * worker message holding every column counts once) total more than
+ * twice the bytes its rows use, or a text column's dictionary has more
+ * than twice as many entries as it has rows. A `slice()` shares its
+ * parent's buffers and dictionaries, and so does an operator that
+ * rebuilds only the key (`asTime({ at: 'center' })`). Exported for tests
+ * only (not from the package index).
+ */
+export function batchHoldsExtra(
+  key: TimeKeyColumn,
+  columns: Map<string, Column>,
+  n: number,
+): boolean {
+  const tally: Tally = { held: 0, used: 0, seen: [] };
+  tallyArray(tally, key.begin, 8 * n);
+  for (const col of columns.values()) {
+    if (tallyColumn(tally, col)) return true;
+  }
+  return tally.held > 2 * tally.used;
+}
+
+/** `batchHoldsExtra`'s running count. */
+interface Tally {
+  /** Bytes of the buffers behind the batch's arrays, each counted once. */
+  held: number;
+  /** Bytes the batch's rows use in those arrays. */
+  used: number;
+  /** Buffers a partial view already counted. */
+  seen: ArrayBufferLike[];
+}
+
+function tallyArray(tally: Tally, array: ArrayBufferView, bytes: number): void {
+  tally.used += bytes;
+  const buffer = array.buffer;
+  // An array that fills its buffer holds exactly what it uses, so it needs
+  // no check against the others (the common case, and the cheap one).
+  if (buffer.byteLength === bytes) {
+    tally.held += bytes;
+    return;
+  }
+  // A plain list measured faster than a Set per call. Partial views come
+  // from a worker message (one buffer for all) or a slice (one per column,
+  // so a slice of C columns costs O(C^2) compares before it is copied).
+  if (tally.seen.includes(buffer)) return;
+  tally.seen.push(buffer);
+  tally.held += buffer.byteLength;
+}
+
+/** Counts a column's arrays; true when its dictionary alone means copy. */
+function tallyColumn(tally: Tally, col: Column): boolean {
+  if (col instanceof Float64Column) {
+    tallyArray(tally, col._values, 8 * col.length);
+    return false;
+  }
+  if ('chunks' in col) {
+    for (const chunk of col.chunks) if (tallyColumn(tally, chunk)) return true;
+    return false;
+  }
+  if (col instanceof StringColumn && col.dictionary !== undefined) {
+    if (col.dictionary.length > 2 * col.length) return true;
+    tallyArray(tally, col.indices!, 4 * col.length);
+  } else if (col instanceof BooleanColumn) {
+    tallyArray(tally, col.values, bitmapByteCount(col.length));
+  }
+  // Array columns copy their cells when sliced: nothing shared to count.
+  if (col.validity !== undefined) {
+    tallyArray(tally, col.validity.bits, bitmapByteCount(col.length));
+  }
+  return false;
+}
+
+/**
+ * @internal A compact copy of a `pushSeries` batch's time key and value
+ * columns (`columns` is updated in place; the key is returned). Number
+ * columns and the key copy their buffer with one `slice`, which measured
+ * several times faster than a per-row gather; other kinds gather, and a
+ * text column then keeps only the dictionary entries it uses. Exported
+ * for tests only (not from the package index).
+ */
+export function copyBatch(
+  key: TimeKeyColumn,
+  columns: Map<string, Column>,
+  n: number,
+): TimeKeyColumn {
+  let rows: Int32Array | undefined;
+  for (const [name, col] of columns) {
+    if (col instanceof Float64Column) {
+      columns.set(
+        name,
+        new Float64Column(col._values.slice(0, n), n, col.allFinite),
+      );
+      continue;
+    }
+    if (rows === undefined) {
+      rows = new Int32Array(n);
+      for (let i = 0; i < n; i += 1) rows[i] = i;
+    }
+    const copy = col.sliceByIndices(rows);
+    columns.set(
+      name,
+      copy instanceof StringColumn ? compactDictionary(copy) : copy,
+    );
+  }
+  return TimeKeyColumn.fromValidatedSubarray(key.begin.slice(0, n), n);
+}
+
 // ── LiveSeries ──────────────────────────────────────────────────
 
 /**
@@ -259,6 +377,17 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #onEvict: ListenerSet<EvictListener<S>>;
   /** [PND-REDUCETICK] End-of-push listeners; see `settle.ts`. */
   readonly #onSettle: ListenerSet<() => void> = new ListenerSet();
+  /**
+   * [PND-HOOKSIGNAL] Payload-free change signals (see `[ON_SIGNAL]`).
+   * Unlike `'event'` / `'evict'` listeners, these never make the chunked
+   * backing build `Event`s.
+   */
+  readonly #onEventSignal: ListenerSet<() => void> = new ListenerSet();
+  readonly #onEvictSignal: ListenerSet<() => void> = new ListenerSet();
+  /** Rows the last `#applyRetention` removed (whether or not materialized). */
+  #lastEvictCount = 0;
+  /** Rows staged by the open `_stageRowsOpen`, read by `_stageRowsClose`. */
+  #stagedCount = 0;
   /**
    * [PND-LIVFIX] Re-entrancy guard. `> 0` while a push is fanning out to
    * listeners. A push that arrives from inside a listener (`#dispatchDepth
@@ -471,12 +600,29 @@ export class LiveSeries<S extends SeriesSchema> {
 
   /**
    * @internal [PND-REDUCETICK] Subscribe to the end of every push: fires
-   * once per `push` / `pushMany` / `pushJson` (and each internal push),
-   * after `'evict'`, still inside the push. See `settle.ts`.
+   * once per `push` / `pushMany` / `pushJson` / `pushSeries` (and each
+   * internal push), after `'evict'`, still inside the push. See
+   * `settle.ts`.
    */
   _onSettle(fn: () => void): () => void {
     this.#onSettle.add(fn);
     return () => this.#onSettle.delete(fn);
+  }
+
+  /**
+   * @internal [PND-HOOKSIGNAL] Payload-free change signal for consumers
+   * that only need to know *that* the series changed (the React hooks).
+   * `fn` runs with no argument once per push in which `type`'s channel
+   * delivered at least one row, at the point of that channel's last call:
+   * for `'event'`, after the push's rows are stored and before retention;
+   * for `'evict'`, where `'evict'` fires (retention, the age sweep,
+   * `clear()`). Subscribing never makes the chunked backing build `Event`s,
+   * which an `'event'` / `'evict'` listener does for every row.
+   */
+  [ON_SIGNAL](type: 'event' | 'evict', fn: () => void): () => void {
+    const set = type === 'event' ? this.#onEventSignal : this.#onEvictSignal;
+    set.add(fn);
+    return () => set.delete(fn);
   }
 
   push(...rows: RowForSchema<S>[]): void {
@@ -499,7 +645,11 @@ export class LiveSeries<S extends SeriesSchema> {
    *
    * For JSON-shape rows arriving over the wire, prefer
    * {@link LiveSeries.pushJson} — it accepts the JSON envelope
-   * (nulls, raw timestamps) and parses through `parseJsonRow`.
+   * (nulls, raw timestamps) and parses through `parseJsonRow`. For data
+   * that already comes in columns (typed arrays off a socket or a
+   * worker), build a batch with `TimeSeries.fromColumns` and push it with
+   * {@link LiveSeries.pushSeries}: no row tuples, and on a default series
+   * no per-row check.
    *
    * **Commit granularity differs by backing.** On the `Event[]`
    * backing each row is appended then its `'event'` fires, so a
@@ -545,44 +695,249 @@ export class LiveSeries<S extends SeriesSchema> {
       // bad row refuses the batch whole (as the chunked path does) instead
       // of leaving earlier rows committed with retention, 'batch' and
       // 'evict' skipped.
-      const events = rows.map((row) => this.#validateRow(row));
-      this.#checkOrder(events);
-      this.#checkLabels(events);
-      const added: EventForSchema<S>[] = [];
-      const errors: unknown[] = [];
-
-      for (const event of events) {
-        if (this.#insertPerRow(event)) {
-          // Increment the counter immediately after a successful
-          // insert and BEFORE listener fan-out. If a listener throws
-          // partway through the loop, the event is committed in the
-          // buffer and reflected in `length` — `ingested` must
-          // reflect that too, so callers can recover from listener
-          // exceptions without observability counters lying.
-          this.#statsIngested++;
-          added.push(event);
-          this.#dispatch(this.#onEvent, event, errors);
-        } else {
-          // Drop-mode silent rejection: out-of-order event under
-          // `ordering: 'drop'`. Strict / reorder modes throw; those
-          // never reach this counter.
-          this.#statsRejected++;
-        }
-      }
-
-      if (added.length === 0) return;
-
-      // `#applyRetention` updates `#statsEvicted` internally and returns
-      // the materialized evicted events only when an `'evict'` listener
-      // will consume them.
-      const evicted = this.#applyRetention();
-
-      this.#dispatch(this.#onBatch, added, errors);
-      if (evicted.length > 0) {
-        this.#dispatch(this.#onEvict, evicted, errors);
-      }
-      rethrowFirst(errors);
+      this.#commitPerRow(rows.map((row) => this.#validateRow(row)));
     });
+  }
+
+  /**
+   * Example: `live.pushSeries(TimeSeries.fromColumns({ name: 'ticks', schema: live.schema, columns: { time, price, size } }))`.
+   * Pushes a batch `TimeSeries` as one batch: the same checks, ordering,
+   * retention and `'event'` / `'batch'` / `'evict'` listeners as
+   * {@link LiveSeries.pushMany} of its rows, and the same all-or-nothing
+   * rule (a refused batch stores nothing; the one exception, shared with
+   * `pushMany`, is a `partitionBy` router error on a default series,
+   * which comes after the batch is stored). It is how column-shaped data
+   * gets into a live series: build the batch with
+   * `TimeSeries.fromColumns` (typed arrays in) and push it. "Its rows"
+   * assumes the batch's rows and columns agree, which every validating
+   * constructor guarantees (`TimeSeries.fromEvents` doesn't check).
+   *
+   * **Where it is faster.** On a default series (`ordering: 'strict'`,
+   * `time` key) the batch's columns are stored as they are, with no
+   * per-row check and no `Event` per row, so a large batch costs about
+   * what `fromColumns` costs: 100k rows in batches of 1,600 took 1.6 ms
+   * against `pushMany`'s 17.9 ms (`scripts/perf-live-push-series.mjs`).
+   * Two things bring back an `Event` per row and most of `pushMany`'s
+   * cost: a listener on `'event'` or `'batch'` (a `window()`, `filter()`
+   * or other view built on the series is one; ~1.3-1.5x), and the other
+   * storage mode (`ordering: 'drop'` / `'reorder'`, or a `timeRange` /
+   * `interval` key), where the batch's rows go through `pushMany`'s row
+   * path (~1x). Results are the same either way. For one row at a time
+   * use `push`; for batches of a few rows whose arrays are made for that
+   * push (about 8 or fewer), `pushMany`: there the arrays and a
+   * `TimeSeries` per batch cost more than they save.
+   *
+   * **Matching.** The batch's key kind must be the live series' (the
+   * key column's name may differ). Value columns are matched by name, in
+   * any order, and must have the live column's kind; a missing or extra
+   * column is refused. (The parameter's type asks for this series'
+   * schema, so in TypeScript the by-name matching matters for a batch
+   * whose schema is only known at run time, passed with a cast.) A gap
+   * in a column the live schema marks required is refused, naming the
+   * first such row, whatever the batch's own schema says. Rows inside the
+   * batch are already in order (a `TimeSeries` is sorted); against the
+   * rows held, `ordering` applies as in `pushMany`.
+   *
+   * **The batch's buffers are shared, not copied.** On a default series
+   * the live series keeps the batch's key and number columns, and
+   * `fromColumns` keeps the `Float64Array`s it was given, so the live
+   * series ends up holding your arrays. Don't write to, reuse or pool a
+   * pushed `Float64Array` while its rows are still in the series: rows are
+   * not checked again, so a write changes rows already stored and can
+   * leave their keys out of order (lookups such as `atOrBefore` then go
+   * wrong, and a later `toTimeSeries()` throws), while a row already read
+   * with `at()` keeps its old value. If you reuse buffers, push
+   * `buf.slice(0, n)` (or a `number[]`, which `fromColumns` copies). A
+   * push made from inside a listener is queued and reads the batch when it
+   * runs, whatever the storage mode, so leave its arrays alone until then.
+   * One case is copied: a batch that would keep much more memory alive
+   * than its rows need, so a small batch never keeps a big parent alive.
+   * That is a batch whose arrays sit in buffers holding more than twice
+   * the bytes its rows use (each buffer counted once), or whose text
+   * column's dictionary has more than twice as many entries as it has
+   * rows. A `slice()` of a bigger series shares its parent's buffers and
+   * dictionaries, and so does one re-keyed with
+   * `asTime({ at: 'center' })`. Views into one buffer about the batch's
+   * size (one worker message holding every column) are kept as they are.
+   *
+   * **NaN and other non-finite numbers** in a batch from `fromColumns`
+   * are gaps, because that is how `fromColumns` reads them (`pushMany`
+   * refuses one instead): in an optional column they are stored as
+   * missing, in a required one they are refused.
+   *
+   * An empty batch is checked for shape and otherwise ignored. A push
+   * made from inside a listener is queued and runs after the current
+   * push, like `pushMany`'s.
+   *
+   * @throws TypeError when `series` is not a `TimeSeries`.
+   * @throws ValidationError on a key-kind mismatch, a missing, extra or
+   *   wrong-kind column, a gap in a required column, or a row that the
+   *   series' `ordering` refuses (e.g. a first row older than the newest
+   *   row held, under `'strict'`).
+   */
+  pushSeries(series: TimeSeries<S>): void {
+    if (!(series instanceof TimeSeries)) {
+      throw new TypeError('pushSeries: expected a TimeSeries');
+    }
+    // Checked even when empty, as pond-rs `push_series` does: a batch of
+    // the wrong shape is an error whatever its length.
+    if (series.length === 0) {
+      this.#checkSeries(series);
+      return;
+    }
+    if (this.#dispatchDepth > 0) {
+      this.#pendingPushes.push(() => this.pushSeries(series));
+      return;
+    }
+    this.#guarded(() => {
+      const columns = this.#checkSeries(series);
+      let key = series.keyColumn() as KeyColumn;
+      // The chunked backing keeps the batch's buffers. A `slice()` shares
+      // its parent's, so keeping it would keep the whole parent alive:
+      // copy a batch that holds much more than its rows need.
+      if (
+        this.#chunked &&
+        batchHoldsExtra(key as TimeKeyColumn, columns, series.length)
+      ) {
+        key = copyBatch(key as TimeKeyColumn, columns, series.length);
+      }
+      // Re-wrap the key and value columns against this series' schema:
+      // O(columns), no row is read or copied.
+      const store = ColumnarStore.fromTrustedStore(this.schema, key, columns);
+      if (this.#chunked) {
+        this.#commitChunk(store);
+        return;
+      }
+      this.#commitPerRow(materializeEventsFromStore(store, this.schema));
+    });
+  }
+
+  /**
+   * `pushSeries`' shape check: key kind, every live value column present
+   * by name with its kind, no extra column, and no gap in a column this
+   * series requires. Returns the batch's columns keyed by name.
+   */
+  #checkSeries(series: TimeSeries<S>): Map<string, Column> {
+    const live = this.schema as SeriesSchema;
+    const theirs = series.schema as SeriesSchema;
+    const theirKey = theirs[0]!.kind;
+    if (theirKey !== live[0]!.kind) {
+      throw new ValidationError(
+        `pushSeries: series '${series.name}' is keyed by '${theirKey}', ` +
+          `but live series '${this.name}' is keyed by '${live[0]!.kind}'`,
+      );
+    }
+    const column = (name: string) =>
+      (series as unknown as { column(n: string): Column | undefined }).column(
+        name,
+      );
+    const columns = new Map<string, Column>();
+    for (let j = 1; j < live.length; j += 1) {
+      const def = live[j]!;
+      const col = column(def.name);
+      if (col === undefined) {
+        const has = theirs
+          .slice(1)
+          .map((c) => c.name)
+          .join(', ');
+        throw new ValidationError(
+          `pushSeries: series '${series.name}' has no column '${def.name}' ` +
+            `(it has: ${has || 'none'})`,
+        );
+      }
+      if (col.kind !== def.kind) {
+        throw new ValidationError(
+          `pushSeries: column '${def.name}' is '${col.kind}' in series ` +
+            `'${series.name}' but '${def.kind}' in live series '${this.name}'`,
+        );
+      }
+      columns.set(def.name, col);
+    }
+    for (let j = 1; j < theirs.length; j += 1) {
+      const name = theirs[j]!.name;
+      if (!columns.has(name)) {
+        throw new ValidationError(
+          `pushSeries: series '${series.name}' has column '${name}', which ` +
+            `live series '${this.name}' does not declare`,
+        );
+      }
+    }
+    // Required is judged by this series' schema, not the batch's:
+    // `fromColumns` doesn't enforce `required`, so the batch's flag
+    // proves nothing. No validity bitmap means every cell is defined.
+    // Name the first bad cell in row order, as `pushMany` does.
+    let badRow = Infinity;
+    let badCol = 0;
+    for (let j = 1; j < live.length; j += 1) {
+      const def = live[j]!;
+      if (def.required === false) continue;
+      const col = columns.get(def.name)!;
+      const validity = col.validity;
+      if (validity === undefined || validity.definedCount >= col.length) {
+        continue;
+      }
+      let i = 0;
+      while (i < badRow && validity.isDefined(i)) i += 1;
+      if (i < badRow) {
+        badRow = i;
+        badCol = j;
+      }
+    }
+    if (badCol > 0) {
+      throw new ValidationError(
+        `pushSeries: row ${badRow} col ${badCol} (${live[badCol]!.name}) is required`,
+      );
+    }
+    return columns;
+  }
+
+  /**
+   * The per-row (`Event[]`) backing's commit, shared by `pushMany` and
+   * `pushSeries`: order and label checks for the whole batch first
+   * ([PND-BATCHATOM]), then insert, `'event'`, retention, `'batch'`,
+   * `'evict'`.
+   */
+  #commitPerRow(events: ReadonlyArray<EventForSchema<S>>): void {
+    this.#checkOrder(events);
+    this.#checkLabels(events);
+    const added: EventForSchema<S>[] = [];
+    const errors: unknown[] = [];
+
+    for (const event of events) {
+      if (this.#insertPerRow(event)) {
+        // Increment the counter immediately after a successful
+        // insert and BEFORE listener fan-out. If a listener throws
+        // partway through the loop, the event is committed in the
+        // buffer and reflected in `length` — `ingested` must
+        // reflect that too, so callers can recover from listener
+        // exceptions without observability counters lying.
+        this.#statsIngested++;
+        added.push(event);
+        this.#dispatch(this.#onEvent, event, errors);
+      } else {
+        // Drop-mode silent rejection: out-of-order event under
+        // `ordering: 'drop'`. Strict / reorder modes throw; those
+        // never reach this counter.
+        this.#statsRejected++;
+      }
+    }
+
+    if (added.length === 0) return;
+    this.#dispatch(this.#onEventSignal, undefined, errors);
+
+    // `#applyRetention` updates `#statsEvicted` internally and returns
+    // the materialized evicted events only when an `'evict'` listener
+    // will consume them.
+    const evicted = this.#applyRetention();
+
+    this.#dispatch(this.#onBatch, added, errors);
+    if (evicted.length > 0) {
+      this.#dispatch(this.#onEvict, evicted, errors);
+    }
+    if (this.#lastEvictCount > 0) {
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
+    }
+    rethrowFirst(errors);
   }
 
   /**
@@ -743,6 +1098,7 @@ export class LiveSeries<S extends SeriesSchema> {
 
     chunked.stageRows(source, indices);
     this.#statsIngested += k;
+    this.#stagedCount = k;
     const added =
       k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
         ? materializeEventsFromStoreAt(source, indices, this.schema)
@@ -769,9 +1125,17 @@ export class LiveSeries<S extends SeriesSchema> {
   _stageRowsClose(added: EventForSchema<S>[] | null, errors: unknown[]): void {
     let failure: { error: unknown } | undefined;
     try {
+      // The router has fired every staged row's `'event'` by now; the
+      // payload-free signal stands in for the last of them.
+      if (this.#stagedCount > 0) {
+        this.#dispatch(this.#onEventSignal, undefined, errors);
+      }
       const evicted = this.#applyRetention();
       if (added) this.#dispatch(this.#onBatch, added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+      if (this.#lastEvictCount > 0) {
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+      }
       if (errors.length > 0) failure = { error: errors[0] };
     } catch (error) {
       failure = { error };
@@ -831,6 +1195,7 @@ export class LiveSeries<S extends SeriesSchema> {
     if (added) {
       for (const ev of added) this.#dispatch(this.#onEvent, ev, errors);
     }
+    if (n > 0) this.#dispatch(this.#onEventSignal, undefined, errors);
 
     // Retention always runs. It updates `#statsEvicted` internally and
     // returns the materialized evicted events only when an `'evict'`
@@ -839,6 +1204,9 @@ export class LiveSeries<S extends SeriesSchema> {
 
     if (added) this.#dispatch(this.#onBatch, added, errors);
     if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+    if (this.#lastEvictCount > 0) {
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
+    }
     rethrowFirst(errors);
   }
 
@@ -911,11 +1279,15 @@ export class LiveSeries<S extends SeriesSchema> {
       }
 
       if (added.length === 0) return;
+      this.#dispatch(this.#onEventSignal, undefined, errors);
 
       const evicted = this.#applyRetention();
 
       this.#dispatch(this.#onBatch, added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
+      if (this.#lastEvictCount > 0) {
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+      }
       rethrowFirst(errors);
     });
   }
@@ -972,12 +1344,19 @@ export class LiveSeries<S extends SeriesSchema> {
     this.#statsEvicted += i;
     if (this.#onEvict.size === 0) {
       this.#storage.dropPrefix(i);
+      if (this.#onEvictSignal.size === 0) return;
+      this.#guarded(() => {
+        const errors: unknown[] = [];
+        this.#dispatch(this.#onEvictSignal, undefined, errors);
+        rethrowFirst(errors);
+      });
       return;
     }
     const evicted = this.#storage.evictPrefix(i);
     this.#guarded(() => {
       const errors: unknown[] = [];
       this.#dispatch(this.#onEvict, evicted, errors);
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
       rethrowFirst(errors);
     });
   }
@@ -1064,6 +1443,7 @@ export class LiveSeries<S extends SeriesSchema> {
       this.#statsEvicted += evicted.length;
       const errors: unknown[] = [];
       this.#dispatch(this.#onEvict, evicted, errors);
+      this.#dispatch(this.#onEvictSignal, undefined, errors);
       rethrowFirst(errors);
     }
   }
@@ -1752,6 +2132,7 @@ export class LiveSeries<S extends SeriesSchema> {
    * chunked backing's retention hot path).
    */
   #applyRetention(): ReadonlyArray<EventForSchema<S>> {
+    this.#lastEvictCount = 0;
     let evictCount = 0;
     const len = this.#storage.length;
 
@@ -1772,6 +2153,7 @@ export class LiveSeries<S extends SeriesSchema> {
     if (evictCount === 0) return [];
 
     this.#statsEvicted += evictCount;
+    this.#lastEvictCount = evictCount;
     if (this.#onEvict.size === 0) {
       this.#storage.dropPrefix(evictCount);
       return [];

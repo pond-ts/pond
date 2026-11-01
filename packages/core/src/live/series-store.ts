@@ -424,7 +424,12 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
 /* Internal helpers — key + row materialization, cache validation.            */
 /* -------------------------------------------------------------------------- */
 
-function materializeKey(keys: KeyColumn, i: number): EventKey {
+/**
+ * The `EventKey` at row `i` of a key column: a `Time`, `TimeRange` or
+ * `Interval`. Exported for `materializeEventsFromStore` (the live layer);
+ * not part of the package's public surface.
+ */
+export function materializeKey(keys: KeyColumn, i: number): EventKey {
   if (keys.kind === 'time') {
     return new Time(keys.beginAt(i));
   }

@@ -640,7 +640,8 @@ the study oracle) is done.
   P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
   merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
   J2 split the same way: J2a studies + trading calendars built 2026-10-31;
-  J2b `LiveSeries` built 2026-10-31. Next J3. Detail in the breakout plan.
+  J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
+  columns across, rows built in JS). Next J3. Detail in the breakout plan.
 
 - **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
   2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
@@ -812,11 +813,11 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   reference, so two equal arrays give a gap (the live store's
   `valuesEqual` compares them element by element). pond-rs refuses array
   partition keys. Found 2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ARRAYSLOW]** — pond-ts's array calls go row by row through
-  `Event` objects: on 100k rows `arrayAggregate` takes 220–370 ms and
-  `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
-  ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
-  and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYSLOW]** — `arrayAggregate` / `arrayExplode` now work on the
+  column (see PND_COLUMNAR_PLAN). Still open: `arrayContains` / `All` /
+  `Any` filter through `Event`s (9–71 ms on 100k rows, pond-rs 1–6 ms),
+  because they return the source's own `Event` objects, like `filter`;
+  changing that is the same identity question as [PND-FILTERTAKE].
 - **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
   number outputs, but it is all-or-nothing per call: one text output (a
   `first` of a name column) sends every column to the slow general sweep.
@@ -966,11 +967,6 @@ Robustness debt plus the queued composition workstreams. Plan:
   whole-window copy, so it suits throttled snapshots; per-frame reads go
   through [PND-COLOUT]'s appended-columns event (the spike used internal
   `_onChunk`). Data side of [PND-LIVELYR].
-- **[PND-LPUSHCOL]** — Columnar push into `LiveSeries`. `pushMany` (rows
-  only) costs ~17–23 ms per 100k ticks in Node; a CPU profile puts 89% in
-  the per-row check, including 27% making a `Time` object per tick.
-  `TimeSeries.fromColumns` takes the same ticks in ~0.9 ms. The in-process
-  half of [PND-WIRE]'s streaming append.
 - **[PND-LVWIN]** — A `live.window()` view gets slower per tick as its
   window grows: each arriving event `splice`s the oldest off an `Event[]`,
   shifting the whole array (98% of a profile). One 16 ms push into a
@@ -995,6 +991,42 @@ Robustness debt plus the queued composition workstreams. Plan:
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
   now.
+- **[PND-ONCHUNKISO]** — On a default (chunked) `LiveSeries`, a partition
+  error (a row for an undeclared group) escapes after the batch is stored, so
+  the source skips its own retention and listeners; the per-row backing
+  finishes the push, then throws. Fix by finishing then throwing, or by
+  refusing the whole batch first as pond-rs does. Needs Peter's call; detail
+  in `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-AGESCAN]** — `maxAge` retention finds its cutoff by walking rows from
+  the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
+  ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
+  so a binary search would do. Measured 2026-11-01 in
+  `perf-live-push-series.mjs`.
+- **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
+  `push_series`). Add it with a `{ pushSeries }` step in the live parity
+  generator (`packages/core/scripts/parity/live.mjs`) and
+  `crates/pond-rs/tests/live_parity.rs` in one PR: `packages/rs/test/live.mjs`
+  reruns the generator, so the step alone would break it.
+
+- **[PND-PUSHTIME]** — `pushMany` on a default series makes a `Time` per row
+  and throws it away (`batch/validate.ts`, untrusted intake); the trusted
+  branch already skips it. No API change. The spike profiled it at ~27% of
+  `pushMany` (not re-measured).
+- **[PND-COLSTYPED]** — Type `fromColumns`' `columns` from the schema so a
+  misspelt column name fails to compile. Public type change; needs Peter's OK.
+- **[PND-LIVEFASTDROP]** — `pushSeries` into a `drop` / `reorder` series
+  builds an event per row, like `pushMany`. pond-rs takes columns straight in
+  when nothing is built on the series; port that if a consumer pushes columns
+  into such a series.
+- **[PND-CLAMPHINT]** — The chunked `LiveSeries` intra-batch order error
+  suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
+  message.
+- **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
+  it builds, and each retention eviction rebuilds that whole cache. Building a
+  view over a big series reads every row through `at()`, so the pushes after
+  it slow down until retention has dropped those rows: after reading 200k
+  rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
+  0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
 
 ### Streaming semantics (Phase 4.5)
 
@@ -1039,6 +1071,29 @@ consumer signal. Plan:
   Friction-gated: no consumer has asked yet.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
+- **[PND-HOOKSIGNAL]** — The React hooks `useSnapshot`, `useLatest` and
+  `useLiveVersion` subscribe to `'event'` (and `useLiveVersion` to
+  `'evict'`) only as a "something changed" signal, but on the column-native
+  `LiveSeries` backing any such listener makes every push build one `Event`
+  per row (and one per evicted row). Measured: 200k rows pushed in batches
+  of 1000 into a 10k-row buffer take 25 ms with no listener, 64 ms with an
+  `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
+  payload-free change signal the hooks use when the source offers it.
+  `useEventRate` gains nothing (its window view stores `Event`s anyway).
+- **[PND-SPANFILTER]** — `before`, `after`, `tail`, `within`,
+  `overlapping` and `containedBy` run `filter(fn)` with a test on the key
+  alone, so the first call on a series builds an `Event` for every row:
+  ~1.1–1.5 s on 1M rows, against ~1 ms for `slice` over the same rows.
+  Fix: read the stored begin/end times (binary search where the rows are
+  sorted by the tested time) and select rows, keeping the result's events
+  identical (`===`) to the source's as `filter` does.
+- **[PND-ROWSOUT]** — `toJSON`, `toRows`, `toObjects` and `toPoints` build
+  an `Event` per row: 1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s.
+  Fix: write each row from the columns directly.
+- **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
+  groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
+  1M rows with 8 groups. Fix: group row numbers from the column and gather
+  each group's columns, as `partitionBy` does.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.

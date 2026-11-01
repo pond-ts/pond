@@ -129,6 +129,15 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: npm
+
+      # Only test/tojson.mjs needs these: it compares against pond-ts's
+      # own toJSON, from packages/core/dist.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build pond-ts
+        run: npm run build --workspace=pond-ts
 
       - name: Build
         run: packages/rs/build.sh
@@ -147,6 +156,9 @@ jobs:
 
       - name: Live parity through JS
         run: node packages/rs/test/live.mjs
+
+      - name: toJSON against pond-ts
+        run: node packages/rs/test/tojson.mjs
 
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:

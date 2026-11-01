@@ -12,22 +12,9 @@
 //! group equal ones (O(N); interval keys hash labels within a run of equal
 //! spans) and copies the kept rows (O(N·C)).
 
-use std::time::Instant;
+mod common;
 
 use pond_rs::{Align, AlignMethod, Column, Keep, Materialize, Pick, Sequence, TimeSeries};
-
-fn median_ms(mut f: impl FnMut()) -> f64 {
-    f();
-    let mut t: Vec<f64> = (0..7)
-        .map(|_| {
-            let s = Instant::now();
-            f();
-            s.elapsed().as_secs_f64() * 1000.0
-        })
-        .collect();
-    t.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    t[3]
-}
 
 /// Rows, and the sum of `v` where present.
 fn checksum(s: &TimeSeries) -> (usize, f64) {
@@ -204,7 +191,7 @@ fn main() -> pond_rs::Result<()> {
         let (rows, sum) = checksum(&f());
         println!(
             "| {name} | {:.1} ms | {rows} rows, sum {sum} |",
-            median_ms(|| drop(f()))
+            common::time_case(name, 7, &f)
         );
     }
     Ok(())

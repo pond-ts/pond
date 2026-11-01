@@ -286,9 +286,8 @@ export class StringColumn {
    * shared. Fallback: gathers strings into a new array.
    *
    * **Dictionary retention.** The output keeps the full source
-   * dictionary even if some entries are no longer referenced. A
-   * future `compactDictionary` op (deferred until a use case
-   * justifies it) trims unused entries.
+   * dictionary even if some entries are no longer referenced;
+   * `compactDictionary` trims the unused ones.
    */
   sliceByIndices(sourceRowIndices: Int32Array): StringColumn {
     const outLength = sourceRowIndices.length;
@@ -345,6 +344,34 @@ export function stringColumnDictEncoded(
     indices,
     ...(validity !== undefined ? { validity } : {}),
   });
+}
+
+/**
+ * A dict-encoded column rebuilt with only the dictionary entries its
+ * defined cells use, in first-use order; a fallback column is returned
+ * as it is. O(length): a slice or gather shares its source's whole
+ * dictionary, so a 100-row slice of a column with 50k distinct values
+ * would otherwise keep all 50k strings alive.
+ */
+export function compactDictionary(column: StringColumn): StringColumn {
+  const { dictionary, indices, validity, length } = column;
+  if (dictionary === undefined) return column;
+  const remap = new Map<number, number>();
+  const kept: string[] = [];
+  const out = new Int32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    // A missing cell's index is a placeholder that is never read.
+    if (validity !== undefined && !validity.isDefined(i)) continue;
+    const old = indices![i]!;
+    let next = remap.get(old);
+    if (next === undefined) {
+      next = kept.length;
+      remap.set(old, next);
+      kept.push(dictionary[old]!);
+    }
+    out[i] = next;
+  }
+  return stringColumnDictEncoded(kept, out, validity);
 }
 
 /**
