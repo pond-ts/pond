@@ -51,29 +51,26 @@ import type {
   SeriesSchema,
 } from '../schema/index.js';
 import type { ReadableLiveStorage } from './live-storage.js';
+import { materializeKey } from './series-store.js';
 
 /**
- * Materialize a fresh `Event[]` from a (time / timeRange) store —
- * used by `LiveSeries`'s transient `'event'` / `'batch'` fan-out on
- * the chunked path. These events are NOT cached (young-gen, GC'd
- * after the listeners run), so they don't defeat the heap win.
+ * Materialize a fresh `Event[]` from a store of any key kind (time /
+ * timeRange / interval) — used by `LiveSeries`'s transient `'event'` /
+ * `'batch'` fan-out on the chunked path, and by `pushSeries` to hand a
+ * batch to the per-row backing. These events are NOT cached (young-gen,
+ * GC'd after the listeners run), so they don't defeat the heap win.
  */
 export function materializeEventsFromStore<S extends SeriesSchema>(
   store: ColumnarStore<S>,
   schema: S,
 ): EventForSchema<S>[] {
-  const keyKind = schema[0].kind;
   const valueNames: string[] = [];
   for (let i = 1; i < schema.length; i += 1) {
     valueNames.push((schema[i] as { name: string }).name);
   }
   const out: EventForSchema<S>[] = new Array(store.length);
   for (let i = 0; i < store.length; i += 1) {
-    const begin = store.beginAt(i);
-    const key =
-      keyKind === 'time'
-        ? new Time(begin)
-        : new TimeRange({ start: begin, end: store.endAt(i) });
+    const key = materializeKey(store.keys, i);
     const data: Record<string, unknown> = {};
     for (let v = 0; v < valueNames.length; v += 1) {
       data[valueNames[v]!] = store.valueAt(i, valueNames[v]!);

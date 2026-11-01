@@ -72,6 +72,8 @@ import {
 } from './live-chunked-storage.js';
 import { validateAndNormalizeColumnar } from '../batch/validate.js';
 import { ColumnarStore } from '../columnar/store.js';
+import type { Column } from '../columnar/column.js';
+import type { KeyColumn } from '../columnar/key-column.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
@@ -471,7 +473,8 @@ export class LiveSeries<S extends SeriesSchema> {
 
   /**
    * @internal [PND-REDUCETICK] Subscribe to the end of every push: fires
-   * once per `push` / `pushMany` / `pushJson` (and each internal push),
+   * once per `push` / `pushMany` / `pushJson` / `pushSeries` (and each
+   * internal push),
    * after `'evict'`, still inside the push. See `settle.ts`.
    */
   _onSettle(fn: () => void): () => void {
@@ -499,7 +502,11 @@ export class LiveSeries<S extends SeriesSchema> {
    *
    * For JSON-shape rows arriving over the wire, prefer
    * {@link LiveSeries.pushJson} — it accepts the JSON envelope
-   * (nulls, raw timestamps) and parses through `parseJsonRow`.
+   * (nulls, raw timestamps) and parses through `parseJsonRow`. For data
+   * that already comes in columns (typed arrays off a socket or a
+   * worker), build a batch with `TimeSeries.fromColumns` and push it with
+   * {@link LiveSeries.pushSeries}: no row tuples, and on a default series
+   * no per-row check.
    *
    * **Commit granularity differs by backing.** On the `Event[]`
    * backing each row is appended then its `'event'` fires, so a
@@ -545,44 +552,205 @@ export class LiveSeries<S extends SeriesSchema> {
       // bad row refuses the batch whole (as the chunked path does) instead
       // of leaving earlier rows committed with retention, 'batch' and
       // 'evict' skipped.
-      const events = rows.map((row) => this.#validateRow(row));
-      this.#checkOrder(events);
-      this.#checkLabels(events);
-      const added: EventForSchema<S>[] = [];
-      const errors: unknown[] = [];
-
-      for (const event of events) {
-        if (this.#insertPerRow(event)) {
-          // Increment the counter immediately after a successful
-          // insert and BEFORE listener fan-out. If a listener throws
-          // partway through the loop, the event is committed in the
-          // buffer and reflected in `length` — `ingested` must
-          // reflect that too, so callers can recover from listener
-          // exceptions without observability counters lying.
-          this.#statsIngested++;
-          added.push(event);
-          this.#dispatch(this.#onEvent, event, errors);
-        } else {
-          // Drop-mode silent rejection: out-of-order event under
-          // `ordering: 'drop'`. Strict / reorder modes throw; those
-          // never reach this counter.
-          this.#statsRejected++;
-        }
-      }
-
-      if (added.length === 0) return;
-
-      // `#applyRetention` updates `#statsEvicted` internally and returns
-      // the materialized evicted events only when an `'evict'` listener
-      // will consume them.
-      const evicted = this.#applyRetention();
-
-      this.#dispatch(this.#onBatch, added, errors);
-      if (evicted.length > 0) {
-        this.#dispatch(this.#onEvict, evicted, errors);
-      }
-      rethrowFirst(errors);
+      this.#commitPerRow(rows.map((row) => this.#validateRow(row)));
     });
+  }
+
+  /**
+   * Example: `live.pushSeries(TimeSeries.fromColumns({ name: 'ticks', schema: live.schema, columns: { time, price, size } }))`.
+   * Pushes a batch `TimeSeries` as one batch: the same checks, ordering,
+   * retention and `'event'` / `'batch'` / `'evict'` listeners as
+   * {@link LiveSeries.pushMany} of its rows, and the same all-or-nothing
+   * rule (a refused batch stores nothing). It is how column-shaped data
+   * gets into a live series: build the batch with
+   * `TimeSeries.fromColumns` (typed arrays in) and push it.
+   *
+   * **Where it is faster.** On a default series (`ordering: 'strict'`,
+   * `time` key) the batch's columns are stored as they are, with no
+   * per-row check and no `Event` per row, so a large batch costs about
+   * what `fromColumns` costs. Two things bring back an `Event` per row
+   * and most of `pushMany`'s cost: a listener on `'event'` or `'batch'`
+   * (a `window()`, `filter()` or other view built on the series is one),
+   * and the other storage mode (`ordering: 'drop'` / `'reorder'`, or a
+   * `timeRange` / `interval` key), where the batch's rows go through
+   * `pushMany`'s row path. Results are the same either way.
+   *
+   * **Matching.** The batch's key kind must be the live series' (the
+   * key column's name may differ). Value columns are matched by name, in
+   * any order, and must have the live column's kind; a missing or extra
+   * column is refused. A gap in a column the live schema marks required
+   * is refused, naming the row, whatever the batch's own schema says.
+   * Rows already in order inside the batch (a `TimeSeries` is sorted);
+   * across batches, `ordering` applies as in `pushMany`.
+   *
+   * **The batch's buffers are shared, not copied.** On a default series
+   * the live series keeps the batch's key and number columns, and
+   * `fromColumns` keeps the `Float64Array`s it was given, so the live
+   * series ends up holding your arrays. Don't write to, reuse or pool a
+   * pushed `Float64Array` while its rows are still in the series; push
+   * `buf.slice(0, n)` (or a `number[]`, which `fromColumns` copies) if
+   * you reuse buffers. A `Float64Array` that is a view into a bigger
+   * buffer (say, one transferred worker message holding every column)
+   * keeps that whole buffer alive until the rows leave the series.
+   *
+   * **NaN and other non-finite numbers** are gaps, as everywhere in
+   * pond: in an optional column they are stored as missing, in a
+   * required one they are refused.
+   *
+   * An empty batch is checked for shape and otherwise ignored. A push
+   * made from inside a listener is queued and runs after the current
+   * push, like `pushMany`'s.
+   *
+   * @throws TypeError when `series` is not a `TimeSeries`.
+   * @throws ValidationError on a key-kind mismatch, a missing, extra or
+   *   wrong-kind column, a gap in a required column, or a row that the
+   *   series' `ordering` refuses (e.g. a first row older than the newest
+   *   row held, under `'strict'`).
+   */
+  pushSeries(series: TimeSeries<S>): void {
+    if (!(series instanceof TimeSeries)) {
+      throw new TypeError('pushSeries: expected a TimeSeries');
+    }
+    // Checked even when empty, as pond-rs `push_series` does: a batch of
+    // the wrong shape is an error whatever its length.
+    if (series.length === 0) {
+      this.#checkSeries(series);
+      return;
+    }
+    if (this.#dispatchDepth > 0) {
+      this.#pendingPushes.push(() => this.pushSeries(series));
+      return;
+    }
+    this.#guarded(() => {
+      const columns = this.#checkSeries(series);
+      // Re-wrap the batch's own key and value columns against this
+      // series' schema: O(columns), no row is read or copied.
+      const store = ColumnarStore.fromTrustedStore(
+        this.schema,
+        series.keyColumn() as KeyColumn,
+        columns,
+      );
+      if (this.#chunked) {
+        this.#commitChunk(store);
+        return;
+      }
+      this.#commitPerRow(materializeEventsFromStore(store, this.schema));
+    });
+  }
+
+  /**
+   * `pushSeries`' shape check: key kind, every live value column present
+   * by name with its kind, no extra column, and no gap in a column this
+   * series requires. Returns the batch's columns keyed by name.
+   */
+  #checkSeries(series: TimeSeries<S>): Map<string, Column> {
+    const live = this.schema as SeriesSchema;
+    const theirs = series.schema as SeriesSchema;
+    const theirKey = theirs[0]!.kind;
+    if (theirKey !== live[0]!.kind) {
+      throw new ValidationError(
+        `pushSeries: series '${series.name}' is keyed by '${theirKey}', ` +
+          `but live series '${this.name}' is keyed by '${live[0]!.kind}'`,
+      );
+    }
+    const column = (name: string) =>
+      (series as unknown as { column(n: string): Column | undefined }).column(
+        name,
+      );
+    const columns = new Map<string, Column>();
+    for (let j = 1; j < live.length; j += 1) {
+      const def = live[j]!;
+      const col = column(def.name);
+      if (col === undefined) {
+        const has = theirs
+          .slice(1)
+          .map((c) => c.name)
+          .join(', ');
+        throw new ValidationError(
+          `pushSeries: series '${series.name}' has no column '${def.name}' ` +
+            `(it has: ${has || 'none'})`,
+        );
+      }
+      if (col.kind !== def.kind) {
+        throw new ValidationError(
+          `pushSeries: column '${def.name}' is '${col.kind}' in series ` +
+            `'${series.name}' but '${def.kind}' in live series '${this.name}'`,
+        );
+      }
+      columns.set(def.name, col);
+    }
+    for (let j = 1; j < theirs.length; j += 1) {
+      const name = theirs[j]!.name;
+      if (!columns.has(name)) {
+        throw new ValidationError(
+          `pushSeries: series '${series.name}' has column '${name}', which ` +
+            `live series '${this.name}' does not declare`,
+        );
+      }
+    }
+    // Required is judged by this series' schema, not the batch's:
+    // `fromColumns` doesn't enforce `required`, so the batch's flag
+    // proves nothing. No validity bitmap means every cell is defined.
+    for (let j = 1; j < live.length; j += 1) {
+      const def = live[j]!;
+      if (def.required === false) continue;
+      const col = columns.get(def.name)!;
+      const validity = col.validity;
+      if (validity === undefined || validity.definedCount >= col.length) {
+        continue;
+      }
+      let i = 0;
+      while (validity.isDefined(i)) i += 1;
+      throw new ValidationError(
+        `pushSeries: row ${i} col ${j} (${def.name}) is required`,
+      );
+    }
+    return columns;
+  }
+
+  /**
+   * The per-row (`Event[]`) backing's commit, shared by `pushMany` and
+   * `pushSeries`: order and label checks for the whole batch first
+   * ([PND-BATCHATOM]), then insert, `'event'`, retention, `'batch'`,
+   * `'evict'`.
+   */
+  #commitPerRow(events: ReadonlyArray<EventForSchema<S>>): void {
+    this.#checkOrder(events);
+    this.#checkLabels(events);
+    const added: EventForSchema<S>[] = [];
+    const errors: unknown[] = [];
+
+    for (const event of events) {
+      if (this.#insertPerRow(event)) {
+        // Increment the counter immediately after a successful
+        // insert and BEFORE listener fan-out. If a listener throws
+        // partway through the loop, the event is committed in the
+        // buffer and reflected in `length` — `ingested` must
+        // reflect that too, so callers can recover from listener
+        // exceptions without observability counters lying.
+        this.#statsIngested++;
+        added.push(event);
+        this.#dispatch(this.#onEvent, event, errors);
+      } else {
+        // Drop-mode silent rejection: out-of-order event under
+        // `ordering: 'drop'`. Strict / reorder modes throw; those
+        // never reach this counter.
+        this.#statsRejected++;
+      }
+    }
+
+    if (added.length === 0) return;
+
+    // `#applyRetention` updates `#statsEvicted` internally and returns
+    // the materialized evicted events only when an `'evict'` listener
+    // will consume them.
+    const evicted = this.#applyRetention();
+
+    this.#dispatch(this.#onBatch, added, errors);
+    if (evicted.length > 0) {
+      this.#dispatch(this.#onEvict, evicted, errors);
+    }
+    rethrowFirst(errors);
   }
 
   /**

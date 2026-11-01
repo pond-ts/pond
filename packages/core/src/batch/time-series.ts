@@ -1077,12 +1077,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * aligned length).
    *
    * **`Float64Array` inputs are adopted, not copied** (zero-copy — the point of
-   * the fast path): the resulting series' columns alias the caller's buffers.
-   * Mutating an adopted buffer after construction mutates the series. Pass a
-   * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied. (**`ordering: 'reorder'` disables the
-   * adoption** — a reorder needs its own buffers, so every column is copied
-   * when sorting.)
+   * the fast path): the resulting series' columns alias the caller's buffers,
+   * the key column's included. Mutating an adopted buffer after construction
+   * mutates the series. Pass a fresh buffer (e.g. straight off a decode) if
+   * this matters; `number[]` columns are always copied. (**`ordering:
+   * 'reorder'` disables the adoption** — a reorder needs its own buffers, so
+   * every column is copied when sorting.) {@link LiveSeries.pushSeries} keeps
+   * the same buffers on a default live series, so the rule lasts as long as
+   * the rows stay in that series.
    *
    * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
    * `atTime`, range queries) rely on it — so an out-of-order columnar input
