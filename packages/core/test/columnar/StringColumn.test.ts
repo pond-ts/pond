@@ -1090,24 +1090,64 @@ describe('Direct-constructor fallback rejects undefined slots without validity',
 
 describe('compactDictionary', () => {
   it('keeps only the entries defined cells use, in first-use order', () => {
-    // 'c' (index 2) sits only under a gap; 'd' is unused.
-    const validity = validityFromBits(Uint8Array.of(0b1011), 4);
+    // 'c' (index 2) sits only under a gap; 'd' is unused. Both 'b' and
+    // 'a' repeat, so each must map back to the entry it got first.
+    const validity = validityFromBits(Uint8Array.of(0b11011), 5);
     const col = stringColumnDictEncoded(
       ['a', 'b', 'c', 'd'],
-      Int32Array.of(1, 0, 2, 1),
+      Int32Array.of(1, 0, 2, 0, 1),
       validity,
     );
     const out = compactDictionary(col);
     expect(out.dictionary).toEqual(['b', 'a']);
-    expect(Array.from(out.indices!)).toEqual([0, 1, 0, 0]);
+    expect(Array.from(out.indices!)).toEqual([0, 1, 0, 1, 0]);
     expect(out.validity).toBe(validity);
-    expect([0, 1, 2, 3].map((i) => out.read(i))).toEqual([
+    expect([0, 1, 2, 3, 4].map((i) => out.read(i))).toEqual([
       'b',
       'a',
       undefined,
+      'a',
       'b',
     ]);
   });
+
+  // Rows and dictionary sizes either side of each remap's edge: a lookup
+  // table (256+ rows, dictionary up to 8 times the rows) or a Map (fewer
+  // rows, or a dictionary beyond that). Both give the same output, so these
+  // cases check each path's output; which path runs only shows in speed.
+  for (const [rows, entries] of [
+    [300, 900],
+    [300, 300 * 8],
+    [300, 300 * 8 + 1],
+    [256, 256 * 8],
+    [255, 900],
+    [8, 300],
+  ] as const) {
+    it(`matches the source cell for cell (${rows} rows, ${entries} entries)`, () => {
+      const dictionary = Array.from({ length: entries }, (_, i) => `v${i}`);
+      // Every 7th cell a gap; the rest cycle through 40 entries spread over
+      // the dictionary, so most values repeat.
+      const indices = Int32Array.from(
+        { length: rows },
+        (_, i) => ((i % 40) * 97) % entries,
+      );
+      const bits = new Uint8Array(Math.ceil(rows / 8));
+      for (let i = 0; i < rows; i += 1) {
+        if (i % 7 !== 3) bits[i >> 3]! |= 1 << (i & 7);
+      }
+      const col = stringColumnDictEncoded(
+        dictionary,
+        indices,
+        validityFromBits(bits, rows),
+      );
+      const out = compactDictionary(col);
+      const want = Array.from({ length: rows }, (_, i) => col.read(i));
+      expect(Array.from({ length: rows }, (_, i) => out.read(i))).toEqual(want);
+      expect(out.dictionary).toEqual([
+        ...new Set(want.filter((v) => v !== undefined)),
+      ]);
+    });
+  }
 
   it('gives an empty dictionary when every cell is a gap', () => {
     const col = stringColumnDictEncoded(

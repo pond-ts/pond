@@ -889,14 +889,17 @@ as in the `TimeSeries::new` call in the Rust tab above.
 
 :::warning[Adopted, not copied]
 Because a `Float64Array` column is adopted by reference, mutating the source
-buffer after construction mutates the series. Hand `fromColumns` a buffer you're
+buffer after construction mutates the series, and transferring it to a worker
+(`postMessage(msg, [buffer])`) breaks the series: its values read back as
+missing, or operations such as `slice` throw. Hand `fromColumns` a buffer you're
 done writing to — freshly decoded output is the common case and is naturally
 safe. `number[]` columns are always copied, so this only applies to the
 typed-array path. The time key's `Float64Array` is adopted too. A series pushed
 into a default live series (`ordering: 'strict'`, a `time` key) with
 [`pushSeries`](live/live-series#pushing-columns-pushseries) is kept as it is
-(unless it would keep a much bigger buffer alive, which is copied), so the
-same rule holds for as long as its rows stay in that live series.
+(unless it has 8 rows or fewer, or would keep a much bigger buffer alive; those
+are copied), so the same rule holds for as long as its rows stay in that live
+series.
 :::
 
 :::tip[Why this matters for interactive charts]
