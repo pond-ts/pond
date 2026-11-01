@@ -603,6 +603,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
   a gap check.
 
+### Changed
+
+- **`useSnapshot`, `useLatest` and `useLiveVersion` no longer make a
+  `LiveSeries` build an `Event` per pushed row** ([PND-HOOKSIGNAL]). They
+  listened for `'event'` (and `useLiveVersion` for `'evict'`) only to learn
+  that something changed, which made the column-native backing build an
+  `Event` for every pushed and evicted row. They now use an internal change
+  signal that fires at the same moments with no payload. 200k rows into a
+  10k-row buffer, batches of 1,000, with `useLiveVersion`'s subscriptions:
+  108–141 ms → 25–36 ms (no listener: 24 ms). `useSnapshot` and `useLatest`
+  return the same values. `useLiveVersion`'s token still changes on every
+  change but now advances once per push rather than once per row (it was
+  always meant to be compared, not counted). Views, aggregations and rolling
+  sources work as before.
+
 ### Fixed
 
 - **Column expressions** (follow-up to [PND-EXPR], from a Codex review): a

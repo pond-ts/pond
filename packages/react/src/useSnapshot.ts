@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LiveSource, SeriesSchema } from 'pond-ts';
 import type { TimeSeries } from 'pond-ts';
 import { takeSnapshot } from './takeSnapshot.js';
+import { onSourceChange } from './changeSignal.js';
 
 export interface UseSnapshotOptions {
   /** Minimum milliseconds between snapshot rebuilds. Default 100. Set to 0 for immediate. */
@@ -71,7 +72,7 @@ export function useSnapshot<S extends SeriesSchema>(
       }
     };
 
-    const unsub = source.on('event', () => {
+    const unsub = onSourceChange(source, 'event', () => {
       if (throttleMs === 0) {
         if (sourceRef.current) {
           setSnapshot(
