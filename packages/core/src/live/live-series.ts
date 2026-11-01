@@ -1670,22 +1670,14 @@ export class LiveSeries<S extends SeriesSchema> {
 
   window(size: RollingWindow): LiveView<S> {
     if (typeof size === 'number' && Number.isInteger(size) && size > 0) {
-      const count = size;
       return new LiveView(this, (event: EventForSchema<S>) => event, {
-        evict: (events: readonly EventForSchema<S>[]) =>
-          Math.max(0, events.length - count),
+        keep: { count: size },
       });
     }
     if (typeof size === 'string') {
       const ms = parseDuration(size);
       return new LiveView(this, (event: EventForSchema<S>) => event, {
-        evict: (events: readonly EventForSchema<S>[]) => {
-          if (events.length === 0) return 0;
-          const cutoff = events[events.length - 1]!.begin() - ms;
-          let i = 0;
-          while (i < events.length && events[i]!.begin() < cutoff) i++;
-          return i;
-        },
+        keep: { ms },
         windowMs: ms,
       });
     }
