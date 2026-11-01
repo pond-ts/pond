@@ -274,6 +274,10 @@ const sidebars: SidebarsConfig = {
         'how-to-guides/ingesting-messy-data',
         'how-to-guides/histograms',
         'how-to-guides/categorical-charts',
+        'how-to-guides/rendering-large-series',
+        'how-to-guides/air-quality-bands',
+        'how-to-guides/streaming-aggregator',
+        'how-to-guides/live-chart-in-a-worker',
       ],
     },
     {

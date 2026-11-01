@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Worker chart</title>
+    <link rel="icon" href="data:," />
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #0b0f14;
+        color: #cbd2d9;
+        font:
+          13px ui-monospace,
+          monospace;
+      }
+      .chart {
+        position: relative;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 360px;
+      }
+      #tooltip {
+        position: absolute;
+        pointer-events: none;
+        padding: 2px 6px;
+        background: #1f2933;
+        border: 1px solid #3e4c59;
+        white-space: pre;
+      }
+      p {
+        margin: 8px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chart">
+      <canvas></canvas>
+      <div id="tooltip" hidden></div>
+    </div>
+    <p id="status">connecting…</p>
+    <p id="work"></p>
+    <p>
+      <label
+        ><input type="checkbox" id="busy" /> busy page (40 ms of every
+        50)</label
+      >
+      · URL params: <code>?rate=10000&amp;window=60</code>
+    </p>
+    <script type="module" src="page.js"></script>
+  </body>
+</html>

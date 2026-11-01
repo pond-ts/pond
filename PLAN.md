@@ -324,8 +324,10 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   unexported draw functions, page-thread hit-testing and DOM theming.
   Its guide should show the socket on its own worker (in the spike that
   kept every tick flowing where the drawing worker's own socket fell
-  behind). Also fix `drawLine`'s fresh `boundaries = []` default
-  (defeats the M4 cache for direct callers) before exporting draw functions.
+  behind); an interim guide without the charts package shipped 2026-11-01
+  (`how-to-guides/live-chart-in-a-worker`). Also fix `drawLine`'s fresh
+  `boundaries = []` default (defeats the M4 cache for direct callers)
+  before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on

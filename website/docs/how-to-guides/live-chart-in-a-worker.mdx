@@ -1,0 +1,586 @@
+---
+title: A live chart at 120 fps, off the main thread
+sidebar_position: 8
+---
+
+# A live chart at 120 fps, off the main thread
+
+I wanted a live market chart that scrolls at the screen's full frame rate,
+60 or 120 frames a second, with thousands of ticks arriving every second,
+and that keeps doing so while the rest of the page is busy. On the page's
+own thread (the "main thread", which also runs your app, React, layout and
+input) that last part is the problem: one 40 ms task and the chart misses
+frames. So the chart below runs in a Web Worker and draws on an
+`OffscreenCanvas`, a second worker owns the WebSocket, and the page only
+passes its size and the pointer along.
+
+The short version:
+
+- **Hand the canvas to a worker** with `transferControlToOffscreen()`. The
+  worker draws on every frame with its own `requestAnimationFrame`, and a
+  busy page doesn't slow it down.
+- **Give the WebSocket its own worker**, which turns each message into
+  columns and passes them on without copying.
+- **Keep the ticks in a `LiveSeries`**, fed with `pushSeries`, for hover
+  lookups and anything else that needs the raw data.
+- **Draw one bucket per pixel column**, filled as ticks arrive, so a frame
+  costs the same at 10 thousand points or 30 million.
+
+The code is in the pond repo at
+[**`apps/worker-chart`**](https://github.com/pond-ts/pond/tree/main/apps/worker-chart),
+about 800 lines including a made-up feed, plus a headless browser check. File
+paths in square brackets point at it. It builds on the
+[offscreen-stream spike](https://github.com/pond-ts/pond/blob/main/spikes/offscreen-stream/REPORT.md),
+which measured the method on a MacBook Pro's 120 Hz screen; its numbers
+are in [section 8](#8-what-it-costs).
+
+:::note[Two things to know first]
+
+- **`pushSeries` needs the first pond-ts release after 0.75.0.** Until
+  that's out, build pond-ts from `main` (the example links the repo's own
+  copy).
+- **pond's charts can't run in a worker yet.** `LineChart` draws inside
+  React and hands the canvas functions, which can't be sent to a worker.
+  So this guide draws with its own code: about 80 lines for the line,
+  plus axes and labels. A worker mode for the charts is planned
+  ([section 10](#10-whats-coming)).
+
+:::
+
+```
+feed ──WebSocket──▶ socket worker ──columns──▶ render worker
+                    decodes each   (transferred) LiveSeries + buckets,
+                    message                      draws every frame on
+                                                 the OffscreenCanvas
+                                                    ▲            │
+                                size, pointer x     │            │ stats, picked tick
+                    page (DOM, tooltip) ────────────┘ ◀──────────┘
+```
+
+---
+
+## 1. Why the main thread is the problem
+
+Everything a page does in JavaScript runs on one thread, and a browser
+can only paint a frame when that thread is free. At 120 Hz a frame comes
+every 8.3 ms. A chart drawn on the page thread therefore shares those
+8.3 ms with everything else the app does, and a long task delays the
+frame. Moving the drawing into a worker gives it a thread of its own.
+
+The spike measured exactly this on the Mac, at the screen's full
+resolution, with 100,000 ticks a second and a 10-second window (about
+990,000 points), while the page burned 40 ms of every 50:
+
+| Chart drawn on           | Frames a second | Slowest 5% of frames | Tick to drawn frame |
+| ------------------------ | --------------- | -------------------- | ------------------- |
+| a worker                 | 120             | 10.3 ms              | 15 ms               |
+| the page thread          | 33              | 47 ms                | 56 ms               |
+| a worker, buckets        | 120             | 10.2 ms              | 10 ms               |
+| the page thread, buckets | 60              | 44 ms                | 30 ms               |
+
+The first two rows used `@pond-ts/charts`' own line drawing; the last two
+the bucket drawing in section 5. Either way the worker chart didn't notice
+the busy page, while the page's own frame rate fell to 62. The delay grows
+on the page thread too, because the socket's messages queue behind the
+page's work. (The 10 ms "slowest 5%" on the worker is the Mac's normal
+frame-to-frame jitter: on a quiet page the page-thread chart showed the
+same.)
+
+## 2. The page hands over the canvas
+
+The page creates both workers, connects them with a `MessageChannel`, and
+sends the render worker the canvas:
+
+```ts
+// [src/page.ts], trimmed
+const render = new Worker('render-worker.js', { type: 'module' });
+const socket = new Worker('socket-worker.js', { type: 'module' });
+
+// The socket worker sends batches straight to the render worker over this
+// channel; they never pass through the page.
+const feed = new MessageChannel();
+const offscreen = canvas.transferControlToOffscreen();
+const box = canvas.getBoundingClientRect();
+render.postMessage(
+  {
+    type: 'init',
+    canvas: offscreen,
+    feed: feed.port2,
+    width: box.width,
+    height: box.height,
+    dpr: devicePixelRatio,
+    columns: Math.ceil(screen.width * devicePixelRatio),
+    windowMs: windowSec * 1000,
+  },
+  [offscreen, feed.port2],
+);
+socket.postMessage(
+  {
+    url: `ws://${location.host}/stream?rate=${rate}&prefill=${windowSec}`,
+    port: feed.port1,
+  },
+  [feed.port1],
+);
+```
+
+Three things to notice:
+
+- **The canvas and the port go in the transfer list** (the second
+  argument). A transferred object moves to the worker; the page can't use
+  it afterwards.
+- **After the transfer the page can't set the canvas's pixel size.** The
+  `canvas` element still sits in the page and CSS still sizes it, but only
+  the worker can set `width` and `height`. So the page watches its size
+  and tells the worker:
+
+  ```ts
+  // [src/page.ts]
+  const sendSize = () => {
+    const { width, height } = canvas.getBoundingClientRect();
+    render.postMessage({
+      type: 'resize',
+      width,
+      height,
+      dpr: devicePixelRatio,
+    });
+  };
+  new ResizeObserver(sendSize).observe(canvas);
+  ```
+
+  A `ResizeObserver` doesn't fire when only the pixel ratio changes (the
+  window moved to a screen with a different one), so the example also
+  listens to a `matchMedia('(resolution: …dppx)')` query.
+
+- **`columns` is the screen's width in device pixels**, fixed for the
+  session. Section 5 explains why.
+
+`OffscreenCanvas` and `requestAnimationFrame` in a worker both work in
+every current major browser (Chrome 69, Edge 79, Firefox 105 for
+`OffscreenCanvas`, Safari 16.4). The numbers in this guide are from Chrome
+only.
+
+An exception thrown in a worker doesn't reach the page's console
+handlers, and the chart can look alive with its feed dead. The example
+puts any worker error in the status line (`worker.onerror`).
+
+## 3. The socket gets its own worker
+
+The socket worker does one thing: it reads each WebSocket message and
+passes the ticks on as one `Float64Array` per column. The feed sends
+binary messages, `[sendTime, n, droppedSoFar, time0, price0, size0, time1, …]`,
+every 16 ms:
+
+```ts
+// [src/socket-worker.ts]
+self.onmessage = (ev: MessageEvent<{ url: string; port: MessagePort }>) => {
+  const { url, port } = ev.data;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (m: MessageEvent<ArrayBuffer>) => {
+    const frame = new Float64Array(m.data);
+    const n = frame[1]!;
+    const batch: Batch = {
+      time: new Float64Array(n),
+      price: new Float64Array(n),
+      size: new Float64Array(n),
+      dropped: frame[2]!,
+    };
+    for (let i = 0, o = 3; i < n; i++, o += 3) {
+      batch.time[i] = frame[o]!;
+      batch.price[i] = frame[o + 1]!;
+      batch.size[i] = frame[o + 2]!;
+    }
+    // Transfer, don't copy: after this the arrays belong to the render worker.
+    port.postMessage(batch, [
+      batch.time.buffer,
+      batch.price.buffer,
+      batch.size.buffer,
+    ]);
+  };
+};
+```
+
+Whatever format your feed uses (JSON, protobuf, a vendor's binary), this
+is where it becomes columns. `binaryType = 'arraybuffer'` matters: the
+default hands you a `Blob`, which has to be read asynchronously.
+
+**Why a separate worker, when the render worker could open the socket
+itself?** In the spike, at 1M ticks a second on the Mac, a socket on the
+drawing worker took in every tick until the chart's own work filled about
+70% of that thread, and fell behind from 89%. With the socket on its own
+worker, every tick got through even at 98%. On a 4-core cloud machine the
+difference showed much earlier: the drawing worker's own socket fell
+behind with the thread only 3–4% busy, while a separate socket worker got
+every tick drawn within 11–36 ms. Why the shared thread falls behind so
+early wasn't established, and it rests on three runs a machine, but the
+extra worker costs about 25 lines.
+
+## 4. Ticks into a `LiveSeries`
+
+The render worker keeps the ticks in a `LiveSeries` that holds one
+window: `maxAge` drops rows older than the newest tick minus the window.
+
+```ts
+// [src/render-worker.ts], trimmed
+import { LiveSeries, TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'price', kind: 'number' },
+  { name: 'size', kind: 'number' },
+] as const;
+
+live = new LiveSeries({
+  name: 'ticks',
+  schema,
+  retention: { maxAge: windowMs },
+});
+
+function ingest(batch: Batch) {
+  const n = batch.time.length;
+  if (n === 0) return;
+  const { time, price, size } = batch;
+  // The live series keeps these arrays as they are, so nothing may write to
+  // them after this line. Reading them, as the loop below does, is fine.
+  live.pushSeries(
+    TimeSeries.fromColumns({
+      name: 'ticks',
+      schema,
+      columns: { time, price, size },
+    }),
+  );
+  for (let i = 0; i < n; i++) buckets.add(time[i]!, price[i]!);
+  buckets.evictBefore(time[n - 1]! - windowMs - buckets.ms);
+  newestTime = time[n - 1]!;
+  newestArrival = performance.now();
+  changed = true;
+}
+```
+
+[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries)
+takes a batch built by
+[`TimeSeries.fromColumns`](../pond-ts/creating#float64array-columnar) and
+stores its columns as they are: no row objects, no check per cell. Things
+to know:
+
+- **The live series keeps your arrays.** It doesn't copy them, so don't
+  write to them, reuse them or transfer them again while their rows are in
+  the window. Here each message gets fresh arrays and the render worker
+  never sends them on, so that holds. (Batches of 8 rows or fewer are
+  copied anyway.)
+- **Push first, then fold into the buckets.** `pushSeries` stores all of a
+  batch or none of it: it throws on a batch that goes back in time or has
+  a gap in a required column. Folding first would put a refused batch on
+  the chart.
+- **Retention follows the data's time, not the clock**, and runs only
+  inside a push. If the feed stops, the window stops ageing too.
+- **Only the render worker imports pond.** The socket worker imports types
+  only, so its bundle stays under 1 KB. The render worker's bundle,
+  minified, is about 120 KB gzipped.
+
+**Why keep a `LiveSeries` at all, when the drawing reads only the
+buckets?** Because the buckets throw the ticks away. Hover needs the real
+tick under the pointer (section 7), and anything beyond the line (an
+aggregate, a rolling average, a snapshot to export) needs the raw window.
+
+## 5. Drawing one bucket per pixel column
+
+A chart that redraws a line through every point gets slower as the window
+fills. `@pond-ts/charts` avoids most of that cost on still charts by
+thinning the points to a few per pixel column and caching the result. A
+chart that scrolls every frame can't reuse that cache (the data and the
+time range both change each frame), so every frame thins every point
+again. In the spike that held 120 fps up to about a million points
+(4.3 ms a frame) and fell to 74 fps at 3 million.
+
+So this chart never draws the ticks. It keeps one bucket per device-pixel
+column of the window, holding the first, lowest, highest and last price
+that fell in it, and updates the newest bucket as each tick arrives:
+
+```ts
+// [src/buckets.ts], trimmed
+export class Buckets {
+  constructor(windowMs: number, columns: number) {
+    this.ms = windowMs / columns; // time covered by one bucket
+    this.cap = columns + 2; // the window plus the partly visible edges
+    // k, lo, hi, first, last, n: one Float64Array each, used as a ring
+  }
+
+  add(time: number, value: number): void {
+    const k = Math.floor(time / this.ms);
+    if (this.len > 0) {
+      const i = (this.head + this.len - 1) % this.cap;
+      if (this.k[i] === k) {
+        if (value < this.lo[i]!) this.lo[i] = value;
+        if (value > this.hi[i]!) this.hi[i] = value;
+        this.last[i] = value;
+        this.n[i]!++;
+        return;
+      }
+    }
+    if (this.len === this.cap) this.dropOldest();
+    const i = (this.head + this.len++) % this.cap;
+    this.k[i] = k;
+    this.lo[i] = this.hi[i] = this.first[i] = this.last[i] = value;
+    this.n[i] = 1;
+  }
+}
+```
+
+A frame draws one line through the buckets: into each column at its first
+value, down to its lowest, up to its highest, out at its last. A pixel
+column can't show more than its lowest and highest point, so at this zoom
+the result looks like the full tape:
+
+```ts
+// [src/buckets.ts]
+export function drawBuckets(ctx, b: Buckets, x, y): void {
+  ctx.beginPath();
+  for (let j = 0; j < b.len; j++) {
+    const i = (b.head + j) % b.cap;
+    const px = x((b.k[i]! + 0.5) * b.ms);
+    if (j === 0) ctx.moveTo(px, y(b.first[i]!));
+    else ctx.lineTo(px, y(b.first[i]!));
+    if (b.n[i]! > 1) {
+      ctx.lineTo(px, y(b.lo[i]!));
+      ctx.lineTo(px, y(b.hi[i]!));
+      ctx.lineTo(px, y(b.last[i]!));
+    }
+  }
+  ctx.stroke();
+}
+```
+
+Each tick costs a compare and a store when it arrives, and a frame costs
+the number of columns, whatever the window holds. In the spike the bucket
+drawing held 120 fps in every run, at 0.48–0.60 ms a frame on full
+windows, including a 5-minute window of 29.4 million points.
+
+**Why the bucket count is the screen's width, not the canvas's.** The
+buckets are fixed to one time per column when they're made. If the canvas
+gets wider, more buckets would need rebuilding from the raw ticks, and
+reading a window back out of a `LiveSeries` is slow today (`toTimeSeries()`
+took 542 ms at 600,000 rows in the spike). Sizing the buckets to the
+screen means the canvas can never outgrow them: a resize only changes the
+scale they're drawn at, and a canvas narrower than the screen draws a few
+buckets per pixel, which costs little.
+
+## 6. The frame loop
+
+The worker draws on every animation frame, whether or not new ticks came,
+because the time axis moves every frame:
+
+```ts
+// [src/render-worker.ts], trimmed
+// Ticks arrive every 16 ms; between them, move the right edge on with the
+// clock so the chart scrolls smoothly instead of in steps.
+const rightEdge = (now: number) => newestTime + (now - newestArrival);
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now();
+  if (changed) {
+    const [lo, hi] = buckets.range()!;
+    const pad = (hi - lo) * 0.05 || 1;
+    yLow = lo - pad;
+    yHigh = hi + pad;
+    changed = false;
+  }
+  const edge = rightEdge(now);
+  const start = edge - windowMs;
+  const x = (t: number) => PAD.left + ((t - start) / windowMs) * plotW;
+  const y = (v: number) => PAD.top + ((yHigh - v) / (yHigh - yLow)) * plotH;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels
+  ctx.fillStyle = COLOR.background;
+  ctx.fillRect(0, 0, width, height);
+  drawAxes(start, edge, x, y, plotW, plotH);
+  // clip to the plot, then drawBuckets(ctx, buckets, x, y)
+  // the last-price tag reads buckets.newest(), not the live series
+  // the hover cursor: section 7
+}
+```
+
+- **Without the moving edge the chart would step** every 16 ms when a
+  batch lands, instead of gliding.
+- **The y range is recomputed only when ticks arrive**, from the buckets'
+  lows and highs, so it's a few thousand comparisons, not a pass over the
+  ticks.
+- **Nothing in the frame reads the `LiveSeries`.** The newest price comes
+  from the buckets. Per-frame reads from a live series cost more than
+  they look (section 7).
+
+## 7. Hover: the page asks, the worker answers
+
+The tooltip is a `div` on the page, but the data is in the worker. The
+page sends the pointer's x; the worker turns it into a time, asks the
+`LiveSeries` for the tick at or before it, and sends that tick back. The
+worker draws the cursor line; the page draws the tooltip.
+
+```ts
+// [src/render-worker.ts]
+function pick(px: number | null) {
+  const plotW = width - PAD.left - PAD.right;
+  const inside =
+    px !== null &&
+    newestTime > -Infinity &&
+    px >= PAD.left &&
+    px <= PAD.left + plotW;
+  const start = rightEdge(performance.now()) - windowMs;
+  const event = inside
+    ? live.atOrBefore(start + ((px - PAD.left) / plotW) * windowMs)
+    : undefined;
+  hovered = event
+    ? {
+        time: event.begin(),
+        price: event.get('price'),
+        size: event.get('size'),
+      }
+    : null;
+  post({ type: 'hover', tick: hovered });
+}
+```
+
+The picked tick stays picked until the pointer moves again, so the cursor
+scrolls left with the data and the tooltip holds still long enough to
+read. That also keeps the lookups out of the frame loop, which matters
+more than it looks. The live series caches every row a lookup returns,
+and each push that drops old rows rebuilds that cache, so pushes slow
+down as more rows across the window get looked up. I measured it in Node
+with a 60-second window at 10,000 ticks a second and one push every
+16 ms (3,750 stored batches): each `atOrBefore` took a median of
+110–150 µs, and a push took 0.02 ms with no lookups, 0.16 ms with one
+lookup per push and 0.30 ms with two. Looking up on every frame at
+120 fps would spend about 3% of the thread on reads nobody can follow.
+
+## 8. What it costs
+
+**On the Mac (from the spike).** Chrome on a MacBook Pro M1 Pro with its
+120 Hz screen, at full resolution (about 2,260 pixel columns), one run on
+battery with Spotlight indexing in the background. These used the
+spike's own code, not this example, and took ticks in with `pushMany`
+plus an internal hook rather than `pushSeries`:
+
+| Setup                                                                   | Result                                              |
+| ----------------------------------------------------------------------- | --------------------------------------------------- |
+| 1M ticks/s into a `LiveSeries` in a worker, bucket drawing, 10 s window | 120 fps, newest tick drawn 11 ms after it was sent  |
+| Same, socket on its own worker                                          | 120 fps, 12 ms                                      |
+| Bucket drawing alone, full windows up to 29.4M points                   | 120 fps, 0.48–0.60 ms a frame                       |
+| `@pond-ts/charts` line drawing, scrolling                               | 120 fps at 1M points (4.3 ms a frame), 74 fps at 3M |
+| Taking ticks in at 1M/s (`pushMany`, an internal hook, buckets)         | 75 ms of each second, under 8% of the worker        |
+
+(The 1M ticks/s window was about 89% full; the delay is measured on one
+machine's clock and includes up to 16 ms the feed holds ticks before
+sending.)
+
+**This example, in a headless browser.** `npm run check` in a 4-core
+cloud container, headless Chromium at one device pixel per CSS pixel
+(about 1,130 columns). Headless frame rates are capped at 60 and say
+nothing about a real screen, so the table shows work, not frames. Each
+cell is the range over six one-second samples, three of them with the
+page busy:
+
+| Ticks/s, window | Ticks held | `pushSeries`, ms a second | Buckets, ms a second | JavaScript per frame | Tick to frame |
+| --------------- | ---------- | ------------------------- | -------------------- | -------------------- | ------------- |
+| 10k, 60 s       | 600k       | 6.7–8.3                   | 0.2–1.4              | 0.66–0.85 ms         | 10–16 ms      |
+| 100k, 30 s      | 3M         | 10.7–13.2                 | 2.3–3.4              | 0.67–0.93 ms         | 11–16 ms      |
+| 1M, 5 s         | 5M         | 47–67                     | 21–28                | 0.53–0.82 ms         | 19–26 ms      |
+
+So at 100,000 ticks a second, taking ticks in (`pushSeries` and the
+buckets together) took 1–2% of the render worker's time. At 1M a second,
+`pushSeries` cost 15–17 ms a second while the window filled and 47–67 once
+it was full and old rows had to be dropped: most of the cost there is the
+dropping. The same pushes in Node without retention stayed at 12–27 ms a
+second, and with a 5-second `maxAge` rose from 15–24 to 44–103 once the
+window was full. The feed also dropped 3.7 million ticks at the start of
+the 1M run, while the browser was still taking in 5 seconds of history;
+after that, none. In every run, the busy page left the chart's frame rate
+where it was.
+
+## 9. When `LineChart` is the better choice
+
+The worker route trades pond's charts for speed and a free page thread.
+Use [`LineChart`](../charts/) instead when:
+
+- **The page isn't busy and the window holds up to about a million
+  points.** A scrolling `LineChart` held 120 fps there in the spike, and
+  a still or panned one does better (see
+  [Rendering large time series](./rendering-large-series)).
+- **You want what the charts give you**: axes and formats, themes,
+  several layers and series, annotations, zoom, cursors and readouts, and
+  React. Everything in this example beyond the line is hand-written.
+- **The chart is mostly still.** Buckets suit a window that scrolls; they
+  are fixed to one zoom level, so zooming or panning needs the raw ticks
+  again.
+
+Reach for the worker when the page thread is genuinely busy (a heavy
+React app, big tables, other charts), when the window holds millions of
+points that scroll every frame, or when steady 120 fps matters more than
+the charts' features.
+
+## 10. What's coming
+
+These are planned in pond and would shrink this example:
+
+- **A worker mode for the charts** ([PND-OFFSCREEN]). Today the charts
+  can't move into a worker: each layer hands the canvas a function with
+  its data built in, the drawing functions aren't exported, and hover and
+  CSS themes read the page. When it lands, the render worker would draw a
+  pond chart instead of section 5's code.
+- **A streaming draw for scrolling charts** ([PND-STREAMDRAW]): buckets
+  like section 5's, filled as ticks arrive, as a charts drawing mode.
+- **Columns out of a live series**: an event that hands over newly added
+  rows as columns ([PND-COLOUT]), and a `toTimeSeries()` that copies
+  columns instead of rebuilding rows ([PND-LSNAP]). Either would make it
+  cheap to rebuild buckets after a resize or a zoom.
+- **Cheaper lookups** ([PND-LATCACHE]): the cache rebuild that makes
+  per-frame `atOrBefore` calls slow down pushes.
+
+## 11. Sharp edges
+
+- **No limit between the workers.** The socket worker forwards every
+  message the moment it arrives. If the render worker fell behind, the
+  messages would queue in the browser rather than the feed dropping ticks.
+  It never fell behind in these runs; a real app might count unanswered
+  batches and drop or merge when there are too many.
+- **Gaps are drawn as straight lines.** An empty column is skipped, so the
+  line joins its neighbours. When the feed drops ticks, the hole looks
+  like a flat stretch of data. Break the line where `k` jumps if your feed
+  can have holes.
+- **Reconnecting needs a reset.** A new connection resends history that's
+  older than the rows already held, and `pushSeries` refuses it. Call
+  `live.clear()` and start new buckets first.
+- **The edge keeps scrolling when the feed stops.** That's honest (time
+  is passing) but it can hide a dead feed. Watch the ticks-per-second
+  figure, not the motion.
+- **The delay figure needs one clock.** It compares the feed's timestamp
+  with the browser's clock, which only works with both on one machine.
+- **Fonts.** The worker's canvas can't use web fonts the page loaded
+  through CSS; the example uses system fonts. Load a `FontFace` in the
+  worker if you need one.
+- **The y range jumps** with every new high or low. Ease it if that
+  bothers you.
+- **Not covered:** several series, zoom and pan, touch, and browsers other
+  than Chrome for the numbers.
+
+## 12. Running it yourself
+
+```bash
+git clone https://github.com/pond-ts/pond && cd pond
+npm install && npm run build --workspace=pond-ts
+cd apps/worker-chart && npm install
+npm start          # http://localhost:8787/?rate=10000&window=60
+```
+
+Tick the "busy page" box and watch the chart's frame rate stay put while
+the page's falls. `npm run check` runs the headless check (after
+`npx playwright install chromium`); `RATE=100000 WINDOW=30 npm run check`
+tries a heavier feed. CI doesn't build the example, so the check is how
+it's verified.
+
+For the pieces on their own: [live series](../pond-ts/live/live-series),
+[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries),
+[live charts with `@pond-ts/charts`](../learn-charts/live-charts) and
+[rendering large time series](./rendering-large-series). The spike's
+[full report](https://github.com/pond-ts/pond/blob/main/spikes/offscreen-stream/REPORT.md)
+has every run behind section 8.

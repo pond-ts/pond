@@ -125,6 +125,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   parent alive, and so is any batch of 8 rows or fewer.
   The same rules as pond-rs's `push_series`, apart
   from that `partitionBy` case (pond-rs refuses the whole batch).
+  Guide: [A live chart at 120 fps, off the main thread](https://pond-ts.org/docs/how-to-guides/live-chart-in-a-worker),
+  which feeds a chart in a Web Worker with `pushSeries` batches.
 - **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
   per-row rules as data instead of functions, e.g.
   `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
