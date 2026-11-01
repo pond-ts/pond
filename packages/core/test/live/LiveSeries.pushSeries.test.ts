@@ -17,6 +17,7 @@ import {
   ValidationError,
 } from '../../src/index.js';
 import { copyBatch } from '../../src/live/live-series.js';
+import { ON_SIGNAL } from '../../src/schema/series.js';
 
 type AnyLive = LiveSeries<any>;
 type AnySeries = TimeSeries<any>;
@@ -169,6 +170,18 @@ function record(live: AnyLive): unknown[] {
   return log;
 }
 
+/**
+ * The payload-free change signals the React hooks use ([PND-HOOKSIGNAL]).
+ * They don't make the chunked backing build events, so they are logged
+ * with and without the listeners above.
+ */
+function recordSignals(live: AnyLive, log: unknown[]): unknown[] {
+  const on = (live as any)[ON_SIGNAL].bind(live);
+  on('event', () => log.push(['signal:event', live.length]));
+  on('evict', () => log.push(['signal:evict', live.length]));
+  return log;
+}
+
 function state(live: AnyLive) {
   return {
     rows: live.toRows().map((r) => rowDesc(r as unknown[])),
@@ -198,8 +211,8 @@ describe('pushSeries matches pushMany (differential)', () => {
             const rand = rng(seed * 7919 + cfg.label.length);
             const a = makeLive(cfg, retention);
             const b = makeLive(cfg, retention);
-            const logA = watched ? record(a) : [];
-            const logB = watched ? record(b) : [];
+            const logA = recordSignals(a, watched ? record(a) : []);
+            const logB = recordSignals(b, watched ? record(b) : []);
             let last = 0;
             const batches = 1 + Math.floor(rand() * 6);
             for (let k = 0; k < batches; k += 1) {
