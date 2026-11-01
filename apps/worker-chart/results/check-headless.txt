@@ -1,0 +1,83 @@
+# node check.mjs at four feed rates — 2026-11-01, headless Chromium 141 (Playwright), 4-core cloud container (Linux), viewport 1200x520 at 1 device pixel per CSS pixel, pond-ts built from main at 607c4648.
+# Each 'steady' / 'busy page' entry is one once-a-second stats report: pushMs and foldMs are ms spent that second in pushSeries and in the buckets; frameMs is JavaScript per frame; delayMs is the median age of the newest tick at the end of each frame. Headless frame rates are capped at 60.
+
+== RATE=10000 WINDOW=60
+steady: [{"fps":51,"pageFps":60,"ticksPerSec":9990,"rows":600001,"delayMs":14,"dropped":0,"pushMs":7.3,"foldMs":0.8,"frameMs":0.61},{"fps":45,"pageFps":60,"ticksPerSec":10169,"rows":600000,"delayMs":14,"dropped":0,"pushMs":5.7,"foldMs":0.8,"frameMs":0.7},{"fps":43,"pageFps":60,"ticksPerSec":9621,"rows":600001,"delayMs":14,"dropped":0,"pushMs":8.1,"foldMs":0.6,"frameMs":0.72}]
+ok   chart draws (median 45 fps)
+ok   ticks arrive at the feed's rate (9990/s of 10000/s)
+ok   series holds one window (600001 of 600000)
+ok   no ticks dropped by the server
+ok   line spans the plot (100.0% of columns)
+ok   hover shows the tick under the pointer ("01:22:29.950  98.845 × 63")
+ok   the tooltip's clock is local time (29 s behind the page's)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+ok   line spans the plot after a resize (100.0%)
+busy page: [{"fps":50,"pageFps":43,"ticksPerSec":9750,"rows":600001,"delayMs":12,"dropped":0,"pushMs":7.7,"foldMs":0.3,"frameMs":0.71},{"fps":51,"pageFps":40,"ticksPerSec":10400,"rows":600001,"delayMs":10,"dropped":0,"pushMs":6,"foldMs":0.3,"frameMs":0.58},{"fps":49,"pageFps":40,"ticksPerSec":9970,"rows":600001,"delayMs":14,"dropped":0,"pushMs":5.9,"foldMs":0.9,"frameMs":0.62}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (45 -> 50 fps)
+ok   ticks keep arriving on a busy page
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=100000 WINDOW=30
+steady: [{"fps":45,"pageFps":60,"ticksPerSec":100000,"rows":3000000,"delayMs":17,"dropped":0,"pushMs":9.9,"foldMs":2.1,"frameMs":0.75},{"fps":54,"pageFps":60,"ticksPerSec":99501,"rows":3000001,"delayMs":12,"dropped":0,"pushMs":9.3,"foldMs":1.7,"frameMs":0.6},{"fps":49,"pageFps":58,"ticksPerSec":100400,"rows":3000001,"delayMs":14,"dropped":0,"pushMs":9.9,"foldMs":3.2,"frameMs":0.65}]
+ok   chart draws (median 49 fps)
+ok   ticks arrive at the feed's rate (100000/s of 100000/s)
+ok   series holds one window (3000001 of 3000000)
+ok   no ticks dropped by the server
+ok   line spans the plot (100.0% of columns)
+ok   hover shows the tick under the pointer ("01:22:58.517  98.273 × 75")
+ok   the tooltip's clock is local time (14 s behind the page's)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+ok   line spans the plot after a resize (100.0%)
+busy page: [{"fps":50,"pageFps":43,"ticksPerSec":98800,"rows":3000001,"delayMs":11,"dropped":0,"pushMs":10.1,"foldMs":1.6,"frameMs":0.7},{"fps":49,"pageFps":40,"ticksPerSec":101200,"rows":3000001,"delayMs":10,"dropped":0,"pushMs":8.9,"foldMs":2.7,"frameMs":0.71},{"fps":48,"pageFps":40,"ticksPerSec":100600,"rows":3000001,"delayMs":13,"dropped":0,"pushMs":7.9,"foldMs":2.1,"frameMs":0.7}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (49 -> 49 fps)
+ok   ticks keep arriving on a busy page
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=1000000 WINDOW=5
+steady: [{"fps":47,"pageFps":60,"ticksPerSec":1002000,"rows":5000001,"delayMs":23,"dropped":0,"pushMs":53.1,"foldMs":25.5,"frameMs":0.72},{"fps":45,"pageFps":60,"ticksPerSec":995000,"rows":5000001,"delayMs":22,"dropped":0,"pushMs":48.9,"foldMs":22.5,"frameMs":0.64},{"fps":50,"pageFps":60,"ticksPerSec":1007000,"rows":5000001,"delayMs":19,"dropped":0,"pushMs":43.5,"foldMs":20.8,"frameMs":0.62}]
+ok   chart draws (median 47 fps)
+ok   ticks arrive at the feed's rate (1002000/s of 1000000/s)
+ok   series holds one window (5000001 of 5000000)
+ok   no ticks dropped by the server
+ok   line spans the plot (100.0% of columns)
+ok   hover shows the tick under the pointer ("01:23:27.964  86.869 × 40")
+ok   the tooltip's clock is local time (3 s behind the page's)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+ok   line spans the plot after a resize (99.3%)
+busy page: [{"fps":45,"pageFps":59,"ticksPerSec":986000,"rows":5000001,"delayMs":21,"dropped":0,"pushMs":45.6,"foldMs":17.2,"frameMs":0.59},{"fps":44,"pageFps":60,"ticksPerSec":1004000,"rows":5000001,"delayMs":24,"dropped":0,"pushMs":51.2,"foldMs":19.6,"frameMs":0.58},{"fps":55,"pageFps":60,"ticksPerSec":994000,"rows":5000001,"delayMs":19,"dropped":0,"pushMs":41.7,"foldMs":18.1,"frameMs":0.66}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (47 -> 45 fps)
+ok   ticks keep arriving on a busy page
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=20000 WINDOW=10
+steady: [{"fps":53,"pageFps":60,"ticksPerSec":20080,"rows":200001,"delayMs":7,"dropped":0,"pushMs":8.9,"foldMs":1.2,"frameMs":0.62},{"fps":57,"pageFps":60,"ticksPerSec":20100,"rows":200001,"delayMs":11,"dropped":0,"pushMs":7.8,"foldMs":1.3,"frameMs":0.57},{"fps":53,"pageFps":60,"ticksPerSec":19840,"rows":200001,"delayMs":11,"dropped":0,"pushMs":8,"foldMs":1.1,"frameMs":0.59}]
+ok   chart draws (median 53 fps)
+ok   ticks arrive at the feed's rate (20080/s of 20000/s)
+ok   series holds one window (200001 of 200000)
+ok   no ticks dropped by the server
+ok   line spans the plot (100.0% of columns)
+ok   hover shows the tick under the pointer ("01:23:38.057  99.623 × 47")
+ok   the tooltip's clock is local time (4 s behind the page's)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+ok   line spans the plot after a resize (100.0%)
+busy page: [{"fps":53,"pageFps":40,"ticksPerSec":19780,"rows":200001,"delayMs":7,"dropped":0,"pushMs":7.5,"foldMs":1.4,"frameMs":0.57},{"fps":54,"pageFps":40,"ticksPerSec":20420,"rows":200001,"delayMs":12,"dropped":0,"pushMs":8.4,"foldMs":1.4,"frameMs":0.58},{"fps":53,"pageFps":40,"ticksPerSec":19580,"rows":200001,"delayMs":12,"dropped":0,"pushMs":6.8,"foldMs":0.9,"frameMs":0.58}]
+ok   the page's thread is busy (79% blocked)
+ok   the chart keeps its frame rate (53 -> 53 fps)
+ok   ticks keep arriving on a busy page
+ok   no page errors
+
+all checks passed
+exit 0

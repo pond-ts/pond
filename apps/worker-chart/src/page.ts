@@ -1,7 +1,8 @@
 // The page: hands the canvas to the render worker, wires the socket worker
 // to it, and passes size and pointer changes along. It never sees a tick
 // except the one under the pointer.
-import type { FromRender, ToRender } from './messages.js';
+import { clock } from './clock.js';
+import type { FeedClosed, FromRender, ToRender } from './messages.js';
 
 const params = new URLSearchParams(location.search);
 const rate = Number(params.get('rate') ?? 10_000);
@@ -10,6 +11,7 @@ const windowSec = Number(params.get('window') ?? 60);
 const canvas = document.querySelector('canvas')!;
 const tooltip = document.querySelector<HTMLElement>('#tooltip')!;
 const status = document.querySelector<HTMLElement>('#status')!;
+const problem = document.querySelector<HTMLElement>('#problem')!;
 const work = document.querySelector<HTMLElement>('#work')!;
 const busy = document.querySelector<HTMLInputElement>('#busy')!;
 
@@ -17,13 +19,19 @@ const render = new Worker('render-worker.js', { type: 'module' });
 const socket = new Worker('socket-worker.js', { type: 'module' });
 const toRender = (msg: ToRender, transfer: Transferable[] = []) =>
   render.postMessage(msg, transfer);
-// An exception in a worker doesn't reach the page's console handlers, so
-// show it.
+// Errors inside a worker are easy to miss, and the chart can look alive
+// with its feed dead, so show both on the page. They stay until reload.
+const showProblem = (text: string) => {
+  problem.textContent = text;
+  problem.hidden = false;
+};
 for (const w of [render, socket]) {
-  w.onerror = (e) => {
-    status.textContent = `error: ${e.message}`;
-  };
+  w.onerror = (e) => showProblem(`error: ${e.message}`);
 }
+socket.onmessage = (ev: MessageEvent<FeedClosed>) =>
+  showProblem(
+    `feed closed (code ${ev.data.code}${ev.data.reason ? `, ${ev.data.reason}` : ''})`,
+  );
 
 // The socket worker sends batches straight to the render worker over this
 // channel; they never pass through the page.
@@ -99,10 +107,13 @@ render.onmessage = (ev: MessageEvent<FromRender>) => {
     tooltip.hidden = true;
   } else {
     const { time, price, size } = msg.tick;
-    tooltip.textContent = `${new Date(time).toISOString().slice(11, 23)}  ${price.toFixed(3)} × ${size}`;
-    tooltip.style.left = `${pointer.x + 12}px`;
-    tooltip.style.top = `${pointer.y + 12}px`;
+    tooltip.textContent = `${clock(time, true)}  ${price.toFixed(3)} × ${size}`;
     tooltip.hidden = false;
+    // Right of the pointer, or left of it where it would leave the chart.
+    const w = tooltip.offsetWidth;
+    const flip = pointer.x + 12 + w > canvas.clientWidth;
+    tooltip.style.left = `${flip ? pointer.x - 12 - w : pointer.x + 12}px`;
+    tooltip.style.top = `${pointer.y + 12}px`;
   }
 };
 

@@ -2,6 +2,7 @@
 // OffscreenCanvas the page handed over. The page never touches the data.
 import { LiveSeries, TimeSeries } from 'pond-ts';
 import { Buckets, drawBuckets } from './buckets.js';
+import { clock } from './clock.js';
 import type { Batch, FromRender, Tick, ToRender } from './messages.js';
 
 const schema = [
@@ -29,6 +30,7 @@ let dpr = 1;
 
 let newestTime = -Infinity; // time of the newest tick
 let newestArrival = 0; // performance.now() when it arrived
+let lastEdge = -Infinity; // the right edge, as last drawn or picked
 let changed = false;
 let yLow = 0;
 let yHigh = 1;
@@ -109,8 +111,12 @@ const nextFrame = () =>
     : setTimeout(frame, 1000 / 60);
 
 // Ticks arrive every 16 ms; between them, move the right edge on with the
-// clock so the chart scrolls smoothly instead of in steps.
-const rightEdge = (now: number) => newestTime + (now - newestArrival);
+// clock so the chart scrolls smoothly instead of in steps. A batch that
+// arrives later than the last one (relative to its times) would pull the
+// edge back a few pixels, so the edge waits for the clock to catch up
+// instead.
+const rightEdge = (now: number) =>
+  (lastEdge = Math.max(lastEdge, newestTime + (now - newestArrival)));
 
 function frame() {
   nextFrame();
@@ -119,7 +125,9 @@ function frame() {
 
   if (changed) {
     const [lo, hi] = buckets.range()!;
-    const pad = (hi - lo) * 0.05 || 1;
+    // At least 0.01% of the price, so a flat price (even one that differs
+    // only by rounding) still gets a range the axis can label.
+    const pad = Math.max((hi - lo) * 0.05, Math.abs(hi) * 1e-4) || 1;
     yLow = lo - pad;
     yHigh = hi + pad;
     changed = false;
@@ -181,13 +189,13 @@ function drawAxes(
 
   const priceStep = niceStep((yHigh - yLow) / 6);
   const digits = Math.max(0, -Math.floor(Math.log10(priceStep)));
+  const firstPrice = Math.ceil(yLow / priceStep) * priceStep;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  for (
-    let v = Math.ceil(yLow / priceStep) * priceStep;
-    v <= yHigh;
-    v += priceStep
-  ) {
+  // Counted, not stepped, so rounding can't stall or skew the loop.
+  for (let i = 0; i < 20; i++) {
+    const v = firstPrice + i * priceStep;
+    if (v > yHigh) break;
     const py = Math.round(y(v)) + 0.5;
     ctx.moveTo(PAD.left, py);
     ctx.lineTo(PAD.left + plotW, py);
@@ -222,6 +230,7 @@ function pick(px: number | null) {
   const inside =
     px !== null &&
     newestTime > -Infinity &&
+    plotW > 0 &&
     px >= PAD.left &&
     px <= PAD.left + plotW;
   const start = rightEdge(performance.now()) - windowMs;
@@ -290,9 +299,3 @@ function niceStep(raw: number) {
 const TIME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].map(
   (s) => s * 1000,
 );
-
-function clock(t: number) {
-  const d = new Date(t);
-  const two = (n: number) => String(n).padStart(2, '0');
-  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
-}

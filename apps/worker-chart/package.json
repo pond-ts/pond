@@ -2,7 +2,7 @@
   "name": "@pond-ts/worker-chart",
   "version": "0.0.0",
   "private": true,
-  "description": "NOT PUBLISHED. A live market chart drawn in a Web Worker at the display's frame rate: the worked example behind the 'Live chart off the main thread' how-to guide.",
+  "description": "NOT PUBLISHED. A live market chart drawn in a Web Worker at the display's frame rate: the worked example behind the 'A live chart at 120 fps, off the main thread' how-to guide.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -12,7 +12,8 @@
     "build": "node build.mjs",
     "start": "node build.mjs && node server.mjs",
     "check": "node build.mjs && node check.mjs",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "bench": "node bench/lookups.mjs && node bench/retention.mjs && node bench/clear.mjs"
   },
   "dependencies": {
     "pond-ts": "file:../../packages/core"

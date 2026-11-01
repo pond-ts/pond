@@ -1,0 +1,12 @@
+# node bench/lookups.mjs — 2026-11-01, Node v22.22.0, 4-core cloud container (Linux), pond-ts built from main at 607c4648
+
+1. atOrBefore, 600,000 rows (median of 400 lookups; 5 runs)
+   3750 batch(es) of 160: 71.7–131.1 µs
+    375 batch(es) of 1600: 12.3–22.9 µs
+     40 batch(es) of 15000: 5.1–8.2 µs
+      1 batch(es) of 600000: 3.7–4.7 µs
+
+2. push cost with lookups, 10k ticks/s, 60 s window (medians; 5 runs)
+  0 lookup(s) per push: push 0.008–0.014 ms
+  1 lookup(s) per push: push 0.138–0.162 ms, lookup 93–118 µs
+  2 lookup(s) per push: push 0.279–0.295 ms, lookup 111–113 µs

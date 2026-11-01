@@ -1,7 +1,9 @@
 // Opens the page in headless Chromium and checks that the chart works:
 // frames are drawn, every tick arrives, the series holds one window of ticks,
-// the line spans the chart (also after a resize), hovering answers, and the
-// chart keeps drawing while the page's own thread is busy.
+// the line spans the chart (also after a resize), hovering answers in local
+// time and the tooltip stays on the page, and the chart keeps drawing while
+// the page's own thread is busy. It runs in a time zone away from UTC
+// (Tokyo), so a clock shown in UTC would stand out.
 //
 //   npm run check
 //
@@ -30,6 +32,7 @@ try {
   const page = await browser.newPage({
     viewport: { width: 1200, height: 520 },
     locale: 'en-US',
+    timezoneId: 'Asia/Tokyo',
   });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -38,8 +41,9 @@ try {
 
   // The status line, parsed back into numbers.
   const stats = async () => {
+    const problem = await page.textContent('#problem');
+    if (problem) throw new Error(`page shows: ${problem}`);
     const text = await page.textContent('#status');
-    if (text.startsWith('error:')) throw new Error(`worker ${text}`);
     const m = text.match(
       /chart (\d+) fps · page (\d+) fps · ([\d,]+) ticks\/s · ([\d,]+) ticks held · delay (\d+) ms(?: · ([\d,]+) dropped)?/,
     );
@@ -163,20 +167,51 @@ try {
     `line spans the plot (${(covered * 100).toFixed(1)}% of columns)`,
   );
 
+  // Resolves true once `fn` holds, false after `ms`.
+  const becomes = (fn, ms = 3000) =>
+    page.waitForFunction(fn, null, { timeout: ms }).then(
+      () => true,
+      () => false,
+    );
+  const tooltipShown = () => !document.querySelector('#tooltip').hidden;
+
   await page.mouse.move(600, 180);
-  await page.waitForFunction(
-    () => !document.querySelector('#tooltip').hidden,
-    null,
-    { timeout: 3000 },
-  );
+  await becomes(tooltipShown);
   const tip = await page.textContent('#tooltip');
   check(
     /^\d\d:\d\d:\d\d\.\d{3} {2}\d+\.\d{3} × \d+$/.test(tip),
     `hover shows the tick under the pointer ("${tip}")`,
   );
+  // The tick is within the window, so its local time is at most a window
+  // (plus a little) behind the page's local clock.
+  const behind = await page.evaluate((text) => {
+    const [h, m, s] = text.slice(0, 8).split(':').map(Number);
+    const d = new Date();
+    const now = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+    return (now - (h * 3600 + m * 60 + s) + 86_400) % 86_400;
+  }, tip);
+  check(
+    behind <= WINDOW + 2,
+    `the tooltip's clock is local time (${behind} s behind the page's)`,
+  );
+
+  // Near the plot's right edge the tooltip flips left of the pointer.
+  const box = await page.locator('canvas').boundingBox();
+  await page.mouse.move(box.x + box.width - 66, 180);
+  await sleep(300);
+  const onPage = await page.evaluate(() => {
+    const tip = document.querySelector('#tooltip').getBoundingClientRect();
+    const chart = document.querySelector('canvas').getBoundingClientRect();
+    const root = document.documentElement;
+    return tip.right <= chart.right && root.scrollWidth <= root.clientWidth;
+  });
+  check(onPage, 'the tooltip stays on the page at the right edge');
+
   await page.mouse.move(600, 500); // off the canvas
-  await page.waitForFunction(() => document.querySelector('#tooltip').hidden);
-  check(true, 'tooltip hides when the pointer leaves');
+  check(
+    await becomes(() => document.querySelector('#tooltip').hidden),
+    'tooltip hides when the pointer leaves',
+  );
 
   await page.setViewportSize({ width: 800, height: 520 });
   await sleep(500);

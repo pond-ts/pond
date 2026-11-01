@@ -80,9 +80,9 @@ export class Buckets {
 }
 
 /**
- * One polyline through every bucket: first, low, high, last. The result
- * looks like the full tape at this zoom, since a column can't show more
- * than its lowest and highest point.
+ * One polyline through every bucket: first, low, high, last. A pixel column
+ * can't show more than its lowest and highest point, so this should look
+ * close to a line through every tick (not compared image to image).
  */
 export function drawBuckets(
   ctx: OffscreenCanvasRenderingContext2D,

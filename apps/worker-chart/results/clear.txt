@@ -1,0 +1,5 @@
+# node bench/clear.mjs — 2026-11-01, Node v22.22.0, 4-core cloud container (Linux), pond-ts built from main at 607c4648
+
+10,000 ticks/s, 60 s window (600,001 rows): clear() 3077 ms, new LiveSeries 0.11 ms
+100,000 ticks/s, 30 s window (3,000,001 rows): clear() 10414 ms, new LiveSeries 0.15 ms
+1,000,000 ticks/s, 5 s window (5,000,000 rows): clear() 15425 ms, new LiveSeries 0.13 ms

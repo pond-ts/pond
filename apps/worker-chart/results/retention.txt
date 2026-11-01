@@ -1,0 +1,11 @@
+# node bench/retention.mjs — 2026-11-01, Node v22.22.0, 4-core cloud container (Linux), pond-ts built from main at 607c4648
+
+maxAge 5 s    run 1, ms per second of data: 31 16 14 15 13 78 77 82 81 87 (5,000,000 rows held)
+maxAge 5 s    run 2, ms per second of data: 24 19 13 13 13 66 65 71 75 60 (5,000,000 rows held)
+maxAge 5 s    run 3, ms per second of data: 13 14 20 18 12 45 41 40 53 49 (5,000,000 rows held)
+maxEvents 5M  run 1, ms per second of data: 12 13 13 12 16 23 22 22 22 23 (5,000,000 rows held)
+maxEvents 5M  run 2, ms per second of data: 12 12 12 12 12 13 12 14 15 11 (5,000,000 rows held)
+maxEvents 5M  run 3, ms per second of data: 10 12 12 10 14 13 20 13 12 12 (5,000,000 rows held)
+no retention  run 1, ms per second of data: 11 11 11 16 21 21 21 19 11 12 (9,920,000 rows held)
+no retention  run 2, ms per second of data: 15 15 14 12 11 11 11 11 11 10 (9,920,000 rows held)
+no retention  run 3, ms per second of data: 10 13 17 12 14 18 17 11 11 17 (9,920,000 rows held)

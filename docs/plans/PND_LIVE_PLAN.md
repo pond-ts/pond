@@ -780,6 +780,50 @@ after at 1.6 ms. Fix to consider: remap only the entries that
 survive (most are dropped, oldest first), drop the cache on eviction, or let
 a view fill itself without going through the cache.
 
+Hover lookups set it off too (2026-11-01, off-main-thread chart guide,
+`apps/worker-chart/bench/lookups.mjs`, five runs): at 10,000 ticks a second
+with a 60 s `maxAge`, one 160-row push every 16 ms, a push took
+0.008–0.014 ms (median) with no lookups, 0.14–0.16 ms with one
+`atOrBefore` mid-window after each push and 0.28–0.30 ms with two. The guide
+looks up on pointer move only for this reason.
+
+### [PND-LIVECLEAR] — `clear()` builds every row's `Event`
+
+**Found** 2026-11-01 while writing the off-main-thread chart guide (its
+reconnect advice). `LiveSeries.clear()` calls the chunked storage's
+`clear()`, which runs `all[i] = this.at(i)!` for every row so it can hand
+the rows to `'evict'` listeners. It does so even when no listener exists,
+and each `at(i)` both caches the `Event` and finds the row with `#locate`,
+which walks the chunk list (from the nearer end).
+
+Measured (`apps/worker-chart/bench/clear.mjs`, Node 22, main 607c4648, one
+push of fresh columns every 16 ms of data, `maxAge` = the window): 3.1 s
+at 600k rows (10k ticks/s, 60 s), 10.4 s at 3M (100k/s, 30 s), 15.4 s at
+5M (1M/s, 5 s). A new `LiveSeries` took 0.1 ms. The guide tells readers to
+make a new series on reconnect instead.
+
+Fix to consider: when `#onEvict` is empty, drop the chunks without building
+anything (as `#applyRetention` already does with `dropPrefix`); when there
+are listeners, build the rows by walking chunks in order rather than
+`at(i)` per row. Count `stats().evicted` either way.
+
+### [PND-LIVELOCATE] — Mid-window lookups walk the chunk list
+
+**Found** 2026-11-01 while measuring hover for the off-main-thread chart
+guide. `bisect` calls `storage.keyAt(mid)` about log₂(rows) times, and each
+`keyAt` (like `at` and `beginAt`) finds its chunk with `#locate`, which
+walks the chunk list from the nearer end. The ends are cheap since
+[PND-LIVEPUSHSCAN]; the middle costs O(chunks) per probe, so a lookup costs
+O(log rows × chunks).
+
+Measured (`apps/worker-chart/bench/lookups.mjs`, five runs, median of 400
+lookups spread over the window): `atOrBefore` on 600k rows took 4–5 µs in
+one chunk, 5–8 µs in 40 chunks, 12–23 µs in 375, and 72–131 µs in 3,750,
+which is what a 60 s window fed every 16 ms holds.
+
+Fix to consider: keep a running array of chunk start indices (rebuilt or
+shifted on eviction, appended on push) and binary-search it in `#locate`.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)

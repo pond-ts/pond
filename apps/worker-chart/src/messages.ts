@@ -18,7 +18,10 @@ export type ToRender =
       width: number;
       height: number;
       dpr: number;
-      /** Fixed bucket count: the screen's width in device pixels. */
+      /**
+       * Fixed bucket count: the width in device pixels of the screen the
+       * page opened on.
+       */
       columns: number;
       windowMs: number;
     }
@@ -38,7 +41,7 @@ export type FromRender =
       fps: number;
       ticksPerSec: number;
       rows: number;
-      /** Median ms from a tick's time to the end of the frame that drew it. */
+      /** Median age in ms of the newest tick, at the end of each frame. */
       delayMs: number;
       dropped: number;
       /** ms this second spent in pushSeries, and folding into buckets. */
@@ -48,3 +51,10 @@ export type FromRender =
       frameMs: number;
     }
   | { type: 'hover'; tick: Tick | null };
+
+/** Socket worker → page: the feed has gone. */
+export interface FeedClosed {
+  type: 'closed';
+  code: number;
+  reason: string;
+}
