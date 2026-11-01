@@ -13,6 +13,8 @@
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=series
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=views
 //   node --expose-gc scripts/perf-live-push-series.mjs --heap=slice
+//   node --expose-gc scripts/perf-live-push-series.mjs --heap=center
+//   node --expose-gc scripts/perf-live-push-series.mjs --heap=dict
 //
 // Cost model (N rows per push, C columns):
 //   pushSeries, default series: O(C) shape check + O(1) per number column
@@ -22,8 +24,10 @@
 //     O(N) Events + pushMany's per-row loop, so ≈ pushMany.
 //   An 'event' / 'batch' listener (a window() view is one) builds an
 //     Event per row on either path.
-//   A batch whose key sits in a buffer over twice the batch's size (a
-//     slice() of a bigger series) is copied first: + O(N·C).
+//   The copy check walks each column's arrays once: O(C) per push. A
+//     batch whose buffers hold over twice the bytes its rows use, or whose
+//     text dictionary has over twice as many entries as rows (a slice()
+//     of a bigger series), is copied first: + O(N·C).
 
 import { performance } from 'node:perf_hooks';
 import { LiveSeries, TimeSeries } from '../dist/index.js';
@@ -145,14 +149,43 @@ const heapMode = process.argv
   .find((a) => a.startsWith('--heap='))
   ?.slice('--heap='.length);
 
-if (heapMode === 'slice') {
-  // Seed a live series with the last 100 rows of a 1M-row history, then
-  // let the history go: the live series should hold ~100 rows, not 1M.
+if (heapMode === 'slice' || heapMode === 'center' || heapMode === 'dict') {
+  // Seed a live series with the last 100 rows of a big history, then let
+  // the history go: the live series should hold ~100 rows, not the
+  // history. 'slice': a 1M-row history. 'center': the same slice re-keyed
+  // with asTime({ at: 'center' }), which builds a new key but keeps the
+  // history's number columns. 'dict': a 200k-row history whose text
+  // column has 50k distinct values (a slice shares the whole dictionary).
   // Built inside a function and measured on a later tick, so nothing on
   // the stack still points at the history.
-  const n = 1_000_000;
-  const l = new LiveSeries({ name: 's', schema });
+  const dictSchema = Object.freeze([
+    { name: 'time', kind: 'time' },
+    { name: 'price', kind: 'number' },
+    { name: 'host', kind: 'string' },
+  ]);
+  const l = new LiveSeries({
+    name: 's',
+    schema: heapMode === 'dict' ? dictSchema : schema,
+  });
   (() => {
+    if (heapMode === 'dict') {
+      const n = 200_000;
+      const history = TimeSeries.fromColumns({
+        name: 'history',
+        schema: dictSchema,
+        columns: {
+          time: Float64Array.from({ length: n }, (_, i) => i * STEP),
+          price: new Float64Array(n).fill(100),
+          host: Array.from(
+            { length: n },
+            (_, i) => `host-${(i * 7) % 50_000}-${'x'.repeat(40)}`,
+          ),
+        },
+      });
+      l.pushSeries(history.slice(n - 100, n));
+      return;
+    }
+    const n = 1_000_000;
     const history = TimeSeries.fromColumns({
       name: 'history',
       schema,
@@ -162,7 +195,8 @@ if (heapMode === 'slice') {
         size: new Float64Array(n).fill(1),
       },
     });
-    l.pushSeries(history.slice(n - 100, n));
+    const seed = history.slice(n - 100, n);
+    l.pushSeries(heapMode === 'center' ? seed.asTime({ at: 'center' }) : seed);
   })();
   await new Promise((resolve) => setTimeout(resolve, 10));
   globalThis.gc?.();

@@ -16,7 +16,12 @@ import {
   TimeSeries,
   ValidationError,
 } from '../../src/index.js';
-import { copyBatch } from '../../src/live/live-series.js';
+import { batchHoldsExtra, copyBatch } from '../../src/live/live-series.js';
+import { BooleanColumn, Float64Column } from '../../src/columnar/column.js';
+import { ChunkedFloat64Column } from '../../src/columnar/chunked-column.js';
+import { TimeKeyColumn } from '../../src/columnar/key-column.js';
+import { stringColumnDictEncoded } from '../../src/columnar/string-column.js';
+import { validityFromBits } from '../../src/columnar/validity.js';
 import { ON_SIGNAL } from '../../src/schema/series.js';
 
 type AnyLive = LiveSeries<any>;
@@ -782,8 +787,10 @@ describe('pushSeries shares the batch buffers on the chunked backing', () => {
   }
 
   it('keeps views into a buffer up to twice the batch (a worker message)', () => {
-    // 4 rows x 4 columns x 8 bytes x 2 = 256.
-    const { batch, price } = viewsBatch(4, 256);
+    // The rows use 4 x 3 number columns (time, price, size) x 8 bytes = 96;
+    // twice that is 192. (A 4-row text column copies when sliced, so it
+    // holds no shared buffer.)
+    const { batch, price } = viewsBatch(4, 192);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     live.pushSeries(batch);
     price[3] = 99;
@@ -791,7 +798,7 @@ describe('pushSeries shares the batch buffers on the chunked backing', () => {
   });
 
   it('copies views into a bigger buffer, so they do not keep it alive', () => {
-    const { batch, price } = viewsBatch(4, 264);
+    const { batch, price } = viewsBatch(4, 200);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     live.pushSeries(batch);
     const rows = batch.toRows();
@@ -857,6 +864,205 @@ describe('pushSeries shares the batch buffers on the chunked backing', () => {
     expect(
       Array.from({ length: 100 }, (_, i) => columns.get('venue').read(i)),
     ).toEqual(Array.from({ length: 100 }, (_, i) => `v${(n - 100 + i) % 3}`));
+  });
+});
+
+describe('pushSeries copies a batch that holds more than its rows need', () => {
+  /**
+   * A history of `n` rows whose `venue` cycles through `distinct` values
+   * (dictionary-encoded when `distinct` is under half of `n`), with a gap
+   * in `venue` every `gapEvery` rows when given.
+   */
+  function history(n: number, distinct: number, gapEvery = 0) {
+    const time = Float64Array.from({ length: n }, (_, i) => i * 1000);
+    const price = Float64Array.from({ length: n }, (_, i) => i);
+    const venue = Array.from({ length: n }, (_, i) =>
+      gapEvery > 0 && i % gapEvery === 0 ? undefined : `v${i % distinct}`,
+    );
+    const big = TimeSeries.fromColumns({
+      name: 'history',
+      schema: SCHEMA,
+      columns: { time, price, size: new Float64Array(n).fill(1), venue },
+    });
+    return { big, price, venue };
+  }
+
+  /** A batch's key and value columns, as `pushSeries` passes them. */
+  function parts(series: AnySeries) {
+    const columns = new Map<string, any>(
+      ['price', 'size', 'venue'].map((name) => [
+        name,
+        series.column(name as 'price'),
+      ]),
+    );
+    return { key: series.keyColumn() as any, columns };
+  }
+
+  it('keeps a fresh batch and one buffer of exactly the batch', () => {
+    const fresh = parts(ticks([0, 1000, 2000]));
+    expect(batchHoldsExtra(fresh.key, fresh.columns, 3)).toBe(false);
+    // 32 rows: time, price and size in one buffer, venue dictionary-encoded.
+    const n = 32;
+    const buf = new ArrayBuffer(n * 24);
+    const time = new Float64Array(buf, 0, n);
+    for (let i = 0; i < n; i += 1) time[i] = i * 1000;
+    const message = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time,
+        price: new Float64Array(buf, n * 8, n),
+        size: new Float64Array(buf, n * 16, n),
+        venue: Array.from({ length: n }, (_, i) => (i % 2 ? 'a' : 'b')),
+      },
+    });
+    const m = parts(message);
+    expect(m.columns.get('venue').dictionary).toEqual(['b', 'a']);
+    expect(batchHoldsExtra(m.key, m.columns, n)).toBe(false);
+  });
+
+  it('copies a slice of a bigger history, not the whole history', () => {
+    const { big } = history(2_000, 3);
+    const seed = parts(big.slice(1_900, 2_000));
+    expect(batchHoldsExtra(seed.key, seed.columns, 100)).toBe(true);
+    const whole = parts(big);
+    expect(batchHoldsExtra(whole.key, whole.columns, 2_000)).toBe(false);
+  });
+
+  it('copies a compact key over value views (asTime center of a slice)', () => {
+    const n = 2_000;
+    const begin = Float64Array.from({ length: n }, (_, i) => i * 1000);
+    const price = Float64Array.from({ length: n }, (_, i) => i);
+    const bars = TimeSeries.fromColumns({
+      name: 'bars',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'price', kind: 'number' },
+        { name: 'size', kind: 'number', required: false },
+        { name: 'venue', kind: 'string', required: false },
+      ] as const,
+      columns: {
+        timeRange: begin,
+        timeRangeEnd: begin.map((t) => t + 1000),
+        price,
+        size: new Float64Array(n).fill(1),
+        // All distinct, so the text column copies when sliced and only
+        // the number columns can hold the bars' buffers.
+        venue: Array.from({ length: n }, (_, i) => `v${i}`),
+      } as never,
+    });
+    const seed = bars.slice(n - 100, n).asTime({ at: 'center' });
+    const p = parts(seed as AnySeries);
+    // The key is new and compact; the value columns still view the bars.
+    expect(p.key.begin.buffer.byteLength).toBe(100 * 8);
+    expect(p.columns.get('price')._values.buffer.byteLength).toBe(n * 8);
+    expect(batchHoldsExtra(p.key, p.columns, 100)).toBe(true);
+    const viaMany = new LiveSeries({ name: 'x', schema: SCHEMA });
+    viaMany.pushMany(seed.toRows() as never);
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    live.pushSeries(seed as never);
+    price[n - 1] = -1;
+    expect(live.toTimeSeries().toRows()).toEqual(
+      viaMany.toTimeSeries().toRows(),
+    );
+  });
+
+  it('copies a text column whose dictionary is much bigger than the batch', () => {
+    const { big } = history(2_000, 900);
+    const full = big.column('venue') as any;
+    expect(full.dictionary.length).toBe(900);
+    // A gather copies the indices (compact) but shares the dictionary, so
+    // only the dictionary rule can catch it.
+    const rows = Int32Array.from({ length: 100 }, (_, i) => 1_900 + i);
+    const venue = full.sliceByIndices(rows);
+    expect(venue.indices.buffer.byteLength).toBe(100 * 4);
+    const key = new TimeKeyColumn(
+      Float64Array.from({ length: 100 }, (_, i) => i * 1000),
+      100,
+    );
+    expect(batchHoldsExtra(key, new Map([['venue', venue]]), 100)).toBe(true);
+    // Exactly twice as many entries as rows is kept; one more is copied.
+    const first100 = Int32Array.from({ length: 100 }, (_, i) => i);
+    for (const [distinct, copies] of [
+      [200, false],
+      [201, true],
+    ] as const) {
+      const gathered = (
+        history(500, distinct).big.column('venue') as any
+      ).sliceByIndices(first100);
+      expect(gathered.dictionary.length).toBe(distinct);
+      expect(batchHoldsExtra(key, new Map([['venue', gathered]]), 100)).toBe(
+        copies,
+      );
+    }
+  });
+
+  it('counts text indices, validity and boolean bits in a bigger buffer', () => {
+    const key = new TimeKeyColumn(
+      Float64Array.from({ length: 100 }, (_, i) => i * 1000),
+      100,
+    );
+    // A range slice shares the text column's indices buffer: with a small
+    // dictionary and every other column fresh, the indices alone decide.
+    const ranged = (history(2_000, 3).big.column('venue') as any).sliceByRange(
+      1_900,
+      2_000,
+    );
+    expect(ranged.indices.buffer.byteLength).toBe(2_000 * 4);
+    expect(batchHoldsExtra(key, new Map([['venue', ranged]]), 100)).toBe(true);
+    // A validity bitmap in a bigger buffer counts too.
+    const bits = new Uint8Array(10_000).fill(0xff);
+    const sparse = stringColumnDictEncoded(
+      ['a'],
+      new Int32Array(100),
+      validityFromBits(bits, 100),
+    );
+    expect(batchHoldsExtra(key, new Map([['venue', sparse]]), 100)).toBe(true);
+    // And a boolean column's bits.
+    const flags = new BooleanColumn(bits, 100);
+    expect(batchHoldsExtra(key, new Map([['flag', flags]]), 100)).toBe(true);
+    const ownFlags = new BooleanColumn(new Uint8Array(13), 100);
+    expect(batchHoldsExtra(key, new Map([['flag', ownFlags]]), 100)).toBe(
+      false,
+    );
+  });
+
+  it('the copy keeps only the dictionary entries its rows use, gaps kept', () => {
+    const { big, venue } = history(2_000, 900, 7);
+    const seed = big.slice(1_900, 2_000);
+    const p = parts(seed);
+    copyBatch(p.key, p.columns, 100);
+    const copied = p.columns.get('venue');
+    const want = venue.slice(1_900, 2_000);
+    expect(copied.dictionary.length).toBe(
+      new Set(want.filter((v) => v !== undefined)).size,
+    );
+    expect(Array.from({ length: 100 }, (_, i) => copied.read(i))).toEqual(want);
+    // End to end: same rows as pushMany.
+    const viaMany = new LiveSeries({ name: 'x', schema: SCHEMA });
+    viaMany.pushMany(seed.toRows() as never);
+    const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+    live.pushSeries(seed);
+    expect(live.toTimeSeries().toRows()).toEqual(
+      viaMany.toTimeSeries().toRows(),
+    );
+  });
+
+  it('counts each chunk of a chunked column', () => {
+    const key = new TimeKeyColumn(new Float64Array([0, 1, 2, 3]), 4);
+    const a = new Float64Column(new Float64Array([1, 2]), 2, true);
+    const b = new Float64Column(new Float64Array([3, 4]), 2, true);
+    const own = new ChunkedFloat64Column([a, b]);
+    expect(batchHoldsExtra(key, new Map([['v', own]]) as never, 4)).toBe(false);
+    const view = new Float64Column(
+      new Float64Array(1_000).subarray(0, 2),
+      2,
+      true,
+    );
+    const pinned = new ChunkedFloat64Column([a, view]);
+    expect(batchHoldsExtra(key, new Map([['v', pinned]]) as never, 4)).toBe(
+      true,
+    );
   });
 });
 

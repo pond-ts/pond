@@ -14,6 +14,7 @@ import {
   stringColumnFromArray,
   validityFromBits,
 } from '../../src/columnar/index.js';
+import { compactDictionary } from '../../src/columnar/string-column.js';
 
 /* -------------------------------------------------------------------------- */
 /* Construction & read — dict-encoded mode                                    */
@@ -1084,5 +1085,43 @@ describe('Direct-constructor fallback rejects undefined slots without validity',
     // to the callback. Now the construction itself is rejected.
     // This test confirms there's no surviving path.
     expect(() => new StringColumn(2, { fallback: ['a', undefined] })).toThrow();
+  });
+});
+
+describe('compactDictionary', () => {
+  it('keeps only the entries defined cells use, in first-use order', () => {
+    // 'c' (index 2) sits only under a gap; 'd' is unused.
+    const validity = validityFromBits(Uint8Array.of(0b1011), 4);
+    const col = stringColumnDictEncoded(
+      ['a', 'b', 'c', 'd'],
+      Int32Array.of(1, 0, 2, 1),
+      validity,
+    );
+    const out = compactDictionary(col);
+    expect(out.dictionary).toEqual(['b', 'a']);
+    expect(Array.from(out.indices!)).toEqual([0, 1, 0, 0]);
+    expect(out.validity).toBe(validity);
+    expect([0, 1, 2, 3].map((i) => out.read(i))).toEqual([
+      'b',
+      'a',
+      undefined,
+      'b',
+    ]);
+  });
+
+  it('gives an empty dictionary when every cell is a gap', () => {
+    const col = stringColumnDictEncoded(
+      ['a', 'b'],
+      Int32Array.of(0, 1),
+      validityFromBits(Uint8Array.of(0), 2),
+    );
+    const out = compactDictionary(col);
+    expect(out.dictionary).toEqual([]);
+    expect([out.read(0), out.read(1)]).toEqual([undefined, undefined]);
+  });
+
+  it('returns a fallback column as it is', () => {
+    const col = stringColumnFallback(['x', 'y']);
+    expect(compactDictionary(col)).toBe(col);
   });
 });

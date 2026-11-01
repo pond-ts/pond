@@ -192,8 +192,9 @@ schema validation as `TimeSeries`. Eviction runs after each push to
 honor retention. Column-shaped batches come in as a `TimeSeries`
 (`pushSeries`, usually fed by `TimeSeries.fromColumns`); on the
 chunked backing the batch's own columns become one chunk, unchecked
-per row and uncopied (a `slice()` of a much bigger series is copied
-first, so it doesn't keep its parent alive).
+per row and uncopied (a batch holding much more than its rows need,
+such as a `slice()` of a much bigger series, is copied first, so it
+doesn't keep its parent alive).
 
 `live.toTimeSeries()` snapshots to a batch series — the standard
 crossing point between layers.
