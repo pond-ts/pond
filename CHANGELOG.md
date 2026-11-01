@@ -112,16 +112,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   requires is refused, naming the first such row. On a default series
   (`strict`, `time` key) the batch's columns are stored as they are, with no
   per-row check and no event object per row: 100,000 rows in batches of 1,600
-  take 1.6 ms against `pushMany`'s 17.9 ms (2.3× faster in batches of 16). A
+  take 1.8 ms against `pushMany`'s 18.1 ms (2.4× faster in batches of 16). A
   `window()` or other view on the series brings the per-row events back
   (about 1.3×), and `drop` / `reorder` series or `timeRange` / `interval`
   keys take `pushMany`'s row path (about the same speed). **The live series
-  keeps the batch's `Float64Array`s, not copies**, so don't write to or reuse
-  a pushed buffer while its rows are retained (push `buf.slice(0, n)`
-  instead): a write changes stored rows and can leave their times out of
-  order. A batch that would keep much more memory alive than its rows need
-  (a `slice()` of a much bigger series, which shares the parent's buffers and
-  text dictionaries) is copied first, so it doesn't keep its parent alive.
+  keeps the batch's `Float64Array`s, not copies**, so don't write to, reuse
+  or transfer a pushed buffer while its rows are retained (push
+  `buf.slice(0, n)` instead): a write changes stored rows and can leave their
+  times out of order. A batch that would keep much more memory alive than its
+  rows need (a `slice()` of a much bigger series, which shares the parent's
+  buffers and text dictionaries) is copied first, so it doesn't keep its
+  parent alive, and so is any batch of 8 rows or fewer.
   The same rules as pond-rs's `push_series`, apart
   from that `partitionBy` case (pond-rs refuses the whole batch).
 - **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build

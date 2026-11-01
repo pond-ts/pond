@@ -519,64 +519,100 @@ missing or extra column, `required` judged by the live schema (the batch's own
 flag proves nothing: `fromColumns` doesn't enforce it, [PND-COLSREQ]), shape
 checked even on an empty batch.
 
-**Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, middle of three
-runs, 4-core Linux, Node 22.22, 2026-11-01, build 58d75170, before the review
-fixes; pushSeries includes `fromColumns`):
+**Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, ms, 4-core
+Linux, Node 22.22, 2026-11-01, final build; median of six runs alternating
+with bb4aeade, the build the Codex pass reviewed; `pushSeries` includes
+`fromColumns`; "Faster" is the median of the six runs' own ratios):
 
-| Case                                  | pushMany | pushSeries | fromColumns alone |
-| ------------------------------------- | -------- | ---------- | ----------------- |
-| 1,600 rows/push                       | 18.7     | 1.6        | 1.1               |
-| one 100k push                         | 14.7     | 0.9        | 0.9               |
-| 1,600/push, maxEvents 10k             | 17.4     | 1.2        | 0.9               |
-| 1,600/push, maxAge                    | 18.3     | 5.6        | 1.4               |
-| 16 rows/push                          | 56.1     | 21.2       | 12.1              |
-| 1 row/push                            | 359      | 436        | 182               |
-| 'event' listener, 1,600/push          | 48.0     | 33.0       | 0.9               |
-| window(1000) view, 1,600/push         | 72.0     | 52.7       | 0.9               |
-| partitionBy host (100), 1,600/push    | 87.7     | 62.6       | 4.3               |
-| drop, 1,600/push                      | 69.3     | 62.4       | 1.2               |
-| reorder grace 5s, 1,600/push          | 71.3     | 68.1       | 1.1               |
-| timeRange key, 1,600/push             | 82.2     | 82.5       | 1.4               |
-| + host string column, 1,600/push      | 25.5     | 4.4        | 4.2               |
-| `.slice()` each column first, 1,600   | 15.2     | 2.4        | 2.5               |
-| `.slice()` each column first, 16/push | 49.1     | 42.9       | — (\*)            |
+| Case                                        | pushMany | pushSeries | fromColumns alone | Faster |
+| ------------------------------------------- | -------- | ---------- | ----------------- | ------ |
+| 1,600 rows/push                             | 18.1     | 1.76       | 1.14              | 10.5×  |
+| one 100k push                               | 15.0     | 0.92       | 0.85              | 16.3×  |
+| 1,600/push, maxEvents 10k                   | 15.1     | 1.21       | 0.86              | 12.8×  |
+| 16/push, maxEvents 10k                      | 84.4     | 25.6       | 14.6              | 3.3×   |
+| 1,600/push, maxAge                          | 19.6     | 3.61       | 0.89              | 5.4×   |
+| 16 rows/push                                | 57.1     | 23.3       | 12.6              | 2.4×   |
+| 1 row/push                                  | 389      | 601        | 189               | 0.7×   |
+| 'event' listener, 1,600/push                | 50.0     | 34.3       | 0.90              | 1.4×   |
+| window(1000) view, 1,600/push               | 69.1     | 53.9       | 0.87              | 1.3×   |
+| partitionBy host (100), 1,600/push          | 85.9     | 60.6       | 4.18              | 1.4×   |
+| partitionBy host, drop partitions           | 125      | 126        | 4.30              | 1.0×   |
+| drop, 1,600/push                            | 80.5     | 73.6       | 1.15              | 1.1×   |
+| drop, every row late, 1,600/push            | 39.5     | 35.8       | 1.17              | 1.1×   |
+| reorder grace 5s, 1,600/push                | 72.7     | 68.0       | 1.17              | 1.1×   |
+| timeRange key, 1,600/push                   | 78.5     | 84.7       | 1.54              | 0.9×   |
+| + host string column, 1,600/push            | 21.4     | 4.58       | 4.33              | 4.6×   |
+| `number[]` columns (`fromColumns` copies)   | 16.2     | 16.1       | 15.8              | 1.0×   |
+| `.slice()` each column first, 1,600         | 14.8     | 2.48       | 2.34              | 6.1×   |
+| `.slice()` each column first, 16/push       | 50.1     | 54.5       | — (\*)            | 0.9×   |
+| slices of one 100k series, 1,600 (copied)   | 17.6     | 1.73       | —                 | 9.9×   |
+| slices of a 100k hosts series, 1,600        | 23.6     | 3.35       | —                 | 7.2×   |
+| slices of a 100k hosts series, 16 (trimmed) | 63.9     | 61.9       | —                 | 1.0×   |
+| 100k empty `pushSeries` calls               | —        | 24.6       | —                 | —      |
 
-(\*) 61–97 ms across the three runs, more than the `pushSeries` time that
-includes it: garbage left by the scenario before it, since the script doesn't
-force a collection between samples. Not a real floor.
+(\*) 68 ms, more than the `pushSeries` time that includes it: garbage left by
+the scenario before it, since the script doesn't force a collection between
+samples. Not a real floor.
 
-After the Layer 2 review (below), the final build (5a16db27) and 58d75170 ran
-three times each, alternating, so both builds saw the same machine state. The
-two builds' `pushSeries` ranges overlapped on 16 of the 21 rows. Of the other
-five, the final build was faster on three (`drop`, `reorder`, `.slice()` first
-at 1,600/push; 6–10%, not explained by the change, so likely drift) and slower
-on two: 100k empty calls (about 8 ns more per call) and the new scenario,
-1,600-row `slice()`s of one 100k series, which `pushSeries` now copies:
-1.5–1.7 ms against 0.33–0.51 before the copy (`pushMany` 17.5–22.0). One row at
-a time the two builds matched (383–453 against 366–443 ms; `pushMany` faster in
-5 of the 6 runs, middle ratio 1.1×). Two sequential sets of runs before this
-(final build 456–478, the earlier build 395–423) had suggested the fix cost
-~10% there; alternating the builds showed that was drift between sessions. The
-docs table then used the final build's alternating runs; after the Codex fixes
-it was refreshed from the Codex-fix build's six runs (alternating with
-bb4aeade, below), the medians of six. `pushMany`'s own column moved by up to
-9% between those sessions with its code unchanged, so read the table's
-ratios, not its absolute times.
+In the eight rows the docs table shows, most runs' ratios sat within a fifth
+of the median, the widest single runs 23× for one push, 3.2× for batches of
+16 and 6.5× for the text column. Other rows swung further: one run each at
++83% (hosts slices at 16), +71% (`.slice()` first at 16), +60%
+(`number[]` columns) and −44% (maxAge). A second session, with both builds
+loaded from identically laid-out folders, gave ratios within 13% of these on
+18 rows; the other four moved more: partitionBy 1.43× → 1.20×, slices of one
+series 9.9× → 11.6×, hosts slices at 1,600 7.2× → 5.3×, and at 16 1.03× →
+0.83× (`pushMany` the faster call there). Against bb4aeade (`pushSeries`
+time, median of the six pairs' ratios, both sessions) every row was level
+(0.86–1.10) except: one row a push, 1.34× and 1.37× slower (the batch is now
+copied; see the decision below); `.slice()` first at 16 rows, 1.26× and
+1.11× (pair ratios 0.95–1.92, the row whose garbage the footnote describes);
+slices of one series, 0.72× and 1.01× (bb4aeade's samples 1.7–6.3 ms, noisy);
+and slices of the hosts series, 1.12–1.27× at 16 rows and 1.15–1.24× at
+1,600. A focused probe running both builds in one process, alternated 15
+times, put the 1,600-row hosts slices at 0.99–1.05× (level). The 16-row ones
+are typically ~1.3× slower: of 13 such probe runs (three here, ten in the
+Layer 2 review of #878), 11 sat at 1.15–1.70× and two at 0.92. That is ~2–3 µs
+a push over bb4aeade; the dictionary trim each such copy now does measures
+~1.3 µs alone, and the rest wasn't broken down.
+Earlier, the Layer 2 fix had moved 1,600-row slices of one series from
+0.33–0.51 ms (kept) to 1.5–1.7 ms (copied).
 
-Retained heap for a full 100k window is the same both ways (8.4 MB heap,
-2.3 MB array buffers); pushing views into a buffer twice the batch's size
-doubles the array buffers held (4.6 MB), as documented. Seeding a live
-series with `history.slice(-100)` of a 1M-row history and letting the
-history go left 22.9 MB of array buffers alive before the review fix and
-0.1 MB after (`--heap=slice`). The Codex pass found two batches that rule
-missed, both fixed (bb4aeade build vs the fix, same script): the same slice
-re-keyed with `asTime({ at: 'center' })` (a new key over the history's number
-columns) held 15.3 MB of array buffers, now 0.1 MB (`--heap=center`); and the
-last 100 rows of a 200k-row history whose text column has 50k distinct
-values held the whole dictionary, 13.5 MB of heap against 8.2 MB now (8.1 MB
-is the empty baseline; `--heap=dict`). `perf-live-columnar.mjs`
-before/after (main a363dc63 vs branch, three runs each) moved by no more than
-run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
+Three cases added after the Layer 2 review of #878, so the script reaches
+both paths of the dictionary trim (see the copy, below). Slices of a 100k
+series whose text column has 10,000 hosts; every slice's dictionary is past
+twice its rows, so every copy trims it. Final build, median of three runs, not
+run against bb4aeade:
+
+| Case                                          | pushMany | pushSeries | Faster |
+| --------------------------------------------- | -------- | ---------- | ------ |
+| 1,600-row slices, 1,600 hosts each (table)    | 34.7     | 9.85       | 3.5×   |
+| 1,600-row slices, 160 hosts, each ×10 (table) | 24.3     | 4.95       | 4.7×   |
+| 16-row slices (`Map`)                         | 59.3     | 63.3       | 0.9×   |
+
+Retained memory. A full 100k window holds the same both ways (8.4 MB heap,
+2.3 MB array buffers); views into a buffer twice the batch's size double the
+array buffers held (4.6 MB), as documented. Batches that would keep a bigger
+parent alive (`--heap=` modes of the script): `history.slice(-100)` of a
+1M-row history held 22.9 MB of array buffers before the Layer 2 fix, 0.1 MB
+after; the same slice re-keyed with `asTime({ at: 'center' })` held 15.3 MB
+at bb4aeade, 0.1 MB now (Codex finding 1); the last 100 rows of a 200k-row
+history whose text column has 50k distinct values held the whole dictionary,
+13.5 MB of heap against 8.2 MB now, 8.1 MB being the empty baseline (Codex
+finding 2). Tails of fresh parents (1,000 pushes, each the last 5 rows of a
+new 1,000-row series holding 256 strings of 200 characters): `pushSeries`
+keeps 2.9 MB of heap, `pushMany` 2.7; 20-row tails 6.2 and 5.9. Small
+batches of fresh arrays (100k rows, three number columns; resident memory
+growth, three runs each, both builds loaded from identically laid-out
+folders): 1 row a push 160–163 MB against 175–176 at bb4aeade (`pushMany`
+158–160), 4 rows 60–61 against 64–66, 8 rows 45–46 against 46–47; from 9
+rows level with bb4aeade and with `pushMany`. (A first measurement loaded the
+two builds from differently laid-out folders and read ~5 MB apart at 16
+rows; an unchanged copy of one build moved by the same amount when its
+folder changed, so memory comparisons now load both builds from identically
+laid-out folders.) `perf-live-columnar.mjs` before/after (main a363dc63 vs
+branch, three runs each) moved by no more than run-to-run noise (chunked
+with an `'event'` listener: 160-164 vs 157-172 ms).
 
 **Decisions and why.**
 
@@ -590,61 +626,86 @@ run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
 - **Share the batch's buffers, don't copy.** Pond never writes a column
   buffer; the caller is the only possible writer, which is the contract
   `fromColumns` already documents. A defensive copy (the `.slice()` rows
-  above) costs 1.5× the shared path at 1,600/push and 2× at 16/push. Callers
+  above) costs 1.4× the shared path at 1,600/push and 2.3× at 16/push. Callers
   who pool buffers push `buf.slice(0, n)`; the JSDoc and docs say so.
 - **Except a batch that would keep much more memory alive than its rows
-  need** (Layer 2 review, widened after the Codex pass). `TimeSeries.slice()`
-  returns views into its parent's buffers, and a text column's slice or gather
-  shares the parent's whole dictionary, so keeping a slice kept the whole
-  parent. The first rule looked only at the key's buffer; Codex showed it
-  missed `asTime({ at: 'center' })` on a slice (a new compact key over the
-  parent's number columns) and that a copied text column still carried the
-  full dictionary. `batchHoldsExtra` now walks every array the batch holds
-  (key, number values, text indices, boolean bits, validity bits, each chunk
-  of a chunked column), counts each buffer once, and copies when those
-  buffers hold more than twice the bytes the rows use, or when a text
-  dictionary has more than twice as many entries as the batch has rows.
-  Counting each buffer once keeps one worker message holding every column on
-  the shared path. `copyBatch` copies number columns and the key with one
-  `slice` each and other kinds by gather (a per-row gather for everything
-  measured 7.4 ms against 2.0–2.8 for this per 100k rows, in a scratch
-  probe), then rebuilds a copied text column's dictionary with only the
-  entries its rows use (`compactDictionary`, O(rows)).
+  need, and any batch of 8 rows or fewer** (Layer 2 review, widened after
+  the Codex pass and two internal reviews of that fix). `TimeSeries.slice()`
+  returns views into its parent's buffers, and a text column's slice or
+  gather shares the parent's whole dictionary, so keeping a slice kept the
+  whole parent. The Layer 2 fix looked only at the key's buffer; Codex
+  showed it missed `asTime({ at: 'center' })` on a slice (a new compact key
+  over the parent's number columns) and that a copied text column still
+  carried the whole dictionary. The rule now, on the chunked backing only:
+  - **8 rows or fewer: copy without checking** (`ALWAYS_COPY_ROWS`). V8
+    keeps a typed array of 64 bytes or less (8 numbers) inside its own heap
+    and gives it a separate buffer only when `.buffer` is first read:
+    0.70–1.0 µs and ~175 bytes more per array for as long as the array lives
+    (against 0.05–0.06 µs to make the array without the read; from 9 numbers
+    up the buffer exists from the start and a read costs ~0.1 µs). A check
+    reads every column's buffer. For arrays made for the push, copying took
+    about what the Layer 2 key-only check (one read) took (100k rows from
+    fresh arrays, four processes per build alternating, ranges overlap at 1,
+    2, 4, 8, 9 and 16 rows a push; e.g. 1 row 590–661 ms against 597–673), and
+    keeps less memory (above). Reading every column's buffer instead, at
+    e9cd6440, had measured slower than the key-only check (1 row 578–642
+    against 533–582, alternating, one session). Arrays whose buffer was
+    already read pay the copy where a check would cost ~0.1–0.4 µs: the full
+    script's one-row case, which pushes the same arrays into each new
+    series, is 1.34–1.37× slower.
+  - **Otherwise copy when the batch holds more than twice what its rows
+    use** (`batchHoldsExtra`): the buffers behind every array the batch
+    holds (key, number values, text indices, boolean bits, validity bits,
+    each chunk of a chunked column) total more than twice the bytes its rows
+    use, or a text column's dictionary has more than twice as many entries
+    as the column has rows (`dictionaryOutgrows`). A buffer counts once
+    while it matches the last partial view counted: O(1) per array. One
+    worker message laying its columns out one after another counts once and
+    is kept; a buffer seen again after another partial view counts again,
+    which can only cause an extra copy, never a missed one. A bit array of 64
+    bytes or less that fills its own buffer at offset 0 is counted without
+    reading `.buffer` (no code path builds a bit array as a view; a bit
+    array partway into a buffer is still read and counted).
+  - **The copy** (`copyBatch`): number columns and the key with one `slice`
+    each, other kinds by gather (a per-row gather for everything measured
+    7.4 ms against 2.0–2.8 for this per 100k rows, in a scratch probe). A
+    text column whose dictionary outgrows its rows then keeps only the
+    entries its rows use (`compactDictionary`: a lookup table over the
+    dictionary when the column has 256 rows or more and the dictionary is
+    at most 8 times the rows, a `Map` otherwise). In a copy of the loop
+    (20k calls, three rounds, both orders) the table was 2–4× faster than
+    a `Map` when most rows hold distinct values, and 1.1–1.6× slower, a few
+    µs a call, when the rows repeat a few dozen values or fewer, since the
+    `Map` then stays small. Which case applies isn't known before the loop
+    and the table's win is the bigger one, so it stays. End to end, one
+    build with and without the table (15 alternating pairs, three runs;
+    slices of a 100k series with 10,000 hosts): 1,600-row slices of mostly
+    distinct hosts took 0.42–0.48× the time, slices repeating each host ten
+    rows 0.88–0.90×, and 300-row slices using ~10 hosts each 0.89–1.13×
+    (level). Outside the limits the table loses badly: 16 rows of a
+    50,000-entry dictionary ~60 µs against ~1 µs. The 16-row slices row
+    above would catch that: in that case, one process alternating, a build
+    without the limits took 239–248 ms against 71–73.
 
-  Cost. The first version of the walk (a `Set` and two closures per call)
-  took 0.375 µs a call on 6,250 distinct 16-row batches whose buffers
-  already existed, and showed in the full script as `pushSeries` 13% slower
-  at 16 rows a push (median of six alternating pairs against bb4aeade). An
-  array that fills its own buffer now skips the duplicate check, and the
-  check keeps a plain list instead of a `Set`: 0.109 µs a call (the old
-  key-only rule: 0.03). Re-run, six pairs alternating against bb4aeade:
-  batches of 16 1.03× (median pair ratio), 1,600 and one 100k push within
-  run-to-run spread (cases on the per-row path, which never run the check,
-  moved by up to 1.07× the same way). What remains is small batches made
-  from fresh arrays: V8 keeps a typed array of 64 bytes or less inside its
-  heap and makes its separate buffer only when `.buffer` is first read
-  (measured: making a fresh array of 1–8 numbers and reading its buffer
-  costs 0.70–1.0 µs, against 0.05–0.06 µs to make it without the read; from
-  9 numbers up, making the array costs 1 µs or more whether or not it is
-  read; a second read 0.1 µs), and
-  the check now reads every column's buffer, not just the key's. One row a
-  push in the full script (arrays made beforehand): 1.06× slower (pair
-  ratios 1.01–1.08; the docs table now shows `pushMany` 1.2× faster there).
-  100k rows with arrays made inside each push, ms, medians of 7, three
-  processes per build alternating (bb4aeade → this fix): 1 row 533–582 →
-  578–642, 2 rows 241–251 → 259–373, 4 rows 118–147 → 139–148, 8 rows 53–57
-  → 64–75; 16 rows level within noise. `pushMany` on the same rows (making
-  its row arrays) was faster at every one of those sizes on both builds (1:
-  253–311, 2: 133–156, 4: 71–89, 8: 46–52; about level at 16), and the docs
-  now point such callers to it. Reusing the same arrays every push, one row
-  costs 1–14% more (medians 370–418 → 413–471 ms).
+  Cost: level with bb4aeade apart from the rows named under **Measured**.
+  The walk costs ~0.1 µs a call when the same batch is checked again and
+  again, and 0.2–0.4 µs across many distinct small batches (Layer 2 timing on
+  #878). Its first version (a `Set` and two closures per call) took 0.375 µs and showed as 13% at 16 rows a push; the plain
+  list that replaced it was O(C²) on wide batches; the last-buffer rule is
+  O(C). `fromArrow` of a 1,000-column builder-built table: +87 µs a push.
 
-  Rejected: skipping the read for an array of 64 bytes or less at offset 0,
-  which would remove the small-batch cost. It misses `history.slice(0, k)`
-  for k ≤ 8 and a pooled buffer holding a few rows at its start, and
-  replaying a history one row at a time starts with exactly that slice.
-  Memory held wins over speed on batch sizes where `pushMany` is the faster
-  call anyway.
+  Rejected:
+  - **Don't trim dictionaries of 256 entries or fewer.** Saved ~1.2 µs a
+    push and ~11 bytes a row on 16-row slices of one 100-host series, but each batch
+    from a different parent then kept that parent's whole dictionary: 1,000
+    five-row tails of fresh series holding 256 strings of 200 characters
+    kept 60 MB, against 2.9 MB trimmed. That has no bound, so trim.
+  - **Skip the `.buffer` read for any array of 64 bytes or less at offset 0.** It misses `history.slice(0, k)` and a pooled buffer holding a few
+    rows at its start. Moot for number columns now that batches of 8 rows or
+    fewer are copied; kept only for bit arrays that fill their own buffer.
+  - **One count object shared by every call** instead of one per call.
+    Looked like ~5 MB less resident memory at 16 rows, but the gap came from
+    the folder the build was loaded from (above), not the code.
 
 - **Per-row backings accept the batch** rather than refusing it: the method
   then works in every ordering mode and key kind (as pond-rs's does), at
@@ -669,7 +730,10 @@ wire-batching producer yet)" (`docs/notes/columnar-arc-assessment-2026-06.md`).
 Tests: `test/live/LiveSeries.pushSeries.test.ts` (differential vs `pushMany`
 over 8 configurations × 3 retentions × with/without listeners, 40 seeds each,
 plus targeted cases; 12 of 12 planted bugs caught, 6 of 6 more for the
-review fixes and 14 of 14 for the Codex fixes),
+review fixes, 45 of 45 on the final copy rule after the Codex pass and
+the two reviews of its fix, and 4 of 4 more from the Layer 2 review of #878),
+`test/columnar/StringColumn.test.ts`
+(`compactDictionary`, both lookup paths),
 `test-d/live-push-series.test-d.ts`, `live-chunked-storage.test.ts`.
 
 ### [PND-ONCHUNKISO] — A partition error on a default series skips the source's own push steps
