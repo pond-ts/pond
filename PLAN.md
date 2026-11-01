@@ -957,6 +957,42 @@ Robustness debt plus the queued composition workstreams. Plan:
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
   now.
+- **[PND-ONCHUNKISO]** — On a default (chunked) `LiveSeries`, a partition
+  error (a row for an undeclared group) escapes after the batch is stored, so
+  the source skips its own retention and listeners; the per-row backing
+  finishes the push, then throws. Fix by finishing then throwing, or by
+  refusing the whole batch first as pond-rs does. Needs Peter's call; detail
+  in `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-AGESCAN]** — `maxAge` retention finds its cutoff by walking rows from
+  the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
+  ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
+  so a binary search would do. Measured 2026-11-01 in
+  `perf-live-push-series.mjs`.
+- **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
+  `push_series`). Add it with a `{ pushSeries }` step in the live parity
+  generator (`packages/core/scripts/parity/live.mjs`) and
+  `crates/pond-rs/tests/live_parity.rs` in one PR: `packages/rs/test/live.mjs`
+  reruns the generator, so the step alone would break it.
+
+- **[PND-PUSHTIME]** — `pushMany` on a default series makes a `Time` per row
+  and throws it away (`batch/validate.ts`, untrusted intake); the trusted
+  branch already skips it. No API change. The spike profiled it at ~27% of
+  `pushMany` (not re-measured).
+- **[PND-COLSTYPED]** — Type `fromColumns`' `columns` from the schema so a
+  misspelt column name fails to compile. Public type change; needs Peter's OK.
+- **[PND-LIVEFASTDROP]** — `pushSeries` into a `drop` / `reorder` series
+  builds an event per row, like `pushMany`. pond-rs takes columns straight in
+  when nothing is built on the series; port that if a consumer pushes columns
+  into such a series.
+- **[PND-CLAMPHINT]** — The chunked `LiveSeries` intra-batch order error
+  suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
+  message.
+- **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
+  it builds, and each retention eviction rebuilds that whole cache. Building a
+  view over a big series reads every row through `at()`, so the pushes after
+  it slow down until retention has dropped those rows: after reading 200k
+  rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
+  0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
 
 ### Streaming semantics (Phase 4.5)
 

@@ -310,6 +310,224 @@ time, which would throw inside a push after the root stored the row.
 Tests: `test/live/livelabel.test.ts`, `test/live/mapgap.test.ts`, pond-rs
 `live/tests.rs`.
 
+### [PND-LPUSHCOL] — Column push into `LiveSeries`: `pushSeries` — **shipped 2026-11-01**
+
+**Source:** the offscreen-stream spike (PR #760): `pushMany` takes rows only,
+and its per-row check made 100k ticks cost 17-23 ms where
+`TimeSeries.fromColumns` takes about 1 ms. Peter approved starting the work
+2026-10-31.
+
+**What shipped.** `live.pushSeries(ts: TimeSeries<S>)`. Column data comes in
+through the existing door: `live.pushSeries(TimeSeries.fromColumns({...}))`.
+Follows `pushMany`'s rules for the batch's rows. On the chunked backing
+(top-level `strict` + `time` key) the batch's own key and value columns are
+re-wrapped against the live schema (`ColumnarStore.fromTrustedStore`, O(C), no
+row read) and committed through `#commitChunk`; on the per-row backings the
+store becomes `Event`s (`materializeEventsFromStore`, which now builds
+`Interval` keys too) and runs pushMany's row loop, moved unchanged into
+`#commitPerRow`. Matching follows pond-rs `push_series`: same key kind (key
+name may differ), value columns by name in any order with the same kind, no
+missing or extra column, `required` judged by the live schema (the batch's own
+flag proves nothing: `fromColumns` doesn't enforce it, [PND-COLSREQ]), shape
+checked even on an empty batch.
+
+**Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, middle of three
+runs, 4-core Linux, Node 22.22, 2026-11-01, build 58d75170, before the review
+fixes; pushSeries includes `fromColumns`):
+
+| Case                                  | pushMany | pushSeries | fromColumns alone |
+| ------------------------------------- | -------- | ---------- | ----------------- |
+| 1,600 rows/push                       | 18.7     | 1.6        | 1.1               |
+| one 100k push                         | 14.7     | 0.9        | 0.9               |
+| 1,600/push, maxEvents 10k             | 17.4     | 1.2        | 0.9               |
+| 1,600/push, maxAge                    | 18.3     | 5.6        | 1.4               |
+| 16 rows/push                          | 56.1     | 21.2       | 12.1              |
+| 1 row/push                            | 359      | 436        | 182               |
+| 'event' listener, 1,600/push          | 48.0     | 33.0       | 0.9               |
+| window(1000) view, 1,600/push         | 72.0     | 52.7       | 0.9               |
+| partitionBy host (100), 1,600/push    | 87.7     | 62.6       | 4.3               |
+| drop, 1,600/push                      | 69.3     | 62.4       | 1.2               |
+| reorder grace 5s, 1,600/push          | 71.3     | 68.1       | 1.1               |
+| timeRange key, 1,600/push             | 82.2     | 82.5       | 1.4               |
+| + host string column, 1,600/push      | 25.5     | 4.4        | 4.2               |
+| `.slice()` each column first, 1,600   | 15.2     | 2.4        | 2.5               |
+| `.slice()` each column first, 16/push | 49.1     | 42.9       | — (\*)            |
+
+(\*) 61–97 ms across the three runs, more than the `pushSeries` time that
+includes it: garbage left by the scenario before it, since the script doesn't
+force a collection between samples. Not a real floor.
+
+After the Layer 2 review (below), the final build (5a16db27) and 58d75170 ran
+three times each, alternating, so both builds saw the same machine state. The
+two builds' `pushSeries` ranges overlapped on 16 of the 21 rows. Of the other
+five, the final build was faster on three (`drop`, `reorder`, `.slice()` first
+at 1,600/push; 6–10%, not explained by the change, so likely drift) and slower
+on two: 100k empty calls (about 8 ns more per call) and the new scenario,
+1,600-row `slice()`s of one 100k series, which `pushSeries` now copies:
+1.5–1.7 ms against 0.33–0.51 before the copy (`pushMany` 17.5–22.0). One row at
+a time the two builds matched (383–453 against 366–443 ms; `pushMany` faster in
+5 of the 6 runs, middle ratio 1.1×). Two sequential sets of runs before this
+(final build 456–478, the earlier build 395–423) had suggested the fix cost
+~10% there; alternating the builds showed that was drift between sessions. The
+docs table then used the final build's alternating runs; after the Codex fixes
+it was refreshed from the Codex-fix build's six runs (alternating with
+bb4aeade, below), the medians of six. `pushMany`'s own column moved by up to
+9% between those sessions with its code unchanged, so read the table's
+ratios, not its absolute times.
+
+Retained heap for a full 100k window is the same both ways (8.4 MB heap,
+2.3 MB array buffers); pushing views into a buffer twice the batch's size
+doubles the array buffers held (4.6 MB), as documented. Seeding a live
+series with `history.slice(-100)` of a 1M-row history and letting the
+history go left 22.9 MB of array buffers alive before the review fix and
+0.1 MB after (`--heap=slice`). The Codex pass found two batches that rule
+missed, both fixed (bb4aeade build vs the fix, same script): the same slice
+re-keyed with `asTime({ at: 'center' })` (a new key over the history's number
+columns) held 15.3 MB of array buffers, now 0.1 MB (`--heap=center`); and the
+last 100 rows of a 200k-row history whose text column has 50k distinct
+values held the whole dictionary, 13.5 MB of heap against 8.2 MB now (8.1 MB
+is the empty baseline; `--heap=dict`). `perf-live-columnar.mjs`
+before/after (main a363dc63 vs branch, three runs each) moved by no more than
+run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
+
+**Decisions and why.**
+
+- **A `TimeSeries`, not raw columns** (`pushColumns` rejected). `fromColumns`
+  stays the one door that turns typed arrays into a series, so adoption, gap
+  and ordering rules live in one place; pond-rs has the same shape
+  (`push_series`, and it turned down `push_columns`); the most a raw-columns
+  method could save over `pushSeries(fromColumns(...))` is `fromColumns`' own
+  cost, ~2 µs per call (`fromColumns` alone at one row per push, 172–212 ms
+  per 100k calls across both builds' alternating runs). Shipping both would be two verbs for one thing.
+- **Share the batch's buffers, don't copy.** Pond never writes a column
+  buffer; the caller is the only possible writer, which is the contract
+  `fromColumns` already documents. A defensive copy (the `.slice()` rows
+  above) costs 1.5× the shared path at 1,600/push and 2× at 16/push. Callers
+  who pool buffers push `buf.slice(0, n)`; the JSDoc and docs say so.
+- **Except a batch that would keep much more memory alive than its rows
+  need** (Layer 2 review, widened after the Codex pass). `TimeSeries.slice()`
+  returns views into its parent's buffers, and a text column's slice or gather
+  shares the parent's whole dictionary, so keeping a slice kept the whole
+  parent. The first rule looked only at the key's buffer; Codex showed it
+  missed `asTime({ at: 'center' })` on a slice (a new compact key over the
+  parent's number columns) and that a copied text column still carried the
+  full dictionary. `batchHoldsExtra` now walks every array the batch holds
+  (key, number values, text indices, boolean bits, validity bits, each chunk
+  of a chunked column), counts each buffer once, and copies when those
+  buffers hold more than twice the bytes the rows use, or when a text
+  dictionary has more than twice as many entries as the batch has rows.
+  Counting each buffer once keeps one worker message holding every column on
+  the shared path. `copyBatch` copies number columns and the key with one
+  `slice` each and other kinds by gather (a per-row gather for everything
+  measured 7.4 ms against 2.0–2.8 for this per 100k rows, in a scratch
+  probe), then rebuilds a copied text column's dictionary with only the
+  entries its rows use (`compactDictionary`, O(rows)).
+
+  Cost. The first version of the walk (a `Set` and two closures per call)
+  took 0.375 µs a call on 6,250 distinct 16-row batches whose buffers
+  already existed, and showed in the full script as `pushSeries` 13% slower
+  at 16 rows a push (median of six alternating pairs against bb4aeade). An
+  array that fills its own buffer now skips the duplicate check, and the
+  check keeps a plain list instead of a `Set`: 0.109 µs a call (the old
+  key-only rule: 0.03). Re-run, six pairs alternating against bb4aeade:
+  batches of 16 1.03× (median pair ratio), 1,600 and one 100k push within
+  run-to-run spread (cases on the per-row path, which never run the check,
+  moved by up to 1.07× the same way). What remains is small batches made
+  from fresh arrays: V8 keeps a typed array of 64 bytes or less inside its
+  heap and makes its separate buffer only when `.buffer` is first read
+  (measured: making a fresh array of 1–8 numbers and reading its buffer
+  costs 0.70–1.0 µs, against 0.05–0.06 µs to make it without the read; from
+  9 numbers up, making the array costs 1 µs or more whether or not it is
+  read; a second read 0.1 µs), and
+  the check now reads every column's buffer, not just the key's. One row a
+  push in the full script (arrays made beforehand): 1.06× slower (pair
+  ratios 1.01–1.08; the docs table now shows `pushMany` 1.2× faster there).
+  100k rows with arrays made inside each push, ms, medians of 7, three
+  processes per build alternating (bb4aeade → this fix): 1 row 533–582 →
+  578–642, 2 rows 241–251 → 259–373, 4 rows 118–147 → 139–148, 8 rows 53–57
+  → 64–75; 16 rows level within noise. `pushMany` on the same rows (making
+  its row arrays) was faster at every one of those sizes on both builds (1:
+  253–311, 2: 133–156, 4: 71–89, 8: 46–52; about level at 16), and the docs
+  now point such callers to it. Reusing the same arrays every push, one row
+  costs 1–14% more (medians 370–418 → 413–471 ms).
+
+  Rejected: skipping the read for an array of 64 bytes or less at offset 0,
+  which would remove the small-batch cost. It misses `history.slice(0, k)`
+  for k ≤ 8 and a pooled buffer holding a few rows at its start, and
+  replaying a history one row at a time starts with exactly that slice.
+  Memory held wins over speed on batch sizes where `pushMany` is the faster
+  call anyway.
+
+- **Per-row backings accept the batch** rather than refusing it: the method
+  then works in every ordering mode and key kind (as pond-rs's does), at
+  `pushMany`'s speed.
+- **Required-gap errors name the first bad row**, scanning the required
+  columns in row order as `pushMany` does (review finding; the message now
+  matches `pushMany`'s on the chunked backing, `pushMany`'s per-row backings
+  word it differently).
+- **No order re-scan of the batch on the chunked path.** A `TimeSeries` is
+  sorted (checked when built); a scan only guards against a caller writing an
+  adopted key buffer between `fromColumns` and the push, and no scan can catch
+  a write after it. It was measured at ~0.18 ms per 100k, about a tenth of the
+  fast path. Left as a question for Peter.
+- **Noted, not built:** [PND-ONCHUNKISO] (a partition router error skips the
+  source's retention on the chunked backing; `pushSeries` matches `pushMany`
+  there, pinned by a test that will keep passing either way it is fixed),
+  [PND-AGESCAN] (the maxAge row above), [PND-RSPUSHSERIES], [PND-PUSHTIME],
+  [PND-COLSTYPED], [PND-LIVEFASTDROP], [PND-CLAMPHINT]; see PLAN.md.
+
+Supersedes the 2026-06 columnar-arc assessment's "keep `pushColumns` dead (no
+wire-batching producer yet)" (`docs/notes/columnar-arc-assessment-2026-06.md`).
+Tests: `test/live/LiveSeries.pushSeries.test.ts` (differential vs `pushMany`
+over 8 configurations × 3 retentions × with/without listeners, 40 seeds each,
+plus targeted cases; 12 of 12 planted bugs caught, 6 of 6 more for the
+review fixes and 14 of 14 for the Codex fixes),
+`test-d/live-push-series.test-d.ts`, `live-chunked-storage.test.ts`.
+
+### [PND-ONCHUNKISO] — A partition error on a default series skips the source's own push steps
+
+**Found** 2026-10-31 designing [PND-LPUSHCOL]. On the chunked backing,
+`#commitChunk` calls its `_onChunk` consumers (the partition router) with no
+`try`, after the chunk is stored and counted. A router throw (a row for a
+group a typed `partitionBy` doesn't declare, or a partition listener's error
+that `_stageRowsClose` rethrows) escapes there, so the source skips its own
+`'event'`, retention, `'batch'` and `'evict'`: 5 rows pushed into a
+`maxEvents: 2` source are all kept, with no `'batch'` or `'evict'`. The
+per-row backing, where the router is an ordinary `'event'` listener, finishes
+the push and then throws. `pushSeries` and `pushMany` behave the same here
+(pinned by a test that keeps passing whichever fix lands).
+
+**Two fixes.** (a) Finish, then throw: isolate each `_onChunk` call like a
+listener and rethrow the first error at the end, as the per-row backing does
+(about 15 lines in `#commitChunk`; drafted in the authoring session, not
+committed). (b) Refuse the whole batch before storing anything, as pond-rs's
+`check_partitions` does. Either changes what the live parity fixture
+(`packages/core/scripts/parity/live.mjs`) records, and three bridge harnesses
+read that fixture, so the fix lands with their updates. Waiting on Peter's
+pick.
+
+### [PND-LATCACHE] — Reading every row with `at()` slows later pushes until retention drops those rows
+
+**Found** 2026-11-01 while re-measuring [PND-LVWIN]. On the chunked backing
+`at(i)` builds an `Event` and caches it in a `Map` keyed by row index, so
+`at(i) === at(i)`. Each retention eviction remaps that cache by building a
+new `Map` of every cached entry (`#shiftCacheBy` in
+`live-chunked-storage.ts`), so with a full cache every push pays for the
+whole cache until retention has dropped the cached rows. A new `LiveView`
+fills itself by calling `source.at(i)` for every row the source holds, so
+building a view over a big series is enough to set it off.
+
+Measured on main (a363dc63, Node 22, one run; `maxEvents: 200_000`, 130
+pushes of 1,600 first, then every row read with `at()`): pushes before the
+read 0.29 ms (median); the next 50 pushes 47 ms; the 50 after 19 ms; the 100
+after that 0.22 ms. With no retention the read leaves pushes at 0.28 ms, and
+with no read they stay at 0.21–0.23 ms. Building a `window(1)` view
+mid-stream on a 200k-row series with no other view put the next 100 pushes
+at 21–23 ms (median) on both main and the [PND-LVWIN] build, and the 100
+after at 1.6 ms. Fix to consider: remap only the entries that
+survive (most are dropped, oldest first), drop the cache on eviction, or let
+a view fill itself without going through the cache.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)

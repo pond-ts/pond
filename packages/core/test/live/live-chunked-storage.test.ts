@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { ChunkedColumnarLiveStorage } from '../../src/live/live-chunked-storage.js';
+import {
+  ChunkedColumnarLiveStorage,
+  materializeEventsFromStore,
+} from '../../src/live/live-chunked-storage.js';
+import { Interval } from '../../src/core/interval.js';
+import { Time } from '../../src/core/time.js';
+import { TimeRange } from '../../src/core/time-range.js';
+import { TimeSeries } from '../../src/batch/time-series.js';
 import { ColumnarStore } from '../../src/columnar/store.js';
 import { validateAndNormalizeColumnar } from '../../src/batch/validate.js';
 import type { RowForSchema, SeriesSchema } from '../../src/schema/index.js';
@@ -286,5 +293,56 @@ describe('ChunkedColumnarLiveStorage — clear + snapshot', () => {
     expect(ts.length).toBe(60);
     expect(ts.at(0)!.get('value')).toBe(40);
     expect(ts.at(59)!.get('value')).toBe(99);
+  });
+});
+
+describe('materializeEventsFromStore', () => {
+  // `pushSeries` hands a per-row backing events built here, so every key
+  // kind must come back as its own class ([PND-LPUSHCOL]).
+  const storeOf = (key: 'time' | 'timeRange' | 'interval') => {
+    const columns: Record<string, unknown> = { v: [1, 2] };
+    columns[key] = [0, 10];
+    if (key !== 'time') columns[`${key}End`] = [5, 15];
+    if (key === 'interval') columns.intervalLabel = ['a', 'b'];
+    const schema = [
+      { name: key, kind: key },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const ts = TimeSeries.fromColumns({ name: 'x', schema, columns } as never);
+    const store = ColumnarStore.fromTrustedStore(
+      schema,
+      (ts as any).keyColumn(),
+      new Map([['v', (ts as any).column('v')]]),
+    );
+    return materializeEventsFromStore(store as never, schema as never);
+  };
+
+  it('time keys become Time', () => {
+    const events = storeOf('time');
+    expect(events.map((e) => e.key() instanceof Time)).toEqual([true, true]);
+    expect(events.map((e) => e.begin())).toEqual([0, 10]);
+  });
+
+  it('timeRange keys become TimeRange', () => {
+    const events = storeOf('timeRange');
+    expect(events.map((e) => e.key() instanceof TimeRange)).toEqual([
+      true,
+      true,
+    ]);
+    expect(events.map((e) => [e.begin(), e.end()])).toEqual([
+      [0, 5],
+      [10, 15],
+    ]);
+  });
+
+  it('interval keys become Interval, with their labels', () => {
+    const events = storeOf('interval');
+    const keys = events.map((e) => e.key() as Interval);
+    expect(keys.every((k) => k instanceof Interval)).toBe(true);
+    expect(keys.map((k) => [k.value, k.begin(), k.end()])).toEqual([
+      ['a', 0, 5],
+      ['b', 10, 15],
+    ]);
+    expect(events.map((e) => (e as any).get('v'))).toEqual([1, 2]);
   });
 });

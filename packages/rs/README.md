@@ -156,7 +156,8 @@ live.free();
   function column; `toTimeSeries` takes no name; partitioned fused
   rolling `stats()` has no `windowsCount`; a `map` result cell of the
   wrong type is a gap; a `cumulative` result that is not a number is
-  `NaN`.
+  `NaN`; there is no `pushSeries` yet (pond-rs has `push_series`; this
+  package doesn't expose it).
 - **Speed** (`scripts/perf-live.mjs`, 1M events): `push` about 6x faster
   than pond-ts, `pushMany` about 3x, a rolling average plus 1-minute
   buckets 2-5x, and about 1.4-2x with a listener on every rolling update
