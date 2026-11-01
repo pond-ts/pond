@@ -230,22 +230,52 @@ type EvictListener<S extends SeriesSchema> = (
 ) => void;
 
 /**
+ * @internal `pushSeries` copies a batch of this many rows or fewer on the
+ * chunked backing without checking it. V8 keeps a typed array of 64 bytes
+ * or less (8 numbers) inside its own heap, and the first read of its
+ * `.buffer` moves it out: about 1 µs and ~175 bytes kept for good, per
+ * array. For arrays made for the push (the usual case) copying a batch
+ * that small takes about as long as that first read and keeps less
+ * memory. (Arrays whose buffer was already read, such as the same arrays
+ * pushed again into a new series, pay the copy, ~1.5 µs a push, where the
+ * check would cost ~0.4.)
+ */
+const ALWAYS_COPY_ROWS = 8;
+
+/**
+ * @internal Whether a text column's dictionary has more than twice as
+ * many entries as the column has rows, so a copy should keep only the
+ * entries its rows use. A `slice()` or gather shares its parent's whole
+ * dictionary. Trimming every such batch costs time and a dictionary per
+ * batch when many batches come from one parent (16-row slices of a
+ * 100-host series: ~1.2 µs a push and ~11 bytes a row more), but sharing
+ * costs a whole dictionary per batch when each comes from its own parent
+ * (5-row tails of 1,000 fresh series holding 256 strings of 200
+ * characters: 60 MB kept, against 2.9 MB trimmed). The second has no
+ * bound, so trim.
+ */
+function dictionaryOutgrows(col: StringColumn): boolean {
+  const dictionary = col.dictionary;
+  return dictionary !== undefined && dictionary.length > 2 * col.length;
+}
+
+/**
  * @internal Whether a `pushSeries` batch would keep more memory alive
  * than its rows need, so the chunked backing should copy it first. True
- * when the buffers behind its arrays (each buffer counted once, so one
- * worker message holding every column counts once) total more than
- * twice the bytes its rows use, or a text column's dictionary has more
- * than twice as many entries as it has rows. A `slice()` shares its
- * parent's buffers and dictionaries, and so does an operator that
- * rebuilds only the key (`asTime({ at: 'center' })`). Exported for tests
- * only (not from the package index).
+ * when the buffers behind its arrays total more than twice the bytes its
+ * rows use, or a text column's dictionary outgrows its rows
+ * (`dictionaryOutgrows`). A buffer shared by arrays next to each other
+ * counts once, so one worker message holding every column counts once.
+ * A `slice()` shares its parent's buffers and dictionaries, and so does
+ * an operator that rebuilds only the key (`asTime({ at: 'center' })`).
+ * Exported for tests only (not from the package index).
  */
 export function batchHoldsExtra(
   key: TimeKeyColumn,
   columns: Map<string, Column>,
   n: number,
 ): boolean {
-  const tally: Tally = { held: 0, used: 0, seen: [] };
+  const tally: Tally = { held: 0, used: 0, last: undefined };
   tallyArray(tally, key.begin, 8 * n);
   for (const col of columns.values()) {
     if (tallyColumn(tally, col)) return true;
@@ -255,29 +285,46 @@ export function batchHoldsExtra(
 
 /** `batchHoldsExtra`'s running count. */
 interface Tally {
-  /** Bytes of the buffers behind the batch's arrays, each counted once. */
+  /** Bytes of the buffers behind the batch's arrays. */
   held: number;
   /** Bytes the batch's rows use in those arrays. */
   used: number;
-  /** Buffers a partial view already counted. */
-  seen: ArrayBufferLike[];
+  /** The buffer behind the last partial view counted. */
+  last: ArrayBufferLike | undefined;
 }
 
 function tallyArray(tally: Tally, array: ArrayBufferView, bytes: number): void {
   tally.used += bytes;
   const buffer = array.buffer;
-  // An array that fills its buffer holds exactly what it uses, so it needs
-  // no check against the others (the common case, and the cheap one).
+  // An array that fills its buffer holds exactly what it uses (the common
+  // case, and the cheap one).
   if (buffer.byteLength === bytes) {
     tally.held += bytes;
     return;
   }
-  // A plain list measured faster than a Set per call. Partial views come
-  // from a worker message (one buffer for all) or a slice (one per column,
-  // so a slice of C columns costs O(C^2) compares before it is copied).
-  if (tally.seen.includes(buffer)) return;
-  tally.seen.push(buffer);
+  // A buffer counts once while it matches the last partial view counted:
+  // O(1) per array. A worker message lays its columns out one after
+  // another, so it counts once. A buffer shared with an earlier view, past
+  // another partial view, counts again, which can only cause an extra
+  // copy, never a missed one.
+  if (buffer === tally.last) return;
+  tally.last = buffer;
   tally.held += buffer.byteLength;
+}
+
+/**
+ * Bit arrays (validity bits, boolean values) are made fresh at their exact
+ * size by every path that builds them, never as a view. One of 64 bytes or
+ * less (up to 512 rows) sits inside V8's heap, where reading its `.buffer`
+ * would move it out (see `ALWAYS_COPY_ROWS`), so it is counted unread.
+ */
+function tallyBits(tally: Tally, bits: Uint8Array, bytes: number): void {
+  if (bytes <= 64 && bits.byteOffset === 0 && bits.byteLength === bytes) {
+    tally.used += bytes;
+    tally.held += bytes;
+    return;
+  }
+  tallyArray(tally, bits, bytes);
 }
 
 /** Counts a column's arrays; true when its dictionary alone means copy. */
@@ -291,14 +338,14 @@ function tallyColumn(tally: Tally, col: Column): boolean {
     return false;
   }
   if (col instanceof StringColumn && col.dictionary !== undefined) {
-    if (col.dictionary.length > 2 * col.length) return true;
+    if (dictionaryOutgrows(col)) return true;
     tallyArray(tally, col.indices!, 4 * col.length);
   } else if (col instanceof BooleanColumn) {
-    tallyArray(tally, col.values, bitmapByteCount(col.length));
+    tallyBits(tally, col.values, bitmapByteCount(col.length));
   }
   // Array columns copy their cells when sliced: nothing shared to count.
   if (col.validity !== undefined) {
-    tallyArray(tally, col.validity.bits, bitmapByteCount(col.length));
+    tallyBits(tally, col.validity.bits, bitmapByteCount(col.length));
   }
   return false;
 }
@@ -307,9 +354,9 @@ function tallyColumn(tally: Tally, col: Column): boolean {
  * @internal A compact copy of a `pushSeries` batch's time key and value
  * columns (`columns` is updated in place; the key is returned). Number
  * columns and the key copy their buffer with one `slice`, which measured
- * several times faster than a per-row gather; other kinds gather, and a
- * text column then keeps only the dictionary entries it uses. Exported
- * for tests only (not from the package index).
+ * several times faster than a per-row gather; other kinds gather. A text
+ * column whose dictionary `dictionaryOutgrows` its rows then keeps only the
+ * entries it uses. Exported for tests only (not from the package index).
  */
 export function copyBatch(
   key: TimeKeyColumn,
@@ -332,7 +379,9 @@ export function copyBatch(
     const copy = col.sliceByIndices(rows);
     columns.set(
       name,
-      copy instanceof StringColumn ? compactDictionary(copy) : copy,
+      copy instanceof StringColumn && dictionaryOutgrows(copy)
+        ? compactDictionary(copy)
+        : copy,
     );
   }
   return TimeKeyColumn.fromValidatedSubarray(key.begin.slice(0, n), n);
@@ -715,8 +764,8 @@ export class LiveSeries<S extends SeriesSchema> {
    * **Where it is faster.** On a default series (`ordering: 'strict'`,
    * `time` key) the batch's columns are stored as they are, with no
    * per-row check and no `Event` per row, so a large batch costs about
-   * what `fromColumns` costs: 100k rows in batches of 1,600 took 1.6 ms
-   * against `pushMany`'s 17.9 ms (`scripts/perf-live-push-series.mjs`).
+   * what `fromColumns` costs: 100k rows in batches of 1,600 took 1.8 ms
+   * against `pushMany`'s 18.1 ms (`scripts/perf-live-push-series.mjs`).
    * Two things bring back an `Event` per row and most of `pushMany`'s
    * cost: a listener on `'event'` or `'batch'` (a `window()`, `filter()`
    * or other view built on the series is one; ~1.3-1.5x), and the other
@@ -741,24 +790,31 @@ export class LiveSeries<S extends SeriesSchema> {
    * **The batch's buffers are shared, not copied.** On a default series
    * the live series keeps the batch's key and number columns, and
    * `fromColumns` keeps the `Float64Array`s it was given, so the live
-   * series ends up holding your arrays. Don't write to, reuse or pool a
-   * pushed `Float64Array` while its rows are still in the series: rows are
-   * not checked again, so a write changes rows already stored and can
-   * leave their keys out of order (lookups such as `atOrBefore` then go
-   * wrong, and a later `toTimeSeries()` throws), while a row already read
-   * with `at()` keeps its old value. If you reuse buffers, push
-   * `buf.slice(0, n)` (or a `number[]`, which `fromColumns` copies). A
-   * push made from inside a listener is queued and reads the batch when it
-   * runs, whatever the storage mode, so leave its arrays alone until then.
-   * One case is copied: a batch that would keep much more memory alive
-   * than its rows need, so a small batch never keeps a big parent alive.
-   * That is a batch whose arrays sit in buffers holding more than twice
-   * the bytes its rows use (each buffer counted once), or whose text
-   * column's dictionary has more than twice as many entries as it has
-   * rows. A `slice()` of a bigger series shares its parent's buffers and
-   * dictionaries, and so does one re-keyed with
-   * `asTime({ at: 'center' })`. Views into one buffer about the batch's
-   * size (one worker message holding every column) are kept as they are.
+   * series ends up holding your arrays. Don't write to, reuse, pool or
+   * transfer a pushed `Float64Array` while its rows are still in the
+   * series. Rows are not checked again, so a write changes rows already
+   * stored and can leave their keys out of order (lookups such as
+   * `atOrBefore` then go wrong, and a later `toTimeSeries()` throws),
+   * while a row already read with `at()` keeps its old value. Transferring
+   * its buffer (`postMessage(msg, [buffer])`) or shrinking a resizable one
+   * breaks those rows: their values read back as missing, or reads throw.
+   * If you reuse buffers, push `buf.slice(0, n)` (or a `number[]`, which
+   * `fromColumns` copies). A push made from inside a listener is queued
+   * and reads the batch when it runs, whatever the storage mode, so leave
+   * its arrays alone until then.
+   *
+   * Two kinds of batch are copied for you. A batch of 8 rows or fewer:
+   * copying it takes about as long as checking it and keeps less memory.
+   * And a batch that would keep much more memory alive than its rows
+   * need, so a small batch never keeps a big parent alive: one whose
+   * arrays sit in buffers more than twice the size its rows need, or whose
+   * text column carries more than twice as many distinct strings as it
+   * has rows (the copy then keeps only the strings its rows use). A
+   * `slice()` of a bigger series is like that, since it shares its
+   * parent's buffers and strings, and so is one re-keyed with
+   * `asTime({ at: 'center' })`. Columns that are views into one buffer
+   * about the batch's size (one worker message holding every column) are
+   * kept as they are.
    *
    * **NaN and other non-finite numbers** in a batch from `fromColumns`
    * are gaps, because that is how `fromColumns` reads them (`pushMany`
@@ -794,10 +850,12 @@ export class LiveSeries<S extends SeriesSchema> {
       let key = series.keyColumn() as KeyColumn;
       // The chunked backing keeps the batch's buffers. A `slice()` shares
       // its parent's, so keeping it would keep the whole parent alive:
-      // copy a batch that holds much more than its rows need.
+      // copy a batch that holds much more than its rows need, and any
+      // batch of 8 rows or fewer, where copying is cheaper overall.
       if (
         this.#chunked &&
-        batchHoldsExtra(key as TimeKeyColumn, columns, series.length)
+        (series.length <= ALWAYS_COPY_ROWS ||
+          batchHoldsExtra(key as TimeKeyColumn, columns, series.length))
       ) {
         key = copyBatch(key as TimeKeyColumn, columns, series.length);
       }

@@ -356,11 +356,31 @@ export function stringColumnDictEncoded(
 export function compactDictionary(column: StringColumn): StringColumn {
   const { dictionary, indices, validity, length } = column;
   if (dictionary === undefined) return column;
-  const remap = new Map<number, number>();
   const kept: string[] = [];
   const out = new Int32Array(length);
+  // A lookup table over the whole dictionary measured faster than a Map
+  // from 256 rows while the dictionary is at most 8 times the rows (1.3-5x
+  // when the rows hold mostly distinct values, about even when a few values
+  // repeat); fewer rows or a bigger dictionary, filling the table costs
+  // more than it saves.
+  if (length >= 256 && dictionary.length <= 8 * length) {
+    const remap = new Int32Array(dictionary.length).fill(-1);
+    for (let i = 0; i < length; i += 1) {
+      // A missing cell's index is a placeholder that is never read.
+      if (validity !== undefined && !validity.isDefined(i)) continue;
+      const old = indices![i]!;
+      let next = remap[old]!;
+      if (next < 0) {
+        next = kept.length;
+        remap[old] = next;
+        kept.push(dictionary[old]!);
+      }
+      out[i] = next;
+    }
+    return stringColumnDictEncoded(kept, out, validity);
+  }
+  const remap = new Map<number, number>();
   for (let i = 0; i < length; i += 1) {
-    // A missing cell's index is a placeholder that is never read.
     if (validity !== undefined && !validity.isDefined(i)) continue;
     const old = indices![i]!;
     let next = remap.get(old);

@@ -24,10 +24,13 @@
 //     O(N) Events + pushMany's per-row loop, so ≈ pushMany.
 //   An 'event' / 'batch' listener (a window() view is one) builds an
 //     Event per row on either path.
-//   The copy check walks each column's arrays once: O(C) per push. A
-//     batch whose buffers hold over twice the bytes its rows use, or whose
-//     text dictionary has over twice as many entries as rows (a slice()
-//     of a bigger series), is copied first: + O(N·C).
+//   The copy check looks at each array once: O(C) per push (O(total
+//     chunks) for a chunked column). A batch of 8 rows or fewer is copied
+//     without checking. A batch whose buffers hold over twice the bytes its
+//     rows use, or whose text dictionary has over twice as many entries as
+//     rows (a slice() of a bigger series), is copied first: + O(N·C), and a
+//     text column with such a dictionary is then trimmed: + O(N), plus
+//     O(dictionary) when the lookup-table path fills its table.
 
 import { performance } from 'node:perf_hooks';
 import { LiveSeries, TimeSeries } from '../dist/index.js';
@@ -393,6 +396,29 @@ scenario('Float64Array .slice() first, 16/push', b16, live(), {
 });
 
 /* ── Slices of one big series (copied before storing) ──────────────── */
+function sliceScenario(label, big, s, per) {
+  const ranges = [];
+  for (let start = 0; start < TOTAL; start += per) {
+    const end = Math.min(TOTAL, start + per);
+    ranges.push({ start, end, rows: big.slice(start, end).toRows() });
+  }
+  const pushMany = benchmark(() => {
+    const l = new LiveSeries({ name: 's', schema: s });
+    for (const r of ranges) l.pushMany(r.rows);
+  });
+  const pushSeries = benchmark(() => {
+    const l = new LiveSeries({ name: 's', schema: s });
+    for (const r of ranges) l.pushSeries(big.slice(r.start, r.end));
+  });
+  const row = {
+    label,
+    pushManyMs: pushMany,
+    pushSeriesMs: pushSeries,
+    speedup: Number((pushMany / pushSeries).toFixed(1)),
+  };
+  results.push(row);
+  console.error(JSON.stringify(row));
+}
 {
   const big = TimeSeries.fromColumns({
     name: 'big',
@@ -403,28 +429,38 @@ scenario('Float64Array .slice() first, 16/push', b16, live(), {
       size: Float64Array.from({ length: TOTAL }, (_, i) => (i % 7) + 1),
     },
   });
-  const per = 1_600;
-  const ranges = [];
-  for (let start = 0; start < TOTAL; start += per) {
-    const end = Math.min(TOTAL, start + per);
-    ranges.push({ start, end, rows: big.slice(start, end).toRows() });
-  }
-  const pushMany = benchmark(() => {
-    const l = new LiveSeries({ name: 's', schema });
-    for (const r of ranges) l.pushMany(r.rows);
+  sliceScenario(
+    'slices of one 100k series, 1,600/push (copied)',
+    big,
+    schema,
+    1_600,
+  );
+  // A text column of 100 hosts: each slice is copied (its number columns
+  // view the parent's); its dictionary (100 entries) is within twice its
+  // rows at 1,600 rows, so it stays shared, and beyond it at 16, so the copy
+  // trims it.
+  const hosts = TimeSeries.fromColumns({
+    name: 'hosts',
+    schema: hostSchema,
+    columns: {
+      time: Float64Array.from({ length: TOTAL }, (_, i) => i * STEP),
+      cpu: Float64Array.from({ length: TOTAL }, (_, i) => 100 + (i % 97) / 4),
+      requests: Float64Array.from({ length: TOTAL }, (_, i) => (i % 7) + 1),
+      host: Array.from({ length: TOTAL }, (_, i) => HOSTS[i % HOSTS.length]),
+    },
   });
-  const pushSeries = benchmark(() => {
-    const l = new LiveSeries({ name: 's', schema });
-    for (const r of ranges) l.pushSeries(big.slice(r.start, r.end));
-  });
-  const row = {
-    label: 'slices of one 100k series, 1,600/push (copied)',
-    pushManyMs: pushMany,
-    pushSeriesMs: pushSeries,
-    speedup: Number((pushMany / pushSeries).toFixed(1)),
-  };
-  results.push(row);
-  console.error(JSON.stringify(row));
+  sliceScenario(
+    'slices of a 100k hosts series, 1,600/push (copied)',
+    hosts,
+    hostSchema,
+    1_600,
+  );
+  sliceScenario(
+    'slices of a 100k hosts series, 16/push (copied)',
+    hosts,
+    hostSchema,
+    16,
+  );
 }
 
 /* ── No-op pushes ─────────────────────────────────────────────────── */

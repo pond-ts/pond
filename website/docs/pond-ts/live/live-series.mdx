@@ -250,43 +250,47 @@ so the speed is the same.
 (ms, the median of six runs on one 4-core Linux machine, Node 22,
 2026-11-01; `scripts/perf-live-push-series.mjs`; the `pushSeries` times
 include building each batch with `fromColumns`; "Faster" is the median of
-the six runs' own ratios; the row-path cases vary by up to a fifth between
-runs, apart from one `window()` run 40% slower):
+the six runs' own ratios; most runs' ratios sat within a fifth of the median,
+the widest single run 23× for one batch of 100,000):
 
 | Case                                        | `pushMany` | `pushSeries` | Faster                 |
 | ------------------------------------------- | ---------- | ------------ | ---------------------- |
-| Batches of 1,600 rows                       | 17.9       | 1.6          | 11×                    |
-| One batch of 100,000                        | 14.5       | 0.9          | 16×                    |
-| Batches of 1,600, keep the last 10,000      | 14.9       | 1.15         | 13×                    |
-| Batches of 16                               | 51         | 22           | 2.3×                   |
-| One row at a time                           | 333        | 408          | `pushMany` 1.2× faster |
-| Batches of 1,600 with a `window()` view     | 68         | 51           | 1.3×                   |
-| Batches of 1,600, `ordering: 'drop'`        | 69         | 65           | 1.1×                   |
-| Batches of 1,600, plus a text `host` column | 21.6       | 4.3          | 5.1×                   |
+| Batches of 1,600 rows                       | 18.1       | 1.8          | 10×                    |
+| One batch of 100,000                        | 15.0       | 0.9          | 16×                    |
+| Batches of 1,600, keep the last 10,000      | 15.1       | 1.2          | 13×                    |
+| Batches of 16                               | 57         | 23           | 2.4×                   |
+| One row at a time                           | 389        | 601          | `pushMany` 1.5× faster |
+| Batches of 1,600 with a `window()` view     | 69         | 54           | 1.3×                   |
+| Batches of 1,600, `ordering: 'drop'`        | 81         | 74           | 1.1×                   |
+| Batches of 1,600, plus a text `host` column | 21.4       | 4.6          | 4.6×                   |
 
 :::warning[The live series keeps your arrays]
 On a default series the live series holds the batch's `Float64Array`s
 themselves, not copies (`fromColumns` adopts them, and `pushSeries` keeps
-what `fromColumns` built). Don't write to, reuse or pool a pushed array
-while its rows are still in the series. The rows aren't checked again, so a
-write changes rows already stored and can leave their times out of order:
-lookups such as `atOrBefore` then give wrong answers and a later
+what `fromColumns` built). Don't write to, reuse, pool or transfer a pushed
+array while its rows are still in the series. The rows aren't checked again,
+so a write changes rows already stored and can leave their times out of
+order: lookups such as `atOrBefore` then give wrong answers and a later
 `toTimeSeries()` throws, while a row you already read with `at()` keeps its
-old value. If you reuse buffers, push `buf.slice(0, n)`; that copy is cheap
-next to `pushMany`. A push made from inside a listener waits until the
-current push ends and reads the batch then, so leave its arrays alone until
-it has run.
+old value. Sending the array's buffer to a worker with
+`postMessage(msg, [buffer])`, or shrinking a resizable buffer, breaks those
+rows: their values read back as missing, or reading them throws. If you reuse
+buffers, push `buf.slice(0, n)`; that copy is cheap next to `pushMany`. A push
+made from inside a listener waits until the current push ends and reads the
+batch then, so leave its arrays alone until it has run.
 
-One case is copied for you: a batch that would keep much more memory alive
-than its own rows need, such as `history.slice(-100)` of a big series. A
+Two kinds of batch are copied for you. A batch of 8 rows or fewer is always
+copied: at that size copying takes about as long as checking it and keeps
+less memory. And a batch that would keep much more memory alive than its own
+rows need, such as `history.slice(-100)` of a big series, is copied too. A
 slice shares its parent's buffers, and its text columns share the parent's
 whole list of distinct strings, so keeping it would keep all of `history`
 alive (`asTime({ at: 'center' })` on a slice still shares the number
 columns). `pushSeries` copies a batch whose arrays sit in buffers more than
-twice the size its rows need, or whose text column carries more than twice
-as many distinct strings as it has rows. A batch whose columns are views
-into one buffer about its own size, like a single worker message holding
-every column, is kept as it is.
+twice the size its rows need, or whose text column carries more than twice as
+many distinct strings as it has rows; the copy keeps only the strings its
+rows use. A batch whose columns are views into one buffer about its own size,
+like a single worker message holding every column, is kept as it is.
 
 :::
 
@@ -295,9 +299,9 @@ treats it; `pushMany` refuses one. For one row at a time, keep using
 `push`. If each batch is only a few rows and you make its arrays for that
 push, `pushMany` is faster too: making three small `Float64Array`s and a
 `TimeSeries` costs more than it saves. Counting that work, 8 rows a push
-took 46–52 ms per 100,000 rows through `pushMany` and 64–75 through
-`pushSeries`, and 16 rows about the same either way (the table's batches of
-16 come from arrays made beforehand).
+took 50–72 ms per 100,000 rows through `pushMany` and 67–90 through
+`pushSeries` (eight runs each), and 16 rows about the same either way (the
+table's batches of 16 come from arrays made beforehand).
 
 ## Reading events
 

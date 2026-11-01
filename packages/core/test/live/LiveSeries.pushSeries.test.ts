@@ -18,7 +18,10 @@ import {
 } from '../../src/index.js';
 import { batchHoldsExtra, copyBatch } from '../../src/live/live-series.js';
 import { BooleanColumn, Float64Column } from '../../src/columnar/column.js';
-import { ChunkedFloat64Column } from '../../src/columnar/chunked-column.js';
+import {
+  ChunkedFloat64Column,
+  ChunkedStringColumn,
+} from '../../src/columnar/chunked-column.js';
 import { TimeKeyColumn } from '../../src/columnar/key-column.js';
 import { stringColumnDictEncoded } from '../../src/columnar/string-column.js';
 import { validityFromBits } from '../../src/columnar/validity.js';
@@ -718,27 +721,42 @@ describe('pushSeries value kinds beyond fromColumns', () => {
 });
 
 describe('pushSeries shares the batch buffers on the chunked backing', () => {
+  /** A fresh batch of `n` rows, with its `price` array. */
+  function freshBatch(n: number) {
+    const price = Float64Array.from({ length: n }, (_, i) => i + 1);
+    const batch = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: Float64Array.from({ length: n }, (_, i) => i * 1000),
+        price,
+        size: new Float64Array(n).fill(1),
+        venue: Array.from({ length: n }, () => 'a'),
+      },
+    });
+    return { batch, price };
+  }
+
   it('a write to a pushed Float64Array shows in rows not yet read', () => {
-    const price = new Float64Array([1, 2, 3]);
+    const { batch, price } = freshBatch(9);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
-    live.pushSeries(
-      TimeSeries.fromColumns({
-        name: 't',
-        schema: SCHEMA,
-        columns: {
-          time: new Float64Array([0, 1000, 2000]),
-          price,
-          size: new Float64Array([1, 1, 1]),
-          venue: ['a', 'a', 'a'],
-        },
-      }),
-    );
+    live.pushSeries(batch);
     const snapshot = live.toTimeSeries();
-    price[2] = 99;
-    // Row 2 was never read, so nothing cached it: the write shows.
-    expect(live.at(2)!.get('price')).toBe(99);
+    price[8] = 99;
+    // Row 8 was never read, so nothing cached it: the write shows.
+    expect(live.at(8)!.get('price')).toBe(99);
     // A snapshot taken before the write is its own copy.
-    expect(snapshot.at(2)!.get('price')).toBe(3);
+    expect(snapshot.at(8)!.get('price')).toBe(9);
+  });
+
+  it('a batch of 8 rows or fewer is copied, so a later write does not show', () => {
+    for (const n of [1, 8]) {
+      const { batch, price } = freshBatch(n);
+      const live = new LiveSeries({ name: 'x', schema: SCHEMA });
+      live.pushSeries(batch);
+      price[n - 1] = 99;
+      expect(live.at(n - 1)!.get('price')).toBe(n);
+    }
   });
 
   it('per-row backings copy into events, so a later write does not show', () => {
@@ -787,24 +805,24 @@ describe('pushSeries shares the batch buffers on the chunked backing', () => {
   }
 
   it('keeps views into a buffer up to twice the batch (a worker message)', () => {
-    // The rows use 4 x 3 number columns (time, price, size) x 8 bytes = 96;
-    // twice that is 192. (A 4-row text column copies when sliced, so it
-    // holds no shared buffer.)
-    const { batch, price } = viewsBatch(4, 192);
+    // The rows use 10 x 3 number columns (time, price, size) x 8 bytes =
+    // 240; twice that is 480. (A 10-row text column is a plain list, not
+    // dictionary-encoded, so it holds no typed array.)
+    const { batch, price } = viewsBatch(10, 480);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     live.pushSeries(batch);
-    price[3] = 99;
-    expect(live.toTimeSeries().at(3)!.get('price')).toBe(99);
+    price[9] = 99;
+    expect(live.toTimeSeries().at(9)!.get('price')).toBe(99);
   });
 
   it('copies views into a bigger buffer, so they do not keep it alive', () => {
-    const { batch, price } = viewsBatch(4, 200);
+    const { batch, price } = viewsBatch(10, 488);
     const live = new LiveSeries({ name: 'x', schema: SCHEMA });
     live.pushSeries(batch);
     const rows = batch.toRows();
-    price[3] = 99;
+    price[9] = 99;
     expect(live.toTimeSeries().toRows()).toEqual(rows);
-    expect(live.toTimeSeries().at(3)!.get('price')).toBe(3);
+    expect(live.toTimeSeries().at(9)!.get('price')).toBe(9);
   });
 
   it('copies a slice of a bigger series', () => {
@@ -981,17 +999,22 @@ describe('pushSeries copies a batch that holds more than its rows need', () => {
       100,
     );
     expect(batchHoldsExtra(key, new Map([['venue', venue]]), 100)).toBe(true);
-    // Exactly twice as many entries as rows is kept; one more is copied.
-    const first100 = Int32Array.from({ length: 100 }, (_, i) => i);
-    for (const [distinct, copies] of [
-      [200, false],
-      [201, true],
+    // Copied past twice as many entries as rows.
+    for (const [rows, distinct, copies] of [
+      [200, 400, false],
+      [200, 401, true],
+      [16, 32, false],
+      [16, 33, true],
     ] as const) {
       const gathered = (
-        history(500, distinct).big.column('venue') as any
-      ).sliceByIndices(first100);
+        history(1_000, distinct).big.column('venue') as any
+      ).sliceByIndices(Int32Array.from({ length: rows }, (_, i) => i));
       expect(gathered.dictionary.length).toBe(distinct);
-      expect(batchHoldsExtra(key, new Map([['venue', gathered]]), 100)).toBe(
+      const k = new TimeKeyColumn(
+        Float64Array.from({ length: rows }, (_, i) => i * 1000),
+        rows,
+      );
+      expect(batchHoldsExtra(k, new Map([['venue', gathered]]), rows)).toBe(
         copies,
       );
     }
@@ -1025,6 +1048,187 @@ describe('pushSeries copies a batch that holds more than its rows need', () => {
     expect(batchHoldsExtra(key, new Map([['flag', ownFlags]]), 100)).toBe(
       false,
     );
+  });
+
+  describe('counts each kind of array at its true size, at the 2x line', () => {
+    // A fresh 100-row key: 800 bytes held, 800 used.
+    const key = new TimeKeyColumn(
+      Float64Array.from({ length: 100 }, (_, i) => i * 1000),
+      100,
+    );
+    const holds = (columns: Record<string, unknown>) =>
+      batchHoldsExtra(key, new Map(Object.entries(columns)) as never, 100);
+    const numbers = (bufferLength: number, from = 0) =>
+      new Float64Column(
+        new Float64Array(bufferLength).subarray(from, from + 100),
+        100,
+        true,
+      );
+
+    it('each check starts its count from zero', () => {
+      // Nothing carries over between calls. A key viewing a big buffer is
+      // extra every time, including right after a call that saw the same
+      // buffer; a batch within the line right after is not.
+      const viewKey = new TimeKeyColumn(
+        new Float64Array(10_000).subarray(0, 100),
+        100,
+      );
+      expect(batchHoldsExtra(viewKey, new Map(), 100)).toBe(true);
+      expect(batchHoldsExtra(viewKey, new Map(), 100)).toBe(true);
+      expect(holds({ price: numbers(300) })).toBe(false);
+    });
+
+    it('a number column viewing a bigger buffer', () => {
+      // Used 800 + 800 = 1,600. Held 800 + 8 x the buffer's length.
+      expect(holds({ price: numbers(300) })).toBe(false); // 3,200
+      expect(holds({ price: numbers(301) })).toBe(true); // 3,208
+    });
+
+    it('two columns viewing two buffers count both', () => {
+      // Used 2,400. Each alone stays at 2x (above); together they hold
+      // 800 + 2,400 + 2,400 = 5,600.
+      expect(holds({ price: numbers(300), size: numbers(300, 200) })).toBe(
+        true,
+      );
+    });
+
+    it('two columns viewing one buffer, side by side, count it once', () => {
+      const buf = new Float64Array(450);
+      const view = (from: number) =>
+        new Float64Column(buf.subarray(from, from + 100), 100, true);
+      // Used 2,400; held 800 + 3,600 = 4,400 (counted twice: 8,000).
+      expect(holds({ price: view(0), size: view(100) })).toBe(false);
+    });
+
+    it('an array filling its own buffer between two views keeps the count', () => {
+      // Key, price and size view one 5,600-byte buffer; a fresh column sits
+      // between price and size. Used 3,200; the line is 6,400. Held 5,600 +
+      // 800 = 6,400 with the shared buffer counted once (12,000 if twice).
+      const buf = new Float64Array(700);
+      const k = new TimeKeyColumn(buf.subarray(0, 100), 100);
+      const view = (from: number) =>
+        new Float64Column(buf.subarray(from, from + 100), 100, true);
+      const fresh = new Float64Column(new Float64Array(100), 100, true);
+      const columns = new Map<string, unknown>([
+        ['price', view(100)],
+        ['fresh', fresh],
+        ['size', view(200)],
+      ]);
+      expect(batchHoldsExtra(k, columns as never, 100)).toBe(false);
+    });
+
+    it('text indices viewing a bigger buffer', () => {
+      const text = (bufferLength: number) =>
+        stringColumnDictEncoded(
+          ['a', 'b'],
+          new Int32Array(bufferLength).subarray(0, 100),
+        );
+      // Used 800 + 400 = 1,200. Held 800 + 4 x the buffer's length.
+      expect(holds({ venue: text(400) })).toBe(false); // 2,400
+      expect(holds({ venue: text(401) })).toBe(true); // 2,404
+    });
+
+    it('validity bits in a bigger buffer', () => {
+      const text = (bitsLength: number) =>
+        stringColumnDictEncoded(
+          ['a'],
+          new Int32Array(100),
+          validityFromBits(new Uint8Array(bitsLength).fill(0xff), 100),
+        );
+      // Used 800 + 400 + 13 = 1,213. Held 800 + 400 + the bits' buffer.
+      expect(holds({ venue: text(1_226) })).toBe(false); // 2,426
+      expect(holds({ venue: text(1_227) })).toBe(true); // 2,427
+    });
+
+    it('small bit arrays count at their own size, unread', () => {
+      // A fresh 13-byte bitmap takes the unread path. Used 1,613; the line
+      // is 3,226. Held 800 + 8 x the buffer's length + 13.
+      const own = new BooleanColumn(new Uint8Array(13), 100);
+      expect(holds({ price: numbers(301), flag: own })).toBe(false); // 3,221
+      expect(holds({ price: numbers(302), flag: own })).toBe(true); // 3,229
+    });
+
+    it('a small bit array partway into a bigger buffer counts the buffer', () => {
+      // 13 bytes at offset 100 of a 4,096-byte buffer: not at offset 0, so
+      // its buffer is read and counted.
+      const flags = new BooleanColumn(
+        new Uint8Array(4_096).subarray(100, 113),
+        100,
+      );
+      expect(holds({ flag: flags })).toBe(true);
+    });
+
+    it('a fresh bit array of 64 bytes or less is counted without reading it', () => {
+      // A bit array whose \`buffer\` getter records each read.
+      const watched = (bytes: number) => {
+        const bits = new Uint8Array(bytes);
+        const get = Object.getOwnPropertyDescriptor(
+          Object.getPrototypeOf(Uint8Array.prototype),
+          'buffer',
+        )!.get!;
+        let reads = 0;
+        Object.defineProperty(bits, 'buffer', {
+          get() {
+            reads += 1;
+            return get.call(bits);
+          },
+        });
+        return { bits, reads: () => reads };
+      };
+      for (const [rows, bytes, read] of [
+        [512, 64, false],
+        [513, 65, true],
+      ] as const) {
+        const w = watched(bytes);
+        const k = new TimeKeyColumn(
+          Float64Array.from({ length: rows }, (_, i) => i),
+          rows,
+        );
+        const flags = new BooleanColumn(w.bits, rows);
+        batchHoldsExtra(k, new Map([['flag', flags]]) as never, rows);
+        expect(w.reads() > 0).toBe(read);
+      }
+    });
+
+    it('boolean bits in a bigger buffer', () => {
+      const flags = (bitsLength: number) =>
+        new BooleanColumn(new Uint8Array(bitsLength), 100);
+      // Used 800 + 13 = 813. Held 800 + the bits' buffer.
+      expect(holds({ flag: flags(826) })).toBe(false); // 1,626
+      expect(holds({ flag: flags(827) })).toBe(true); // 1,627
+    });
+
+    it('a chunk whose dictionary is much bigger than its rows', () => {
+      const four = new TimeKeyColumn(new Float64Array([0, 1, 2, 3]), 4);
+      const dict = Array.from({ length: 10 }, (_, i) => `v${i}`);
+      const venue = new ChunkedStringColumn([
+        stringColumnDictEncoded(dict, Int32Array.of(0, 1)),
+        stringColumnDictEncoded(dict, Int32Array.of(2, 3)),
+      ]);
+      expect(
+        batchHoldsExtra(four, new Map([['venue', venue]]) as never, 4),
+      ).toBe(true);
+    });
+  });
+
+  it('the copy trims a dictionary only past twice its rows', () => {
+    for (const [rows, distinct, trims] of [
+      [200, 400, false],
+      [200, 401, true],
+      [16, 32, false],
+      [16, 33, true],
+    ] as const) {
+      const { big } = history(1_000, distinct);
+      const parent = big.column('venue') as any;
+      const p = parts(big.slice(0, rows));
+      copyBatch(p.key, p.columns, rows);
+      const copied = p.columns.get('venue');
+      expect(copied.dictionary === parent.dictionary).toBe(!trims);
+      expect(copied.dictionary.length).toBe(trims ? rows : distinct);
+      expect(Array.from({ length: rows }, (_, i) => copied.read(i))).toEqual(
+        Array.from({ length: rows }, (_, i) => `v${i}`),
+      );
+    }
   });
 
   it('the copy keeps only the dictionary entries its rows use, gaps kept', () => {
@@ -1224,6 +1428,52 @@ describe('pushSeries interval keys', () => {
     live.pushSeries(spans(['a'], 0));
     expect(() => live.pushSeries(spans([1, 2], 10))).toThrow(/one label type/);
     expect(live.length).toBe(1);
+  });
+
+  it('a slice of a bigger series equals pushMany, on every per-row backing', () => {
+    // The copy only runs on the default backing; the others turn the
+    // slice's rows into events, views and all.
+    const n = 2_000;
+    const labels = Array.from({ length: n }, (_, i) => `s${i % 5}`);
+    const big = spans(labels, 0);
+    const seed = big.slice(n - 100, n);
+    const rangeSchema = [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const begin = Float64Array.from({ length: n }, (_, i) => i * 10);
+    const ranges = TimeSeries.fromColumns({
+      name: 'ranges',
+      schema: rangeSchema,
+      columns: {
+        timeRange: begin,
+        timeRangeEnd: begin.map((t) => t + 10),
+        v: Float64Array.from({ length: n }, (_, i) => i),
+      } as never,
+    }).slice(n - 100, n);
+    const cases = [
+      [schema, seed, {}],
+      [rangeSchema, ranges, {}],
+      [rangeSchema, ranges, { ordering: 'drop' }],
+    ] as const;
+    const keyOf = (k: any) => [k.begin(), k.end(), k.value];
+    for (const [s, batch, opts] of cases) {
+      const viaMany = new LiveSeries({
+        name: 'x',
+        schema: s,
+        ...opts,
+      } as never);
+      const viaSeries = new LiveSeries({
+        name: 'x',
+        schema: s,
+        ...opts,
+      } as never);
+      viaMany.pushMany(batch.toRows() as never);
+      viaSeries.pushSeries(batch as never);
+      const rows = (l: any) =>
+        l.toRows().map((r: any[]) => [keyOf(r[0]), ...r.slice(1)]);
+      expect(rows(viaSeries)).toEqual(rows(viaMany));
+    }
   });
 });
 

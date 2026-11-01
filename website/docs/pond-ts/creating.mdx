@@ -895,8 +895,9 @@ safe. `number[]` columns are always copied, so this only applies to the
 typed-array path. The time key's `Float64Array` is adopted too. A series pushed
 into a default live series (`ordering: 'strict'`, a `time` key) with
 [`pushSeries`](live/live-series#pushing-columns-pushseries) is kept as it is
-(unless it would keep a much bigger buffer alive, which is copied), so the
-same rule holds for as long as its rows stay in that live series.
+(unless it has 8 rows or fewer, or would keep a much bigger buffer alive; those
+are copied), so the same rule holds for as long as its rows stay in that live
+series, and the same goes for transferring the buffer to a worker.
 :::
 
 :::tip[Why this matters for interactive charts]

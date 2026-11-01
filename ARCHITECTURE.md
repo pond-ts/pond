@@ -194,7 +194,8 @@ honor retention. Column-shaped batches come in as a `TimeSeries`
 chunked backing the batch's own columns become one chunk, unchecked
 per row and uncopied (a batch holding much more than its rows need,
 such as a `slice()` of a much bigger series, is copied first, so it
-doesn't keep its parent alive).
+doesn't keep its parent alive; so is a batch of 8 rows or fewer, where
+copying is cheaper overall than checking).
 
 `live.toTimeSeries()` snapshots to a batch series — the standard
 crossing point between layers.
