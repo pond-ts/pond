@@ -324,8 +324,10 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   unexported draw functions, page-thread hit-testing and DOM theming.
   Its guide should show the socket on its own worker (in the spike that
   kept every tick flowing where the drawing worker's own socket fell
-  behind). Also fix `drawLine`'s fresh `boundaries = []` default
-  (defeats the M4 cache for direct callers) before exporting draw functions.
+  behind); an interim guide without the charts package shipped 2026-11-01
+  (`how-to-guides/live-chart-in-a-worker`). Also fix `drawLine`'s fresh
+  `boundaries = []` default (defeats the M4 cache for direct callers)
+  before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
@@ -1001,7 +1003,10 @@ Robustness debt plus the queued composition workstreams. Plan:
   the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
   ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
   so a binary search would do. Measured 2026-11-01 in
-  `perf-live-push-series.mjs`.
+  `perf-live-push-series.mjs`. At 1M ticks a second (16,000-row pushes,
+  5M rows held) `pushSeries` alone cost 29–67 ms a second with `maxAge`
+  against 1–2 with `maxEvents` (`apps/worker-chart/bench/retention.mjs`,
+  2026-11-01).
 - **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
   `push_series`). Add it with a `{ pushSeries }` step in the live parity
   generator (`packages/core/scripts/parity/live.mjs`) and
@@ -1027,6 +1032,20 @@ Robustness debt plus the queued composition workstreams. Plan:
   it slow down until retention has dropped those rows: after reading 200k
   rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
   0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
+  `Event` for every row it holds, even with no `'evict'` listener, and finds
+  each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
+  at 3M, 12.4–15.4 s at 5M, against 0.1–0.2 ms for a new series (Node,
+  2026-11-01, two runs). Skip the
+  Events when nothing listens, as retention already does. Found while
+  writing the off-main-thread chart guide; detail in
+  `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-LIVELOCATE]** — Lookups in the middle of a default `LiveSeries`
+  (`at(i)`, `bisect`, `atOrBefore`) walk the chunk list for every row they
+  touch, so they slow with the batch count: `atOrBefore` on 600k rows took
+  about 4 µs in one chunk and 72–131 µs in 3,750 (a 60 s window fed every
+  16 ms). Keep each chunk's start index and binary-search it. Detail in
+  `docs/plans/PND_LIVE_PLAN.md`.
 
 ### Streaming semantics (Phase 4.5)
 

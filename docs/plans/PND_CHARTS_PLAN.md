@@ -1901,6 +1901,16 @@ The spike's receiving worker forwards every message with no cap, so a
 drawing worker that couldn't keep up would build a backlog in the browser
 instead of letting the server drop ticks; a real guide needs a cap.
 
+**Interim guide (2026-11-01):**
+`website/docs/how-to-guides/live-chart-in-a-worker.mdx`, built on
+`apps/worker-chart/`, shows the route available today without the charts
+package: canvas handed to a render worker, socket on its own worker,
+`pushSeries` into a `LiveSeries`, hand-written per-pixel-column buckets,
+hover answered from the worker (looked up on pointer move only, because of
+[PND-LATCACHE]). It still has no cap between the workers; the guide lists
+that as a sharp edge. When this task lands, rewrite the guide's drawing
+section to use the worker mode.
+
 Fix before exporting draw functions: `drawLine`'s `boundaries: readonly
 number[] = []` default (`line.ts:131`) makes a new array on every call, and
 the M4 cache compares `boundaries` by identity, so a direct caller that

@@ -1,0 +1,91 @@
+# node check.mjs at four feed rates — 2026-11-01, headless Chromium 141 (Playwright), 4-core cloud container (Linux), viewport 1200x520 at 1 device pixel per CSS pixel, pond-ts built from main at 607c4648.
+# Each 'steady' / 'busy page' entry is one once-a-second stats report: seriesMs, pushMs and foldMs are ms spent that second building each batch's TimeSeries (fromColumns), in pushSeries and in the buckets; frameMs is JavaScript per frame; delayMs is the median age of the newest tick at the end of each frame; missing counts ticks the feed sent that never arrived; canvas is the canvas's size in device pixels. All six samples come before the resize to 800 px. Headless frame rates are capped at 60.
+
+== RATE=10000 WINDOW=60
+steady: [{"fps":52,"pageFps":60,"ticksPerSec":9940,"rows":600001,"delayMs":11,"dropped":0,"missing":0,"seriesMs":4.3,"pushMs":4,"foldMs":0.8,"frameMs":0.68,"canvas":"1168×360"},{"fps":57,"pageFps":60,"ticksPerSec":10020,"rows":600001,"delayMs":12,"dropped":0,"missing":0,"seriesMs":3.3,"pushMs":4.1,"foldMs":0.6,"frameMs":0.69,"canvas":"1168×360"},{"fps":53,"pageFps":60,"ticksPerSec":9900,"rows":600001,"delayMs":13,"dropped":0,"missing":0,"seriesMs":2.7,"pushMs":4.4,"foldMs":0.4,"frameMs":0.6,"canvas":"1168×360"}]
+ok   chart draws (median 53 fps)
+ok   ticks arrive at the feed's rate (9940/s of 10000/s)
+ok   series holds one window (600001 of 600000)
+ok   every tick arrives, none dropped, and the newest is drawn within 250 ms
+ok   line spans the plot (100.0% of columns)
+ok   hover shows a tick ("02:41:57.522  95.779 × 40")
+ok   the tick is the one under the pointer, in local time (28.5 s behind the page's clock; expected 28.5)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+busy page: [{"fps":49,"pageFps":42,"ticksPerSec":10060,"rows":600001,"delayMs":9,"dropped":0,"missing":0,"seriesMs":2.2,"pushMs":5.4,"foldMs":0.8,"frameMs":0.68,"canvas":"1168×360"},{"fps":54,"pageFps":40,"ticksPerSec":9960,"rows":600001,"delayMs":12,"dropped":0,"missing":0,"seriesMs":3.1,"pushMs":4.2,"foldMs":0.7,"frameMs":0.57,"canvas":"1168×360"},{"fps":53,"pageFps":40,"ticksPerSec":10100,"rows":600001,"delayMs":9,"dropped":0,"missing":0,"seriesMs":2.3,"pushMs":3.8,"foldMs":0.7,"frameMs":0.62,"canvas":"1168×360"}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (53 -> 53 fps)
+ok   ticks keep arriving on a busy page
+ok   the chart doesn't fall behind (newest tick 12 ms old, then 9 ms)
+ok   a resize gives the canvas new pixels (768×360 of 768×360)
+ok   line spans the plot after a resize (100.0%)
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=100000 WINDOW=30
+steady: [{"fps":47,"pageFps":60,"ticksPerSec":103700,"rows":3000001,"delayMs":10,"dropped":0,"missing":0,"seriesMs":5,"pushMs":5.9,"foldMs":2.4,"frameMs":0.73,"canvas":"1168×360"},{"fps":44,"pageFps":60,"ticksPerSec":97500,"rows":3000001,"delayMs":15,"dropped":0,"missing":0,"seriesMs":4.1,"pushMs":7.1,"foldMs":2.1,"frameMs":0.76,"canvas":"1168×360"},{"fps":49,"pageFps":60,"ticksPerSec":100699,"rows":3000000,"delayMs":13,"dropped":0,"missing":0,"seriesMs":3.8,"pushMs":6.1,"foldMs":2.4,"frameMs":0.71,"canvas":"1168×360"}]
+ok   chart draws (median 47 fps)
+ok   ticks arrive at the feed's rate (100699/s of 100000/s)
+ok   series holds one window (3000001 of 3000000)
+ok   every tick arrives, none dropped, and the newest is drawn within 250 ms
+ok   line spans the plot (100.0% of columns)
+ok   hover shows a tick ("02:42:26.708  98.112 × 71")
+ok   the tick is the one under the pointer, in local time (14.3 s behind the page's clock; expected 14.2)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+busy page: [{"fps":50,"pageFps":41,"ticksPerSec":97499,"rows":3000000,"delayMs":13,"dropped":0,"missing":0,"seriesMs":4.4,"pushMs":5.9,"foldMs":2.7,"frameMs":0.72,"canvas":"1168×360"},{"fps":48,"pageFps":40,"ticksPerSec":102301,"rows":3000001,"delayMs":12,"dropped":0,"missing":0,"seriesMs":3.8,"pushMs":5.4,"foldMs":2.9,"frameMs":0.7,"canvas":"1168×360"},{"fps":56,"pageFps":40,"ticksPerSec":99600,"rows":3000001,"delayMs":13,"dropped":0,"missing":0,"seriesMs":4,"pushMs":5.8,"foldMs":2.4,"frameMs":0.63,"canvas":"1168×360"}]
+ok   the page's thread is busy (79% blocked)
+ok   the chart keeps its frame rate (47 -> 50 fps)
+ok   ticks keep arriving on a busy page
+ok   the chart doesn't fall behind (newest tick 13 ms old, then 13 ms)
+ok   a resize gives the canvas new pixels (768×360 of 768×360)
+ok   line spans the plot after a resize (100.0%)
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=1000000 WINDOW=5
+steady: [{"fps":53,"pageFps":60,"ticksPerSec":1001000,"rows":5000001,"delayMs":20,"dropped":0,"missing":0,"seriesMs":14.5,"pushMs":35.1,"foldMs":24.8,"frameMs":0.64,"canvas":"1168×360"},{"fps":41,"pageFps":60,"ticksPerSec":1007000,"rows":5000001,"delayMs":23,"dropped":0,"missing":0,"seriesMs":19.8,"pushMs":43.8,"foldMs":30.8,"frameMs":0.75,"canvas":"1168×360"},{"fps":44,"pageFps":60,"ticksPerSec":988000,"rows":5000001,"delayMs":19,"dropped":0,"missing":0,"seriesMs":16.1,"pushMs":36.9,"foldMs":25.2,"frameMs":0.67,"canvas":"1168×360"}]
+ok   chart draws (median 44 fps)
+ok   ticks arrive at the feed's rate (1001000/s of 1000000/s)
+ok   series holds one window (5000001 of 5000000)
+ok   every tick arrives, none dropped, and the newest is drawn within 250 ms
+ok   line spans the plot (100.0% of columns)
+ok   hover shows a tick ("02:42:56.664  112.154 × 9")
+ok   the tick is the one under the pointer, in local time (2.4 s behind the page's clock; expected 2.4)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+busy page: [{"fps":49,"pageFps":60,"ticksPerSec":1000000,"rows":5000001,"delayMs":27,"dropped":0,"missing":0,"seriesMs":11.2,"pushMs":35.8,"foldMs":23.2,"frameMs":0.63,"canvas":"1168×360"},{"fps":45,"pageFps":57,"ticksPerSec":1012000,"rows":5000001,"delayMs":27,"dropped":0,"missing":0,"seriesMs":12.9,"pushMs":41.5,"foldMs":25.5,"frameMs":0.81,"canvas":"1168×360"},{"fps":51,"pageFps":60,"ticksPerSec":987000,"rows":5000001,"delayMs":21,"dropped":0,"missing":0,"seriesMs":11.1,"pushMs":32.9,"foldMs":22.8,"frameMs":0.66,"canvas":"1168×360"}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (44 -> 49 fps)
+ok   ticks keep arriving on a busy page
+ok   the chart doesn't fall behind (newest tick 20 ms old, then 27 ms)
+ok   a resize gives the canvas new pixels (768×360 of 768×360)
+ok   line spans the plot after a resize (100.0%)
+ok   no page errors
+
+all checks passed
+exit 0
+== RATE=20000 WINDOW=10
+steady: [{"fps":53,"pageFps":60,"ticksPerSec":20080,"rows":200001,"delayMs":11,"dropped":0,"missing":0,"seriesMs":3.2,"pushMs":6.8,"foldMs":1.1,"frameMs":0.64,"canvas":"1168×360"},{"fps":51,"pageFps":60,"ticksPerSec":20120,"rows":200001,"delayMs":10,"dropped":0,"missing":0,"seriesMs":3.4,"pushMs":4.5,"foldMs":0.7,"frameMs":0.7,"canvas":"1168×360"},{"fps":51,"pageFps":60,"ticksPerSec":19900,"rows":200001,"delayMs":13,"dropped":0,"missing":0,"seriesMs":3.8,"pushMs":3,"foldMs":1.7,"frameMs":0.66,"canvas":"1168×360"}]
+ok   chart draws (median 51 fps)
+ok   ticks arrive at the feed's rate (20080/s of 20000/s)
+ok   series holds one window (200001 of 200000)
+ok   every tick arrives, none dropped, and the newest is drawn within 250 ms
+ok   line spans the plot (99.9% of columns)
+ok   hover shows a tick ("02:43:07.244  103.713 × 53")
+ok   the tick is the one under the pointer, in local time (4.8 s behind the page's clock; expected 4.7)
+ok   the tooltip stays on the page at the right edge
+ok   tooltip hides when the pointer leaves
+busy page: [{"fps":51,"pageFps":41,"ticksPerSec":20180,"rows":200001,"delayMs":12,"dropped":0,"missing":0,"seriesMs":3.2,"pushMs":3.6,"foldMs":1,"frameMs":0.66,"canvas":"1168×360"},{"fps":51,"pageFps":40,"ticksPerSec":19820,"rows":200001,"delayMs":11,"dropped":0,"missing":0,"seriesMs":3,"pushMs":4.4,"foldMs":1.2,"frameMs":0.63,"canvas":"1168×360"},{"fps":46,"pageFps":40,"ticksPerSec":20120,"rows":200001,"delayMs":17,"dropped":0,"missing":0,"seriesMs":3.2,"pushMs":4,"foldMs":2,"frameMs":0.74,"canvas":"1168×360"}]
+ok   the page's thread is busy (80% blocked)
+ok   the chart keeps its frame rate (51 -> 51 fps)
+ok   ticks keep arriving on a busy page
+ok   the chart doesn't fall behind (newest tick 11 ms old, then 12 ms)
+ok   a resize gives the canvas new pixels (768×360 of 768×360)
+ok   line spans the plot after a resize (100.0%)
+ok   no page errors
+
+all checks passed
+exit 0
