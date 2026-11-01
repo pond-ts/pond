@@ -474,8 +474,8 @@ export class LiveSeries<S extends SeriesSchema> {
   /**
    * @internal [PND-REDUCETICK] Subscribe to the end of every push: fires
    * once per `push` / `pushMany` / `pushJson` / `pushSeries` (and each
-   * internal push),
-   * after `'evict'`, still inside the push. See `settle.ts`.
+   * internal push), after `'evict'`, still inside the push. See
+   * `settle.ts`.
    */
   _onSettle(fn: () => void): () => void {
     this.#onSettle.add(fn);
@@ -568,20 +568,23 @@ export class LiveSeries<S extends SeriesSchema> {
    * **Where it is faster.** On a default series (`ordering: 'strict'`,
    * `time` key) the batch's columns are stored as they are, with no
    * per-row check and no `Event` per row, so a large batch costs about
-   * what `fromColumns` costs. Two things bring back an `Event` per row
-   * and most of `pushMany`'s cost: a listener on `'event'` or `'batch'`
-   * (a `window()`, `filter()` or other view built on the series is one),
-   * and the other storage mode (`ordering: 'drop'` / `'reorder'`, or a
-   * `timeRange` / `interval` key), where the batch's rows go through
-   * `pushMany`'s row path. Results are the same either way.
+   * what `fromColumns` costs: 100k rows in batches of 1,600 took 1.6 ms
+   * against `pushMany`'s 18.7 ms (`scripts/perf-live-push-series.mjs`).
+   * Two things bring back an `Event` per row and most of `pushMany`'s
+   * cost: a listener on `'event'` or `'batch'` (a `window()`, `filter()`
+   * or other view built on the series is one; ~1.4x), and the other
+   * storage mode (`ordering: 'drop'` / `'reorder'`, or a `timeRange` /
+   * `interval` key), where the batch's rows go through `pushMany`'s row
+   * path (~1x). Results are the same either way. For one row at a time
+   * use `push`: a `TimeSeries` per row costs more than it saves.
    *
    * **Matching.** The batch's key kind must be the live series' (the
    * key column's name may differ). Value columns are matched by name, in
    * any order, and must have the live column's kind; a missing or extra
    * column is refused. A gap in a column the live schema marks required
    * is refused, naming the row, whatever the batch's own schema says.
-   * Rows already in order inside the batch (a `TimeSeries` is sorted);
-   * across batches, `ordering` applies as in `pushMany`.
+   * Rows inside the batch are already in order (a `TimeSeries` is
+   * sorted); against the rows held, `ordering` applies as in `pushMany`.
    *
    * **The batch's buffers are shared, not copied.** On a default series
    * the live series keeps the batch's key and number columns, and
@@ -593,9 +596,10 @@ export class LiveSeries<S extends SeriesSchema> {
    * buffer (say, one transferred worker message holding every column)
    * keeps that whole buffer alive until the rows leave the series.
    *
-   * **NaN and other non-finite numbers** are gaps, as everywhere in
-   * pond: in an optional column they are stored as missing, in a
-   * required one they are refused.
+   * **NaN and other non-finite numbers** in a batch from `fromColumns`
+   * are gaps, because that is how `fromColumns` reads them (`pushMany`
+   * refuses one instead): in an optional column they are stored as
+   * missing, in a required one they are refused.
    *
    * An empty batch is checked for shape and otherwise ignored. A push
    * made from inside a listener is queued and runs after the current

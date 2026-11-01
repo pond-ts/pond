@@ -151,6 +151,125 @@ arrival — invalid rows throw a `ValidationError`. Events must arrive in
 timestamp order by default (see [ordering modes](#ordering-modes) to change
 this).
 
+### Pushing columns: pushSeries
+
+When data already arrives as columns (one typed array per column, off a
+socket or from a worker), don't turn it into rows. Build a batch with
+[`TimeSeries.fromColumns`](../creating#float64array-columnar) and push the batch:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { LiveSeries, TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'price', kind: 'number' },
+  { name: 'size', kind: 'number' },
+] as const;
+
+const live = new LiveSeries({
+  name: 'ticks',
+  schema,
+  retention: { maxEvents: 100_000 },
+});
+
+// One message: a Float64Array per column, the same length each.
+function onMessage(msg: {
+  time: Float64Array;
+  price: Float64Array;
+  size: Float64Array;
+}) {
+  live.pushSeries(
+    TimeSeries.fromColumns({ name: 'ticks', schema, columns: msg }),
+  );
+}
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{Column, ColumnDef, ColumnKind, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "ticks",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::required("price", ColumnKind::Number),
+            ColumnDef::required("size", ColumnKind::Number),
+        ],
+    )?;
+    let batch = TimeSeries::new(
+        "ticks",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("price", [10.0, 10.5, 10.25]),
+            Column::required("size", [3.0, 1.0, 2.0]),
+        ],
+    )?;
+    live.push_series(&batch)?;
+    assert_eq!(live.len(), 3);
+    Ok(())
+}
+```
+
+`push_series` follows the same rules as pond-ts's `pushSeries`.
+
+</TabItem>
+</Tabs>
+
+`pushSeries` behaves exactly like `pushMany` of the batch's rows: the same
+ordering rules, retention, listeners and errors, and a refused batch stores
+nothing. The batch must be keyed the same way as the live series and have
+its value columns, matched by name in any order, each of the same kind. A
+gap in a column the live schema requires is refused, naming the row, even if
+the batch's own schema called the column optional.
+
+**It is faster only on a default series** (`ordering: 'strict'`, a `time`
+key). There the batch's columns are stored as they are: no row tuples, no
+check per cell, no event object per row. Anything listening for single
+events brings the event objects back, and with them most of `pushMany`'s
+cost; that includes a `window()`, `filter()` or other view built on the
+series. Under `ordering: 'drop'` or `'reorder'`, or with a `timeRange` or
+`interval` key, the batch goes through `pushMany`'s row path, so the speed
+is the same.
+
+100,000 rows of `time` + two numbers, pushed both ways into a default series
+(ms, the middle of three runs on one 4-core Linux machine, Node 22,
+2026-11-01; `scripts/perf-live-push-series.mjs`; the `pushSeries` times
+include building each batch with `fromColumns`; the row-path cases vary by
+up to a fifth between runs):
+
+| Case                                        | `pushMany` | `pushSeries` | Faster          |
+| ------------------------------------------- | ---------- | ------------ | --------------- |
+| Batches of 1,600 rows                       | 18.7       | 1.6          | 12×             |
+| One batch of 100,000                        | 14.7       | 0.9          | 17×             |
+| Batches of 1,600, keep the last 10,000      | 17.4       | 1.2          | 15×             |
+| Batches of 16                               | 56         | 21           | 2.6×            |
+| One row at a time                           | 359        | 436          | `pushMany` 1.2× |
+| Batches of 1,600 with a `window()` view     | 72         | 53           | 1.4×            |
+| Batches of 1,600, `ordering: 'drop'`        | 69         | 62           | 1.1×            |
+| Batches of 1,600, plus a text `host` column | 25.5       | 4.4          | 5.8×            |
+
+:::warning[The live series keeps your arrays]
+On a default series the live series holds the batch's `Float64Array`s
+themselves, not copies (`fromColumns` adopts them, and `pushSeries` keeps
+what `fromColumns` built). Don't write to, reuse or pool a pushed array
+while its rows are still in the series. If you reuse buffers, push
+`buf.slice(0, n)`; that copy is cheap next to `pushMany`. A `Float64Array`
+that is a view into a bigger buffer (say, one transferred message holding
+every column) keeps that whole buffer alive until its rows leave the series.
+:::
+
+A non-finite number (`NaN`, `Infinity`) is a gap here, as `fromColumns`
+treats it; `pushMany` refuses one. For one row at a time, keep using
+`push`: building a `TimeSeries` per row is slower than `pushMany` (the
+one-row case above).
+
 ## Reading events
 
 <Tabs groupId="language" queryString>

@@ -80,6 +80,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`LiveSeries.pushSeries(series)`** ([PND-LPUSHCOL]) pushes a batch
+  `TimeSeries` into a live series as one batch: the column-shaped way in.
+  Data that arrives as typed arrays goes
+  `live.pushSeries(TimeSeries.fromColumns({ name, schema, columns }))`, with
+  no row tuples. It behaves exactly like `pushMany` of the batch's rows (same
+  ordering rules, retention, listeners and errors; a refused batch stores
+  nothing). The batch must be keyed the same way and carry the live series'
+  value columns, matched by name in any order, each of the same kind; a gap in
+  a column the live schema requires is refused, naming the row. On a default
+  series (`strict`, `time` key) the batch's columns are stored as they are,
+  with no per-row check and no event object per row: 100,000 rows in batches
+  of 1,600 take 1.6 ms against `pushMany`'s 18.7 ms (2.6× faster in batches
+  of 16). A `window()` or other view on the series brings the per-row events
+  back (about 1.4×), and `drop` / `reorder` series or `timeRange` /
+  `interval` keys take `pushMany`'s row path (about the same speed). **The live series keeps
+  the batch's `Float64Array`s, not copies**, so don't reuse a pushed buffer
+  while its rows are retained (push `buf.slice(0, n)` instead). Same rules as
+  pond-rs's `push_series`.
 - **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
   per-row rules as data instead of functions, e.g.
   `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
@@ -177,8 +195,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   watches it, the columns are copied straight into storage with no event
   built per row ([PND-RUSTLIVEBATCH]): one million rows in batches of 1,000
   take about half the time of `push_many` and about a third less than
-  pond-ts's `pushMany` on the same machine. pond-ts has no column-shaped
-  push.
+  pond-ts's `pushMany` on the same machine. pond-ts's `LiveSeries.pushSeries`
+  (above) is the same call.
 - **pond-rs: ready for crates.io.** The crate has package metadata, a
   README, three runnable examples (`quickstart`, `rsi`, `live_stream`) and
   API docs for every public item, with a docs.rs front page and the `live`

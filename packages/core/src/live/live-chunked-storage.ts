@@ -64,16 +64,24 @@ export function materializeEventsFromStore<S extends SeriesSchema>(
   store: ColumnarStore<S>,
   schema: S,
 ): EventForSchema<S>[] {
+  const timeKeyed = schema[0].kind === 'time';
   const valueNames: string[] = [];
+  const columns: Column[] = [];
   for (let i = 1; i < schema.length; i += 1) {
-    valueNames.push((schema[i] as { name: string }).name);
+    const name = (schema[i] as { name: string }).name;
+    valueNames.push(name);
+    columns.push(store.columns.get(name)!);
   }
   const out: EventForSchema<S>[] = new Array(store.length);
   for (let i = 0; i < store.length; i += 1) {
-    const key = materializeKey(store.keys, i);
+    // `time` keys inline: this loop is the chunked backing's per-event
+    // listener path, and the shared helper's call cost showed there.
+    const key = timeKeyed
+      ? new Time(store.beginAt(i))
+      : materializeKey(store.keys, i);
     const data: Record<string, unknown> = {};
     for (let v = 0; v < valueNames.length; v += 1) {
-      data[valueNames[v]!] = store.valueAt(i, valueNames[v]!);
+      data[valueNames[v]!] = columns[v]!.read(i);
     }
     out[i] = new Event(key, data) as unknown as EventForSchema<S>;
   }

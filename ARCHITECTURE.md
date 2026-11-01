@@ -189,7 +189,10 @@ in `'reorder'` ordering), and three subscription channels:
 
 Validation at ingest: `push(...rows)` runs each row through the same
 schema validation as `TimeSeries`. Eviction runs after each push to
-honor retention.
+honor retention. Column-shaped batches come in as a `TimeSeries`
+(`pushSeries`, usually fed by `TimeSeries.fromColumns`); on the
+chunked backing the batch's own columns become one chunk, unchecked
+per row and uncopied.
 
 `live.toTimeSeries()` snapshots to a batch series — the standard
 crossing point between layers.
@@ -702,6 +705,17 @@ it should.
   a class-wide "variance issue" needing a refactor; [PND-TSCOLS] /
   [PND-TSJSONT] showed it isn't. `RowForSchema` has since honoured
   `required: false` as well.)
+
+### Column data into a `LiveSeries` arrives as a `TimeSeries`
+
+Decided 2026-11-01 ([PND-LPUSHCOL]): `live.pushSeries(ts)`, not a
+`pushColumns(columns)`. `fromColumns` stays the one door that turns
+typed arrays into a series (adoption, gap and ordering rules live
+there once); pond-rs's `push_series` has the same shape; and the
+measured saving a raw-columns method could add over
+`pushSeries(fromColumns(...))` is at most `fromColumns`' own ~1 µs per
+call. The batch's buffers are shared with the live series, not copied
+(see `docs/plans/PND_LIVE_PLAN.md`).
 
 ### Patterns we deliberately don't generalize
 

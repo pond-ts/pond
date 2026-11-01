@@ -310,6 +310,88 @@ time, which would throw inside a push after the root stored the row.
 Tests: `test/live/livelabel.test.ts`, `test/live/mapgap.test.ts`, pond-rs
 `live/tests.rs`.
 
+### [PND-LPUSHCOL] — Column push into `LiveSeries`: `pushSeries` — **shipped 2026-11-01**
+
+**Source:** the offscreen-stream spike (PR #760): `pushMany` takes rows only,
+and its per-row check made 100k ticks cost 17-23 ms where
+`TimeSeries.fromColumns` takes about 1 ms. Peter approved starting the work
+2026-10-31.
+
+**What shipped.** `live.pushSeries(ts: TimeSeries<S>)`. Column data comes in
+through the existing door: `live.pushSeries(TimeSeries.fromColumns({...}))`.
+Behaves exactly like `pushMany` of the batch's rows. On the chunked backing
+(top-level `strict` + `time` key) the batch's own key and value columns are
+re-wrapped against the live schema (`ColumnarStore.fromTrustedStore`, O(C), no
+row read) and committed through `#commitChunk`; on the per-row backings the
+store becomes `Event`s (`materializeEventsFromStore`, which now builds
+`Interval` keys too) and runs pushMany's row loop, moved unchanged into
+`#commitPerRow`. Matching follows pond-rs `push_series`: same key kind (key
+name may differ), value columns by name in any order with the same kind, no
+missing or extra column, `required` judged by the live schema (the batch's own
+flag proves nothing: `fromColumns` doesn't enforce it, [PND-COLSREQ]), shape
+checked even on an empty batch.
+
+**Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, middle of three
+runs, 4-core Linux, Node 22.22, 2026-11-01; pushSeries includes `fromColumns`):
+
+| Case                                  | pushMany | pushSeries | fromColumns alone |
+| ------------------------------------- | -------- | ---------- | ----------------- |
+| 1,600 rows/push                       | 18.7     | 1.6        | 1.1               |
+| one 100k push                         | 14.7     | 0.9        | 0.9               |
+| 1,600/push, maxEvents 10k             | 17.4     | 1.2        | 0.9               |
+| 1,600/push, maxAge                    | 18.3     | 5.6        | 1.4               |
+| 16 rows/push                          | 56.1     | 21.2       | 12.1              |
+| 1 row/push                            | 359      | 436        | 182               |
+| 'event' listener, 1,600/push          | 48.0     | 33.0       | 0.9               |
+| window(1000) view, 1,600/push         | 72.0     | 52.7       | 0.9               |
+| partitionBy host (100), 1,600/push    | 87.7     | 62.6       | 4.3               |
+| drop, 1,600/push                      | 69.3     | 62.4       | 1.2               |
+| reorder grace 5s, 1,600/push          | 71.3     | 68.1       | 1.1               |
+| timeRange key, 1,600/push             | 82.2     | 82.5       | 1.4               |
+| + host string column, 1,600/push      | 25.5     | 4.4        | 4.2               |
+| `.slice()` each column first, 1,600   | 15.2     | 2.4        | 2.5               |
+| `.slice()` each column first, 16/push | 49.1     | 42.9       | 89.1              |
+
+Retained heap for a full 100k window is the same both ways (8.4 MB heap,
+2.3 MB array buffers); pushing views into a buffer twice the batch's size
+doubles the array buffers held (4.6 MB), as documented. `perf-live-columnar.mjs`
+before/after (main a363dc63 vs branch, three runs each) moved by no more than
+run-to-run noise (chunked with an `'event'` listener: 160-164 vs 157-172 ms).
+
+**Decisions and why.**
+
+- **A `TimeSeries`, not raw columns** (`pushColumns` rejected). `fromColumns`
+  stays the one door that turns typed arrays into a series, so adoption, gap
+  and ordering rules live in one place; pond-rs has the same shape
+  (`push_series`, and it turned down `push_columns`); the most a raw-columns
+  method could save over `pushSeries(fromColumns(...))` is `fromColumns`' own
+  ~1 µs per call. Shipping both would be two verbs for one thing.
+- **Share the batch's buffers, don't copy.** Pond never writes a column
+  buffer; the caller is the only possible writer, which is the contract
+  `fromColumns` already documents. A defensive copy (the `.slice()` rows
+  above) costs 1.5× the shared path at 1,600/push and 2× at 16/push. Callers
+  who pool buffers push `buf.slice(0, n)`; the JSDoc and docs say so.
+- **Per-row backings accept the batch** rather than refusing it: the method
+  then works in every ordering mode and key kind (as pond-rs's does), at
+  `pushMany`'s speed.
+- **No order re-scan of the batch on the chunked path.** A `TimeSeries` is
+  sorted (checked when built); a scan only guards against a caller writing an
+  adopted key buffer between `fromColumns` and the push, and no scan can catch
+  a write after it. It was measured at ~0.18 ms per 100k, about a tenth of the
+  fast path. Left as a question for Peter.
+- **Noted, not built:** [PND-ONCHUNKISO] (a partition router error skips the
+  source's retention on the chunked backing; `pushSeries` matches `pushMany`
+  there, pinned by a test that will keep passing either way it is fixed),
+  [PND-AGESCAN] (the maxAge row above), [PND-RSPUSHSERIES], [PND-PUSHTIME],
+  [PND-COLSTYPED], [PND-LIVEFASTDROP], [PND-CLAMPHINT]; see PLAN.md.
+
+Supersedes the 2026-06 columnar-arc assessment's "keep `pushColumns` dead (no
+wire-batching producer yet)" (`docs/notes/columnar-arc-assessment-2026-06.md`).
+Tests: `test/live/LiveSeries.pushSeries.test.ts` (differential vs `pushMany`
+over 8 configurations × 3 retentions × with/without listeners, 40 seeds each,
+plus targeted cases; 12 of 12 planted bugs caught),
+`test-d/live-push-series.test-d.ts`, `live-chunked-storage.test.ts`.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)
