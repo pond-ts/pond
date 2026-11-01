@@ -93,7 +93,7 @@ const AREAS = [
     key: 'pond-rs',
     title: 'pond-rs (Rust)',
     blurb:
-      'The Rust crate: same operations and answers as pond-ts, with threads and Arrow I/O. Early; not on crates.io.',
+      'The Rust crate (`pond-rs` on crates.io, API at docs.rs/pond-rs): the core and the financial studies, same answers as pond-ts, with threads and Arrow I/O.',
     match: (/** @type {string} */ p) => p.startsWith('docs/pond-rs/'),
   },
   {
@@ -140,7 +140,9 @@ function oneLine(text) {
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ') // MDX comments
     .replace(/<[^>]+>/g, ' ') // JSX tags
     .replace(/\s+/g, ' ')
-    .replace(/[*_`]/g, '')
+    // Emphasis markers only: `_` inside a word (partition_by) stays.
+    .replace(/[*`]/g, '')
+    .replace(/(^|[^A-Za-z0-9_])_+|_+(?=[^A-Za-z0-9_]|$)/g, '$1')
     .trim();
   if (flat.length <= 220) return flat;
   const cut = flat.slice(0, 220);
@@ -209,14 +211,17 @@ function renderIndex(site, docs, areaFiles) {
   const out = [
     `# ${site.title}`,
     '',
-    `> ${site.tagline}. Six npm packages that release together: \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`.`,
+    `> Typed time series in TypeScript or Rust, batch and streaming. TypeScript: six npm packages that release together, \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`. Rust: the \`pond-rs\` crate, which covers the core (batch and live) and the financial studies with the same answers as pond-ts.`,
     '',
     'For a coding agent: the shortest route to working code is the agent guide',
     `(\`AGENTS.md\`, also shipped inside every npm tarball) and the export map (\`API.md\`,`,
     'also in every tarball) under Optional below. Each docs area also has a single-file',
     `dump, \`${base}/llms-<area>.txt\`, listed at the end of its section. Schemas are`,
     'declared `as const`; every operator returns a new series; `aggregate` downsamples,',
-    '`align` regrids, `rolling` slides.',
+    '`align` regrids, `rolling` slides. Simple per-row rules can be written as',
+    "expressions (`col('cpu').gt(0.5)`) instead of functions. Most core pages show",
+    'TypeScript and Rust side by side; for Rust, start at the pond-rs section and',
+    '"Coming from pond-ts", and use docs.rs/pond-rs for the full API.',
     '',
   ];
 
@@ -243,7 +248,8 @@ function renderIndex(site, docs, areaFiles) {
     '## Optional',
     '',
     `- [AGENTS.md — using pond from a coding agent](${REPO}/docs/agents/USING_POND.md): which package for which task, the five idioms, the mistakes agents make.`,
-    `- [API.md — export map](${REPO}/API.md): every public export across the six packages, one line each, with its source file.`,
+    `- [API.md — export map](${REPO}/API.md): every public export across the six npm packages and the pond-rs crate, one line each, with its source file.`,
+    '- [pond-rs on docs.rs](https://docs.rs/pond-rs): the Rust API reference; install with `cargo add pond-rs` (crates.io).',
     `- [CHANGELOG.md](${REPO}/CHANGELOG.md): what shipped in each release.`,
     `- [Claude Code plugin](${REPO}/plugins/pond-ts/): \`/plugin marketplace add pond-ts/pond\` then \`/plugin install pond-ts@pond-ts\`.`,
     `- [Full docs, one file](${base}/llms-full.txt): every page concatenated (large).`,
