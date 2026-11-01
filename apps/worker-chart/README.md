@@ -35,16 +35,23 @@ npx playwright install chromium   # once
 npm run check                     # RATE=100000 WINDOW=30 npm run check
 ```
 
-It opens the page in headless Chromium and checks that frames are drawn,
-every tick arrives, the series holds one window, the line spans the chart
-(also after a resize), hovering answers in local time with the tooltip
-kept on the page, and the chart keeps its frame rate while the page is
-busy. It runs in the Asia/Tokyo time zone, so a clock shown in UTC would
-stand out, and at one device pixel per CSS pixel. `CHROMIUM_PATH` points it
-at another Chrome or Chromium binary. Headless frame rates are capped at 60
-and are no measure of a real screen; the work timings (`pushSeries`,
-buckets, frame) are. `npm run typecheck` checks the page against the DOM
-types and the workers against the worker types.
+It opens the page in headless Chromium and checks that frames are drawn;
+that every tick the feed sends arrives (the feed numbers them), none is
+dropped, and the newest is drawn within 250 ms; that the series holds one
+window and the line spans the chart; that hovering picks the tick under
+the pointer and shows it in local time, with the tooltip kept on the page;
+that the chart keeps its frame rate, and doesn't fall behind, while the
+page is busy; and that a resize gives the canvas new pixels. It runs in
+the Asia/Tokyo time zone, so a clock shown in UTC would stand out, and at
+one device pixel per CSS pixel. `CHROMIUM_PATH` points it at another
+Chrome or Chromium binary. Headless frame rates are capped at 60 and are
+no measure of a real screen; the work timings (`fromColumns`,
+`pushSeries`, buckets, frame) are. `npm run typecheck` checks the page
+against the DOM types and the workers against the worker types.
+
+At a million ticks a second (`RATE=1000000 WINDOW=5`) the feed, the browser
+and the check share the machine's cores, so run it on an otherwise idle
+machine: with other work running it can fall behind and fail.
 
 ## Benchmarks
 
@@ -53,8 +60,8 @@ the same `pond-ts` build:
 
 - `bench/lookups.mjs`: what a hover lookup costs, and what lookups do to
   later pushes (guide section 7).
-- `bench/retention.mjs`: `pushSeries` at 1M ticks a second with `maxAge`,
-  `maxEvents` and no retention (section 8).
+- `bench/retention.mjs`: `fromColumns` and `pushSeries` at 1M ticks a
+  second with `maxAge`, `maxEvents` and no retention (section 8).
 - `bench/clear.mjs`: `live.clear()` against a new `LiveSeries` (section 11).
 
 `results/` holds the output of these and of `npm run check` at four feed

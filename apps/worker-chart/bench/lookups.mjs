@@ -2,9 +2,10 @@
 //
 // 1. What one atOrBefore costs, by how many batches the series holds
 //    (600,000 rows in each case, lookups spread across the window).
-// 2. What lookups do to push cost: 10,000 ticks a second, one push every
-//    16 ms, a 60 s window (maxAge), and 0, 1 or 2 lookups mid-window after
-//    each push. The first minute fills the window; the second is measured.
+// 2. What lookups do to pushSeries' cost: 10,000 ticks a second, one push
+//    every 16 ms, a 60 s window (maxAge), and 0, 1 or 2 lookups mid-window
+//    after each push. The first minute fills the window; the second is
+//    measured.
 //
 //   node bench/lookups.mjs
 import { feed, median, range } from './common.mjs';
@@ -33,7 +34,7 @@ for (const perBatch of [160, 1_600, 15_000, 600_000]) {
 }
 
 console.log(
-  '\n2. push cost with lookups, 10k ticks/s, 60 s window (medians; 5 runs)',
+  '\n2. pushSeries cost with lookups, 10k ticks/s, 60 s window (medians; 5 runs)',
 );
 for (const lookups of [0, 1, 2]) {
   const pushMs = [];
@@ -44,7 +45,7 @@ for (const lookups of [0, 1, 2]) {
     const pt = [];
     const lt = [];
     for (let k = 0; k < pushes; k++) {
-      const ms = push(160);
+      const ms = push(160).push;
       const measured = k > pushes / 2;
       if (measured) pt.push(ms);
       for (let j = 0; j < lookups; j++) {
@@ -57,7 +58,7 @@ for (const lookups of [0, 1, 2]) {
     if (lookups) lookUs.push(median(lt) * 1000);
   }
   console.log(
-    `  ${lookups} lookup(s) per push: push ${range(pushMs, 3)} ms` +
+    `  ${lookups} lookup(s) per push: pushSeries ${range(pushMs, 3)} ms` +
       (lookups ? `, lookup ${range(lookUs, 0)} µs` : ''),
   );
 }

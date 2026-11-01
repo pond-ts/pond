@@ -1004,8 +1004,9 @@ Robustness debt plus the queued composition workstreams. Plan:
   ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
   so a binary search would do. Measured 2026-11-01 in
   `perf-live-push-series.mjs`. At 1M ticks a second (16,000-row pushes,
-  5M rows held) pushes cost 40–87 ms a second with `maxAge` against 10–23
-  with `maxEvents` (`apps/worker-chart/bench/retention.mjs`).
+  5M rows held) `pushSeries` alone cost 29–67 ms a second with `maxAge`
+  against 1–2 with `maxEvents` (`apps/worker-chart/bench/retention.mjs`,
+  2026-11-01).
 - **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
   `push_series`). Add it with a `{ pushSeries }` step in the live parity
   generator (`packages/core/scripts/parity/live.mjs`) and
@@ -1033,15 +1034,16 @@ Robustness debt plus the queued composition workstreams. Plan:
   0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
 - **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
   `Event` for every row it holds, even with no `'evict'` listener, and finds
-  each row by walking the chunk list: 3.1 s at 600k rows, 10.4 s at 3M,
-  15.4 s at 5M, against 0.1 ms for a new series (Node, 2026-11-01). Skip the
+  each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
+  at 3M, 12.4–15.4 s at 5M, against 0.1–0.2 ms for a new series (Node,
+  2026-11-01, two runs). Skip the
   Events when nothing listens, as retention already does. Found while
   writing the off-main-thread chart guide; detail in
   `docs/plans/PND_LIVE_PLAN.md`.
 - **[PND-LIVELOCATE]** — Lookups in the middle of a default `LiveSeries`
   (`at(i)`, `bisect`, `atOrBefore`) walk the chunk list for every row they
   touch, so they slow with the batch count: `atOrBefore` on 600k rows took
-  4–5 µs in one chunk and 72–131 µs in 3,750 (a 60 s window fed every
+  about 4 µs in one chunk and 72–131 µs in 3,750 (a 60 s window fed every
   16 ms). Keep each chunk's start index and binary-search it. Detail in
   `docs/plans/PND_LIVE_PLAN.md`.
 

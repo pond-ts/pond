@@ -9,7 +9,11 @@ export const schema = [
   { name: 'size', kind: 'number' },
 ];
 
-/** A LiveSeries plus a push(n) that appends n ticks spread over 16 ms. */
+/**
+ * A LiveSeries plus a push(n) that appends n ticks spread over 16 ms. It
+ * returns the ms spent building the batch's TimeSeries (`build`) and in
+ * pushSeries (`push`).
+ */
 export function feed(options = {}) {
   const live = new LiveSeries({ name: 'ticks', schema, ...options });
   let t = 0;
@@ -25,15 +29,16 @@ export function feed(options = {}) {
       price[i] = p;
       size[i] = 1;
     }
-    const start = performance.now();
-    live.pushSeries(
-      TimeSeries.fromColumns({
-        name: 'ticks',
-        schema,
-        columns: { time, price, size },
-      }),
-    );
-    return performance.now() - start;
+    const t0 = performance.now();
+    const series = TimeSeries.fromColumns({
+      name: 'ticks',
+      schema,
+      columns: { time, price, size },
+    });
+    const t1 = performance.now();
+    live.pushSeries(series);
+    const t2 = performance.now();
+    return { build: t1 - t0, push: t2 - t1 };
   };
   return { live, push, now: () => t };
 }

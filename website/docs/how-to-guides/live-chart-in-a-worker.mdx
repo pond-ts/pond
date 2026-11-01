@@ -82,8 +82,8 @@ resolution, with 100,000 ticks a second and a 10-second window (about
 | a worker, buckets        | 120             | 10.2 ms                             | 10 ms                  |
 | the page thread, buckets | 60              | 44 ms                               | 30 ms                  |
 
-The gap column is how long after the frame before it each of the slowest
-5% of frames came; at 120 fps the normal gap is 8.3 ms. The age column is
+The gap column means the slowest 5% of frames each came at least that long
+after the frame before; at 120 fps the normal gap is 8.3 ms. The age column is
 the median, taken at the end of each frame, of how long ago the newest
 tick on screen was sent.
 
@@ -161,12 +161,15 @@ Three things to notice:
 - **`columns` is the width in device pixels of the screen the page opened
   on**, fixed for the session. Section 5 explains why.
 
-The example needs three things from the browser: `OffscreenCanvas`,
+The example uses three things from the browser: `OffscreenCanvas`,
 `requestAnimationFrame` inside a worker, and module workers
 (`type: 'module'`). Every current major browser has all three. The last to
 arrive were Safari 16.4 (March 2023) and Firefox 114 (June 2023); Chrome
-and Edge had them by version 80. The numbers in this guide are from Chrome
-only.
+and Edge had them by version 80. Where a worker has no
+`requestAnimationFrame` the example falls back to a 60 Hz timer, but
+Chrome, the only browser I ran it in, didn't need it, so that path is
+untested. The numbers in this
+guide are from Chrome only.
 
 Errors inside a worker are easy to miss, and the chart can look alive with
 its feed dead. So the example shows any worker error (`worker.onerror`)
@@ -177,8 +180,14 @@ the page is reloaded.
 
 The socket worker does one thing: it reads each WebSocket message and
 passes the ticks on as one `Float64Array` per column. The feed sends
-binary messages, `[sendTime, n, droppedSoFar, time0, price0, size0, time1, …]`,
-every 16 ms:
+binary messages,
+`[sendTime, n, droppedSoFar, sentSoFar, time0, price0, size0, time1, …]`,
+every 16 ms. `droppedSoFar` counts the ticks the feed has dropped because
+the browser fell behind (once the browser has caught up with the history,
+the feed lets about half a second of ticks wait on the socket, then
+drops). `sentSoFar` counts the ticks sent before this message,
+so the render worker can tell if any went missing on the way; the headless
+check fails if any did.
 
 ```ts
 // [src/socket-worker.ts], trimmed
@@ -194,8 +203,9 @@ self.onmessage = (ev: MessageEvent<{ url: string; port: MessagePort }>) => {
       price: new Float64Array(n),
       size: new Float64Array(n),
       dropped: frame[2]!,
+      sentSoFar: frame[3]!,
     };
-    for (let i = 0, o = 3; i < n; i++, o += 3) {
+    for (let i = 0, o = 4; i < n; i++, o += 3) {
       batch.time[i] = frame[o]!;
       batch.price[i] = frame[o + 1]!;
       batch.size[i] = frame[o + 2]!;
@@ -228,7 +238,7 @@ from 89%. With the socket on its own worker, every tick got through even
 at 98%. On a 4-core cloud machine the difference showed much earlier: the
 drawing worker's own socket fell behind with the thread only 3–4% busy,
 while with a separate socket worker every tick got through and the newest
-tick reached the screen in a median of 14–36 ms. Why the shared socket
+tick reached the screen in a median of 19–36 ms. Why the shared socket
 falls behind so early wasn't established, and each machine had only three
 runs. The extra worker costs about 40 lines, so I'd use it anyway.
 
@@ -257,15 +267,14 @@ function ingest(batch: Batch) {
   const n = batch.time.length;
   if (n === 0) return;
   const { time, price, size } = batch;
+  const series = TimeSeries.fromColumns({
+    name: 'ticks',
+    schema,
+    columns: { time, price, size },
+  });
   // The live series keeps these arrays as they are, so nothing may write to
   // them after this line. Reading them, as the loop below does, is fine.
-  live.pushSeries(
-    TimeSeries.fromColumns({
-      name: 'ticks',
-      schema,
-      columns: { time, price, size },
-    }),
-  );
+  live.pushSeries(series);
   for (let i = 0; i < n; i++) buckets.add(time[i]!, price[i]!);
   buckets.evictBefore(time[n - 1]! - windowMs - buckets.ms);
   newestTime = time[n - 1]!;
@@ -394,6 +403,13 @@ because the time axis moves every frame:
 
 ```ts
 // [src/render-worker.ts], trimmed
+// Workers in current browsers have requestAnimationFrame; fall back to a
+// timer where one doesn't.
+const nextFrame = () =>
+  typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(frame)
+    : setTimeout(frame, 1000 / 60);
+
 // Ticks arrive every 16 ms; between them, move the right edge on with the
 // clock so the chart scrolls smoothly instead of in steps. A batch that
 // arrives later than the last one (relative to its times) would pull the
@@ -403,7 +419,7 @@ const rightEdge = (now: number) =>
   (lastEdge = Math.max(lastEdge, newestTime + (now - newestArrival)));
 
 function frame() {
-  requestAnimationFrame(frame);
+  nextFrame();
   const now = performance.now();
   if (changed) {
     const [lo, hi] = buckets.range()!;
@@ -484,18 +500,19 @@ more than it looks, for two reasons. I measured both in Node
 ([`bench/lookups.mjs`], output in [`results/lookups.txt`]):
 
 - **A lookup in the middle of the window walks the stored batches.** At
-  600,000 rows, an `atOrBefore` took a median of 4–5 µs with the rows in
-  one batch, 12–23 µs in 375 batches, and 72–131 µs in 3,750 batches,
+  600,000 rows, an `atOrBefore` took a median of about 4 µs with the rows
+  in one batch, 11–15 µs in 375 batches, and 74–80 µs in 3,750 batches,
   which is what a 60-second window fed every 16 ms holds.
 - **Lookups slow down later pushes.** The live series caches every row a
   lookup returns, and each push that drops old rows rebuilds that cache.
-  At 10,000 ticks a second with a 60-second window, a push took
-  0.008–0.014 ms with no lookups, 0.14–0.16 ms with one lookup per push
-  and 0.28–0.30 ms with two.
+  At 10,000 ticks a second with a 60-second window, a `pushSeries` took
+  0.005–0.007 ms with no lookups, 0.13–0.18 ms with one lookup per push
+  and 0.27–0.32 ms with two.
 
 At 120 fps the frame loop runs about twice per push, so a lookup on every
-frame would cost about 30 ms of every second (3% of the thread) for a
-tooltip nobody can read that fast.
+frame would cost 30–40 ms of every second (3–4% of the thread), the
+lookups and the slower pushes together, for a tooltip nobody can read
+that fast.
 
 ## 8. What it costs
 
@@ -527,23 +544,24 @@ screen, so the table shows work, not frames. Each cell is the range over
 six one-second samples, three of them with the page busy, all with the
 window full ([`results/check-headless.txt`]):
 
-| Ticks/s, window | Ticks held | `pushSeries`, ms a second | Buckets, ms a second | JavaScript per frame | Age of the newest tick |
-| --------------- | ---------- | ------------------------- | -------------------- | -------------------- | ---------------------- |
-| 10k, 60 s       | 600k       | 5.7–8.1                   | 0.3–0.9              | 0.58–0.72 ms         | 10–14 ms               |
-| 100k, 30 s      | 3M         | 7.9–10.1                  | 1.6–3.2              | 0.60–0.75 ms         | 10–17 ms               |
-| 1M, 5 s         | 5M         | 42–53                     | 17–26                | 0.58–0.72 ms         | 19–24 ms               |
+| Ticks/s, window | Ticks held | `fromColumns`, ms a second | `pushSeries`, ms a second | Buckets, ms a second | JavaScript per frame | Age of the newest tick |
+| --------------- | ---------- | -------------------------- | ------------------------- | -------------------- | -------------------- | ---------------------- |
+| 10k, 60 s       | 600k       | 2.2–4.3                    | 3.8–5.4                   | 0.4–0.8              | 0.57–0.69 ms         | 9–13 ms                |
+| 100k, 30 s      | 3M         | 3.8–5.0                    | 5.4–7.1                   | 2.1–2.9              | 0.63–0.76 ms         | 10–15 ms               |
+| 1M, 5 s         | 5M         | 11–20                      | 33–44                     | 23–31                | 0.63–0.81 ms         | 19–27 ms               |
 
-So at 100,000 ticks a second, taking ticks in (`pushSeries` and the
-buckets together) took about 1% of the render worker's time, and at 1M a
-second about 6–8%. A Node run of the same pushes shows where most of
-`pushSeries`' share goes at 1M ([`bench/retention.mjs`],
-[`results/retention.txt`]): with a 5-second `maxAge`, pushes cost 12–31 ms
-a second while the window filled and 40–87 once rows had to be dropped;
-with `maxEvents` holding the same 5 million rows they cost 10–23, the same
-as with no retention (10–21). So in Node most of it is `maxAge` working
-out which rows to drop, which it does by checking the oldest rows' times
-one at a time ([PND-AGESCAN]). In every run, the busy page left the
-chart's frame rate where it was.
+So at 100,000 ticks a second, taking ticks in (building each batch's
+`TimeSeries`, `pushSeries` and the buckets together) took about 1% of the
+render worker's time, and at 1M a second 7–9%. A Node run of the same
+pushes shows where `pushSeries`' share goes at 1M ([`bench/retention.mjs`],
+[`results/retention.txt`]): with a 5-second `maxAge`, `pushSeries` cost
+1–4 ms a second while the window filled and 29–67 once rows had to be
+dropped; with `maxEvents` holding the same 5 million rows it cost 1–2,
+and with no retention 0–1. Building each batch with `fromColumns` cost
+10–31 ms a second in every case. So in Node nearly all of `pushSeries`'
+cost is `maxAge` working out which rows to drop, which it does by checking
+the oldest rows' times one at a time ([PND-AGESCAN]). In every run, the
+busy page left the chart's frame rate where it was.
 
 ## 9. When `LineChart` is the better choice
 
@@ -613,8 +631,8 @@ names are tasks in pond's
   that's older than the rows already held, and `pushSeries` refuses it.
   Make a new `LiveSeries` and new buckets rather than calling
   `live.clear()`: on this series `clear()` builds an object for every row
-  it drops, and took 3.1 s at 600,000 rows and 15.4 s at 5 million in
-  Node, against 0.1 ms for a new series
+  it drops, and took 3.2 s at 600,000 rows and 12.4 s at 5 million in
+  Node, against 0.1–0.2 ms for a new series
   ([`bench/clear.mjs`], [`results/clear.txt`]). The example shows that the
   feed closed and stops there.
 - **The edge keeps scrolling when the feed stops.** That's honest (time

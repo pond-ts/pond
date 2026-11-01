@@ -1,9 +1,11 @@
 // Opens the page in headless Chromium and checks that the chart works:
-// frames are drawn, every tick arrives, the series holds one window of ticks,
-// the line spans the chart (also after a resize), hovering answers in local
-// time and the tooltip stays on the page, and the chart keeps drawing while
-// the page's own thread is busy. It runs in a time zone away from UTC
-// (Tokyo), so a clock shown in UTC would stand out.
+// frames are drawn, every tick the feed sends arrives and the newest is
+// drawn within 250 ms, the series holds one window of ticks, the line spans
+// the chart, hovering picks the tick under the pointer and shows it in local
+// time with the tooltip kept on the page, the chart keeps drawing while the
+// page's own thread is busy, and a resize gives the canvas new pixels. It
+// runs in a time zone away from UTC (Tokyo), so a clock shown in UTC would
+// stand out.
 //
 //   npm run check
 //
@@ -16,6 +18,8 @@ import { startServer } from './server.mjs';
 
 const RATE = Number(process.env.RATE ?? 20_000);
 const WINDOW = Number(process.env.WINDOW ?? 10);
+const PAD = { left: 8, right: 64 }; // the plot's margins in render-worker.ts
+const MAX_DELAY = 250; // ms: the newest tick drawn is never older than this
 
 const failures = [];
 const check = (ok, what) => {
@@ -45,11 +49,11 @@ try {
     if (problem) throw new Error(`page shows: ${problem}`);
     const text = await page.textContent('#status');
     const m = text.match(
-      /chart (\d+) fps · page (\d+) fps · ([\d,]+) ticks\/s · ([\d,]+) ticks held · delay (\d+) ms(?: · ([\d,]+) dropped)?/,
+      /chart (\d+) fps · page (\d+) fps · ([\d,]+) ticks\/s · ([\d,]+) ticks held · delay (\d+) ms(?: · ([\d,]+) dropped)?(?: · ([\d,]+) missing)?/,
     );
     if (!m) return null;
     const w = (await page.textContent('#work')).match(
-      /pushSeries ([\d.]+) ms\/s · buckets ([\d.]+) ms\/s · frame ([\d.]+) ms/,
+      /fromColumns ([\d.]+) ms\/s · pushSeries ([\d.]+) ms\/s · buckets ([\d.]+) ms\/s · frame ([\d.]+) ms · canvas (\d+)×(\d+) px/,
     );
     const n = (s) => Number((s ?? '0').replaceAll(',', ''));
     return {
@@ -59,9 +63,12 @@ try {
       rows: n(m[4]),
       delayMs: n(m[5]),
       dropped: n(m[6]),
-      pushMs: n(w?.[1]),
-      foldMs: n(w?.[2]),
-      frameMs: n(w?.[3]),
+      missing: n(m[7]),
+      seriesMs: n(w?.[1]),
+      pushMs: n(w?.[2]),
+      foldMs: n(w?.[3]),
+      frameMs: n(w?.[4]),
+      canvas: w ? `${w[5]}×${w[6]}` : '',
     };
   };
   // One stats report a second; collect `count` fresh ones.
@@ -122,25 +129,46 @@ try {
       {
         b64: png.toString('base64'),
         cssWidth: box.width,
-        padLeft: 8,
-        padRight: 64,
+        padLeft: PAD.left,
+        padRight: PAD.right,
       },
     );
   };
 
-  // Wait for the history to arrive: the newest tick drawn is under a second
-  // old once the chart has caught up.
-  await page.waitForFunction(
-    () => {
-      const m = /delay (\d+) ms/.exec(
+  // Resolves true once `fn(arg)` holds in the page, false after `ms`.
+  const becomes = (fn, arg = null, ms = 3000) =>
+    page.waitForFunction(fn, arg, { timeout: ms }).then(
+      () => true,
+      () => false,
+    );
+
+  // Wait for the history to arrive: the series holds (nearly) a window and
+  // the newest tick drawn is fresh.
+  const caughtUp = await becomes(
+    ({ want, maxDelay }) => {
+      const m = /([\d,]+) ticks held · delay (\d+) ms/.exec(
         document.querySelector('#status').textContent,
       );
-      return m && Number(m[1]) < 1000;
+      return (
+        m && Number(m[1].replaceAll(',', '')) >= want && Number(m[2]) < maxDelay
+      );
     },
-    null,
-    { timeout: 60_000 },
+    { want: 0.99 * RATE * WINDOW, maxDelay: MAX_DELAY },
+    60_000,
   );
+  if (!caughtUp) {
+    for (const id of ['#problem', '#status', '#work']) {
+      console.log(`${id}: ${await page.textContent(id)}`);
+    }
+    throw new Error('the chart did not catch up with the feed within 60 s');
+  }
   await sleep(1500);
+
+  // Every tick arrived, none was dropped, and the newest was always fresh.
+  const keptUp = (samples) =>
+    samples.every(
+      (s) => s.dropped === 0 && s.missing === 0 && s.delayMs < MAX_DELAY,
+    );
 
   const steady = await sample(3);
   console.log('steady:', JSON.stringify(steady));
@@ -152,13 +180,15 @@ try {
     Math.abs(tps - RATE) / RATE < 0.1,
     `ticks arrive at the feed's rate (${tps}/s of ${RATE}/s)`,
   );
+  // Ticks are evenly spaced, so a window holds RATE × WINDOW of them, give
+  // or take a couple (observed: exact, or one over).
   check(
-    Math.abs(rows - RATE * WINDOW) / (RATE * WINDOW) < 0.05,
+    Math.abs(rows - RATE * WINDOW) <= Math.max(2, RATE * WINDOW * 0.001),
     `series holds one window (${rows} of ${RATE * WINDOW})`,
   );
   check(
-    steady.every((s) => s.dropped === 0),
-    'no ticks dropped by the server',
+    keptUp(steady),
+    `every tick arrives, none dropped, and the newest is drawn within ${MAX_DELAY} ms`,
   );
 
   const covered = await lineCoverage();
@@ -167,58 +197,62 @@ try {
     `line spans the plot (${(covered * 100).toFixed(1)}% of columns)`,
   );
 
-  // Resolves true once `fn` holds, false after `ms`.
-  const becomes = (fn, ms = 3000) =>
-    page.waitForFunction(fn, null, { timeout: ms }).then(
-      () => true,
-      () => false,
-    );
   const tooltipShown = () => !document.querySelector('#tooltip').hidden;
+  const box = await page.locator('canvas').boundingBox();
+  const plotW = box.width - PAD.left - PAD.right;
 
-  await page.mouse.move(600, 180);
+  const hoverX = 600;
+  await page.mouse.move(hoverX, 180);
   await becomes(tooltipShown);
   const tip = await page.textContent('#tooltip');
   check(
     /^\d\d:\d\d:\d\d\.\d{3} {2}\d+\.\d{3} × \d+$/.test(tip),
-    `hover shows the tick under the pointer ("${tip}")`,
+    `hover shows a tick ("${tip}")`,
   );
-  // The tick is within the window, so its local time is at most a window
-  // (plus a little) behind the page's local clock.
+  // The pointer is a share of the way across a plot that ends now, so the
+  // tick under it is (1 - share) × WINDOW seconds older than the page's
+  // local clock. A clock shown in UTC would be hours out.
   const behind = await page.evaluate((text) => {
     const [h, m, s] = text.slice(0, 8).split(':').map(Number);
+    const ms = Number(text.slice(9, 12));
     const d = new Date();
-    const now = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
-    return (now - (h * 3600 + m * 60 + s) + 86_400) % 86_400;
+    const now =
+      d.getHours() * 3600 +
+      d.getMinutes() * 60 +
+      d.getSeconds() +
+      d.getMilliseconds() / 1000;
+    return (now - (h * 3600 + m * 60 + s + ms / 1000) + 86_400) % 86_400;
   }, tip);
+  const expected = (1 - (hoverX - box.x - PAD.left) / plotW) * WINDOW;
   check(
-    behind <= WINDOW + 2,
-    `the tooltip's clock is local time (${behind} s behind the page's)`,
+    Math.abs(behind - expected) < 1 + WINDOW * 0.02,
+    `the tick is the one under the pointer, in local time ` +
+      `(${behind.toFixed(1)} s behind the page's clock; expected ${expected.toFixed(1)})`,
   );
 
   // Near the plot's right edge the tooltip flips left of the pointer.
-  const box = await page.locator('canvas').boundingBox();
   await page.mouse.move(box.x + box.width - 66, 180);
-  await sleep(300);
+  const moved = await becomes((prev) => {
+    const t = document.querySelector('#tooltip');
+    return !t.hidden && t.textContent !== prev;
+  }, tip);
   const onPage = await page.evaluate(() => {
     const tip = document.querySelector('#tooltip').getBoundingClientRect();
     const chart = document.querySelector('canvas').getBoundingClientRect();
     const root = document.documentElement;
-    return tip.right <= chart.right && root.scrollWidth <= root.clientWidth;
+    return (
+      tip.width > 0 &&
+      tip.left >= chart.left &&
+      tip.right <= chart.right &&
+      root.scrollWidth <= root.clientWidth
+    );
   });
-  check(onPage, 'the tooltip stays on the page at the right edge');
+  check(moved && onPage, 'the tooltip stays on the page at the right edge');
 
   await page.mouse.move(600, 500); // off the canvas
   check(
     await becomes(() => document.querySelector('#tooltip').hidden),
     'tooltip hides when the pointer leaves',
-  );
-
-  await page.setViewportSize({ width: 800, height: 520 });
-  await sleep(500);
-  const coveredAfter = await lineCoverage();
-  check(
-    coveredAfter > 0.95,
-    `line spans the plot after a resize (${(coveredAfter * 100).toFixed(1)}%)`,
   );
 
   await page.check('#busy');
@@ -243,6 +277,7 @@ try {
   );
   const busy = await sample(3);
   console.log('busy page:', JSON.stringify(busy));
+  await page.uncheck('#busy');
   const busyFps = median(busy.map((s) => s.fps));
   check(
     blocked > 0.6,
@@ -253,9 +288,40 @@ try {
     `the chart keeps its frame rate (${fps} -> ${busyFps} fps)`,
   );
   check(
-    busy.every((s) => s.dropped === 0) &&
+    keptUp(busy) &&
       Math.abs(median(busy.map((s) => s.ticksPerSec)) - RATE) / RATE < 0.1,
     'ticks keep arriving on a busy page',
+  );
+  // A few seconds on, with the page busy, the newest tick is no further
+  // behind: a chart slowly falling behind fails here before it reaches
+  // MAX_DELAY.
+  const steadyDelay = median(steady.map((s) => s.delayMs));
+  const busyDelay = median(busy.map((s) => s.delayMs));
+  check(
+    busyDelay <= steadyDelay + 50,
+    `the chart doesn't fall behind (newest tick ${steadyDelay} ms old, then ${busyDelay} ms)`,
+  );
+
+  // A narrower window: the worker must give the canvas new pixels (CSS
+  // alone would stretch the old ones, and the line would still span).
+  await page.setViewportSize({ width: 800, height: 520 });
+  const after = await page.locator('canvas').boundingBox();
+  const dpr = await page.evaluate(() => devicePixelRatio);
+  const want = `${Math.round(after.width * dpr)}×${Math.round(after.height * dpr)}`;
+  const resized = await becomes(
+    (w) =>
+      document.querySelector('#work').textContent.includes(`canvas ${w} px`),
+    want,
+  );
+  check(
+    resized,
+    `a resize gives the canvas new pixels (${(await stats())?.canvas} of ${want})`,
+  );
+  await sleep(500);
+  const coveredAfter = await lineCoverage();
+  check(
+    coveredAfter > 0.95,
+    `line spans the plot after a resize (${(coveredAfter * 100).toFixed(1)}%)`,
   );
 
   check(

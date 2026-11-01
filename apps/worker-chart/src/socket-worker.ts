@@ -9,7 +9,7 @@ self.onmessage = (ev: MessageEvent<{ url: string; port: MessagePort }>) => {
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (m: MessageEvent<ArrayBuffer>) => {
-    // [sendTime, n, droppedSoFar, time0, price0, size0, time1, …]
+    // [sendTime, n, droppedSoFar, sentSoFar, time0, price0, size0, time1, …]
     const frame = new Float64Array(m.data);
     const n = frame[1]!;
     const batch: Batch = {
@@ -17,8 +17,9 @@ self.onmessage = (ev: MessageEvent<{ url: string; port: MessagePort }>) => {
       price: new Float64Array(n),
       size: new Float64Array(n),
       dropped: frame[2]!,
+      sentSoFar: frame[3]!,
     };
-    for (let i = 0, o = 3; i < n; i++, o += 3) {
+    for (let i = 0, o = 4; i < n; i++, o += 3) {
       batch.time[i] = frame[o]!;
       batch.price[i] = frame[o + 1]!;
       batch.size[i] = frame[o + 2]!;

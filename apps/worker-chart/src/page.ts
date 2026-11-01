@@ -98,11 +98,14 @@ render.onmessage = (ev: MessageEvent<FromRender>) => {
       `${msg.ticksPerSec.toLocaleString()} ticks/s · ` +
       `${msg.rows.toLocaleString()} ticks held · ` +
       `delay ${Math.round(msg.delayMs)} ms` +
-      (msg.dropped ? ` · ${msg.dropped.toLocaleString()} dropped` : '');
+      (msg.dropped ? ` · ${msg.dropped.toLocaleString()} dropped` : '') +
+      (msg.missing ? ` · ${msg.missing.toLocaleString()} missing` : '');
     work.textContent =
+      `fromColumns ${msg.seriesMs.toFixed(1)} ms/s · ` +
       `pushSeries ${msg.pushMs.toFixed(1)} ms/s · ` +
       `buckets ${msg.foldMs.toFixed(1)} ms/s · ` +
-      `frame ${msg.frameMs.toFixed(2)} ms`;
+      `frame ${msg.frameMs.toFixed(2)} ms · ` +
+      `canvas ${msg.canvasWidth}×${msg.canvasHeight} px`;
   } else if (msg.tick === null) {
     tooltip.hidden = true;
   } else {

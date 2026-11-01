@@ -40,6 +40,9 @@ let hovered: Tick | null = null; // the tick picked by the pointer
 let frames = 0;
 let ticks = 0;
 let dropped = 0;
+let received = 0; // ticks received in all
+let missing = 0;
+let seriesMs = 0;
 let pushMs = 0;
 let foldMs = 0;
 let frameMs = 0;
@@ -81,17 +84,22 @@ function ingest(batch: Batch) {
   const n = batch.time.length;
   if (n === 0) return;
   const { time, price, size } = batch;
+  // The server counts the ticks it sent before each batch; any difference
+  // from the count that arrived here means ticks went missing on the way.
+  missing += Math.abs(batch.sentSoFar - received);
+  received = batch.sentSoFar + n;
+
   const t0 = performance.now();
+  const series = TimeSeries.fromColumns({
+    name: 'ticks',
+    schema,
+    columns: { time, price, size },
+  });
+  const t1 = performance.now();
   // The live series keeps these arrays as they are, so nothing may write to
   // them after this line. Reading them, as the loop below does, is fine.
-  live.pushSeries(
-    TimeSeries.fromColumns({
-      name: 'ticks',
-      schema,
-      columns: { time, price, size },
-    }),
-  );
-  const t1 = performance.now();
+  live.pushSeries(series);
+  const t2 = performance.now();
   for (let i = 0; i < n; i++) buckets.add(time[i]!, price[i]!);
   buckets.evictBefore(time[n - 1]! - windowMs - buckets.ms);
   newestTime = time[n - 1]!;
@@ -99,8 +107,9 @@ function ingest(batch: Batch) {
   changed = true;
   ticks += n;
   dropped = batch.dropped;
-  pushMs += t1 - t0;
-  foldMs += newestArrival - t1;
+  seriesMs += t1 - t0;
+  pushMs += t2 - t1;
+  foldMs += newestArrival - t2;
 }
 
 // Workers in current browsers have requestAnimationFrame; fall back to a
@@ -282,11 +291,15 @@ function report() {
     rows: live.length,
     delayMs: delays[Math.floor(delays.length / 2)] ?? 0,
     dropped,
+    missing,
+    seriesMs,
     pushMs,
     foldMs,
     frameMs: frames ? frameMs / frames : 0,
+    canvasWidth: ctx.canvas.width,
+    canvasHeight: ctx.canvas.height,
   });
-  frames = ticks = pushMs = foldMs = frameMs = delays.length = 0;
+  frames = ticks = seriesMs = pushMs = foldMs = frameMs = delays.length = 0;
 }
 
 /** 1, 2 or 5 times a power of ten, at least `raw`. */

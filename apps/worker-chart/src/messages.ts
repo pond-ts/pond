@@ -7,6 +7,8 @@ export interface Batch {
   size: Float64Array;
   /** Ticks the server has dropped so far because we fell behind. */
   dropped: number;
+  /** Ticks the server sent before this batch. */
+  sentSoFar: number;
 }
 
 /** Page → render worker. Sizes are CSS pixels. */
@@ -44,11 +46,20 @@ export type FromRender =
       /** Median age in ms of the newest tick, at the end of each frame. */
       delayMs: number;
       dropped: number;
-      /** ms this second spent in pushSeries, and folding into buckets. */
+      /** Ticks the server sent that never arrived here (should stay 0). */
+      missing: number;
+      /**
+       * ms this second spent building each batch's TimeSeries, in
+       * pushSeries, and folding into buckets.
+       */
+      seriesMs: number;
       pushMs: number;
       foldMs: number;
       /** Mean ms of JavaScript per frame. */
       frameMs: number;
+      /** The canvas's size in device pixels. */
+      canvasWidth: number;
+      canvasHeight: number;
     }
   | { type: 'hover'; tick: Tick | null };
 
