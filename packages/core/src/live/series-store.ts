@@ -302,6 +302,43 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * Module-internal ([PND-ROWSOUT]): whether any row's `Event` already
+   * exists (a dense event array, or entries in the per-row cache). When
+   * false, every `eventAt(i)` would be built fresh from `keyAt(i)` and the
+   * columns' `read(i)`, so a row export can read the columns instead and
+   * give the same values.
+   */
+  _hasBuiltEventsModulePrivate(): boolean {
+    return this.#dense !== undefined || this.#eventCache.size > 0;
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): whether every row's `Event` already
+   * exists. A row export then reads the events, which is cheaper than a
+   * per-row cache lookup.
+   */
+  _hasAllEventsModulePrivate(): boolean {
+    return (
+      this.#dense !== undefined ||
+      this.#eventsArray !== undefined ||
+      this.#eventCache.size === this.length
+    );
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): row `i`'s `Event` if it already
+   * exists, else `undefined` (nothing is built). A row export uses the
+   * existing event where there is one, since its values can differ from the
+   * columns' (an event handed in through a trusted door may carry a value
+   * the column stores as a gap).
+   */
+  _builtEventAtModulePrivate(i: number): SeriesEvent | undefined {
+    const dense = this.#dense;
+    if (dense !== undefined) return dense[i];
+    return this.#eventCache.get(i);
+  }
+
+  /**
    * Materializes the row at index `i` as an `Event` instance.
    * Lazily built and cached — `eventAt(i) === eventAt(i)` holds
    * for the store's lifetime.

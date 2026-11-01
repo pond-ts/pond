@@ -1915,6 +1915,31 @@ view costs nothing measurable (138 vs 125–146 ms, noise). After, same bench
 |   100 |    31–36 ms |   32–36 |          36–40 |               130–136 |
 |  1000 |       24 ms |   20–25 |          25–36 |               108–142 |
 
+**[PND-ROWSOUT] part 1 shipped — `toJSON` / `toPoints`.** Rows are written
+from the key buffers and `column.read(i)`, which is exactly what `eventAt(i)`
+builds a fresh event from, so a row with no event yet gives the same output.
+A row whose event already exists goes through the event (an event handed in
+through a trusted door may hold a value the column stores as a gap). When
+every event exists the old path runs (a per-row cache lookup made it 2.5×
+slower: 205 → 517 ms), and so does any schema with an array column (array
+cells are shared objects; [PND-ARRAYSLOW] owns that storage). Checked with
+an old-vs-new oracle: 3,000 random series × 5 exports (time / timeRange /
+interval keys, gaps, `-0`, partial and full event caches, filter / concat /
+map results), all equal, frozen-ness included; a planted wrong edge in the
+timeRange key was caught (90 mismatches). 1M rows, median of 7:
+
+| export                            | before (s) | after (s) |
+| --------------------------------- | ---------: | --------: |
+| `toJSON()`                        |  1.36–1.41 | 0.22–0.25 |
+| `toJSON({ rowFormat: 'object' })` |  1.23–1.32 |      0.10 |
+| `toPoints()`                      |  1.28–1.43 | 0.14–0.16 |
+| `toJSON()`, events already built  |  0.21–0.24 |      0.22 |
+| `toJSON()`, one event built       |       1.30 |      0.18 |
+
+`toRows` / `toObjects` are part 2: they hand out key objects, which must be
+the same objects the events carry, so they wait for #873's source-event
+lookup (a selected row's event is its source's).
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly
