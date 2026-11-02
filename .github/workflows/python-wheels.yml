@@ -209,7 +209,10 @@ jobs:
           wheels=$(ls dist/*.whl | wc -l)
           sdists=$(ls dist/*.tar.gz | wc -l)
           echo "$wheels wheels, $sdists sdist"
-          test "$wheels" -eq 5 && test "$sdists" -eq 1
+          if [ "$wheels" -ne 5 ] || [ "$sdists" -ne 1 ]; then
+            echo "want 5 wheels and 1 sdist"
+            exit 1
+          fi
           for tag in 'manylinux_2_17_x86_64' 'manylinux_2_17_aarch64' 'macosx_*_x86_64' 'macosx_*_arm64' 'win_amd64'; do
             ls dist/*$tag*.whl > /dev/null || { echo "no $tag wheel"; exit 1; }
           done
