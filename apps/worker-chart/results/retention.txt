@@ -1,0 +1,29 @@
+# node bench/retention.mjs — 2026-11-01, Node v22.22.0, 4-core cloud container (Linux), pond-ts built from main at 607c4648
+
+maxAge 5 s    run 1 (5,000,000 rows held), ms per second of data:
+  fromColumns  31  18  17  16  18  16  16  15  20  21
+  pushSeries    4   2   2   1   2  59  56  52  49  67
+maxAge 5 s    run 2 (5,000,000 rows held), ms per second of data:
+  fromColumns  19  20  19  18  14  12  13  15  16  20
+  pushSeries    2   2   2   2   1  29  33  38  44  53
+maxAge 5 s    run 3 (5,000,000 rows held), ms per second of data:
+  fromColumns  18  13  14  12  12  12  14  13  12  12
+  pushSeries    1   1   2   1   1  29  33  38  34  29
+maxEvents 5M  run 1 (5,000,000 rows held), ms per second of data:
+  fromColumns  11  12  12  11  11  12  12  12  12  12
+  pushSeries    1   1   1   1   1   2   2   2   2   1
+maxEvents 5M  run 2 (5,000,000 rows held), ms per second of data:
+  fromColumns  12  12  12  12  12  13  12  15  16  15
+  pushSeries    1   1   1   1   1   2   1   2   2   2
+maxEvents 5M  run 3 (5,000,000 rows held), ms per second of data:
+  fromColumns  15  11  10  11  11  12  11  11  17  10
+  pushSeries    1   1   1   1   1   2   1   1   2   1
+no retention  run 1 (9,920,000 rows held), ms per second of data:
+  fromColumns  13  18  16  12  10  11  10  10  10  11
+  pushSeries    1   1   1   0   0   0   0   0   0   0
+no retention  run 2 (9,920,000 rows held), ms per second of data:
+  fromColumns  10  10  10  10  10  10  10  10  10  10
+  pushSeries    1   0   0   1   0   0   1   0   0   0
+no retention  run 3 (9,920,000 rows held), ms per second of data:
+  fromColumns  10  10  10  10  10  10  11  10  10  10
+  pushSeries    1   1   1   0   1   1   1   0   0   1

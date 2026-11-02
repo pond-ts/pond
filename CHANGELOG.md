@@ -78,8 +78,55 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`live.window()` no longer slows down as the window grows.** A window view
+  (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
+  aggregations) dropped its oldest event by shifting its whole list of events,
+  once for every event that arrived, so keeping it up to date cost time in
+  proportion to the window size on every tick. It now moves a start marker and
+  tidies the list only once the dropped part is as big as the window. In
+  Node, a 160-event push into a full 50,000-event window went from 45–53 ms
+  to 0.07–0.12 ms (median), and a 1,600-event push from 478–507 ms to
+  0.8–1.9 ms (`packages/core/scripts/perf-live-window.mjs`). The push that
+  tidies the list costs more, 0.7–5 ms at 50,000–100,000 events (7.6–7.8
+  ms when a garbage-collection pause landed on it), once per window's worth
+  of events; in a separate test at 1,000,000 events it took 11–19 ms (two
+  of 18 took 27 and 30 ms). Memory is about what it was: a 100,000-event
+  window holds 20.5 MB, against 19.3 MB before. Reading the view
+  (`keyColumn()`, `column()`, `toTimeSeries()`) still visits every event in
+  the window. [PND-LVWIN]
+
 ### Added
 
+- **`LiveSeries.pushSeries(series)`** ([PND-LPUSHCOL]) pushes a batch
+  `TimeSeries` into a live series as one batch: the column-shaped way in.
+  Data that arrives as typed arrays goes
+  `live.pushSeries(TimeSeries.fromColumns({ name, schema, columns }))`, with
+  no row tuples. It follows `pushMany`'s rules for the batch's rows (same
+  ordering, retention, listeners and refusals; a refused batch stores
+  nothing, except that a `partitionBy` error on a default series is thrown
+  after the batch is stored, as with `pushMany`). The batch must be keyed the
+  same way and carry exactly the live series' value columns, matched by name
+  in any order, each of the same kind; a gap in a column the live schema
+  requires is refused, naming the first such row. On a default series
+  (`strict`, `time` key) the batch's columns are stored as they are, with no
+  per-row check and no event object per row: 100,000 rows in batches of 1,600
+  take 1.8 ms against `pushMany`'s 18.1 ms (2.4× faster in batches of 16). A
+  `window()` or other view on the series brings the per-row events back
+  (about 1.3×), and `drop` / `reorder` series or `timeRange` / `interval`
+  keys take `pushMany`'s row path (about the same speed). **The live series
+  keeps the batch's `Float64Array`s, not copies**, so don't write to, reuse
+  or transfer a pushed buffer while its rows are retained (push
+  `buf.slice(0, n)` instead): a write changes stored rows and can leave their
+  times out of order. A batch that would keep much more memory alive than its
+  rows need (a `slice()` of a much bigger series, which shares the parent's
+  buffers and text dictionaries) is copied first, so it doesn't keep its
+  parent alive, and so is any batch of 8 rows or fewer.
+  The same rules as pond-rs's `push_series`, apart
+  from that `partitionBy` case (pond-rs refuses the whole batch).
+  Guide: [A live chart at 120 fps, off the main thread](https://pond-ts.org/docs/how-to-guides/live-chart-in-a-worker),
+  which feeds a chart in a Web Worker with `pushSeries` batches.
 - **Column expressions** ([PND-EXPR]): `col`, `lit` and `when` build
   per-row rules as data instead of functions, e.g.
   `s.filter(col('v').gt(0).and(col('host').eq('a')))`. `filter`, `find`,
@@ -177,8 +224,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   watches it, the columns are copied straight into storage with no event
   built per row ([PND-RUSTLIVEBATCH]): one million rows in batches of 1,000
   take about half the time of `push_many` and about a third less than
-  pond-ts's `pushMany` on the same machine. pond-ts has no column-shaped
-  push.
+  pond-ts's `pushMany` on the same machine. pond-ts's `LiveSeries.pushSeries`
+  (above) takes the same batch, but keeps its arrays instead of copying them,
+  so the two haven't been timed against each other.
 - **pond-rs: ready for crates.io.** The crate has package metadata, a
   README, three runnable examples (`quickstart`, `rsi`, `live_stream`) and
   API docs for every public item, with a docs.rs front page and the `live`
@@ -615,6 +663,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   `event.get(output)` is typed `number | undefined` (on `TimeSeries` and
   `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
   a gap check.
+
+### Changed
+
+- **`toJSON` and `toPoints` write rows straight from the columns**
+  ([PND-ROWSOUT]) instead of building an `Event` per row first. Output is
+  identical. 1M rows: `toJSON()` 1.36–1.41 s → 0.22–0.25 s,
+  `toJSON({ rowFormat: 'object' })` 1.23–1.32 s → 0.10 s, `toPoints()`
+  1.28–1.43 s → 0.14–0.16 s. A series whose events already exist, or one
+  with an array column, takes the old path.
+- **`useSnapshot`, `useLatest` and `useLiveVersion` no longer make a
+  `LiveSeries` build an `Event` per pushed row** ([PND-HOOKSIGNAL]). They
+  listened for `'event'` (and `useLiveVersion` for `'evict'`) only to learn
+  that something changed, which made the column-native backing build an
+  `Event` for every pushed and evicted row. They now use an internal change
+  signal that fires at the same moments with no payload. 200k rows into a
+  10k-row buffer, batches of 1,000, with `useLiveVersion`'s subscriptions:
+  108–141 ms → 25–36 ms (no listener: 24 ms). `useSnapshot` and `useLatest`
+  return the same values. `useLiveVersion`'s token still changes on every
+  change but now advances once per push rather than once per row (it was
+  always meant to be compared, not counted). Views, aggregations and rolling
+  sources work as before.
 
 ### Fixed
 

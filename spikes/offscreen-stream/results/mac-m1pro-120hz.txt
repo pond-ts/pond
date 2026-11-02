@@ -1,0 +1,48 @@
+# Headed runs on a real 120 Hz display (2026-10-15)
+# MacBook Pro (MacBookPro18,1), Apple M1 Pro, 32 GB, built-in Liquid Retina XDR
+# (ProMotion; idle runs held 120 fps). Google Chrome 155.0.8059.40, Node v26.10.0.
+# Commands (branch claude/project-thread-fs2yu1 @ ea51913):
+#   node spikes/offscreen-stream/bench.mjs --headed --channel chrome --only busy
+#   node spikes/offscreen-stream/bench.mjs --headed --channel chrome --where group=space,pipeline=raw
+# Transcribed from the run's console output; columns abbreviated.
+# Older bench: each figure is the median of four once-a-second readings, taken
+# separately per figure, and there was no wait for the chart to catch up
+# (see REPORT "Where the numbers come from"). Superseded by mac-m1pro-120hz-dpr2.txt.
+
+## --only busy   (chunk pipeline, 100k ticks/s, 10 s window, push every 16 ms; busy = ms of page work per 50 ms)
+worker chunk m4      busy  0 | pts 990501 fps 120 p95  9.3ms work 4.36ms (ext 0.37 draw 3.98) ingest 11ms/s lat 14/21ms page 120fps max  9ms
+main   chunk m4      busy  0 | pts 991701 fps 120 p95  9.2ms work 4.40ms (ext 0.39 draw 4.00) ingest 11ms/s lat 14/21ms page 120fps max  9ms
+worker chunk m4      busy 20 | pts 990901 fps 120 p95  9.4ms work 4.41ms (ext 0.38 draw 4.03) ingest 12ms/s lat 14/21ms page 100fps max 18ms
+main   chunk m4      busy 20 | pts 992001 fps 100 p95 25.1ms work 4.48ms (ext 0.45 draw 4.03) ingest 11ms/s lat 15/31ms page 100fps max 18ms
+worker chunk m4      busy 40 | pts 991801 fps 120 p95  9.4ms work 4.38ms (ext 0.38 draw 4.00) ingest 12ms/s lat 14/21ms page  69fps max 34ms
+main   chunk m4      busy 40 | pts 992001 fps  35 p95 46.3ms work 4.82ms (ext 0.74 draw 4.07) ingest 10ms/s lat 60/93ms page  35fps max 51ms
+worker chunk buckets busy  0 | pts 992101 fps 120 p95  9.8ms work 0.38ms (draw 0.37) ingest 21ms/s lat 10/19ms page 120fps max  9ms
+main   chunk buckets busy  0 | pts 992001 fps 120 p95 10.0ms work 0.36ms (draw 0.35) ingest 21ms/s lat 10/18ms page 120fps max  9ms
+worker chunk buckets busy 20 | pts 992001 fps 120 p95  9.0ms work 0.21ms (draw 0.20) ingest 13ms/s lat 10/17ms page 100fps max 17ms
+main   chunk buckets busy 20 | pts 991801 fps 120 p95 22.3ms work 0.19ms (draw 0.18) ingest 13ms/s lat 10/29ms page 120fps max  9ms   <- page meter used the rAF timestamp, which hides this stall; fixed since, see REPORT §1
+worker chunk buckets busy 40 | pts 992201 fps 120 p95  9.3ms work 0.19ms (draw 0.19) ingest 13ms/s lat 10/17ms page  60fps max 34ms
+main   chunk buckets busy 40 | pts 991301 fps  60 p95 42.7ms work 0.19ms (draw 0.18) ingest 11ms/s lat 32/49ms page  60fps max 34ms
+
+## --where group=space,pipeline=raw   (worker, raw pipeline, push every 16 ms, quiet page)
+## pts = ticks in view; history prefill is capped at 10M ticks, so long windows at high rates are not full.
+m4       1000/s  10s | pts      9998 fps 120 p95 10.3ms work  0.59ms (ext 0.01 draw  0.58) lat  10/19ms
+m4       1000/s  60s | pts     59991 fps 120 p95 10.8ms work  1.01ms (ext 0.04 draw  0.95) lat  10/19ms
+m4       1000/s 300s | pts    299974 fps 120 p95  9.2ms work  2.27ms (ext 0.16 draw  2.10) lat  12/19ms
+m4      10000/s  10s | pts     99901 fps 120 p95 11.0ms work  1.28ms (ext 0.07 draw  1.20) lat  11/19ms
+m4      10000/s  60s | pts    599521 fps 120 p95  9.2ms work  3.24ms (ext 0.26 draw  2.98) lat  12/20ms
+m4      10000/s 300s | pts   2986771 fps  79 p95 13.8ms work 12.05ms (ext 1.16 draw 10.87) lat  30/41ms
+m4     100000/s  10s | pts    992301 fps 120 p95  9.3ms work  4.43ms (ext 0.38 draw  4.04) lat  14/21ms
+m4     100000/s  60s | pts   5229001 fps  44 p95 23.3ms work 22.26ms (ext 3.86 draw 18.40) lat  33/41ms
+m4    1000000/s  10s | pts   4310000 fps  70 p95 19.2ms work 15.53ms (ext 1.53 draw 13.99) ingest 887097t/s lat 362/577ms
+buckets  1000/s  10s | pts     10014 fps 120 p95 11.2ms work 0.41ms lat 10/18ms
+buckets  1000/s  60s | pts     60091 fps 120 p95 10.9ms work 0.39ms lat 10/18ms
+buckets  1000/s 300s | pts    300392 fps 120 p95 10.8ms work 0.43ms lat 10/18ms
+buckets 10000/s  10s | pts    100034 fps 120 p95 10.9ms work 0.40ms lat 10/20ms
+buckets 10000/s  60s | pts    600377 fps 120 p95 10.8ms work 0.45ms lat 10/18ms
+buckets 10000/s 300s | pts   2998171 fps 120 p95 10.9ms work 0.39ms lat 10/19ms
+buckets 100000/s 10s | pts    993791 fps 120 p95 10.7ms work 0.42ms lat 10/19ms
+buckets 100000/s 60s | pts   5888896 fps 120 p95 10.6ms work 0.40ms lat 10/19ms
+buckets 100000/s 300s| pts  10600800 fps 120 p95 10.3ms work 0.26ms lat 10/19ms
+buckets 1000000/s 10s| pts   8034057 fps 120 p95  9.4ms work 0.20ms ingest 1007612t/s lat 11/18ms
+buckets 1000000/s 60s| pts  15999000 fps 121 p95  9.4ms work 0.12ms ingest  998900t/s lat 11/19ms
+buckets 1000000/s 300s| pts 16041000 fps 120 p95  9.4ms work 0.09ms ingest 1006899t/s lat 11/19ms

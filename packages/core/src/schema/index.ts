@@ -6,7 +6,7 @@
 // (audit v2 §5 F2). Internal live-layer code still imports it from this
 // barrel at source-compile time; `stripInternal` only affects `.d.ts` emit.
 /** @internal */
-export { EMITS_EVICT } from './series.js';
+export { EMITS_EVICT, ON_SIGNAL } from './series.js';
 export type {
   AppendColumn,
   ArrayColumnNameForSchema,

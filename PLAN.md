@@ -310,6 +310,24 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
   a documented cheap-handle idiom for live charts — closes it. Overlaps
   [PND-PARITY] / the live layer.
+- **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
+  (offscreen-stream spike). A scrolling window misses the M4 cache every
+  frame, so `drawLine` re-thins every visible point: on an M1 Pro at Retina
+  resolution, 120 fps at 1M points (4.3 ms a frame), 74 fps at 3M. Folding
+  ticks into one bucket per pixel column as they arrive held 120 fps at
+  0.6 ms a frame or less, up to 29M points in a full window. Design call:
+  a line/area mode vs a live layer ([PND-LIVELYR]), and what zoom/hover
+  read.
+- **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
+  worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
+  page-thread chart fell to 33. Blocked today by layer draw closures,
+  unexported draw functions, page-thread hit-testing and DOM theming.
+  Its guide should show the socket on its own worker (in the spike that
+  kept every tick flowing where the drawing worker's own socket fell
+  behind); an interim guide without the charts package shipped 2026-11-01
+  (`how-to-guides/live-chart-in-a-worker`). Also fix `drawLine`'s fresh
+  `boundaries = []` default (defeats the M4 cache for direct callers)
+  before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
@@ -924,6 +942,24 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` (offscreen-stream
+  spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
+  column read out, vs 16 ms to copy the stored chunks' columns. Still a
+  whole-window copy, so it suits throttled snapshots; per-frame reads go
+  through [PND-COLOUT]'s appended-columns event (the spike used internal
+  `_onChunk`). Data side of [PND-LIVELYR].
+- **[PND-LVCHAIN]** — A view chained after a window view
+  (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
+  window eviction doesn't emit `'evict'`, so the child's mirror never fires,
+  even under source retention. It grows with every event, and its
+  `eventRate()` counts all of them (10k events 10 ms apart: window 101,
+  filter-of-window 10,000). The pattern is tested, but only before events
+  age out. Found while fixing [PND-LVWIN] (#761).
+- **[PND-LVMIRROR]** — A view on a retention-capped `LiveSeries` makes the
+  source build an `Event` for every row retention drops: 0.7–1.0 ms more
+  per 1,600-row push in Node. The view only reads the last dropped timestamp,
+  but any `'evict'` listener switches the source off its skip-the-Events
+  path. Found while benchmarking [PND-LVWIN] (#761).
 - **[PND-LIVEONEPUSH]** — A one-event `push` on a default (strict,
   in-order) `LiveSeries` builds a whole one-row column chunk
   (`validateAndNormalizeColumnar` + `ColumnarStore.fromTrustedStore`), so
@@ -936,6 +972,59 @@ Robustness debt plus the queued composition workstreams. Plan:
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
   now.
+- **[PND-ONCHUNKISO]** — On a default (chunked) `LiveSeries`, a partition
+  error (a row for an undeclared group) escapes after the batch is stored, so
+  the source skips its own retention and listeners; the per-row backing
+  finishes the push, then throws. Fix by finishing then throwing, or by
+  refusing the whole batch first as pond-rs does. Needs Peter's call; detail
+  in `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-AGESCAN]** — `maxAge` retention finds its cutoff by walking rows from
+  the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
+  ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
+  so a binary search would do. Measured 2026-11-01 in
+  `perf-live-push-series.mjs`. At 1M ticks a second (16,000-row pushes,
+  5M rows held) `pushSeries` alone cost 29–67 ms a second with `maxAge`
+  against 1–2 with `maxEvents` (`apps/worker-chart/bench/retention.mjs`,
+  2026-11-01).
+- **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
+  `push_series`). Add it with a `{ pushSeries }` step in the live parity
+  generator (`packages/core/scripts/parity/live.mjs`) and
+  `crates/pond-rs/tests/live_parity.rs` in one PR: `packages/rs/test/live.mjs`
+  reruns the generator, so the step alone would break it.
+
+- **[PND-PUSHTIME]** — `pushMany` on a default series makes a `Time` per row
+  and throws it away (`batch/validate.ts`, untrusted intake); the trusted
+  branch already skips it. No API change. The spike profiled it at ~27% of
+  `pushMany` (not re-measured).
+- **[PND-COLSTYPED]** — Type `fromColumns`' `columns` from the schema so a
+  misspelt column name fails to compile. Public type change; needs Peter's OK.
+- **[PND-LIVEFASTDROP]** — `pushSeries` into a `drop` / `reorder` series
+  builds an event per row, like `pushMany`. pond-rs takes columns straight in
+  when nothing is built on the series; port that if a consumer pushes columns
+  into such a series.
+- **[PND-CLAMPHINT]** — The chunked `LiveSeries` intra-batch order error
+  suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
+  message.
+- **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
+  it builds, and each retention eviction rebuilds that whole cache. Building a
+  view over a big series reads every row through `at()`, so the pushes after
+  it slow down until retention has dropped those rows: after reading 200k
+  rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
+  0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
+  `Event` for every row it holds, even with no `'evict'` listener, and finds
+  each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
+  at 3M, 12.4–15.4 s at 5M, against 0.1–0.2 ms for a new series (Node,
+  2026-11-01, two runs). Skip the
+  Events when nothing listens, as retention already does. Found while
+  writing the off-main-thread chart guide; detail in
+  `docs/plans/PND_LIVE_PLAN.md`.
+- **[PND-LIVELOCATE]** — Lookups in the middle of a default `LiveSeries`
+  (`at(i)`, `bisect`, `atOrBefore`) walk the chunk list for every row they
+  touch, so they slow with the batch count: `atOrBefore` on 600k rows took
+  about 4 µs in one chunk and 72–131 µs in 3,750 (a 60 s window fed every
+  16 ms). Keep each chunk's start index and binary-search it. Detail in
+  `docs/plans/PND_LIVE_PLAN.md`.
 
 ### Streaming semantics (Phase 4.5)
 
@@ -964,7 +1053,9 @@ consumer signal. Plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
-  emit-side allocation slice; spike plan exists.
+  emit-side allocation slice; spike plan exists. Second consumer: the
+  offscreen-stream spike's live chart, which needed each appended batch as
+  columns and used the internal `_onChunk` in its place.
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but
@@ -978,6 +1069,30 @@ consumer signal. Plan:
   Friction-gated: no consumer has asked yet.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
+- **[PND-HOOKSIGNAL]** — The React hooks `useSnapshot`, `useLatest` and
+  `useLiveVersion` subscribe to `'event'` (and `useLiveVersion` to
+  `'evict'`) only as a "something changed" signal, but on the column-native
+  `LiveSeries` backing any such listener makes every push build one `Event`
+  per row (and one per evicted row). Measured: 200k rows pushed in batches
+  of 1000 into a 10k-row buffer take 25 ms with no listener, 64 ms with an
+  `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
+  payload-free change signal the hooks use when the source offers it.
+  `useEventRate` gains nothing (its window view stores `Event`s anyway).
+- **[PND-SPANFILTER]** — `before`, `after`, `tail`, `within`,
+  `overlapping` and `containedBy` run `filter(fn)` with a test on the key
+  alone, so the first call on a series builds an `Event` for every row:
+  ~1.1–1.5 s on 1M rows, against ~1 ms for `slice` over the same rows.
+  Fix: read the stored begin/end times (binary search where the rows are
+  sorted by the tested time) and select rows, keeping the result's events
+  identical (`===`) to the source's as `filter` does.
+- **[PND-ROWSOUT]** — `toRows` and `toObjects` build an `Event` per row:
+  1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
+  row from the columns, keeping the key objects identical to the events'
+  (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
+- **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
+  groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
+  1M rows with 8 groups. Fix: group row numbers from the column and gather
+  each group's columns, as `partitionBy` does.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
