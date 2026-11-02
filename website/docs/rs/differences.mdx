@@ -1,0 +1,107 @@
+---
+id: differences
+title: Differences and speed
+sidebar_position: 3
+description: Every place @pond-ts/rs behaves differently from pond-ts, and what it measured against pond-ts and @pond-ts/financial.
+---
+
+# Differences and speed
+
+`@pond-ts/rs` throws where pond-ts throws and otherwise gives pond-rs's
+answers, which match pond-ts's bit for bit on pond-ts's own parity fixtures
+(core, studies, live). What differs is listed here. The answers pond-rs
+gives differently on purpose are listed in
+[`crates/pond-rs/tests/core_parity.rs`](https://github.com/pond-ts/pond/blob/main/crates/pond-rs/tests/core_parity.rs).
+
+## Everywhere
+
+- **`free()` what you make.** Series, calendars and live series live in
+  WebAssembly memory. A finalizer frees forgotten ones eventually, but that
+  memory never shrinks. pond-ts needs nothing like this.
+- **Loading.** In browsers the package fetches a 7.5 MB `.wasm` file
+  (1.4 MB with brotli) before `import` resolves; see
+  [Loading it](./index.mdx#loading-it-node-and-browsers).
+- **No TypeScript types yet.** pond-ts checks column names and kinds at
+  compile time; here mistakes show up as errors when the code runs.
+- **One thread**, at most about 3.8 GB of memory. Running out of memory
+  stops the WebAssembly instance for good.
+- **Error messages differ.** Often a plain `Error` where pond-ts throws a
+  `TypeError` or `RangeError`, and most messages are pond-rs's; some name
+  its Rust API (for example `by_column:`).
+
+## Batch series
+
+- **Times are milliseconds.** Constructor rows take numbers for times; text
+  times go through `TimeSeries.fromJSON`. Instants must be whole
+  milliseconds.
+- **Durations** are text or a whole number of milliseconds; a fractional
+  number, or one past ±8.64e15 ms, is refused (pond-ts takes both).
+- **`Event`, `Time`, `TimeRange` and `Interval` are cut down**: `Event` has
+  `get`, `data`, `key`, `type`, `begin`, `end` and `timeRange`; there is no
+  `set`, `merge`, `select`, `overlaps`, `contains` or `intersection`.
+  `Time.parse` matches pond-ts.
+- **`mapColumns` with a function** does not work on an array column yet.
+- **Function results are not checked** where pond-ts does not check them:
+  a result of the wrong type becomes a gap (`mapColumns`, `collapse`,
+  `scan`).
+- **`toJSON`** rows are not frozen; the key column is always named `time`,
+  `timeRange` or `interval`; column names pond-ts refuses as reserved
+  (`__proto__`, `constructor`) are taken and become plain fields of an
+  object row.
+
+## Studies and calendars
+
+- Options a study does not have are **ignored**, as pond-ts's runtime does
+  (pond-ts's types refuse them).
+- **`TradingCalendar`** has no `sessionSequence` or `barSequence`; its
+  lookups take a date only as `YYYY-MM-DD` text and throw on other text,
+  where pond-ts compares any text with session dates as text and quietly
+  finds nothing or the wrong neighbour.
+
+## Live series
+
+- Only the **root** series takes `push`, `pushMany`, `pushJson` and `clear`
+  (pond-ts lets you push into or clear one partition's series).
+- `pushJson` takes no `timeZone`. There is no `pushSeries` yet.
+- A node function cannot read its own series while a push runs.
+- Reducers are **names only** (pond-ts also takes a function as `using`).
+- `apply(factory)` runs the factory once and repeats its chain for every
+  partition, so the factory cannot branch on the partition.
+- `cumulative` takes one function column; a result that is not a number is
+  `NaN`. A `map` result cell of the wrong type is a gap.
+- A disposed node cannot be read (pond-ts leaves it readable).
+  `toTimeSeries` takes no name; partitioned fused rolling `stats()` has no
+  `windowsCount`. Keys must be whole milliseconds.
+- If a node function throws, the push still completes, its outputs are
+  delivered, and the first exception is then rethrown.
+
+## Speed
+
+Measured on 1 million rows or events, in Node, with the scripts in
+[`packages/rs/scripts/`](https://github.com/pond-ts/pond/tree/main/packages/rs/scripts)
+(times in milliseconds, lower is better; series in and out included). The
+bigger the work per call, the bigger the gain: each call crosses into
+WebAssembly once, so many tiny calls gain little.
+
+| Work                                                      | `@pond-ts/rs` | pond-ts / `@pond-ts/financial` |
+| --------------------------------------------------------- | ------------: | -----------------------------: |
+| `filter` with an expression                               |            14 |                             28 |
+| `filter` with a function                                  |           920 |                             28 |
+| `sma`                                                     |           4.5 |                           45.7 |
+| `ema`                                                     |           2.6 |                           13.0 |
+| `rsi`                                                     |          10.9 |                           40.9 |
+| `bollinger`                                               |          24.8 |                           98.9 |
+| `macd`                                                    |          18.3 |                           91.8 |
+| `atr`                                                     |           9.3 |                           31.1 |
+| `sessionVwap`                                             |           9.9 |                           85.4 |
+| `toJSON`, one number column                               |            37 |                            220 |
+| `toJSON`, number + text + boolean                         |            74 |                            235 |
+| `toJSON`, object rows                                     |            73 |                            200 |
+| live `push`, one event per call                           |           250 |                          1,593 |
+| live `pushMany`, 1,000 events per call                    |            39 |                            111 |
+| live rolling 1m avg + 1m buckets, `push`                  |           570 |                          2,943 |
+| live rolling 1m avg + 1m buckets, `pushMany`              |           365 |                            835 |
+| the same, plus a listener on every rolling update, `push` |         1,338 |                          2,647 |
+
+A function called per row is where the package is slowest: each call crosses
+from WebAssembly into JavaScript. Use an expression where one exists.

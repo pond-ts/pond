@@ -1,8 +1,13 @@
 # @pond-ts/rs
 
 pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
-pond-ts's method names and argument shapes. **Not published yet**: this is
-steps J1, J1b, J2a and J2b of the bridge plan ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`).
+pond-ts's method names and argument shapes. It runs in Node 20+, browsers,
+web workers and bundlers, and is released with pond-ts, at the same version.
+Guide: <https://pond-ts.org/docs/rs/>.
+
+```sh
+npm install @pond-ts/rs
+```
 
 ```js
 import { TimeSeries, Sequence } from '@pond-ts/rs';
@@ -25,6 +30,25 @@ console.log(perTwoMinutes.toJSON());
 perTwoMinutes.free();
 cpu.free();
 ```
+
+## Loading it
+
+The package is ready when `import` returns, everywhere:
+
+- **Node** reads the `.wasm` from disk at import (as should other runtimes
+  that take the `node` export condition, such as Bun and Deno; untested).
+- **Browsers and workers** fetch the `.wasm` beside the module with top-level
+  await. Bundlers that understand `new URL('…', import.meta.url)` copy it
+  into the build (Vite is tested; webpack 5 knows the same pattern). With
+  Vite, set `build.target: 'es2022'` (Vite 5 and 6 refuse top-level await
+  by default) and `optimizeDeps.exclude: ['@pond-ts/rs']` (the dev
+  server's pre-bundling moves the module away from its `.wasm`).
+- **`@pond-ts/rs/init`** loads nothing until you call `await init()`, for a
+  bundler without top-level await or a `.wasm` served from elsewhere:
+  `await init(url)` takes a URL, a `Response`, bytes or a compiled
+  `WebAssembly.Module`. Use no other export before it resolves. In Node it
+  is the same module as `@pond-ts/rs` and `init()` does nothing, so the
+  same code runs in both.
 
 ## How it differs from pond-ts
 
@@ -80,8 +104,6 @@ cpu.free();
 - **Durations** may be text (`'5m'`) or a whole number of ms (`60000`); a
   fractional number of ms, or one past ±8.64e15 ms, which pond-ts takes,
   is refused.
-- **Not there yet:** a browser build (step J3). This build is for Node 20
-  and later.
 - One thread; at most ~3.8 GB of memory per process. Running out of memory
   stops the WebAssembly instance for good.
 
@@ -177,4 +199,11 @@ node test/inputs.mjs     # cell checks, functions and other inputs the fixture m
 node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
 node test/live.mjs       # pond-ts's live parity fixture
 node test/tojson.mjs     # toJSON against pond-ts's (npm run build --workspace=pond-ts first)
+node test/smoke.mjs      # the packed package in Node, Chromium, a worker and Vite
 ```
+
+`test/smoke.mjs` uses Playwright and Vite from the repo's `node_modules`
+(`npm ci` at the root) and Playwright's Chromium (`npx playwright install
+chromium`), or the browser at `CHROME_PATH`; `--node-only` skips the
+browser. Releases build and publish the package from
+`.github/workflows/release.yml` on every `v*` tag.

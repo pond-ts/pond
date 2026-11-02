@@ -4262,6 +4262,52 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         (unchanged).
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
+      - J3 outcome (2026-11-02): built. One wasm-bindgen `--target web`
+        build (ES module glue + one `.wasm`) serves every runtime; the
+        package (`packages/rs`) is no longer private. `core.js` is the old
+        `index.js` with nothing calling WebAssembly at load (the
+        method-mounting loops, `live_set_callback` and the version moved
+        into its default export `mount`, which `export *` leaves out of
+        the public API). Entries by `exports` condition: `node` ->
+        `index.js` (reads the `.wasm` with `fs`, `initSync`, ready at
+        import, as before); `default` -> `web.js` (top-level await on
+        `init()`, which fetches `new URL('./pkg/pond_wasm_bg.wasm',
+        import.meta.url)`); `./init` -> `init.js` in browsers (nothing
+        loaded until `await init(source?)`, for bundlers without top-level
+        await or a `.wasm` served elsewhere) and `index.js` in Node (where
+        `init()` is a no-op, so the same code runs in both). Decisions: (1)
+        one `web` build rather than `nodejs` + `bundler` + `web` builds:
+        each target's `.wasm` differs only in import module names, and
+        three 7.5 MB copies would triple the package; the `bundler`
+        target also needs a bundler wasm plugin, `new URL` does not; (2)
+        top-level await by default, so `import` gives a ready package in
+        both runtimes and pond-ts code ports unchanged; `./init` is the
+        escape hatch. Found by trying: an ESM sibling's top-level await
+        does not hold back the next sibling, so the entry cannot just
+        import a loader before the classes (hence `mount`); Vite 5/6's
+        default build target refuses top-level await (`build.target:
+        'es2022'`, or `./init`), and its dev server's pre-bundling moves
+        the module away from its `.wasm` (`optimizeDeps.exclude`); both
+        in the docs and the smoke test. Check (`test/smoke.mjs`, CI
+        `js-bridge`, and the release job): `npm pack` the package, unpack
+        it into a scratch project, run one scenario (core, expression and
+        function filters, a study, `LiveSeries` with a listener, `free`)
+        in Node by package name (`.` and `./init`), Chromium with an
+        import map from the `exports` map (`.` and `./init`), a module
+        worker, a Vite 5 production bundle and the Vite dev server; every
+        result must equal Node's and the expected values. Planted: a file
+        dropped from `files` and the browser export pointed at the Node
+        entry each fail it. Release: `release.yml` job `publish-npm-rs`
+        (after `publish-npm`) builds with Rust + wasm-bindgen 0.2.129,
+        checks the version equals pond-ts's and the tag, runs every
+        `packages/rs` test, then `npm publish --provenance` (npm trusted
+        publishing, as the other packages); a manual run with `dry_run`
+        ticked runs both jobs with `npm publish --dry-run`. CI checks the
+        version matches pond-ts. Docs: `website/docs/rs/` (overview,
+        install and loading; usage; differences and the speed table).
+        Package 2.1 MB packed, 7.5 MB unpacked. Not done: TypeScript
+        types (none yet), `wasm-opt`, a Cloudflare Workers-style entry
+        (they import `.wasm` as a module rather than fetch it).
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core

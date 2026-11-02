@@ -1,23 +1,42 @@
 {
   "name": "@pond-ts/rs",
   "version": "0.75.0",
-  "private": true,
   "description": "pond-rs (Rust) compiled to WebAssembly, with pond-ts's method names",
+  "keywords": [
+    "time series",
+    "timeseries",
+    "webassembly",
+    "wasm",
+    "pond",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/rs/",
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": {
+      "node": "./index.js",
+      "default": "./web.js"
+    },
+    "./init": {
+      "node": "./index.js",
+      "default": "./init.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "pkg/package.json",
+    "core.js",
+    "init.js",
+    "web.js",
     "pkg/pond_wasm.js",
     "pkg/pond_wasm_bg.wasm",
-    "pkg/pond_wasm.d.ts"
+    "README.md"
   ],
   "scripts": {
     "build": "./build.sh",
-    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs && node test/studies.mjs && node test/live.mjs"
+    "prepack": "cp ../../LICENSE ./LICENSE",
+    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs && node test/studies.mjs && node test/live.mjs && node test/tojson.mjs && node test/smoke.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -25,7 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pond-ts/pond.git",
+    "url": "git+https://github.com/pond-ts/pond.git",
     "directory": "packages/rs"
   }
 }

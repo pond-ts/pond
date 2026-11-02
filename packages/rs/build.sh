@@ -10,7 +10,8 @@ TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
 cargo build --manifest-path "$ROOT/Cargo.toml" -p pond-wasm --lib \
   --target wasm32-unknown-unknown --profile wasm-release
 rm -rf pkg
-wasm-bindgen --target nodejs --out-dir pkg \
+# One build for every runtime: the `web` target is an ES module that takes
+# the .wasm from the caller. index.js hands it the file's bytes (Node);
+# init.js fetches it (browsers, workers, bundlers).
+wasm-bindgen --target web --out-dir pkg \
   "$TARGET_DIR/wasm32-unknown-unknown/wasm-release/pond_wasm.wasm"
-# wasm-bindgen's nodejs output is CommonJS; this package is ESM.
-echo '{ "type": "commonjs" }' > pkg/package.json

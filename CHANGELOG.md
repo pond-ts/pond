@@ -4,8 +4,8 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
-`@pond-ts/fit`, `@pond-ts/financial`, and `@pond-ts/process` — release together
-under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
+`@pond-ts/fit`, `@pond-ts/financial`, `@pond-ts/process` and `@pond-ts/rs` — release
+together under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
 [Unreleased]: https://github.com/pond-ts/pond/compare/v0.75.0...HEAD
@@ -99,6 +99,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/rs` on npm, in Node and browsers** ([PND-RUST-R4] step J3).
+  pond-rs compiled to WebAssembly, with pond-ts's names, is now published
+  with every release at pond-ts's version (`npm install @pond-ts/rs`).
+  One build serves every runtime through `exports` conditions: in Node the
+  `.wasm` is read from disk at import; in browsers, workers and bundlers it
+  is fetched with top-level await, so the package is ready when `import`
+  resolves in both. `@pond-ts/rs/init` loads nothing until `await init()`
+  (optionally `init(url | Response | bytes | WebAssembly.Module)`), for
+  bundlers without top-level await. With Vite, set `build.target:
+  'es2022'` and `optimizeDeps.exclude: ['@pond-ts/rs']`. A smoke test
+  loads the packed package in Node, Chromium, a module worker, a Vite
+  bundle and the Vite dev server. Docs: a new **@pond-ts/rs
+  (WebAssembly)** section (loading, usage, differences from pond-ts, speed).
 - **`LiveSeries.pushSeries(series)`** ([PND-LPUSHCOL]) pushes a batch
   `TimeSeries` into a live series as one batch: the column-shaped way in.
   Data that arrives as typed arrays goes

@@ -1,0 +1,217 @@
+---
+id: using
+title: Using @pond-ts/rs
+sidebar_position: 2
+description: Batch series, expressions and functions, toJSON and Arrow, financial studies and trading calendars, and LiveSeries in @pond-ts/rs, with where each differs from pond-ts.
+---
+
+# Using @pond-ts/rs
+
+Everything here uses pond-ts's names and argument shapes, so the
+[pond-ts guide](../pond-ts/index.mdx) and the
+[`@pond-ts/financial` page](../financial/index.mdx) describe the operations
+themselves. This page shows how each part looks in `@pond-ts/rs` and what is
+different. The full list of differences is on
+[Differences and speed](./differences).
+
+## Making a series
+
+The constructor takes rows whose times are **numbers** (epoch
+milliseconds). For times written as text, use `TimeSeries.fromJSON`, which
+reads pond-ts's JSON shape, schema and all:
+
+```js
+import { TimeSeries } from '@pond-ts/rs';
+
+const cpu = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string' },
+    { name: 'value', kind: 'number' },
+  ],
+  rows: [
+    ['2025-01-01T00:00:00Z', 'a', 0.31],
+    ['2025-01-01T00:01:00Z', 'b', 0.44],
+    ['2025-01-01T00:02:00Z', 'a', 0.52],
+    ['2025-01-01T00:03:00Z', 'b', 0.4],
+  ],
+});
+```
+
+`TimeSeries.fromArrow(bytes)` reads an Arrow IPC stream (a `Uint8Array`,
+for example from `apache-arrow`'s `tableToIPC`), and `series.toArrow()`
+writes one. Keys may be times, time ranges or labelled intervals, as in
+pond-ts; in arguments a range or interval key is written
+`{ timeRange: [start, end] }` or `{ interval: [label, start, end] }`.
+
+## Operations
+
+A series has pond-ts's methods (`aggregate`, `rolling`, `align`, `fill`,
+`diff`, `smooth`, `select`, `partitionBy`, …), each returning a new series
+to `free()` later:
+
+```js
+import { Sequence } from '@pond-ts/rs';
+
+const perDay = cpu.aggregate(
+  Sequence.calendar('day', { timeZone: 'America/New_York' }),
+  { value: 'max' },
+);
+const perHost = cpu
+  .partitionBy('host')
+  .rolling('5m', { avg: { from: 'value', using: 'avg' } })
+  .collect();
+```
+
+Durations are text (`'5m'`) or a whole number of milliseconds (`300000`).
+
+### Expressions and functions
+
+`filter`, `find`, `some`, `every`, `mapColumns` and `withColumn` take a
+column expression built with `col`, `lit` and `when`, as in pond-ts. An
+expression runs inside pond-rs with no JavaScript call per row, which is
+where this package is fastest:
+
+```js
+import { col } from '@pond-ts/rs';
+
+const busy = cpu.filter(col('value').gt(0.4)); // runs in pond-rs
+const alsoBusy = cpu.filter((e) => e.get('value') > 0.4); // calls JavaScript per row
+```
+
+A function works too (`filter`, `find`, `some`, `every`, `mapColumns`,
+`scan`, `collapse`, `asInterval`), but each row then crosses into JavaScript:
+on 1M rows the expression filter takes about 14 ms, the function about
+920 ms, and pond-ts about 28 ms. If a function throws, the remaining rows
+are skipped and the same exception is rethrown.
+
+### Row lookups
+
+`at`, `bisect`, `nearest`, `find` and friends return an `Event` with part of
+pond-ts's API: `get`, `data`, `key`, `type`, `begin`, `end`, `timeRange`.
+There is no `set`, `merge` or `select` on it.
+
+## Reading results: `toJSON`
+
+`toJSON()` gives pond-ts's tree: `{ name, schema, rows }`, with array rows by
+default or object rows with `{ rowFormat: 'object' }`:
+
+```js
+perDay.toJSON();
+// { name: 'cpu',
+//   schema: [{ name: 'interval', kind: 'interval' }, { name: 'value', kind: 'number', required: false }],
+//   rows: [[[1735621200000, 1735621200000, 1735707600000], 0.52]] }
+
+cpu.toJSON({ rowFormat: 'object' }).rows[0];
+// { time: 1735689600000, host: 'a', value: 0.31 }
+```
+
+The columns cross from WebAssembly whole and the rows are built in
+JavaScript, so on 1M rows it takes 37-75 ms where pond-ts takes 200-235 ms.
+Differences from pond-ts:
+
+- rows are **not frozen** (freezing would double the time);
+- the key column is always named `time`, `timeRange` or `interval`, even if
+  the schema named it something else;
+- `TimeSeries.fromJSON(series.toJSON())` reads it back, as in pond-ts.
+
+## Financial studies
+
+All 109 studies of `@pond-ts/financial` are methods on a series, with the
+same names and options, as `@pond-ts/financial/fluent` adds them in pond-ts.
+No extra import is needed:
+
+```js
+const withRsi = bars.rsi({ period: 14 }); // adds an `rsi` column
+const banded = withRsi.bollinger({ period: 20 }); // + bbMiddle, bbUpper, bbLower
+const same = bars.study('rsi', { period: 14 }); // by name
+```
+
+`studies()` and `studyInfo(name)` return the catalog's descriptors, equal to
+pond-ts's (without `run`). A study also runs per group on a `partitionBy`
+view. Options a study does not have are ignored, as pond-ts's runtime does.
+
+Session studies (`sessionVwap`, pivot points) need trading sessions. Make
+them with `TradingCalendar`, a cut-down version of pond-ts's:
+
+```js
+import { TradingCalendar } from '@pond-ts/rs';
+
+const nyse = TradingCalendar.fromRules(
+  {
+    timeZone: 'America/New_York',
+    open: '09:30',
+    close: '16:00',
+    holidays: ['2025-01-09'],
+  },
+  { from: '2025-01-06', to: '2025-01-10' },
+);
+const vwap = bars.sessionVwap({ sessions: nyse }); // or a Session[] list
+nyse.isTradingDay('2025-01-09'); // false
+nyse.free(); // a calendar lives in WebAssembly memory too
+```
+
+It has `fromRules`, `fromSessions`, `sessions()`, the lookups (`sessionOn`,
+`isTradingDay`, `sessionContaining`, `isOpen`, `sessionsInRange`,
+`nextSession`, `previousSession`) and `tagSessions`, but no
+`sessionSequence` or `barSequence`. Lookups take a date only as
+`YYYY-MM-DD` text and throw on other text.
+
+## LiveSeries
+
+`LiveSeries` and the nodes built on it (`LiveView`, `LiveAggregation`,
+`LiveRollingAggregation`, `LiveReduce`, the partitioned ones) have pond-ts's
+class names, methods and argument shapes:
+
+```js
+import { LiveSeries, Sequence } from '@pond-ts/rs';
+
+const live = new LiveSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string' },
+    { name: 'cpu', kind: 'number' },
+  ],
+});
+const avg = live.rolling('1m', { avg: { from: 'cpu', using: 'avg' } });
+const perMinute = live.aggregate(Sequence.every('1m'), { cpu: 'max' });
+const stop = perMinute.on('event', (bucket) => console.log(bucket.get('cpu')));
+const perHost = live
+  .partitionBy('host')
+  .rolling('1m', { avg: { from: 'cpu', using: 'avg' } })
+  .collect();
+
+live.push([0, 'a', 0.31]);
+live.pushMany([
+  [30_000, 'b', 0.44],
+  [61_000, 'a', 0.52], // closes the first minute: the listener logs 0.44
+]);
+avg.value(); // { avg: 0.48 }
+
+stop();
+live.free(); // frees every node built on it
+```
+
+Built: `filter` (function or expression), `map`, `select`, `sample`,
+`window`, `diff` / `rate` / `pctChange`, `fill`, `cumulative`, `aggregate`,
+`rolling` (one window or several), `reduce`, and `partitionBy` with
+`collect`, `apply`, per-partition `rolling` and `toMap`. `on(type, fn)`
+returns an unsubscribe function; `dispose()` removes a node.
+
+How it behaves:
+
+- **Listeners run after pond-rs has taken the whole push**, from its list of
+  outputs. If one throws, the others still run and the first exception is
+  rethrown. A push made from inside a listener waits until the current push
+  is done.
+- **Rows of numbers are fastest.** `push([t, n, …])` and `pushMany` with only
+  numbers (and `undefined` for a gap) skip JSON; other rows go as JSON.
+  Both give the same result.
+- **Pushes go into the root series only**, and a node function cannot read
+  its own series while a push runs.
+
+The other live differences (reducers are names only, `apply` runs its factory
+once, no `pushSeries`, …) are listed on
+[Differences and speed](./differences#live-series).

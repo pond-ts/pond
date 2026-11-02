@@ -160,6 +160,22 @@ jobs:
       - name: toJSON against pond-ts
         run: node packages/rs/test/tojson.mjs
 
+      # Releases publish @pond-ts/rs with every pond-ts version (release.yml).
+      - name: Check the version matches pond-ts
+        run: |
+          ts=$(node -p "require('./packages/core/package.json').version")
+          rs=$(node -p "require('./packages/rs/package.json').version")
+          echo "pond-ts $ts, @pond-ts/rs $rs"
+          test "$ts" = "$rs"
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # The packed package loaded in Node, a browser page, a module worker,
+      # a Vite bundle and the Vite dev server.
+      - name: Smoke test, Node and browser
+        run: node packages/rs/test/smoke.mjs
+
   # The oldest Rust pond-rs promises (`rust-version` in Cargo.toml).
   rust-msrv:
     runs-on: ubuntu-latest

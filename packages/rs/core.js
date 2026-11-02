@@ -2,10 +2,11 @@
 // method names and argument shapes. A series lives in WebAssembly memory;
 // call `free()` when done with it (a finalizer frees forgotten ones
 // eventually, but WebAssembly memory never shrinks, so do not rely on it).
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const wasm = require('./pkg/pond_wasm.js');
+//
+// Shared by every entry point: nothing here calls into WebAssembly while the
+// module loads. The entry (index.js for Node, web.js / init.js elsewhere)
+// instantiates it, then runs its default export, `mount`.
+import * as wasm from './pkg/pond_wasm.js';
 
 const finalizer = new FinalizationRegistry((id) => wasm.series_free(id));
 const TOKEN = Symbol('pond-rs series id');
@@ -838,33 +839,6 @@ export class PartitionedSeries {
   }
 }
 
-for (const op of wasm.partitioned_methods()) {
-  PartitionedSeries.prototype[op] = function (...args) {
-    return new PartitionedSeries(this._run, [...this._steps, [op, ...args]]);
-  };
-}
-
-const STATICS = new Set(['joinMany', 'concat', 'partitionBy']);
-for (const op of wasm.supported_methods()) {
-  if (STATICS.has(op)) continue;
-  TimeSeries.prototype[op] = function (...args) {
-    return this.call(op, ...args);
-  };
-}
-
-// ---- financial studies ([PND-RUST-R4] J2a) ---------------------------------
-
-// One method per catalog study, pond-ts's name (`s.rsi({ period: 14 })`),
-// as `@pond-ts/financial/fluent` mounts them; each is `study(name, options)`.
-for (const name of wasm.study_names()) {
-  TimeSeries.prototype[name] = function (options) {
-    return this.call('study', name, options);
-  };
-  PartitionedSeries.prototype[name] = function (options) {
-    return this.study(name, options);
-  };
-}
-
 /** Every study's descriptor, as pond-ts's `@pond-ts/financial/catalog` `STUDIES` (without `run`). */
 export function studies() {
   return JSON.parse(wasm.studies_json());
@@ -1031,9 +1005,9 @@ export class Trigger {
 // their series (JavaScript), and a function that refers to its own series
 // does not keep it alive (wasm-bindgen's table would hold it for good).
 const LIVE_OWNERS = new Map();
-wasm.live_set_callback(function (k, a, b) {
+const liveCallback = function (k, a, b) {
   return LIVE_OWNERS.get(this).deref().fns[k](a, b);
-});
+};
 const liveFinalizer = new FinalizationRegistry((id) => {
   LIVE_OWNERS.delete(id);
   wasm.live_free(id);
@@ -1713,8 +1687,43 @@ function fastPush(id, rows, width) {
 /** @internal How many live series are alive in WebAssembly memory. */
 export const livesAlive = () => wasm.lives_alive();
 
-export const version = wasm.pond_rs_version();
 /** @internal How many series are alive in WebAssembly memory. */
 export const alive = () => wasm.series_alive();
 /** @internal How many calendars are alive in WebAssembly memory. */
 export const calendarsAlive = () => wasm.calendars_alive();
+
+/**
+ * Run once by the entry point (index.js, init.js) after the WebAssembly is
+ * instantiated: adds the methods whose names come from pond-rs and returns
+ * pond-rs's version. The default export, so `export *` leaves it out.
+ */
+export default function mount() {
+  for (const op of wasm.partitioned_methods()) {
+    PartitionedSeries.prototype[op] = function (...args) {
+      return new PartitionedSeries(this._run, [...this._steps, [op, ...args]]);
+    };
+  }
+
+  const STATICS = new Set(['joinMany', 'concat', 'partitionBy']);
+  for (const op of wasm.supported_methods()) {
+    if (STATICS.has(op)) continue;
+    TimeSeries.prototype[op] = function (...args) {
+      return this.call(op, ...args);
+    };
+  }
+
+  // Financial studies ([PND-RUST-R4] J2a): one method per catalog study,
+  // pond-ts's name (`s.rsi({ period: 14 })`), as `@pond-ts/financial/fluent`
+  // mounts them; each is `study(name, options)`.
+  for (const name of wasm.study_names()) {
+    TimeSeries.prototype[name] = function (options) {
+      return this.call('study', name, options);
+    };
+    PartitionedSeries.prototype[name] = function (options) {
+      return this.study(name, options);
+    };
+  }
+
+  wasm.live_set_callback(liveCallback);
+  return wasm.pond_rs_version();
+}

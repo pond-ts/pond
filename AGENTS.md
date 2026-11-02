@@ -573,6 +573,11 @@ All packages publish together under one `v*` tag via the GitHub Actions
 workflow at `.github/workflows/release.yml`. npm publishes use OIDC
 Trusted Publisher — no stored tokens, nothing to configure locally.
 
+`@pond-ts/rs` (pond-rs as WebAssembly, `packages/rs` built from
+`crates/pond-wasm`) is not an npm workspace: the same workflow's
+`publish-npm-rs` job builds, tests and publishes it after the workspaces.
+A manual run of the workflow with `dry_run` ticked uploads nothing.
+
 To cut a release from `main`:
 
 0. **Check that every PR merged since the last tag had a review.**

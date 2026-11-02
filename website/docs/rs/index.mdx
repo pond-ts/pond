@@ -1,0 +1,173 @@
+---
+id: rs-index
+title: '@pond-ts/rs (WebAssembly)'
+sidebar_position: 1
+description: pond-rs compiled to WebAssembly for JavaScript. pond-ts's method names and argument shapes, pond-rs's speed, in Node, browsers and workers.
+---
+
+# @pond-ts/rs (WebAssembly)
+
+**`@pond-ts/rs`** is [pond-rs](../pond-rs/index.mdx), the Rust version of
+pond, compiled to WebAssembly and called from JavaScript with **pond-ts's
+class names, method names and argument shapes**. The same code mostly runs
+on either package; the answers are pond-rs's, which match pond-ts's to the
+bit (the package runs pond-ts's own parity fixtures in CI).
+
+It runs in Node 20+, in browsers, in web workers and through bundlers. It is
+released with pond-ts on every version tag, at the same version number.
+
+## When to use it
+
+- **Big series and studies.** On 1 million rows, financial studies run
+  3-10x faster than `@pond-ts/financial`, an expression filter about 2x
+  faster than pond-ts, and `toJSON` about 3-6x faster. Numbers on
+  [Differences and speed](./differences#speed).
+- **Live data pushed one event at a time.** `push` is about 6x faster than
+  pond-ts's, `pushMany` about 3x.
+- **Stay with pond-ts** for small series, for TypeScript types (this
+  package has none yet), for the React hooks and charts (they take pond-ts
+  series), and where a 2 MB download matters.
+
+What it costs: every series lives in WebAssembly memory, so you **`free()`**
+what you make; the package is one thread; and a few behaviours differ from
+pond-ts (listed on [Differences and speed](./differences)).
+
+## Install
+
+```sh
+npm install @pond-ts/rs
+```
+
+The package has no dependencies. It is about 2.1 MB to download
+(7.5 MB unpacked, almost all of it the `.wasm` file; 1.4 MB with brotli
+when a browser fetches it).
+
+## A first example
+
+```js
+import { TimeSeries, Sequence } from '@pond-ts/rs';
+
+const cpu = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+  ],
+  rows: [
+    ['2025-01-01T00:00:00Z', 0.31],
+    ['2025-01-01T00:01:00Z', 0.44],
+    ['2025-01-01T00:02:00Z', 0.52],
+  ],
+});
+const perTwoMinutes = cpu.aggregate(Sequence.every('2m'), { value: 'avg' });
+console.log(perTwoMinutes.toJSON({ rowFormat: 'object' }).rows);
+
+perTwoMinutes.free();
+cpu.free();
+```
+
+The pond-ts version of this is the same code with `'pond-ts'` in the
+import and no `free()` calls.
+
+## Loading it: Node and browsers
+
+The package picks its build through the `exports` conditions in its
+`package.json`, and in both cases it is ready when `import` returns.
+
+| Where                                       | What happens on `import '@pond-ts/rs'`                                                          |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Node (the `node` condition)                 | reads `pkg/pond_wasm_bg.wasm` from disk and compiles it before `import` returns                 |
+| Browsers, workers, bundlers (anything else) | fetches the `.wasm` from beside the module with **top-level await**, then the `import` resolves |
+
+### Browsers and bundlers
+
+The browser build finds its `.wasm` with
+`new URL('./pkg/pond_wasm_bg.wasm', import.meta.url)`. Bundlers that know
+that pattern copy the file into your build and fix the URL; Vite is tested in
+CI, and webpack 5 knows the same pattern. Two settings matter with Vite:
+
+```js
+// vite.config.js
+export default {
+  // Vite 5 and 6 build for browsers older than top-level await by default.
+  build: { target: 'es2022' },
+  // The dev server's dependency pre-bundling moves the module away from its .wasm.
+  optimizeDeps: { exclude: ['@pond-ts/rs'] },
+};
+```
+
+Without a bundler, load it as an ES module from your own server or a CDN
+(the `.wasm` must be served from beside `web.js`, ideally as
+`application/wasm`), for example with an import map:
+
+```html
+<script type="importmap">
+  { "imports": { "@pond-ts/rs": "/node_modules/@pond-ts/rs/web.js" } }
+</script>
+<script type="module">
+  import { TimeSeries } from '@pond-ts/rs';
+</script>
+```
+
+In a module worker (`new Worker(url, { type: 'module' })`) it loads the same
+way, so the work can stay off the page's main thread.
+
+### Loading it yourself: `@pond-ts/rs/init`
+
+`@pond-ts/rs/init` has the same exports plus an `init()` function, and
+fetches nothing until you call it. Use it when your bundler refuses
+top-level await, or to serve the `.wasm` from somewhere else:
+
+```js
+import { init, TimeSeries } from '@pond-ts/rs/init';
+
+await init(); // or init(url), init(response), init(bytes), init(compiledModule)
+// Use the other exports only after init() has resolved.
+```
+
+`init()` runs once; later calls return the same promise. In Node,
+`@pond-ts/rs/init` is the same module as `@pond-ts/rs` and `init()` does
+nothing, so code written this way runs in both. `@pond-ts/rs` also exports
+`init`, already resolved.
+
+### Content Security Policy
+
+A page with a Content Security Policy needs `'wasm-unsafe-eval'` in
+`script-src` to compile any WebAssembly. Separately, `toJSON()` writes its
+row builder with `new Function`; where that is refused (no
+`'unsafe-eval'`) it falls back by itself to a plain loop with the same
+output, at about pond-ts's speed.
+
+## Free what you make
+
+A series, a calendar and a live series live in WebAssembly memory, which
+JavaScript's garbage collector cannot see. Call `free()` on each when you
+are done with it:
+
+```js
+import { col } from '@pond-ts/rs';
+
+const busy = cpu.filter(col('value').gt(0.4));
+try {
+  render(busy.toJSON());
+} finally {
+  busy.free();
+}
+```
+
+A finalizer frees a forgotten series eventually, but WebAssembly memory
+grows and never shrinks, so do not rely on it in a loop. Freeing a live
+series frees every node built on it. The memory limit is about 3.8 GB per
+page or process; running out of it stops the WebAssembly instance for good.
+
+## What is in it
+
+| Area              | In `@pond-ts/rs`                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Batch series      | `TimeSeries` with pond-ts's operations, `partitionBy`, `joinMany`, `concat`, expressions (`col`, `lit`, `when`)        |
+| In and out        | rows of numbers, `fromJSON` / `toJSON`, Arrow IPC (`fromArrow` / `toArrow`), row lookups returning `Event`s            |
+| Financial studies | all 109 studies of `@pond-ts/financial`, as `series.rsi(options)` or `series.study('rsi', options)`; `TradingCalendar` |
+| Live series       | `LiveSeries` and its nodes: `filter`, `map`, `rolling`, `aggregate`, `reduce`, `partitionBy`, listeners with `on()`    |
+| Not here          | TypeScript types, `pushSeries`, the process layer (`@pond-ts/process`), React hooks and charts                         |
+
+Next: [Using @pond-ts/rs](./using) for each part with examples.

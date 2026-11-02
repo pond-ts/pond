@@ -267,6 +267,12 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: '@pond-ts/rs (WebAssembly)',
+      link: { type: 'doc', id: 'rs/rs-index' },
+      items: ['rs/using', 'rs/differences'],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to-guides/how-to-guides-index' },
       items: [
