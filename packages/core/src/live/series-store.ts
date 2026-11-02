@@ -344,6 +344,11 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
    * give the same values.
    */
   _hasBuiltEventsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    // A delegated row's event is its source's, so ask the sources.
+    if (delegate !== undefined) {
+      return delegate.sources.some((s) => s._hasBuiltEventsModulePrivate());
+    }
     return this.#dense !== undefined || this.#eventCache.size > 0;
   }
 
@@ -353,6 +358,10 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
    * per-row cache lookup.
    */
   _hasAllEventsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      return delegate.sources.every((s) => s._hasAllEventsModulePrivate());
+    }
     return (
       this.#dense !== undefined ||
       this.#eventsArray !== undefined ||
@@ -368,6 +377,14 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
    * the column stores as a gap).
    */
   _builtEventAtModulePrivate(i: number): SeriesEvent | undefined {
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from._builtEventAtModulePrivate(delegate.row[i]!);
+    }
     const dense = this.#dense;
     if (dense !== undefined) return dense[i];
     return this.#eventCache.get(i);
