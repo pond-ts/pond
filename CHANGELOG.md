@@ -334,6 +334,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`groupBy` and `pivotByGroup` read the columns** ([PND-GROUPEVENTS])
+  instead of building an `Event` per row. `groupBy` now gathers each
+  group's rows straight off the columns rather than rebuilding it from
+  rows. Output is identical (same groups, order, rows and errors). 1M rows,
+  8 groups: `groupBy` 4.6 s → 0.11 s (1,000 groups: 5.4 s → 0.19 s),
+  `pivotByGroup` 2.7 s → 0.86 s. A series made by `map` (whose events may
+  hold values its columns don't), one with an array column, and a `groupBy`
+  whose required column holds a gap (it throws, as before) take the old
+  path.
+
 - **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
   `{ rowFormat: 'object' }`.** It used to build each row cell by cell
   across the WebAssembly boundary, which made it slower than pond-ts's
