@@ -313,11 +313,6 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
-   * Module-internal ([PND-ROWSOUT]): whether every row's `Event` already
-   * exists. A row export then reads the events, which is cheaper than a
-   * per-row cache lookup.
-   */
-  /**
    * Module-internal ([PND-GROUPEVENTS]): whether `eventAt(i)` can differ
    * from what the columns hold at row `i`. Only a dense event array can: it
    * holds events handed in through a trusted door (e.g. a `map` result,
@@ -329,6 +324,11 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     return this.#dense !== undefined;
   }
 
+  /**
+   * Module-internal ([PND-ROWSOUT]): whether every row's `Event` already
+   * exists. A row export then reads the events, which is cheaper than a
+   * per-row cache lookup.
+   */
   _hasAllEventsModulePrivate(): boolean {
     return (
       this.#dense !== undefined ||

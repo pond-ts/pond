@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TimeSeries } from '../src/index.js';
 
 // [PND-GROUPEVENTS] `groupBy` gathers groups off the columns and
@@ -114,5 +114,72 @@ describe('groupBy / pivotByGroup from the columns [PND-GROUPEVENTS]', () => {
       /^pivotByGroup: 2 events share timestamp 0/,
     );
     expect(message(fresh())).toBe(message(viaEvents()));
+  });
+
+  describe('the column path runs (no source events built)', () => {
+    afterEach(() => vi.restoreAllMocks());
+    const spyEvents = () => vi.spyOn(TimeSeries.prototype, 'events', 'get');
+
+    for (const kind of ['timeRange', 'interval'] as const) {
+      it(`groupBy on a ${kind} key with a boolean column`, () => {
+        const sch = [
+          { name: 'k', kind },
+          { name: 'b', kind: 'boolean', required: false },
+        ] as const;
+        const key = (i: number) =>
+          kind === 'timeRange' ? [i, i + 1] : [`L${i}`, i, i + 1];
+        const make = () =>
+          new TimeSeries({
+            name: 's',
+            schema: sch,
+            rows: [0, 1, 2, 3].map((i) => [
+              key(i),
+              i === 2 ? undefined : i % 2 === 0,
+            ]) as never,
+          });
+        const expected = dump(
+          make()
+            .map(sch, (e) => e)
+            .groupBy('b'),
+        );
+        const s = make();
+        const spy = spyEvents();
+        const groups = s.groupBy('b');
+        expect(spy).not.toHaveBeenCalled();
+        expect(dump(groups)).toEqual(expected);
+      });
+    }
+
+    it('groupBy and pivotByGroup on a fresh series read no events', () => {
+      const s = fresh();
+      const spy = spyEvents();
+      s.groupBy('g');
+      s.pivotByGroup('h', 'x', { aggregate: 'sum' });
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the event path for an array column', () => {
+      const s = new TimeSeries({
+        name: 's',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'g', kind: 'string' },
+          { name: 'tags', kind: 'array', required: false },
+        ] as const,
+        rows: [
+          [0, 'a', ['x']],
+          [1, 'b', undefined],
+        ],
+      });
+      const spy = spyEvents();
+      expect([...s.groupBy('g').keys()]).toEqual(['a', 'b']);
+      expect(spy).toHaveBeenCalled();
+    });
+
+    it("falls back for a name Object.prototype answers ('constructor')", () => {
+      const viaColumns = fresh().groupBy('constructor' as 'g');
+      const viaEvts = viaEvents().groupBy('constructor' as 'g');
+      expect([...viaColumns.keys()]).toEqual([...viaEvts.keys()]);
+    });
   });
 });

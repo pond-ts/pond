@@ -341,8 +341,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   8 groups: `groupBy` 4.6 s → 0.11 s (1,000 groups: 5.4 s → 0.19 s),
   `pivotByGroup` 2.7 s → 0.86 s. A series made by `map` (whose events may
   hold values its columns don't), one with an array column, and a `groupBy`
-  whose required column holds a gap (it throws, as before) take the old
-  path.
+  whose required column holds a gap (it throws, as before) or whose column
+  is not a value column take the old path.
 
 - **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
   `{ rowFormat: 'object' }`.** It used to build each row cell by cell

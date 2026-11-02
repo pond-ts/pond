@@ -3119,7 +3119,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * caller takes that path, wherever the two could differ:
    * - the events may hold values the columns don't (a dense event array);
    * - an array column (validation checks array cells; the column does not);
-   * - a required column holding a gap (validation throws on it).
+   * - a required column holding a gap (validation throws on it);
+   * - `column` is not a value column (read off `event.data()` as before).
    */
   #groupByColumns(column: string): Map<string, TimeSeries<S>> | undefined {
     const seriesStore = this.#store;
@@ -3137,15 +3138,17 @@ export class TimeSeries<S extends SeriesSchema> {
         }
       }
     }
-    // The key column (or an unknown name) is not in `event.data()`, so the
-    // event path files every row under 'undefined'; so does this.
+    // A name that is not a value column (the key column, an unknown name,
+    // or one `Object.prototype` answers, like 'constructor') goes to the
+    // event path, which reads it off `event.data()` as it always did.
     const col = store.columns.get(column);
+    if (col === undefined) return undefined;
     const index = new Map<string, number>();
     const keys: string[] = [];
     const counts: number[] = [];
     const slotOf = new Int32Array(n);
     for (let i = 0; i < n; i += 1) {
-      const raw = col === undefined ? undefined : col.read(i);
+      const raw = col.read(i);
       const key = raw === undefined ? 'undefined' : String(raw);
       let at = index.get(key);
       if (at === undefined) {
