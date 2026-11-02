@@ -653,6 +653,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`toJSON` and `toPoints` write rows straight from the columns**
+  ([PND-ROWSOUT]) instead of building an `Event` per row first. Output is
+  identical. 1M rows: `toJSON()` 1.36–1.41 s → 0.22–0.25 s,
+  `toJSON({ rowFormat: 'object' })` 1.23–1.32 s → 0.10 s, `toPoints()`
+  1.28–1.43 s → 0.14–0.16 s. A series whose events already exist, or one
+  with an array column, takes the old path.
 - **`useSnapshot`, `useLatest` and `useLiveVersion` no longer make a
   `LiveSeries` build an `Event` per pushed row** ([PND-HOOKSIGNAL]). They
   listened for `'event'` (and `useLiveVersion` for `'evict'`) only to learn
