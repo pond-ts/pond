@@ -1,0 +1,259 @@
+name: Python wheels
+
+# The Python bridge (crates/pond-py, PyPI `pond-rs`, `import pond_rs`):
+# build the wheels PyPI gets, test each one, and publish them on a release.
+#
+# - Pull requests that touch the bridge, the pond-rs crate or the parity
+#   fixtures the tests read: build every wheel and the sdist, run the pytest
+#   parity suite against each built wheel on its own platform, check the
+#   files PyPI would get. Nothing is uploaded.
+# - A `v*` tag (the same tag that publishes pond-ts to npm): all of the above,
+#   then publish to PyPI. The package carries pond-ts's version; the tag must
+#   match `version` in crates/pond-py/Cargo.toml.
+# - Manual run (Actions tab): the same checks; choose `testpypi` to also
+#   upload to test.pypi.org (each version can be uploaded there only once).
+#
+# Auth: PyPI trusted publishing (OIDC). No token is stored. PyPI must list
+# this repository, this workflow file (`python-wheels.yml`) and the
+# environment (`pypi`, or `testpypi` on test.pypi.org) as a trusted publisher
+# for `pond-rs`.
+#
+# Every wheel is abi3 (one wheel per platform for Python 3.9 and later).
+# ci.yml's `python` job also builds and tests on Linux, with the oldest and
+# newest Python, on every PR.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/pond-py/**'
+      - 'crates/pond-rs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'packages/core/test/fixtures/**'
+      - 'packages/financial/test/fixtures/**'
+      - '.github/workflows/python-wheels.yml'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_to:
+        description: 'Upload the built files somewhere (none = build and test only)'
+        type: choice
+        options:
+          - none
+          - testpypi
+        default: none
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-wheels-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # Releases bump every package together; the wheel carries pond-ts's
+      # version, and a tag must name that version.
+      - name: Read the version and check it
+        id: version
+        run: |
+          py=$(grep -m1 '^version' crates/pond-py/Cargo.toml | cut -d '"' -f2)
+          ts=$(node -p "require('./packages/core/package.json').version")
+          echo "pond-py $py, pond-ts $ts"
+          if [ "$py" != "$ts" ]; then
+            echo "crates/pond-py/Cargo.toml ($py) must carry pond-ts's version ($ts)"
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$py" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match the package version $py"
+            exit 1
+          fi
+          echo "version=$py" >> "$GITHUB_OUTPUT"
+
+  wheels:
+    needs: version
+    name: wheel ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64
+            manylinux: '2014'
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: '2014'
+          - name: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64
+          - name: macos-arm64
+            runner: macos-14
+            target: aarch64
+          - name: windows-x86_64
+            runner: windows-latest
+            target: x64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # Linux wheels build inside the manylinux2014 container (glibc 2.17),
+      # each on a runner of its own CPU so the wheel can be tested there.
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist -m crates/pond-py/Cargo.toml
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install the wheel with the test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyarrow polars pandas numpy
+          python -m pip install --no-index --find-links dist pond-rs
+          python -c "import pond_rs, sys; v = pond_rs.__version__; print(v); sys.exit(v != '${{ needs.version.outputs.version }}')"
+
+      - name: Test the built wheel
+        run: python -m pytest crates/pond-py/tests -q
+
+      - name: Keep the wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build the sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist -m crates/pond-py/Cargo.toml
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Builds from the packaged files alone, as `pip install` does on a
+      # platform with no wheel; then the same tests.
+      - name: Build and install from the sdist
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyarrow polars pandas numpy
+          python -m pip install dist/*.tar.gz
+
+      - name: Test the package built from the sdist
+        run: python -m pytest crates/pond-py/tests -q
+
+      - name: Keep the sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # What PyPI would get: every file present, the right version, metadata
+  # PyPI accepts. On a pull request this is the dry run of the publish.
+  check-dist:
+    needs: [version, wheels, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect the files
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Check them
+        run: |
+          ls -l dist
+          python -m pip install --upgrade twine
+          twine check --strict dist/*
+          version='${{ needs.version.outputs.version }}'
+          for f in dist/*; do
+            case "$(basename "$f")" in
+              "pond_rs-$version-"*.whl | "pond_rs-$version.tar.gz") ;;
+              *) echo "unexpected file $f (want version $version)"; exit 1 ;;
+            esac
+          done
+          wheels=$(ls dist/*.whl | wc -l)
+          sdists=$(ls dist/*.tar.gz | wc -l)
+          echo "$wheels wheels, $sdists sdist"
+          test "$wheels" -eq 5 && test "$sdists" -eq 1
+          for tag in 'manylinux_2_17_x86_64' 'manylinux_2_17_aarch64' 'macosx_*_x86_64' 'macosx_*_arm64' 'win_amd64'; do
+            ls dist/*$tag*.whl > /dev/null || { echo "no $tag wheel"; exit 1; }
+          done
+
+  publish-pypi:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: check-dist
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pond-rs/
+    permissions:
+      id-token: write
+    steps:
+      - name: Collect the files
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      # skip-existing: a re-run after a partly failed upload sends the rest.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_to == 'testpypi'
+    needs: check-dist
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/pond-rs/
+    permissions:
+      id-token: write
+    steps:
+      - name: Collect the files
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true

@@ -26,7 +26,7 @@ from test_core_parity import REPO, cell_number, compare_cell, expr_of
 
 from pond_rs import LiveSeries, Sequence
 
-FIXTURE = json.loads((REPO / "packages/core/test/fixtures/live-parity.json").read_text())
+FIXTURE = json.loads((REPO / "packages/core/test/fixtures/live-parity.json").read_text(encoding="utf-8"))
 
 # Nodes pond-ts builds that pond-rs refuses on purpose (see the Rust test).
 REFUSED = {("aggregate-bad-mapping", "b"), ("diff-rate-pct", "bad")}

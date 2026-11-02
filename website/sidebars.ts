@@ -255,6 +255,7 @@ const sidebars: SidebarsConfig = {
       link: { type: 'doc', id: 'pond-rs/pond-rs-index' },
       items: [
         'pond-rs/getting-started',
+        'pond-rs/python',
         'pond-rs/series-and-columns',
         'pond-rs/operations',
         'pond-rs/partitions',

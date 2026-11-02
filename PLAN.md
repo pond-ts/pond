@@ -640,8 +640,10 @@ the study oracle) is done.
   docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
   pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
   P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
-  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
-  J2 split the same way: J2a studies + trading calendars built 2026-10-31;
+  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. ~~P3 (wheels
+  in CI, PyPI on `v*`, docs page, agent trial)~~ — built 2026-11-02
+  (`python-wheels.yml`); the first upload needs PyPI's trusted publisher set
+  up by the owner. The Python steps are complete. J2 split the same way: J2a studies + trading calendars built 2026-10-31;
   J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
   columns across, rows built in JS). Next J3. Detail in the breakout plan.
 

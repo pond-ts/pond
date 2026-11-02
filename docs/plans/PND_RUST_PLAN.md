@@ -4378,6 +4378,52 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
       PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
       pandas.
+      - Outcome (2026-11-02): built. `.github/workflows/python-wheels.yml`
+        builds five abi3 wheels with maturin-action (Linux x86-64 and
+        aarch64 in the manylinux2014 container, each on a runner of its own
+        CPU, `ubuntu-24.04-arm` for ARM; macOS on `macos-15-intel` and
+        `macos-14`; Windows x64) and the sdist, and runs the full pytest
+        suite against each built wheel on its own platform (the sdist is
+        built into a wheel and tested too, so a file missing from it
+        fails). `check-dist` then checks what PyPI would get: five wheels
+        with the expected platform tags plus the sdist, all of the expected
+        version, `twine check --strict`. It runs on PRs that touch
+        `crates/pond-py`, `crates/pond-rs`, the workspace manifests or the
+        parity fixtures the tests read; on every `v*` tag (after checking
+        the tag equals `crates/pond-py/Cargo.toml`'s version, which CI
+        already keeps equal to pond-ts's), `publish-pypi` uploads with
+        PyPI trusted publishing (OIDC, environment `pypi`, no token
+        stored); a manual run can upload to TestPyPI (environment
+        `testpypi`). Decisions: (1) one workflow for CI and release, so the
+        files published are the files tested; (2) native ARM and Intel
+        runners rather than cross-compiling, so every wheel is tested where
+        it runs; (3) `skip-existing` on upload, so a re-run after a partial
+        upload sends the rest. ci.yml's `python` job stays (every PR, Python
+        3.9 and 3.13). Fixed on the way: the tests read the fixtures with
+        the platform's encoding, which fails on Windows (now UTF-8); the
+        type hints listed `"minute"` / `"hour"` for `Sequence.calendar`,
+        which pond-rs refuses. Checked locally: a manylinux2014 wheel (zig)
+        and a wheel built from the sdist each pass all 1,420 tests; `twine
+        check` passes; `actionlint` passes. Docs: page
+        `website/docs/pond-rs/python.mdx` (install, frames in / out,
+        reducers, rolling, `partition_by`, calendar buckets, expressions,
+        studies, `LiveSeries`, errors), linked from the pond-rs index and
+        the introduction; the package README updated to match. Agent trial
+        (`crates/pond-py/agent-trial/`): four tasks (per-host rolling from
+        unsorted CSV, New York days across a clock change, RSI + Bollinger
+        per symbol, live per-host buckets as they close), graded against
+        plain pandas. Weak: run by the agent that wrote the page (no
+        subagents in that thread), 4/4 right with polars and with pandas;
+        its value is eight traps found and fixed in the docs (pandas'
+        index arriving as `__index_level_0__`, NaN refused by `push` but a
+        gap in frames, text times in frames, pandas duration words, the
+        live partition column ([PND-LIVEKEY]), unstated window edges /
+        bucket closing / Bollinger's deviation, the calendar units, a list
+        of reducers). Candidates for the bridge, not done: drop pandas'
+        index on the way in, NaN as a gap in `push`, Python spelling in
+        pond-rs error texts. Owner setup before the first upload: PyPI
+        pending trusted publisher for `pond-rs` (owner `pond-ts`, repo
+        `pond`, workflow `python-wheels.yml`, environment `pypi`).
   - J1 built (2026-10-30, `crates/pond-wasm` + `packages/rs`, private
     until J3). Shape: pond-ts's method names and argument shapes in JS; each
     call sends the method name and its arguments as JSON (`{"series": id}`

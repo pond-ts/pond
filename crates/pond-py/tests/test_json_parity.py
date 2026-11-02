@@ -172,7 +172,7 @@ def _judge_value(label, expected, got, failures):
 
 def test_value_series_arrow_match_pond_ts():
     """ValueSeries from the Arrow files pond-ts reads, through pyarrow."""
-    cases = json.loads((REPO / "packages/core/test/fixtures/parity-value-arrow.json").read_text())
+    cases = json.loads((REPO / "packages/core/test/fixtures/parity-value-arrow.json").read_text(encoding="utf-8"))
     failures = []
     for case in cases:
         table = pa.ipc.open_file(pa.BufferReader(bytes.fromhex(case["ipc"]))).read_all()

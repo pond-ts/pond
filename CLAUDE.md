@@ -760,6 +760,14 @@ which checks out the tag, runs `npm run verify`, then
 `npm publish --access public --provenance --workspaces` to publish every
 workspace package in one pass. Do not run `npm publish` locally.
 
+The same tag runs `.github/workflows/python-wheels.yml`: it builds the
+Python wheels (Linux x86-64 / aarch64, macOS x86-64 / arm64, Windows) and
+the sdist, tests each wheel, checks the tag equals `version` in
+`crates/pond-py/Cargo.toml`, and publishes `pond-rs` to PyPI by trusted
+publishing (no token; PyPI lists this repo, that workflow file and the
+`pypi` environment). A tag that does not match the Cargo.toml version
+fails before anything is uploaded. Do not run `maturin publish` locally.
+
 ### Deploying docs without a release
 
 The docs site (`.github/workflows/docs.yml`) publishes only on `v*`

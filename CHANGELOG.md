@@ -80,6 +80,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **pond_rs type hints:** `Sequence.calendar` no longer lists `"minute"` /
+  `"hour"`, which it refuses; use a step such as `"1h"`.
 - **`live.window()` no longer slows down as the window grows.** A window view
   (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
   aggregations) dropped its oldest event by shifting its whole list of events,
@@ -215,6 +217,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   are safe and wait with Python's lock released. Checked by pytest against
   pond-ts's live parity fixture (all 70 cases, every output and final
   state).
+- **pond-rs for Python on PyPI** (bridge step P3). Every `v*` tag now
+  publishes `pond-rs` to PyPI with pond-ts's version (`pip install pond-rs`,
+  `import pond_rs`): abi3 wheels for Linux x86-64 and aarch64 (manylinux
+  2014), macOS x86-64 and arm64 and Windows x86-64, plus an sdist. Each
+  wheel is tested with the pytest parity suite on its own platform before
+  upload. New docs page [Python (pond_rs)](https://pond-ts.org/docs/pond-rs/python):
+  install, frames in and out with polars / pandas / pyarrow, rolling,
+  `partition_by`, calendar buckets, studies and `LiveSeries`.
 - **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
   batch, for data that already comes in columns (an Arrow chunk, a JSON
   read). Same rules and outputs as `push_many` of the same rows: the series
