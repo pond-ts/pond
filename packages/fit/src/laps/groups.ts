@@ -12,9 +12,9 @@
 /** One lap as grouping reads it. */
 export interface GroupLap {
   /** The lap's id in the result; defaults to its position (from 0). */
-  i?: number | undefined;
-  /** The lap's type (`'active'`, `'recovery'`, a user's own); undefined for
-   *  none. */
+  id?: number | undefined;
+  /** The lap's type (`'active'`, `'recovery'`, a user's own); undefined or
+   *  `''` for none. */
   type?: string | undefined;
   /** The lap's name; undefined or `''` for none. */
   name?: string | undefined;
@@ -22,13 +22,11 @@ export interface GroupLap {
   meters?: number | undefined;
 }
 
-/** The key of the group of laps with no type. */
-export const UNTYPED = 'default';
-
 /** One group, or a heading over a type whose laps carry several names. */
 export interface LapGroup {
-  /** `type`, or `type/name` for a name under a heading; {@link UNTYPED}
-   *  for laps with no type. */
+  /** Unique within the result, for list keys: the type and, under a
+   *  heading, the name, as JSON (`'["active"]'`, `'["active","400m"]'`,
+   *  `'[null]'` for laps with no type). */
   key: string;
   /** The type; undefined for laps with none. */
   type?: string;
@@ -45,9 +43,11 @@ export interface LapGroup {
 const pos = (v: number | undefined | null): v is number =>
   v != null && Number.isFinite(v) && v > 0;
 
+const typeOf = (l: GroupLap) => (l.type ? l.type : undefined);
+
 /** Whether any lap carries a type or a name (the groups mean something). */
-export function lapsGrouped(laps: readonly GroupLap[]): boolean {
-  return laps.some((l) => l.type !== undefined || !!l.name);
+export function hasLapGroups(laps: readonly GroupLap[]): boolean {
+  return laps.some((l) => !!l.type || !!l.name);
 }
 
 /**
@@ -56,21 +56,26 @@ export function lapsGrouped(laps: readonly GroupLap[]): boolean {
  * reps and recoveries, cool-down), laps with no type last. A type whose laps
  * share one name is one group carrying that name; one with several names
  * gets a heading and a group per name, shortest laps first (first-seen order
- * when any name's laps have no distance).
+ * when any name's laps have no distance). Throws a RangeError when two laps
+ * end up with the same id.
  */
 export function groupLaps(laps: readonly GroupLap[]): LapGroup[] | null {
-  if (!lapsGrouped(laps)) return null;
-  const idOf = (l: GroupLap, at: number) => l.i ?? at;
-  const indexed = laps.map((l, at) => ({ l, id: idOf(l, at) }));
+  if (!hasLapGroups(laps)) return null;
+  const indexed = laps.map((l, at) => ({ l, id: l.id ?? at, type: typeOf(l) }));
+  const seen = new Set<number>();
+  for (const { id } of indexed) {
+    if (seen.has(id)) throw new RangeError(`groupLaps: lap id ${id} repeats`);
+    seen.add(id);
+  }
   const types: (string | undefined)[] = [];
-  for (const { l } of indexed)
-    if (l.type !== undefined && !types.includes(l.type)) types.push(l.type);
+  for (const { type } of indexed)
+    if (type !== undefined && !types.includes(type)) types.push(type);
   types.push(undefined);
   const out: LapGroup[] = [];
   for (const type of types) {
-    const ofType = indexed.filter((x) => x.l.type === type);
+    const ofType = indexed.filter((x) => x.type === type);
     if (!ofType.length) continue;
-    const key = type ?? UNTYPED;
+    const key = JSON.stringify([type ?? null]);
     const t = type !== undefined ? { type } : {};
     const names: string[] = [];
     for (const { l } of ofType) {
@@ -108,7 +113,7 @@ export function groupLaps(laps: readonly GroupLap[]): LapGroup[] | null {
     });
     for (const n of ordered)
       out.push({
-        key: `${key}/${n}`,
+        key: JSON.stringify([type ?? null, n]),
         ...t,
         name: n,
         depth: 1,
@@ -213,18 +218,25 @@ export function summarizeLaps(laps: readonly LapAverages[]): LapsSummary {
   return out;
 }
 
+/** A group's lowest and highest lap by some number (see {@link lapExtremes}). */
+export interface LapExtremes {
+  lowest: number;
+  lowestLap: number;
+  highest: number;
+  highestLap: number;
+}
+
 /**
- * The laps of a group with the highest and lowest of a number, for marking
- * them on a chart; null with fewer than two laps that have it, or when they
- * tie. Ties go to the earlier lap.
+ * The laps of a group with the lowest and highest of a number, for marking
+ * them on a chart; null with fewer than two laps that have a finite value,
+ * or when they tie. Ties go to the earlier lap. Every finite value counts,
+ * so return undefined from `value` for a lap that has none (as
+ * {@link lapSpeed} does).
  */
 export function lapExtremes(
   lapIds: readonly number[],
   value: (lap: number) => number | undefined,
-): {
-  hi: { lap: number; value: number };
-  lo: { lap: number; value: number };
-} | null {
+): LapExtremes | null {
   const vals = lapIds.flatMap((lap) => {
     const v = value(lap);
     return v !== undefined && Number.isFinite(v) ? [{ lap, value: v }] : [];
@@ -236,5 +248,12 @@ export function lapExtremes(
     if (v.value > hi.value) hi = v;
     if (v.value < lo.value) lo = v;
   }
-  return hi.lap === lo.lap ? null : { hi, lo };
+  return hi.lap === lo.lap
+    ? null
+    : {
+        lowest: lo.value,
+        lowestLap: lo.lap,
+        highest: hi.value,
+        highestLap: hi.lap,
+      };
 }

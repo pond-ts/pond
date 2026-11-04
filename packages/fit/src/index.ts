@@ -127,15 +127,15 @@ export {
 } from './summary/index.js';
 export {
   groupLaps,
-  lapsGrouped,
+  hasLapGroups,
   summarizeLaps,
   lapSpeed,
   lapExtremes,
-  UNTYPED,
 } from './laps/groups.js';
 export type {
   GroupLap,
   LapGroup,
   LapAverages,
   LapsSummary,
+  LapExtremes,
 } from './laps/groups.js';
