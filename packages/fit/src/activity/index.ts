@@ -54,6 +54,7 @@ import {
   sectionGroupStats,
   bestAveragePower,
   movingClock,
+  spanNormalizedPower,
   type Span,
   type SectionStats,
   type SectionGroupStats,
@@ -369,22 +370,28 @@ export class Activity {
 
   /** Device-recorded laps as Sections (empty if the source recorded none). A
    *  lap's normalized power isn't recorded, so it is worked out from the power
-   *  samples over the lap's time. Memoized. */
+   *  samples over the lap's time (`undefined` for a lap outside the
+   *  recording). Memoized; each call returns a fresh array. */
   laps(): Section[] {
-    if (this._laps) return this._laps;
+    if (this._laps) return this._laps.slice();
     const laps = this.prep.imported.laps ?? [];
     const startMs = Date.parse(this.meta.startTimeUtc);
     let acc = 0; // fallback elapsed cursor when a lap has no start time
-    return (this._laps = laps.map((lap) => {
+    this._laps = laps.map((lap) => {
       const sec = sectionFromLap(lap, startMs, acc);
       acc = sec.toSec;
-      if (this.hasPower && this.prep.n > 0)
-        sec.normalizedWatts = this.range(
-          Duration.seconds(sec.fromSec),
-          Duration.seconds(sec.toSec),
-        ).normalizedPower()?.watts;
+      if (
+        this.hasPower &&
+        Number.isFinite(sec.fromSec) &&
+        sec.toSec >= sec.fromSec
+      )
+        sec.normalizedWatts = spanNormalizedPower(this.prep, {
+          fromSeconds: sec.fromSec,
+          toSeconds: sec.toSec,
+        });
       return new Section(sec);
-    }));
+    });
+    return this._laps.slice();
   }
 
   /** The full numbers for one stretch — a lap, a split, a range, or any

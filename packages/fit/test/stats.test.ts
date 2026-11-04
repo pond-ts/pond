@@ -72,15 +72,15 @@ describe('Activity.stats', () => {
 
   it('times: elapsed is the span, moving leaves out the stop', () => {
     const st = act.stats(span(0, 30));
-    expect(st.timeBegin).toBe(0);
-    expect(st.timeEnd).toBe(30);
-    expect(st.timeElapsed).toBe(30);
-    expect(st.timeMoving).toBe(20);
+    expect(st.fromSeconds).toBe(0);
+    expect(st.toSeconds).toBe(30);
+    expect(st.elapsedSeconds).toBe(30);
+    expect(st.movingSeconds).toBe(20);
     expect(st.distanceMeters).toBe(90);
   });
 
   it('moving time matches the activity’s own moving time', () => {
-    expect(act.stats(span(0, 30)).timeMoving).toBe(act.movingTime().seconds);
+    expect(act.stats(span(0, 30)).movingSeconds).toBe(act.movingTime().seconds);
   });
 
   it('speed: avg over elapsed, avg moving over moving time, min/max from samples', () => {
@@ -169,7 +169,7 @@ describe('Activity.stats', () => {
     const st = fromSpeeds(Array(10).fill(0), {
       heartrate: Array(10).fill(90),
     }).stats(span(0, 9));
-    expect(st.timeMoving).toBe(0);
+    expect(st.movingSeconds).toBe(0);
     expect(st.channels.hr!.avgMoving).toBeUndefined();
     expect(st.channels.speed?.avgMoving).toBeUndefined();
   });
@@ -177,7 +177,7 @@ describe('Activity.stats', () => {
   it('a Section fits as the span, and agrees with range()', () => {
     const sec = act.range(Duration.seconds(5), Duration.seconds(25));
     const st = act.stats(sec);
-    expect(st.timeMoving).toBe(sec.movingTime().seconds);
+    expect(st.movingSeconds).toBe(sec.movingTime().seconds);
     expect(st.distanceMeters).toBe(sec.distance().meters);
     expect(st.channels.hr!.avg).toBeCloseTo(sec.avgHeartRate()!.bpm, 9);
   });
@@ -201,8 +201,8 @@ describe('Activity.groupStats', () => {
   it('times add up inside the sections only', () => {
     const g = act.groupStats(reps);
     expect(g.count).toBe(3);
-    expect(g.timeElapsed).toBe(30);
-    expect(g.timeMoving).toBe(30);
+    expect(g.elapsedSeconds).toBe(30);
+    expect(g.movingSeconds).toBe(30);
     expect(g.distanceMeters).toBe(40 + 50 + 30);
     expect(g.sections).toHaveLength(3);
   });
@@ -342,5 +342,113 @@ describe('recorded laps carry normalized power', () => {
       },
     ]);
     expect(act.laps()[0]!.normalizedPower()).toBeUndefined();
+  });
+});
+
+describe('edges', () => {
+  const act = fromSpeeds([0, 3, 3, 3, 3], {
+    heartrate: [90, 100, 110, 120, 130],
+  });
+
+  it('a span that misses the recording gives zeros and no channels', () => {
+    const st = act.stats(span(50, 60));
+    expect(st).toMatchObject({
+      elapsedSeconds: 0,
+      movingSeconds: 0,
+      distanceMeters: 0,
+      channels: {},
+    });
+    expect(act.stats(span(-20, -10)).channels).toEqual({});
+  });
+
+  it('a span hanging over an end is held to the recording', () => {
+    const st = act.stats(span(-5, 99));
+    expect(st.fromSeconds).toBe(0);
+    expect(st.toSeconds).toBe(4);
+    expect(st.channels.hr!.avg).toBe(110);
+  });
+
+  it('a reversed or non-finite span throws', () => {
+    expect(() => act.stats(span(3, 1))).toThrow(RangeError);
+    expect(() => act.stats(span(NaN, 1))).toThrow(RangeError);
+    expect(() => act.groupStats([span(0, 1), span(2, Infinity)])).toThrow(
+      RangeError,
+    );
+    expect(() => act.bestAveragePower([span(3, 1)], 1)).toThrow(RangeError);
+  });
+
+  it('an empty group, and a group with a section outside', () => {
+    expect(act.groupStats([])).toMatchObject({
+      count: 0,
+      elapsedSeconds: 0,
+      channels: {},
+      sections: [],
+    });
+    const g = act.groupStats([span(0, 4), span(50, 60)]);
+    expect(g.channels.hr!.avg).toBe(110);
+    expect(g.sections[1]!.channels).toEqual({});
+  });
+
+  it('one sample: nothing to measure, no crash', () => {
+    const one = fromSpeeds([0], { heartrate: [120] });
+    const st = one.stats(span(0, 0));
+    expect(st.elapsedSeconds).toBe(0);
+    expect(st.channels.speed).toBeUndefined();
+    expect(st.channels.hr).toMatchObject({ first: 120, last: 120, avg: 120 });
+    expect(one.movingClock().at(5)).toBe(0);
+  });
+
+  it('no timestamps: no elapsed or moving time, no speed', () => {
+    const untimed = Activity.fromStreams({
+      activity: META,
+      streams: {
+        latlng: [],
+        distanceMeters: [0, 10, 20],
+        heartrate: [1, 2, 3],
+      },
+    });
+    const st = untimed.stats(span(0, 2));
+    expect(st.elapsedSeconds).toBe(0);
+    expect(st.movingSeconds).toBe(0);
+    expect(st.channels.speed).toBeUndefined();
+    expect(st.distanceMeters).toBe(20);
+  });
+});
+
+describe('laps memo', () => {
+  const lap: Lap = {
+    index: 1,
+    elapsedSeconds: 29,
+    movingSeconds: 29,
+    distanceMeters: 87,
+    startDistanceMeters: 0,
+  };
+  const act = fromSpeeds(Array(30).fill(3), { watts: Array(30).fill(200) }, [
+    lap,
+  ]);
+
+  it('a caller changing the array doesn’t change the next call', () => {
+    const a = act.laps();
+    a.pop();
+    expect(act.laps()).toHaveLength(1);
+    expect(act.laps()[0]).toBe(act.laps()[0]); // the Sections are shared
+  });
+
+  it('a lap outside the recording has no NP', () => {
+    const late = fromSpeeds(Array(30).fill(3), { watts: Array(30).fill(200) }, [
+      {
+        ...lap,
+        startTimeUtc: new Date(
+          Date.parse(META.startTimeUtc) + 600_000,
+        ).toISOString(),
+      },
+    ]);
+    expect(late.laps()[0]!.normalizedPower()).toBeUndefined();
+  });
+
+  it('a profiled activity’s laps carry it too', async () => {
+    const { Profile } = await import('../src/profile/index.js');
+    const p = act.usingProfile(new Profile({ ftp: 250 } as never));
+    expect(p.laps()[0]!.normalizedPower()!.watts).toBeCloseTo(200, 6);
   });
 });

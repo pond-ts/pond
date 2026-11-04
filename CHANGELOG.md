@@ -95,7 +95,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   `bestAveragePower`, `movingClock` take a `PreparedActivity`. Extracted from
   Estela, which had written these beside `Section` and read the prepared
   activity's private columns to do it; the numbers are identical to Estela's
-  on its fixtures.
+  on its fixtures. A span with a non-finite end or its ends reversed throws
+  `RangeError`; a span that misses the recording gives zeros and no
+  channels. `bestAveragePower` carries power over at most 5 s of a gap,
+  stricter than the power curve's 10 s clamp, so a dropout then a spike
+  doesn't pass for a minute's effort.
 - **`@pond-ts/fit`: the activity rules are public** ([PND-FITSTATS]):
   `MOVING_SPEED_MPS` (0.5 m/s) and `movingTimeSeconds`, `CLIMB_THRESHOLD_METERS`
   (3 m) and `elevationGainLoss`, `normalizedPower`, `haversineMeters`. A
@@ -107,7 +111,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 - **`@pond-ts/fit`: recorded laps carry normalized power.** `activity.laps()`
   works each lap's NP out from the power samples over the lap's time (a FIT
   lap doesn't record it), so `lap.normalizedPower()` is no longer always
-  `undefined` on a ride with power.
+  `undefined` on a ride with power. `laps()` is memoized (the first call on a
+  4 h, 50-lap ride takes about 25–30 ms) and returns a fresh array each call.
 
 ### Fixed
 

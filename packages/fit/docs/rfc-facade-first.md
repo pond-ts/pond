@@ -28,15 +28,15 @@ first npm publish.
 
 ## Target surface
 
-| Keep (public) | Demote (internal) |
-| --- | --- |
-| Quantities — `Distance`, `Elevation`, `Duration`, `Speed`, `Pace`, `Power`, `HeartRate`, `Cadence` (to own `.format()`) | `metersToFeet`, `metersToMiles`, `formatDuration`, `formatPace` → onto quantities |
-| `Activity`, `Section` | `computeActivitySummary`, `prepareActivity`, `summaryFromPrepared`, `buildTrackFromStreams`, `windowChannels` → façade methods |
-| **`Profile`** | `hydrateProfile`, `profileAsOf`, `hrZonesFrom`, `paceZonesFrom`, `powerZonesFrom` → `Profile` internals |
-| **`ProfiledActivity`**, **`ProfiledSection`** | `computePower`, `powerBestEfforts`, `zoneDistributionByValue`, `hrZoneDistribution`, `paceZoneDistribution` → profiled-view methods |
-| `Track` for bare-`GeoPoint[]` ops | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
-| **Result types** the façade returns (`ActivitySummary`, `Sample`, `SectionMetrics`, `Split`, `Segment`, `DistanceEffort`, `PowerSummary`, `PowerCurvePoint`, `PowerEffort`, `PowerZone`, `PowerBin`, `ZoneTime`, `ProfilePoint`/`ProfileSample`, `TrackSeries`/`TrackColumns`/`TrackPoint`) | — (hide the verbs, keep the nouns the façade returns) |
-| Construction/data contract: `GeoPoint`, `ActivityStreams`, `ActivityMeta`, `Lap`, `ImportedActivity`, `ActivitySource` | `UnitPreferences`, `DistanceUnit`/…, `convert*`, `*UnitLabel`, `DEFAULT_UNITS` → estela (app concern) or a `Units` namespace |
+| Keep (public)                                                                                                                                                                                                                                                                               | Demote (internal)                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Quantities — `Distance`, `Elevation`, `Duration`, `Speed`, `Pace`, `Power`, `HeartRate`, `Cadence` (to own `.format()`)                                                                                                                                                                     | `metersToFeet`, `metersToMiles`, `formatDuration`, `formatPace` → onto quantities                                                         |
+| `Activity`, `Section`                                                                                                                                                                                                                                                                       | `computeActivitySummary`, `prepareActivity`, `summaryFromPrepared`, `buildTrackFromStreams`, `windowChannels` → façade methods            |
+| **`Profile`**                                                                                                                                                                                                                                                                               | `hydrateProfile`, `profileAsOf`, `hrZonesFrom`, `paceZonesFrom`, `powerZonesFrom` → `Profile` internals                                   |
+| **`ProfiledActivity`**, **`ProfiledSection`**                                                                                                                                                                                                                                               | `computePower`, `powerBestEfforts`, `zoneDistributionByValue`, `hrZoneDistribution`, `paceZoneDistribution` → profiled-view methods       |
+| `Track` for bare-`GeoPoint[]` ops                                                                                                                                                                                                                                                           | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
+| **Result types** the façade returns (`ActivitySummary`, `Sample`, `SectionMetrics`, `Split`, `Segment`, `DistanceEffort`, `PowerSummary`, `PowerCurvePoint`, `PowerEffort`, `PowerZone`, `PowerBin`, `ZoneTime`, `ProfilePoint`/`ProfileSample`, `TrackSeries`/`TrackColumns`/`TrackPoint`) | — (hide the verbs, keep the nouns the façade returns)                                                                                     |
+| Construction/data contract: `GeoPoint`, `ActivityStreams`, `ActivityMeta`, `Lap`, `ImportedActivity`, `ActivitySource`                                                                                                                                                                      | `UnitPreferences`, `DistanceUnit`/…, `convert*`, `*UnitLabel`, `DEFAULT_UNITS` → estela (app concern) or a `Units` namespace              |
 
 Net: ~85 bindings → ~35–40, almost all nouns + a handful of classes.
 
@@ -48,20 +48,20 @@ once via a `Profile`, not threaded through each call:
 ```ts
 const bob = Profile.asOf(athleteJson, activity.meta.startTimeUtc);
 
-activity.usingProfile(bob).power();            // PowerSummary (NP/IF/TSS)
-activity.usingProfile(bob).byPowerZone();      // PowerZone[]  (per-zone data)
-activity.usingProfile(bob).byHeartRateZone();  // ZoneTime[]
-activity.usingProfile(bob).byPaceZone();       // ZoneTime[]
-activity.usingProfile(bob).bestEfforts();      // PowerEffort[] (+ W/kg)
+activity.usingProfile(bob).power(); // PowerSummary (NP/IF/TSS)
+activity.usingProfile(bob).byPowerZone(); // PowerZone[]  (per-zone data)
+activity.usingProfile(bob).byHeartRateZone(); // ZoneTime[]
+activity.usingProfile(bob).byPaceZone(); // ZoneTime[]
+activity.usingProfile(bob).bestEfforts(); // PowerEffort[] (+ W/kg)
 ```
 
 - **Type-safe dependency.** The profile-dependent methods live only on
   `ProfiledActivity`, so you cannot ask for power zones without a profile. `power()`
   returning `undefined` now means exactly one thing — no power was recorded —
   rather than conflating that with "no FTP."
-- **`powerZones` (ranges) vs `byPowerZone()` (data).** The zone *ranges* are a
+- **`powerZones` (ranges) vs `byPowerZone()` (data).** The zone _ranges_ are a
   property of the profile (`bob.powerZones` / `bob.heartRateZones` /
-  `bob.paceZones`, each a `ZoneDef`); the per-activity *time-in-zone* is the
+  `bob.paceZones`, each a `ZoneDef`); the per-activity _time-in-zone_ is the
   profiled activity's `by…Zone()`.
 - **Turtles all the way down.** `usingProfile(bob).splits()` / `.range()` /
   `.laps()` return `ProfiledSection`s carrying the same profile, each exposing the
@@ -99,8 +99,8 @@ from it today. To build first:
    `Cadence` gained `.format(decimals?)`; `Duration.format()` / `Pace.format(unit)`
    already existed. They reuse `units.ts` internally (one source of truth), so the
    bare `metersToFeet` / `formatDuration` / `formatPace` and most `convert* +
-   *UnitLabel` call sites collapse to `quantity.format(unit)` on migration.
-   **Residual** (not absorbed — genuinely app-level): the unit *preference* system
+*UnitLabel` call sites collapse to `quantity.format(unit)` on migration.
+   **Residual** (not absorbed — genuinely app-level): the unit _preference_ system
    — `UnitPreferences`, `DEFAULT_UNITS`, the standalone `*UnitLabel` helpers (for
    axis ticks that label once and format many values). That moves to estela (or a
    separate `DisplayPreferences`/`Units` object) in the demotion step — **not**
@@ -113,7 +113,7 @@ from it today. To build first:
    polyline ops (`polylineCumulative` / `interpolateAtDistance` / `polylineSlice` /
    `boundsOf`). For a track WITH time/channels, `Activity` remains the home.
 3. ✅ **`windowChannels` as a method (slice 4, done).** `activity.windowChannels({
-   startMeters, endMeters, … })` → `ChannelProfile[]` — the chart-zoom rebucketing
+startMeters, endMeters, … })` → `ChannelProfile[]` — the chart-zoom rebucketing
    path, finer than the whole-activity profile. Delegates to the functional
    `windowChannels` (verified by a parity test). The drop-in for estela's
    `windowChannels(prepared, …)` call site.
@@ -165,7 +165,7 @@ This consolidated PR (the remaining additive homes + the curation):
   (slice 3).
 - **`Activity.windowChannels(opts)`** — the chart-zoom rebucketing home (slice 4).
 - **Barrel curation** — dropped the four blanket `export * as geo/power/zones/
-  profile` namespaces; the deliberate flat named exports remain. New barrel
+profile` namespaces; the deliberate flat named exports remain. New barrel
   additions: `Profile`, `ProfiledActivity`, `ProfiledSection`, `Track`,
   `powerZonesFrom`. The operators stay flat-exported (their **demotion** to a
   sub-path is the post-migration step).

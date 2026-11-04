@@ -11,7 +11,7 @@
  *
  * "Moving" is the rule {@link movingTimeSeconds} uses for the activity's
  * moving time: the time between two samples counts when the speed over it is
- * at least {@link MOVING_SPEED_MPS}. So a section's `timeMoving` adds up the
+ * at least {@link MOVING_SPEED_MPS}. So a section's `movingSeconds` adds up the
  * same way the activity's does. A sample counts as moving when the time just
  * before it does (a window's first sample goes by the time just after it).
  *
@@ -68,11 +68,12 @@ export interface ChannelStats {
 
 /** The numbers for one section. */
 export interface SectionStats {
-  /** Elapsed seconds at the section's first and last sample. */
-  timeBegin: number;
-  timeEnd: number;
-  timeElapsed: number;
-  timeMoving: number;
+  /** Elapsed seconds at the section's first and last sample (the span
+   *  snapped to samples, as `Activity.range` does). */
+  fromSeconds: number;
+  toSeconds: number;
+  elapsedSeconds: number;
+  movingSeconds: number;
   distanceMeters: number;
   /** Only the channels the activity recorded. */
   channels: Partial<Record<StatChannel, ChannelStats>>;
@@ -88,7 +89,7 @@ export interface GroupChannelStats {
   minMoving?: number;
   maxMoving?: number;
   avg?: number;
-  movingAvg?: number;
+  avgMoving?: number;
   /** Elevation: the sections' climbs and descents added up. */
   gain?: number;
   loss?: number;
@@ -107,8 +108,8 @@ export interface SectionGroupStats {
   count: number;
   /** Time inside the sections, added up (the gaps between them, a rep's
    *  recovery, don't count). */
-  timeElapsed: number;
-  timeMoving: number;
+  elapsedSeconds: number;
+  movingSeconds: number;
   distanceMeters: number;
   channels: Partial<Record<StatChannel, GroupChannelStats>>;
   /** Each section's own stats, in the order given. */
@@ -309,13 +310,32 @@ interface Window {
   elapsed: number;
   moving: number;
   meters: number;
+  /** The span misses the recording: no samples, no numbers. */
+  empty: boolean;
+}
+
+/** Throws on a span that isn't one: a non-finite end, or ends reversed. */
+function checkSpan(span: Span): void {
+  const { fromSeconds: a, toSeconds: b } = span;
+  if (!Number.isFinite(a) || !Number.isFinite(b))
+    throw new RangeError(`span ends must be finite seconds, got [${a}, ${b}]`);
+  if (a > b) throw new RangeError(`span starts after it ends: [${a}, ${b}]`);
+}
+
+/** Whether a span lies wholly outside the recording's samples. */
+function outside(s: Samples, span: Span): boolean {
+  const n = s.t.length;
+  return n === 0 || span.toSeconds < s.t[0]! || span.fromSeconds > s.t[n - 1]!;
 }
 
 function measure(s: Samples, span: Span): Window {
-  const a = indexAt(s.t, span.fromSeconds);
-  const b = indexAt(s.t, span.toSeconds);
-  const lo = Math.min(a, b);
-  const hi = Math.max(a, b);
+  checkSpan(span);
+  if (outside(s, span)) {
+    const at = s.t.length ? indexAt(s.t, span.fromSeconds) : 0;
+    return { lo: at, hi: at, elapsed: 0, moving: 0, meters: 0, empty: true };
+  }
+  const lo = indexAt(s.t, span.fromSeconds);
+  const hi = indexAt(s.t, span.toSeconds);
   let moving = 0;
   for (let i = lo + 1; i <= hi; i++)
     if (movingBefore(s, i)) moving += s.t[i]! - s.t[i - 1]!;
@@ -324,9 +344,11 @@ function measure(s: Samples, span: Span): Window {
   return {
     lo,
     hi,
-    elapsed: s.t.length ? s.t[hi]! - s.t[lo]! : 0,
+    // with no timestamps the sample axis is a count, not seconds
+    elapsed: s.hasTime ? s.t[hi]! - s.t[lo]! : 0,
     moving,
     meters: fin(c0) && fin(c1) ? c1 - c0 : 0,
+    empty: false,
   };
 }
 
@@ -367,6 +389,17 @@ function steadySpeed(s: Samples): Float64Array {
 function statsOf(s: Samples, w: Window): SectionStats {
   const { lo, hi } = w;
   const channels: Partial<Record<StatChannel, ChannelStats>> = {};
+  if (w.empty) {
+    const at = s.t.length ? s.t[lo]! : 0;
+    return {
+      fromSeconds: at,
+      toSeconds: at,
+      elapsedSeconds: 0,
+      movingSeconds: 0,
+      distanceMeters: 0,
+      channels,
+    };
+  }
   if (s.hasTime && s.t.length > 1 && w.elapsed > 0) {
     const sp = steadySpeed(s);
     // the first sample has no speed of its own: start from the next one
@@ -415,16 +448,30 @@ function statsOf(s: Samples, w: Window): SectionStats {
     channels[ch] = defined<ChannelStats>(c);
   }
   return {
-    timeBegin: s.t.length ? s.t[lo]! : 0,
-    timeEnd: s.t.length ? s.t[hi]! : 0,
-    timeElapsed: w.elapsed,
-    timeMoving: w.moving,
+    fromSeconds: s.t[lo]!,
+    toSeconds: s.t[hi]!,
+    elapsedSeconds: w.elapsed,
+    movingSeconds: w.moving,
     distanceMeters: w.meters,
     channels,
   };
 }
 
-/** The stats for one section of a prepared activity. */
+/** Normalized power over a span (all samples), `undefined` when the span
+ *  misses the recording or holds no power. */
+export function spanNormalizedPower(
+  prep: PreparedActivity,
+  span: Span,
+): number | undefined {
+  const s = samplesOf(prep);
+  if (!s.power) return undefined;
+  const w = measure(s, span);
+  return w.empty ? undefined : windowNp(s, s.power, w.lo, w.hi, false);
+}
+
+/** The stats for one section of a prepared activity. Throws `RangeError` on
+ *  a span with a non-finite end or ends reversed; a span that misses the
+ *  recording gives zeros and no channels. */
 export function sectionStats(prep: PreparedActivity, span: Span): SectionStats {
   const s = samplesOf(prep);
   return statsOf(s, measure(s, span));
@@ -489,7 +536,7 @@ export function sectionGroupStats(
     }
     if (ch === 'speed') {
       if (meters > 0 && timeElapsed > 0) out.avg = meters / timeElapsed;
-      if (meters > 0 && timeMoving > 0) out.movingAvg = meters / timeMoving;
+      if (meters > 0 && timeMoving > 0) out.avgMoving = meters / timeMoving;
     } else {
       const vals = s[ch]!;
       let sum = 0;
@@ -499,6 +546,7 @@ export function sectionGroupStats(
       // each sample once, though touching sections share their end one
       const seen = new Uint8Array(vals.length);
       for (const w of windows) {
+        if (w.empty) continue;
         const t = tally(s, vals, w.lo, w.hi, seen);
         sum += t.sum;
         n += t.n;
@@ -506,7 +554,7 @@ export function sectionGroupStats(
         mN += t.movingN;
       }
       if (n) out.avg = sum / n;
-      if (mN) out.movingAvg = mSum / mN;
+      if (mN) out.avgMoving = mSum / mN;
     }
     const avg = extremesOf(sections.map((x) => x.channels[ch]?.avg));
     if (avg) Object.assign(out, avg);
@@ -522,8 +570,8 @@ export function sectionGroupStats(
   }
   return {
     count: spans.length,
-    timeElapsed,
-    timeMoving,
+    elapsedSeconds: timeElapsed,
+    movingSeconds: timeMoving,
     distanceMeters: meters,
     channels,
     sections,
@@ -541,6 +589,12 @@ const POWER_GAP_SEC = 5;
  * 5 s; beyond that a gap counts as 0 W, so a spike after a dropout isn't a
  * minute's effort. `moving`: the moving time alone, on a clock that stops
  * while stopped. `undefined` when no span is that long, or there's no power.
+ *
+ * Not the same rule as {@link powerBestEfforts} / the power curve, which
+ * clamp a gap's time (to 10 s) and hold the sample's power over it; here
+ * only 5 s of a gap carries power. The stricter rule is for laps and
+ * intervals, where a dropout followed by a spike would otherwise pass for
+ * a minute's effort.
  */
 export function bestAveragePower(
   prep: PreparedActivity,
@@ -548,16 +602,16 @@ export function bestAveragePower(
   seconds: number,
   options: { moving?: boolean } = {},
 ): number | undefined {
+  spans.forEach(checkSpan);
   const s = samplesOf(prep);
   const watts = s.power;
   if (!watts || !(seconds > 0)) return undefined;
   const w = Math.round(seconds);
   let best = -Infinity;
   for (const span of spans) {
-    const a = indexAt(s.t, span.fromSeconds);
-    const b = indexAt(s.t, span.toSeconds);
-    const lo = Math.min(a, b);
-    const hi = Math.max(a, b);
+    if (outside(s, span)) continue;
+    const lo = indexAt(s.t, span.fromSeconds);
+    const hi = indexAt(s.t, span.toSeconds);
     const grid: number[] = [];
     let clock = 0;
     for (let i = lo + 1; i <= hi; i++) {
@@ -609,14 +663,14 @@ export function movingClock(prep: PreparedActivity): MovingClock {
   };
   return {
     at(sec) {
-      if (n === 0 || sec <= s.t[0]!) return 0;
+      if (n < 2 || sec <= s.t[0]!) return 0;
       if (sec >= s.t[n - 1]!) return moved[n - 1] ? upTo[n - 1]! : null;
       const i = after(sec);
       if (!moved[i]) return null;
       return upTo[i - 1]! + (sec - s.t[i - 1]!);
     },
     upTo(sec) {
-      if (n === 0 || sec <= s.t[0]!) return 0;
+      if (n < 2 || sec <= s.t[0]!) return 0;
       if (sec >= s.t[n - 1]!) return upTo[n - 1]!;
       const i = after(sec);
       return upTo[i - 1]! + (moved[i] ? sec - s.t[i - 1]! : 0);
