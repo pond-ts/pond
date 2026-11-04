@@ -454,3 +454,168 @@ _Library agent (Claude), from `packages/fit/src` on the integration branch._
 
 Dependency: everything here sits on `analyze()` and `Section` (§13 steps 1 and
 4). Build order for this layer follows §14.8 once those exist.
+
+## 15. Running depth: pace, aerobic response, workouts, endurance
+
+**Authorship:** direction by pjm17971 (2026-11-04), after §14. Mapping to the
+code by the pond-ts library agent (Claude). References Peter gave:
+TrainingPeaks on normalized graded pace, its trail-running limits and its
+advanced metrics; RUNALYZE on marathon shape and effective VO₂max; research on
+critical speed from training data; Garmin's running dynamics definitions;
+Stryd's critical-power guidance.
+
+Centre running on **pace, aerobic response, workout execution and endurance
+across distance**. Power is an optional input. Already covered (walk-through):
+splits, laps, distance best efforts, pace zones, walk breaks, heart-rate
+recovery.
+
+| Capability                        | Question it answers                                             | Priority  |
+| --------------------------------- | --------------------------------------------------------------- | --------- |
+| Grade-adjusted pace               | How does this hilly effort compare with a flat run?             | Essential |
+| Aerobic efficiency and decoupling | Faster at the same heart rate? Does that slip during a run?     | Essential |
+| Interval detection and comparison | Were the reps consistent? How did recovery affect the next one? | Essential |
+| Historical performances           | Are mile, 5K and longer efforts improving?                      | Essential |
+| Training volume and load          | How are distance, frequency, intensity and long runs changing?  | Essential |
+| Workout execution                 | Planned distances, paces and recoveries done?                   | Next      |
+| Durability                        | Pace and mechanics late in a long run?                          | Next      |
+| Performance models                | Critical speed, race potential?                                 | Next      |
+| Running dynamics                  | Cadence, step length, ground contact against pace and fatigue?  | Next      |
+| Trail and hill analysis           | Climbing, descending, terrain and hiking in the session?        | Next      |
+
+### 15.1 Trustworthy pace first
+
+```ts
+const a = run.analyze({ athlete: me });
+a.pace.average;
+a.pace.bestEffort(km(5));
+a.pace.adjustedForGrade({ model: gradeModel });
+```
+
+Three things stay distinct: **recorded pace** (from the chosen distance and
+time sources), **grade-adjusted pace** (equivalent level-ground pace, an
+estimate), **normalized graded pace** (a named workout-level calculation;
+TrainingPeaks uses it for running load and documents its limits on technical
+trails). Calculate with speed and duration, format as pace at the edge.
+Average pace = total time over total distance. Expose the distance source:
+GPS, footpod, treadmill, or a supplied track distance; it matters most for
+short reps.
+
+### 15.2 Aerobic analysis on a section
+
+```ts
+const steady = run.section({ elapsed: { from: minutes(15), to: minutes(60) } });
+const aerobic = steady.analyze({ athlete: me }).aerobic;
+aerobic.efficiency({ output: 'grade-adjusted-speed' });
+aerobic.decoupling({ output: 'grade-adjusted-speed', method: 'halves' });
+```
+
+Returns the speed-to-heart-rate relationship, its change across the section,
+and coverage. Use **speed**, not minutes per km, so higher always means more
+output (TrainingPeaks: normalized graded speed over average heart rate). Across
+runs: speed at comparable heart rate, heart rate at comparable speed,
+decoupling in comparable steady efforts; filterable by route, terrain and
+conditions.
+
+### 15.3 Workouts as the session the runner did
+
+```ts
+const reps = a.efforts.detect({
+  kind: 'interval',
+  distance: metres(400),
+  tolerance: metres(30),
+});
+reps.compare();
+```
+
+Distance is one hint; also recorded laps, time-based efforts, pace changes,
+strides, hill reps. For 6 × 400 m with 200 m jog: each rep's duration, pace,
+cadence and heart-rate response; the recovery right after it; pace spread and
+first-to-last change; target compliance when a planned workout exists. The
+model is **effort plus recovery**, with warm-up and cool-down explicit; every
+part stays a `Section`.
+
+### 15.4 History: performances and exposure
+
+```ts
+const h = TrainingHistory.of(runs).analyze({ athlete: me });
+h.pace.records({ distances: [metres(400), km(1), miles(1), km(5), km(10)] });
+h.volume.weekly(); // distance, duration, ascent, run count, longest run
+h.load.timeline({ score: 'running-tss' });
+```
+
+Also rolling mileage, run frequency, long-run progression, time in intensity
+zones, each its own output beside any composite score. Named load methods
+(pace, heart rate, perceived effort) keep their inputs and assumptions.
+Running thresholds are dated separately from cycling ones. Records tell apart
+**best recorded section** (inside training), **race result** (an explicit
+event) and **modelled performance**. Default records use elapsed time,
+stops included; moving-time records are a separately labelled query.
+
+### 15.5 Durability
+
+```ts
+a.pace.bestEffort(km(5), { afterDistance: km(20) });
+a.durability.compare({
+  first: { from: km(5), to: km(10) },
+  second: { from: km(25), to: km(30) },
+  metrics: ['pace', 'heartRate', 'cadence'],
+});
+```
+
+Across history, tie it to long-run exposure (RUNALYZE's marathon shape weighs
+weekly distance and long runs).
+
+### 15.6 Models, explicit
+
+```ts
+const model = h.speed.fit({
+  model: 'critical-speed-2p',
+  efforts: selectedPerformances,
+});
+model.parameters.criticalSpeed;
+model.parameters.dPrime;
+model.diagnostics;
+```
+
+Return supporting performances, fit range and diagnostics. Race prediction is
+a separate API with a named model, supporting results and stated assumptions.
+A watch's reported VO₂max and a library's estimated performance index are
+different values.
+
+### 15.7 Running dynamics as channels
+
+```ts
+a.dynamics.cadence;
+a.dynamics.stepLength;
+a.dynamics.groundContactTime;
+a.dynamics.groundContactBalance;
+a.dynamics.verticalOscillation;
+a.dynamics.verticalRatio;
+```
+
+Availability depends on sensors. Keep the source field; normalize conventions,
+especially steps per minute against strides per minute. Running power keeps
+its provider, and thresholds stay tied to that provider (Stryd warns against
+carrying them across systems).
+
+### 15.8 First release of this layer (pjm17971)
+
+Grade adjustment, aerobic decoupling, effort/recovery comparisons, historical
+performances, weekly volume and load.
+
+### 15.9 What exists today
+
+_Library agent (Claude), from `packages/fit/src` on the integration branch._
+
+| Proposed                     | Today                                                                                                         | Note                                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grade-adjusted / graded pace | nothing                                                                                                       | New; needs a grade model and smoothed elevation                                                                                                            |
+| Distance source              | `prepareActivity` picks GPS or the device's distance (open water, pre-GPS-lock minutes) but doesn't say which | Expose the choice; footpod and treadmill aren't told apart by the readers yet                                                                              |
+| Efficiency, decoupling       | average speed and HR per section in `sectionStats`                                                            | Ratios and halves are new                                                                                                                                  |
+| Distance best efforts        | `bestEffortsByDistance`: fastest **elapsed** time over any window, with mean HR                               | Already elapsed-based, as §15.4 wants; `afterDistance` is new                                                                                              |
+| Effort + recovery            | breaks (`findBreaks`, #889), lap groups (#890)                                                                | Detection by distance/pace and the effort-recovery pairing are new                                                                                         |
+| Volume, records over history | nothing in pond; Estela's year strip and totals do it app-side                                                | Shares `TrainingHistory` with §14                                                                                                                          |
+| Running dynamics             | the FIT reader keeps `cadence` only, passed through unchanged                                                 | For runs FIT records cadence per leg (half of steps per minute), so it isn't normalized yet; step length, ground contact, vertical oscillation aren't read |
+
+Shared with §14: `analyze()`, `TrainingHistory`, effort detection, named load
+methods, observed-versus-modelled. Building those once serves both sports.
