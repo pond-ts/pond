@@ -294,3 +294,15 @@ describe('editedLapStarts', () => {
     ]);
   });
 });
+
+describe('a crop and the file’s session timer', () => {
+  it('drops it: it covered the whole recording, not the kept part', () => {
+    const r = { ...recording(), timerSeconds: 999 };
+    expect(editRecording(r, { from: 10 }).timerSeconds).toBeUndefined();
+    expect(
+      editRecording(r, { to: 20 }, { keepClock: true }).timerSeconds,
+    ).toBeUndefined();
+    // a lap edit alone keeps it
+    expect(editRecording(r, { splitLapsAt: [15] }).timerSeconds).toBe(999);
+  });
+});

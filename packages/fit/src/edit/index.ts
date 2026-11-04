@@ -318,7 +318,10 @@ export function editRecording<T extends ImportedActivity>(
     laps = out;
   }
 
-  if (options.keepClock || !cropping) return { ...imported, laps };
+  if (!cropping) return { ...imported, laps };
+  // the file's session timer covers the whole recording, not the kept part
+  const { timerSeconds: _timer, ...uncropped } = imported;
+  if (options.keepClock) return { ...uncropped, laps } as T;
 
   // Crop the streams to [from, to], their clock and distance from zero.
   const i0 = indexAt(times, from);
@@ -338,7 +341,7 @@ export function editRecording<T extends ImportedActivity>(
       Number.isFinite(d) ? Math.max(0, d - d0) : d,
     );
   }
-  const cropped = { ...imported, streams, laps } as T;
+  const cropped = { ...uncropped, streams, laps } as T;
   const swim = imported.swim
     ? croppedSwim(imported.swim, laps, from, to, t0, total)
     : undefined;

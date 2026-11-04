@@ -114,8 +114,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   and for any lap or section of it; everything else keeps the 0.5 m/s speed
   rule. The engine (`sectionStats`, `movingClock`, `bestAveragePower`)
   follows the same rule. Timer time takes the file's session total first
-  (`ImportedActivity.timerSeconds`, new, from FIT `total_timer_time`), else
-  the laps'. The summary pipeline's moving time is unchanged.
+  (`ImportedActivity.timerSeconds`, new, from a single-session FIT's
+  `total_timer_time`; a crop drops it), else the laps'. A swim with no GPS,
+  no pool details and no laps but the watch's swim time uses that total for
+  the whole swim (`'swim-time'`); a part's swimming time is then unknown.
+  The summary pipeline's moving time is unchanged.
 
 ### Added
 

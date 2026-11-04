@@ -157,6 +157,25 @@ describe('pool swim clocks', () => {
     expect(b.stats().time.swimming!.seconds).toBe(240);
   });
 
+  it('only the watch’s swim time: known for the whole swim, not its parts', () => {
+    // no pool, no lengths, no laps: just the total
+    const b = Activity.from(poolRecord({ movingSeconds: 1600 }));
+    expect(b.prepared().movingRule).toBe('swim-time');
+    const st = b.stats();
+    expect(st.time.moving!.seconds).toBe(1600);
+    expect(st.time.swimming!.seconds).toBe(1600);
+    expect(st.time.rest!.seconds).toBe(800);
+    const sw = b.stats({ time: 'swimming' });
+    expect(sw.pace.average!.secondsPerKm).toBe(1600);
+    // which samples were swimming isn't known
+    expect(sw.speed.max).toBeNull();
+    const part = b.section({
+      elapsed: { from: Duration.seconds(0), to: Duration.seconds(600) },
+    });
+    expect(part.stats().time.swimming).toBeNull();
+    expect(part.stats({ time: 'swimming' }).pace.average).toBeNull();
+  });
+
   it('open water and other sports keep the speed rule', () => {
     const r = lengthsSwim();
     r.streams.openWater = true;

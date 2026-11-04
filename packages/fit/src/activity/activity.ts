@@ -9,7 +9,11 @@
  * `splits()`). See docs/rfcs/fit-api.md.
  */
 import type { FileCreator, ImportedActivity, Lap } from '../types.js';
-import { prepareActivity, type PreparedActivity } from '../summary/index.js';
+import {
+  prepareActivity,
+  swimMoving,
+  type PreparedActivity,
+} from '../summary/index.js';
 import type { TrackSeries } from '../geo/index.js';
 import { sectionGroupStats, sectionStats, type Span } from '../stats/index.js';
 import { Distance, Duration } from '../quantities.js';
@@ -133,10 +137,17 @@ export class Section implements Span {
         hasTime: this.prep.hasTime,
         hasDistance: hasDistance(this.prep),
         swim: isSwim(this.prep),
+        movingRule: this.prep.movingRule,
+        wholeSwimSeconds: this.wholeSwimSeconds(),
       });
       this.#stats.set(basis, s);
     }
     return s;
+  }
+
+  /** @internal the watch's swim time, when this is the whole activity */
+  protected wholeSwimSeconds(): number | undefined {
+    return undefined;
   }
 }
 
@@ -228,6 +239,7 @@ export class Sections<T extends Section = Section> implements Iterable<T> {
         hasTime: this.#prep.hasTime,
         hasDistance: hasDistance(this.#prep),
         swim: isSwim(this.#prep),
+        movingRule: this.#prep.movingRule,
       });
       this.#stats.set(basis, s);
     }
@@ -369,6 +381,10 @@ export class Activity extends Section {
       this.#splits.set(step, cached);
     }
     return cached;
+  }
+
+  protected override wholeSwimSeconds(): number | undefined {
+    return swimMoving(this.#record, this.toSeconds - this.fromSeconds);
   }
 
   /** The recording as a pond timeseries, for anything the library doesn't

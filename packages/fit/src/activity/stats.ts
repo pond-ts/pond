@@ -37,6 +37,7 @@ import type {
   SectionGroupStats,
   SectionStats,
 } from '../stats/index.js';
+import type { MovingRule } from './moving.js';
 
 /** The clock a {@link Stats} result is measured on. */
 export type TimeBasis = 'elapsed' | 'moving' | 'timer' | 'swimming';
@@ -110,6 +111,11 @@ export interface StatsContext {
   hasDistance: boolean;
   /** The activity is a swim (so it has a swimming clock). */
   swim: boolean;
+  /** How moving was decided (see `moving.ts`). */
+  movingRule: MovingRule;
+  /** Under the `'swim-time'` rule, the watch's swim time when this stretch
+   *  is the whole activity (unknown for any part of it). */
+  wholeSwimSeconds?: number | undefined;
 }
 
 /** Normalized power across sections, combined as it's made: the
@@ -135,7 +141,13 @@ export function toStats(
 ): Stats {
   const { timerSeconds, hasTime, hasDistance, swim } = ctx;
   const moving = basis === 'moving' || basis === 'swimming';
-  const movingSeconds = hasTime ? raw.movingSeconds : undefined;
+  // the watch's swim time alone: no telling which samples were swimming
+  const swimTimeOnly = ctx.movingRule === 'swim-time';
+  const movingSeconds = swimTimeOnly
+    ? ctx.wholeSwimSeconds
+    : hasTime
+      ? raw.movingSeconds
+      : undefined;
   const swimmingSeconds = swim ? movingSeconds : undefined;
   const time: Clocks = {
     elapsed: hasTime ? Duration.seconds(raw.elapsedSeconds) : null,
@@ -158,18 +170,20 @@ export function toStats(
     hasDistance && basisSeconds !== undefined && basisSeconds > 0 && meters > 0
       ? meters / basisSeconds
       : undefined;
-  const ch = raw.channels;
+  const ch = swimTimeOnly && moving ? {} : raw.channels;
   const speed = pick(ch.speed, moving);
   const hr = pick(ch.hr, moving);
   const power = pick(ch.power, moving);
   const cadence = pick(ch.cadence, moving);
   const ele = ch.elevation;
   const np =
-    'sections' in raw
-      ? groupNp(raw, moving)
-      : moving
-        ? raw.channels.power?.movingNp
-        : raw.channels.power?.np;
+    swimTimeOnly && moving
+      ? undefined
+      : 'sections' in raw
+        ? groupNp(raw, moving)
+        : moving
+          ? raw.channels.power?.movingNp
+          : raw.channels.power?.np;
   return {
     basis,
     distance: hasDistance ? Distance.meters(meters) : null,
