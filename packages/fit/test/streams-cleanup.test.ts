@@ -108,6 +108,52 @@ describe('channel times', () => {
   });
 });
 
+describe('channel times in a zoomed window', () => {
+  /** No GPS: 0–1000 m over 0–300 s, nothing until 4000 m at 1800 s, then on
+   *  to 5000 m at 2100 s. */
+  function gappy(): ImportedActivity {
+    const t: number[] = [];
+    const d: number[] = [];
+    for (let i = 0; i <= 300; i++) (t.push(i), d.push((i * 1000) / 300));
+    for (let i = 0; i <= 300; i++)
+      (t.push(1800 + i), d.push(4000 + (i * 1000) / 300));
+    return {
+      activity: { ...META, sportType: 'Run' },
+      streams: {
+        latlng: [],
+        timeSeconds: t,
+        distanceMeters: d,
+        heartrate: t.map(() => 140),
+      },
+    };
+  }
+  const timeAt = (
+    pts: { distanceMeters: number; timeSeconds: number }[],
+    m: number,
+  ) => pts.find((p) => p.distanceMeters >= m)!.timeSeconds;
+
+  it('give an empty stretch the time before it, as the summary does', () => {
+    const a = Activity.fromStreams(gappy());
+    const whole = a.summary().channels[0]!.points;
+    const win = a.windowChannels({ startMeters: 2500, endMeters: 4500 })[0]!
+      .points;
+    expect(timeAt(whole, 2500)).toBeCloseTo(300, 0);
+    expect(timeAt(win, 2500)).toBeCloseTo(300, 0);
+    expect(timeAt(win, 3900)).toBeCloseTo(300, 0);
+    expect(timeAt(win, 4400)).toBeGreaterThan(1800);
+  });
+
+  it('inside a gap or past the end, carry the time already reached', () => {
+    const a = Activity.fromStreams(gappy());
+    const inGap = a.windowChannels({ startMeters: 2000, endMeters: 3000 });
+    const past = a.windowChannels({ startMeters: 6000, endMeters: 7000 });
+    expect(inGap[0]!.points.length).toBeGreaterThan(0);
+    expect(past[0]!.points.length).toBeGreaterThan(0);
+    for (const p of inGap[0]!.points) expect(p.timeSeconds).toBe(300);
+    for (const p of past[0]!.points) expect(p.timeSeconds).toBe(2100);
+  });
+});
+
 describe('trackLine', () => {
   it('is the fixes in order, leaving out samples with no fix', () => {
     const r = ride(NaN);
@@ -138,8 +184,12 @@ describe('trackLine', () => {
     expect(
       Math.max(...line.map(([, lng]) => Math.abs(lng + 123) * 87000)),
     ).toBeLessThan(10);
-    // the summary's map line is drawn from the same points
-    expect(computeActivitySummary(swim).polyline.length).toBeGreaterThan(1);
+    // the summary's map line is drawn from the same cleaned points
+    const poly = computeActivitySummary(swim).polyline;
+    expect(poly.length).toBeGreaterThan(1);
+    expect(
+      Math.max(...poly.map(([, lng]) => Math.abs(lng + 123) * 87000)),
+    ).toBeLessThan(10);
   });
 
   it('is empty with no GPS', () => {

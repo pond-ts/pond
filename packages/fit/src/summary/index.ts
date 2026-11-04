@@ -233,20 +233,28 @@ function bucketCoast(
 
 /**
  * The time reached at each distance bucket, never NaN: a bucket with no
- * sample (before the first one, as in a pool swim whose first record sits at
- * the end of the first length, or inside a gap) takes the time before it, or
- * the first known time when it comes before any, so the time axis never runs
- * backwards. 0 throughout when no bucket has a time.
+ * sample (inside a gap, or before the first one, as in a pool swim whose
+ * first record sits at the end of the first length) takes the time before
+ * it, so the time axis never runs backwards. `before` is the time already
+ * reached where the buckets start (a zoomed window passes the time at its
+ * start distance); without it, buckets ahead of the first known time take
+ * that first time. 0 throughout when there is no time at all.
  */
-function finiteTimes(timeProf: ProfileSample[], n: number): number[] {
+function finiteTimes(
+  timeProf: ProfileSample[],
+  n: number,
+  before?: number,
+): number[] {
   let prev = 0;
-  for (let i = 0; i < n; i++) {
-    const v = timeProf[i]?.value;
-    if (v !== undefined && Number.isFinite(v)) {
-      prev = v;
-      break;
+  if (before !== undefined && Number.isFinite(before)) prev = before;
+  else
+    for (let i = 0; i < n; i++) {
+      const v = timeProf[i]?.value;
+      if (v !== undefined && Number.isFinite(v)) {
+        prev = v;
+        break;
+      }
     }
-  }
   const out = new Array<number>(n);
   for (let i = 0; i < n; i++) {
     const v = timeProf[i]?.value;
@@ -270,8 +278,9 @@ function zipProfile(
   timeProf: ProfileSample[],
   spread: geo.Spread[],
   coast: boolean[],
+  timeBefore?: number,
 ): ChannelProfile {
-  const times = finiteTimes(timeProf, prof.length);
+  const times = finiteTimes(timeProf, prof.length, timeBefore);
   return {
     key,
     points: prof.map((p, i) => {
@@ -320,6 +329,7 @@ function windowChannelProfile(
   endMeters: number,
   bucketMeters: number,
   timeProf: ProfileSample[],
+  timeBefore: number | undefined,
 ): ChannelProfile | null {
   const arr = cleanColumn(values);
   if (!arr) return null;
@@ -336,7 +346,24 @@ function windowChannelProfile(
   // the window's ends still see their ±radius of raw samples / surrounding runs.
   const spread = geo.rollingSpread(cum, arr, dists, SPREAD_RADIUS_M);
   const coast = bucketCoast(dists, bucketMeters, cum, mask ?? []);
-  return zipProfile(key, prof, timeProf, spread, coast);
+  return zipProfile(key, prof, timeProf, spread, coast, timeBefore);
+}
+
+/**
+ * The elapsed time already reached at `meters`: the time of the last sample at
+ * or before that distance, or undefined when the distance comes before every
+ * sample. Lets a zoomed window's empty buckets carry the same time the
+ * whole-activity profile gives those distances.
+ */
+function timeAtDistance(
+  cum: Float64Array,
+  timeRel: Float64Array,
+  meters: number,
+): number | undefined {
+  let t: number | undefined;
+  for (let i = 0; i < cum.length && cum[i]! <= meters; i++)
+    if (Number.isFinite(timeRel[i]!)) t = timeRel[i]!;
+  return t;
 }
 
 /**
@@ -686,6 +713,7 @@ export function windowChannels(
     endMeters,
     bucket,
   );
+  const timeBefore = timeAtDistance(prep.cum, prep.timeRel, startMeters);
   return channelInputs(prep)
     .map((c) =>
       windowChannelProfile(
@@ -697,6 +725,7 @@ export function windowChannels(
         endMeters,
         bucket,
         timeProf,
+        timeBefore,
       ),
     )
     .filter((c): c is ChannelProfile => c != null);
@@ -719,11 +748,7 @@ export function summaryFromPrepared(
 
   // map outputs only exist for a GPS activity; GPS-less ⇒ no polyline / bounds.
   // Only the fixes: a sample with no fix has no place on the map.
-  const latlng: Array<[number, number]> = [];
-  if (prep.hasTrack)
-    for (let i = 0; i < n; i++)
-      if (Number.isFinite(cols.lat[i]!) && Number.isFinite(cols.lng[i]!))
-        latlng.push([cols.lat[i]!, cols.lng[i]!]);
+  const latlng = trackLine(prep);
 
   const channels = buildChannels(prep, profileBucketMeters);
 
@@ -810,6 +835,10 @@ export function computeActivitySummary(
  * (samples with no fix left out), except an open water swim's, whose raw
  * fixes zigzag; that one gets the cleaned line the summary draws with. Empty
  * for an activity with no GPS.
+ *
+ * The points don't line up with samples by index: a normal track skips
+ * samples with no fix, while an open water swim's cleaned line has a point
+ * for every sample (its gaps are filled in).
  */
 export function trackLine(prep: PreparedActivity): Array<[number, number]> {
   const out: Array<[number, number]> = [];
