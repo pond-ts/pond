@@ -154,3 +154,37 @@ Estela's `packages/core/src/swim/index.ts` and the general half of `fitSwim`
 comes with the readers. Not done: a range or lap inside a swim still takes its
 moving time from samples; per-length sections. Cropping a swim (the cutting
 step) will have to share the swim time out too.
+
+## [PND-FITFILES] — file readers (part of [PND-FITESTELA])
+
+**Shipped.** `@pond-ts/fit/files`: `parseFit` / `parseGpx` / `parseTcx` and
+the FIT helpers, from Estela's `packages/ingest` (fit.ts, gpx.ts, tcx.ts,
+recovery.ts). Decisions:
+
+- **A subpath entry, not `Activity.fromFit`.** The `fromStreams` comment
+  promised `fromFit` etc.; putting them on `Activity` would load the FIT
+  decoder for every consumer of the façade. `Activity.fromStreams(parseFit(b))`
+  is one line.
+- **`fit-file-parser` as a dependency** (MIT; pulls `buffer` for browsers).
+  Typed locally (`fitParser.ts`) so the published types don't lean on the
+  parser's `any`-typed ones or an ambient module declaration.
+- **Device names stay with the app.** The readers report what the file says
+  (`creator`: FIT maker + product number + product name; TCX / GPX creator
+  string). Estela's Garmin product → model-name table comes from the Garmin
+  FIT SDK profile under the FIT Protocol License, which is not MIT; keeping it
+  out of a public MIT package avoids the question. Estela keeps
+  `device.ts` + `fitProfile.data.ts` and names devices from `creator`.
+- **`'file'` source.** Estela stamped files `source: 'manual'`, the same as
+  hand-entered activities (its 2026-10 review flagged the double meaning).
+  The readers default to `'file'`; `options.source` keeps old behaviour.
+- **GPS lock included.** A FIT file keeps records with no fix as `null`
+  positions plus the watch's distance — Peter's call (2026-10-21), pairing
+  with #801. On Estela's real fixtures this is the only output change (27–45
+  records on three Garmin files).
+- **Fixtures are synthetic.** Estela's test files are real people's
+  activities and this repo is public, so the tests use FIT files written with
+  the Garmin FIT SDK (`test/fixtures/make-fit-fixtures.mjs`) and inline
+  GPX / TCX. The real-file checks stay in Estela, run against these readers.
+
+Not moved: Estela's Strava-export and RunningAhead readers, its ids, its
+device naming.

@@ -80,6 +80,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit/files`: FIT, GPX and TCX readers** ([PND-FITFILES]).
+  `parseFit(bytes)`, `parseGpx(xml)`, `parseTcx(xml)` turn an activity file
+  into an `ImportedActivity` ready for `Activity.fromStreams`: streams, laps,
+  sport (FIT sports as Strava-style labels: `fitSport`), local start time
+  (`fitLocalStart`), the swim watch's pool and lengths (`swim`), what made
+  the file (`creator`: FIT maker and product number, or the TCX / GPX creator
+  name), and a Garmin watch's heart rate two minutes after the stop
+  (`recovery`; `fitRecoveryFromBytes` reads just that from the bytes, fast).
+  A FIT file keeps the records before the watch found GPS (null positions;
+  distance from the watch, as the summary already handles). A separate entry
+  point, so the FIT decoder (`fit-file-parser`, MIT, now a dependency of
+  `@pond-ts/fit`) only loads for consumers that read files. From Estela's
+  `packages/ingest`, where these were tested on real files: on Estela's nine
+  real fixtures the output is identical apart from the kept no-fix records.
+- **`ImportedActivity.creator` / `.recovery`**, type `HeartRateRecovery`, and
+  `'file'` as an `ActivitySource` (the readers' default; `options.source`
+  overrides).
+
 - **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
   (`SwimData`: the swim time, the pool length and unit, and every length as a
   `SwimLength` with its strokes and stroke) and `activity.swim`. When an import

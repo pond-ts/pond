@@ -10,8 +10,9 @@
 /** A geographic point as [latitude, longitude]. Matches Leaflet + tracks.json. */
 export type GeoPoint = [number, number];
 
-/** Where an activity came from. Extensible; Strava is the only source for now. */
-export type ActivitySource = 'strava' | 'manual';
+/** Where an activity came from: the Strava API, a file the readers in
+ *  `@pond-ts/fit/files` read (FIT, GPX, TCX), or entered by hand. */
+export type ActivitySource = 'strava' | 'file' | 'manual';
 
 /**
  * The time-series channels recorded during an activity. `latlng` is the track;
@@ -149,4 +150,23 @@ export interface ImportedActivity {
   laps?: Lap[] | undefined;
   /** A swim watch's own record (pool, lengths, swim time), when it has one. */
   swim?: SwimData | undefined;
+  /** What the file says made it: a FIT `file_id`'s maker (FIT's name, e.g.
+   *  `"garmin"`, or its number) and product number, and a product or
+   *  creator name (FIT `product_name`, TCX `<Creator><Name>`, GPX
+   *  `creator`). As stated; turning a Garmin product number into a model
+   *  name is left to the app. */
+  creator?:
+    | { manufacturer?: string | number; product?: number; name?: string }
+    | undefined;
+  /** Heart rate after the stop, when the file has it (a Garmin watch's
+   *  two-minute `recovery_hr` reading). */
+  recovery?: HeartRateRecovery | undefined;
+}
+
+/** Heart rate after the activity stopped. */
+export interface HeartRateRecovery {
+  /** Heart rate when the activity stopped, bpm. */
+  atStopBpm?: number;
+  /** Readings after the stop, oldest first: seconds after the stop, bpm. */
+  after: { sec: number; bpm: number }[];
 }
