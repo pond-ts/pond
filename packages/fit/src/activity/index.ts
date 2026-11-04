@@ -16,7 +16,12 @@
  * as the whole activity. (NOT `Segment`: that word is reserved for the story
  * hierarchy, Story → Chapter → Segment → Activity. See the RFC.)
  */
-import type { ActivityMeta, ImportedActivity, Lap } from '../types.js';
+import type {
+  ActivityMeta,
+  ImportedActivity,
+  Lap,
+  SwimData,
+} from '../types.js';
 import * as geo from '../geo/index.js';
 import type { Split, TrackSeries, DistanceEffort } from '../geo/index.js';
 import {
@@ -295,6 +300,10 @@ export class Activity {
   /** Whether the activity carries GPS positions (a map; otherwise indoor / GPS-off). */
   get hasTrack(): boolean {
     return this.prep.hasTrack;
+  }
+  /** The swim watch's own record (pool, lengths, swim time), when it has one. */
+  get swim(): SwimData | undefined {
+    return this.prep.imported.swim;
   }
   /** Whether a power channel was recorded. */
   get hasPower(): boolean {

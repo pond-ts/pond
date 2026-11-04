@@ -143,3 +143,14 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 [docs/rfcs/geo.md](../rfcs/geo.md) §10–§13, estela's `docs/pond-friction.md`,
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
+
+## [PND-FITSWIM] — swims (part of [PND-FITESTELA])
+
+**Shipped.** `ImportedActivity.swim` (`SwimData`, `SwimLength`), `activity.swim`,
+`swimMovingSeconds(laps)`; the summary's moving time is the swim time when an
+import carries one (finite and above 0), else the sample estimate. Lifted from
+Estela's `packages/core/src/swim/index.ts` and the general half of `fitSwim`
+(`packages/ingest/src/fit.ts`). Reading the pool and lengths from a FIT file
+comes with the readers. Not done: a range or lap inside a swim still takes its
+moving time from samples; per-length sections. Cropping a swim (the cutting
+step) will have to share the swim time out too.

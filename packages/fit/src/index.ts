@@ -5,7 +5,10 @@ export type {
   ActivityMeta,
   Lap,
   ImportedActivity,
+  SwimData,
+  SwimLength,
 } from './types.js';
+export { swimMovingSeconds } from './swim.js';
 
 export {
   metersToMiles,

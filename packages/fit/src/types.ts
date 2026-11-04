@@ -104,10 +104,44 @@ export interface Lap {
   elevationGainMeters?: number;
 }
 
+/** One pool length as the watch logged it: a swum length, or a rest at the
+ *  wall (`active: false`, no strokes). */
+export interface SwimLength {
+  /** ISO 8601, UTC — when the length (or rest) began. */
+  startTimeUtc: string;
+  seconds: number;
+  active: boolean;
+  /** Strokes taken over the length. */
+  strokes?: number;
+  /** The stroke the watch recognised (FIT's names: freestyle, breaststroke,
+   *  backstroke, butterfly, drill, mixed). */
+  stroke?: string;
+}
+
+/**
+ * What a swim watch records beyond the streams.
+ *
+ * `movingSeconds` is the time spent swimming: the summed timer time of the
+ * laps that covered distance, leaving out the rests between sets (`swimMovingSeconds`). When present it is the activity's moving time.
+ * Working it out from the samples instead (as for a run or ride) comes out
+ * far too low on a pool swim, which logs one sample per length: a length
+ * timed together with its rest at the wall reads as too slow to be moving.
+ * Checked against Strava on 20 real FIT swims (pool and open water): the lap
+ * figure matched Strava's moving time to within a second on all of them.
+ */
+export interface SwimData {
+  movingSeconds: number;
+  /** Pool swims only (open water has neither). */
+  pool?: { lengthMeters: number; unit: 'm' | 'yd' };
+  lengths?: SwimLength[];
+}
+
 /** An activity together with its streams — the shape an import yields. Laps are
  *  present only for sources that record them (FIT); GPX/manual omit them. */
 export interface ImportedActivity {
   activity: ActivityMeta;
   streams: ActivityStreams;
   laps?: Lap[] | undefined;
+  /** A swim watch's own record (pool, lengths, swim time), when it has one. */
+  swim?: SwimData | undefined;
 }

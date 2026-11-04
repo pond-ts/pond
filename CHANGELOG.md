@@ -78,6 +78,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
+  (`SwimData`: the swim time, the pool length and unit, and every length with
+  its strokes and stroke) and `activity.swim`. When an import carries the swim
+  watch's swim time, it is the activity's moving time: worked out from the
+  samples, a pool swim (one sample per length, each timed with its rest at the
+  wall) reads as almost standing still. `swimMovingSeconds(laps)` gives that
+  time from the laps that covered distance, which matched Strava's moving time
+  to within a second on 20 real FIT swims. From Estela, which overrode fit's
+  moving time in three places.
+
 ### Fixed
 
 - **`live.window()` no longer slows down as the window grows.** A window view

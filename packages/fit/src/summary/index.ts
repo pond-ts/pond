@@ -498,6 +498,12 @@ function neverDecreases(distance: Float64Array | undefined): boolean {
   return true;
 }
 
+/** The swim watch's swim time, when the import carries a usable one. */
+function swimMoving(imported: ImportedActivity): number | undefined {
+  const v = imported.swim?.movingSeconds;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 /** Decode an activity's streams into the shared per-sample arrays. ONE path now:
  *  build the canonical series, read its columns; distance comes from haversine
  *  when there are positions, else the device `distance` column (GPS-less, or
@@ -723,7 +729,9 @@ export function summaryFromPrepared(
     pointCount: n,
     distanceMeters: cum[n - 1] ?? 0,
     elapsedTimeSeconds: n > 1 ? cols.timeSec[n - 1]! - cols.timeSec[0]! : 0,
-    movingTimeSeconds: geo.movingTimeSeconds(step, cols.timeSec),
+    // A swim watch's own swim time beats the estimate from samples (SwimData).
+    movingTimeSeconds:
+      swimMoving(imported) ?? geo.movingTimeSeconds(step, cols.timeSec),
     elevationGainMeters: gainMeters,
     elevationLossMeters: lossMeters,
     bounds: prep.hasTrack && track ? geo.boundsViaPond(track) : null,
