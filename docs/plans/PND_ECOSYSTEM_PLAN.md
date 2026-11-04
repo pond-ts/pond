@@ -125,6 +125,7 @@ line (Estela read `prepared.cols.lat/lng` for it). Peter's direction the same
 day: `@pond-ts/fit` should be the API version of Estela's activity analysis;
 next in that wave are track outlines, stops and walk breaks with heart rate
 recovery, and lap groups by type and name.
+
 ## [PND-FITOUTLINE] — track outlines (part of [PND-FITESTELA])
 
 **Built.** Estela's `packages/core/src/shape` moved as it was (same algorithm,
@@ -247,6 +248,7 @@ its core is `recoveryFromReadings`. `recoverySummary` keeps any extra fields
 `looksForBreaks` and `pastRecoveries` stay in Estela: both depend on its
 sport-family table. `RECOVERY_MAX_SECONDS` now lives here and the FIT reader
 imports it.
+
 ## [PND-FITESTELA] — take Estela's general activity code into fit
 
 Estela's 2026-11-04 code review (estela-app/estela, project file
@@ -290,6 +292,7 @@ averages, zones, best efforts and channels came out identical with `null`
 and with `NaN` on 0.74 and on main. Estela can delete its two converters.
 moving time from samples; per-length sections. Cropping a swim is done in
 [PND-FITCUT].
+
 ## [PND-FITLAPGROUPS] — lap groups by type and name (part of [PND-FITESTELA])
 
 **Built.** The grouping half of Estela's `ui/lapSummaryData.ts`: which laps go

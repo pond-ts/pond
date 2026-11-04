@@ -206,6 +206,7 @@ export {
   type TrackShape,
   type TrackLevel,
 } from './outline/index.js';
+export {
   groupLaps,
   hasLapGroups,
   summarizeLaps,
