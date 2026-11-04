@@ -12,6 +12,11 @@
  *   `null` (with every number that needs it) when the file doesn't say.
  *   Channel numbers are over every sample, since a device writes samples
  *   only while its timer runs.
+ * - `'swimming'`: a swim's time spent swimming, its rests at the wall left
+ *   out. For a swim it is the moving time (a pool swim moves only during
+ *   its lengths, see `moving.ts`); any other sport has no swimming clock, so
+ *   its time-based numbers are `null`. Channel numbers are over the swimming
+ *   samples.
  *
  * `null` means unavailable (the channel wasn't recorded, or the basis's time
  * isn't known); a real zero stays zero.
@@ -34,14 +39,14 @@ import type {
 } from '../stats/index.js';
 
 /** The clock a {@link Stats} result is measured on. */
-export type TimeBasis = 'elapsed' | 'moving' | 'timer';
+export type TimeBasis = 'elapsed' | 'moving' | 'timer' | 'swimming';
 
 export interface StatsOptions {
   /** Default `'elapsed'`. */
   time?: TimeBasis;
 }
 
-/** The three clocks, whatever the basis. */
+/** The clocks, whatever the basis. */
 export interface Clocks {
   /** Wall-clock time; null with no timestamps in the recording. */
   elapsed: Duration | null;
@@ -49,6 +54,11 @@ export interface Clocks {
   moving: Duration | null;
   /** As the file records it; null when it doesn't. */
   timer: Duration | null;
+  /** Time spent swimming; null for any sport but swimming. */
+  swimming: Duration | null;
+  /** A swim's time not swimming (elapsed − swimming): rests at the wall,
+   *  and any timer pause. Null for any sport but swimming. */
+  rest: Duration | null;
 }
 
 export interface Stats {
@@ -98,11 +108,8 @@ export interface StatsContext {
   hasTime: boolean;
   /** The recording has a distance (GPS or a distance channel). */
   hasDistance: boolean;
-  /** Moving time known better than the samples tell it (a swim watch's own
-   *  swim time for the whole activity). Known limit until the swimming
-   *  clock lands: the channel numbers on a moving basis still come from the
-   *  samples judged moving. */
-  movingSeconds?: number;
+  /** The activity is a swim (so it has a swimming clock). */
+  swim: boolean;
 }
 
 /** Normalized power across sections, combined as it's made: the
@@ -126,25 +133,26 @@ export function toStats(
   basis: TimeBasis,
   ctx: StatsContext,
 ): Stats {
-  const { timerSeconds, hasTime, hasDistance } = ctx;
-  const moving = basis === 'moving';
-  const movingSeconds = ctx.movingSeconds ?? raw.movingSeconds;
-  const movingKnown = hasTime || ctx.movingSeconds !== undefined;
+  const { timerSeconds, hasTime, hasDistance, swim } = ctx;
+  const moving = basis === 'moving' || basis === 'swimming';
+  const movingSeconds = hasTime ? raw.movingSeconds : undefined;
+  const swimmingSeconds = swim ? movingSeconds : undefined;
   const time: Clocks = {
     elapsed: hasTime ? Duration.seconds(raw.elapsedSeconds) : null,
-    moving: movingKnown ? Duration.seconds(movingSeconds) : null,
+    moving: q(movingSeconds, Duration.seconds),
     timer: q(timerSeconds, Duration.seconds),
+    swimming: q(swimmingSeconds, Duration.seconds),
+    rest:
+      swimmingSeconds !== undefined
+        ? Duration.seconds(Math.max(0, raw.elapsedSeconds - swimmingSeconds))
+        : null,
   };
-  const basisSeconds =
-    basis === 'elapsed'
-      ? hasTime
-        ? raw.elapsedSeconds
-        : undefined
-      : basis === 'moving'
-        ? movingKnown
-          ? movingSeconds
-          : undefined
-        : timerSeconds;
+  const basisSeconds = {
+    elapsed: hasTime ? raw.elapsedSeconds : undefined,
+    moving: movingSeconds,
+    timer: timerSeconds,
+    swimming: swimmingSeconds,
+  }[basis];
   const meters = raw.distanceMeters;
   const avgMps =
     hasDistance && basisSeconds !== undefined && basisSeconds > 0 && meters > 0

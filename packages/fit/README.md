@@ -46,6 +46,10 @@ for (const [label, laps] of run.laps.groupBy((lap) => labels.get(lap.id)))
   console.log(label, laps.stats()); // the chosen laps only, never the recovery between
 ```
 
+A swim also has `stats.time.swimming` and `stats.time.rest`, and
+`swim.stats({ time: 'swimming' })` leaves the rests at the wall out of every
+number; a pool swim counts as moving only during its lengths.
+
 `null` means unavailable (no power meter, no timer data in the file); a real
 zero stays zero. Timer time comes only from the file: GPX has none, so its
 `time.timer` is `null`.

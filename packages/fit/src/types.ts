@@ -161,6 +161,9 @@ export interface ImportedActivity {
   laps?: Lap[] | undefined;
   /** A swim watch's own record (pool, lengths, swim time), when it has one. */
   swim?: SwimData | undefined;
+  /** Time the recording timer ran over the whole activity, as the file
+   *  states it (FIT session `total_timer_time`). Absent when it doesn't. */
+  timerSeconds?: number | undefined;
   /** What the file says made it: a FIT `file_id`'s maker (FIT's name, e.g.
    *  `"garmin"`, or its number) and product number, and a product or
    *  creator name (FIT `product_name`, TCX `<Creator><Name>`, GPX

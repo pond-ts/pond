@@ -456,6 +456,17 @@ describe('readActivity: bytes in, an Activity out', () => {
       expect(l.recorded.timerSeconds).toBe(l.recorded.movingSeconds);
   });
 
+  it('a FIT pool swim: session timer, swimming and rest from its lengths', () => {
+    const a = readActivity(fixture('pool-swim'));
+    expect(a.record.timerSeconds).toBe(210);
+    const st = a.stats();
+    expect(st.time.timer!.seconds).toBe(210);
+    expect(st.time.elapsed!.seconds).toBe(210);
+    expect(st.time.swimming!.seconds).toBe(180);
+    expect(st.time.rest!.seconds).toBe(30);
+    expect(a.laps.at(1)!.stats().time.swimming!.seconds).toBe(0);
+  });
+
   it('GPX as text or bytes, with options', () => {
     expect(activityFormat(GPX)).toBe('gpx');
     const a = readActivity(GPX, { name: 'Mine' });

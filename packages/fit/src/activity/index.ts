@@ -8,6 +8,7 @@ export {
   type SectionKind,
 } from './activity.js';
 export { sportOf, type Sport } from './sport.js';
+export { type MovingRule } from './moving.js';
 export {
   type Stats,
   type StatsOptions,

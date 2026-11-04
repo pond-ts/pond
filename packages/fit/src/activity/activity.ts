@@ -9,11 +9,7 @@
  * `splits()`). See docs/rfcs/fit-api.md.
  */
 import type { FileCreator, ImportedActivity, Lap } from '../types.js';
-import {
-  prepareActivity,
-  swimMoving,
-  type PreparedActivity,
-} from '../summary/index.js';
+import { prepareActivity, type PreparedActivity } from '../summary/index.js';
 import type { TrackSeries } from '../geo/index.js';
 import { sectionGroupStats, sectionStats, type Span } from '../stats/index.js';
 import { Distance, Duration } from '../quantities.js';
@@ -132,22 +128,20 @@ export class Section implements Span {
     const basis = options.time ?? 'elapsed';
     let s = this.#stats.get(basis);
     if (!s) {
-      const moving = this.knownMovingSeconds();
       s = toStats(sectionStats(this.prep, this), basis, {
         timerSeconds: this.timerSeconds,
         hasTime: this.prep.hasTime,
         hasDistance: hasDistance(this.prep),
-        ...(moving !== undefined ? { movingSeconds: moving } : {}),
+        swim: isSwim(this.prep),
       });
       this.#stats.set(basis, s);
     }
     return s;
   }
+}
 
-  /** @internal moving time known better than the samples tell it */
-  protected knownMovingSeconds(): number | undefined {
-    return undefined;
-  }
+function isSwim(prep: PreparedActivity): boolean {
+  return sportOf(prep.imported.activity.sportType) === 'swim';
 }
 
 function hasDistance(prep: PreparedActivity): boolean {
@@ -233,6 +227,7 @@ export class Sections<T extends Section = Section> implements Iterable<T> {
         timerSeconds,
         hasTime: this.#prep.hasTime,
         hasDistance: hasDistance(this.#prep),
+        swim: isSwim(this.#prep),
       });
       this.#stats.set(basis, s);
     }
@@ -253,10 +248,12 @@ export class Activity extends Section {
       : 0;
     const laps = prep.imported.laps ?? [];
     const timers = laps.map((l) => l.timerSeconds);
+    // the file's own total first, else the laps' when every lap has one
     const timer =
-      laps.length && timers.every((t) => t !== undefined)
+      prep.imported.timerSeconds ??
+      (laps.length && timers.every((t) => t !== undefined)
         ? timers.reduce((a, b) => a! + b!, 0)
-        : undefined;
+        : undefined);
     super(
       prep,
       'activity',
@@ -372,14 +369,6 @@ export class Activity extends Section {
       this.#splits.set(step, cached);
     }
     return cached;
-  }
-
-  /** A pool swim's samples come one per length, too far apart to read as
-   *  moving, so the swim watch's own swim time stands in for the whole
-   *  activity. (Sections inside a swim still judge by samples, until the
-   *  swimming clock lands.) */
-  protected override knownMovingSeconds(): number | undefined {
-    return swimMoving(this.#record, this.toSeconds - this.fromSeconds);
   }
 
   /** The recording as a pond timeseries, for anything the library doesn't

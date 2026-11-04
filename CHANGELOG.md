@@ -105,6 +105,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   elapsed time throws; a section is held to the recording. Added shorthands `km`, `miles`, `meters`, `seconds`, `minutes`,
   `hours`, and `sportOf`.
 
+- **`@pond-ts/fit`: explicit clocks** ([PND-FITAPI]). `stats().time` adds
+  `swimming` and `rest` (null for any sport but swimming), and `stats({ time:
+'swimming' })` puts every number on the swimming time. Moving is decided
+  by sport (`PreparedActivity.movingRule`, type `MovingRule`): a pool swim
+  moves only during its lengths (from the length records, else the laps that
+  covered distance), so its rests are its stopped time, for the whole swim
+  and for any lap or section of it; everything else keeps the 0.5 m/s speed
+  rule. The engine (`sectionStats`, `movingClock`, `bestAveragePower`)
+  follows the same rule. Timer time takes the file's session total first
+  (`ImportedActivity.timerSeconds`, new, from FIT `total_timer_time`), else
+  the laps'. The summary pipeline's moving time is unchanged.
+
 ### Added
 
 - **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**

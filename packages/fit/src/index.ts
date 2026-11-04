@@ -55,6 +55,7 @@ export {
 } from './activity/index.js';
 export type {
   Sport,
+  MovingRule,
   Stats,
   StatsOptions,
   TimeBasis,

@@ -140,6 +140,8 @@ interface Samples {
   cadence: Float64Array | undefined;
   elevation: Float64Array | undefined;
   hasTime: boolean;
+  /** The sport's own moving rule, when it isn't the speed rule. */
+  moving: Uint8Array | undefined;
 }
 
 const samplesCache = new WeakMap<PreparedActivity, Samples>();
@@ -163,6 +165,7 @@ function samplesOf(prep: PreparedActivity): Samples {
       cadence: present(prep.cols.cadence),
       elevation: present(prep.cols.ele),
       hasTime: prep.hasTime,
+      moving: prep.movingMask,
     };
     samplesCache.set(prep, s);
   }
@@ -188,6 +191,8 @@ function indexAt(t: Float64Array, sec: number): number {
 
 /** Whether the time just before sample i (i ≥ 1) was moving. */
 function movingBefore(s: Samples, i: number): boolean {
+  if (s.moving)
+    return s.hasTime && s.moving[i] === 1 && s.t[i]! - s.t[i - 1]! > 0;
   const v = s.speed[i];
   return (
     s.hasTime &&

@@ -4,6 +4,11 @@
  * map polyline, the elevation-vs-distance profile, per-km splits. This is the
  * domain layer over the pond-based geo operators in `../geo`.
  */
+import {
+  movingMask,
+  movingRuleOf,
+  type MovingRule,
+} from '../activity/moving.js';
 import { TimeSeries } from 'pond-ts';
 import type { ImportedActivity, ActivityStreams, Lap } from '../types.js';
 import * as geo from '../geo/index.js';
@@ -503,6 +508,11 @@ export interface PreparedActivity {
   hasTrack: boolean;
   /** Some samples of a GPS track have no fix (NaN in `cols.lat`). */
   positionGaps: boolean;
+  /** How moving is decided for this activity (see `activity/moving.ts`). */
+  movingRule: MovingRule;
+  /** For a rule other than speed: per sample i ≥ 1, whether the time before
+   *  it counts as moving. */
+  movingMask?: Uint8Array;
   /** Per-sample sustained-coast mask per output channel (speed/power/cadence),
    *  computed ONCE here (it's window-independent and the pond-fill pass is the
    *  expensive part) and reused by every channel build / zoom. */
@@ -629,6 +639,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     if (a) coastMasks[k] = sustainedCoastMask(k, a, cols.timeSec);
   }
 
+  const moving = movingRuleOf(imported);
   return {
     imported,
     track,
@@ -641,6 +652,8 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     hasTime: !!streams.timeSeconds,
     hasTrack,
     positionGaps,
+    movingRule: moving.rule,
+    ...(moving.spans ? { movingMask: movingMask(timeRel, moving.spans) } : {}),
     coastMasks,
   };
 }

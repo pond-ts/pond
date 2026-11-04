@@ -160,10 +160,15 @@ export function parseFit(
   const creator = fileId ? fitCreator(fileId) : undefined;
   // The heart rate a Garmin watch took after the stop.
   const recovery = fitRecovery(data);
+  const sessionTimer = num(
+    (data.sessions as Record<string, unknown>[] | undefined)?.[0]
+      ?.total_timer_time as number | undefined,
+  );
   return {
     activity,
     streams,
     laps,
+    ...(sessionTimer !== undefined ? { timerSeconds: sessionTimer } : {}),
     ...(swim ? { swim } : {}),
     ...(creator ? { creator } : {}),
     ...(recovery ? { recovery } : {}),
