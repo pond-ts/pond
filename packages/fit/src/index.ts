@@ -130,3 +130,29 @@ export {
   type ChannelProfile,
   type ChannelSample,
 } from './summary/index.js';
+export {
+  findBreaks,
+  slowCutOff,
+  pastBreaks,
+  breakTrend,
+  trendRefBpm,
+  BREAK_OFFSETS,
+  BREAKS_VERSION,
+  TREND_DAYS,
+  TREND_MIN_BREAKS,
+  recoveryAt,
+  recoveryFromReadings,
+  recoverySummary,
+  twoMinuteDrop,
+  RECOVERY_MAX_SECONDS,
+  COMPARE_SECONDS,
+} from './recovery/index.js';
+export type {
+  BreakKind,
+  RunBreak,
+  BreakStreams,
+  PastBreak,
+  BreakTrend,
+  BreakTrendPoint,
+  RecoveryReading,
+} from './recovery/index.js';

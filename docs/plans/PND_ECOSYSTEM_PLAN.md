@@ -188,3 +188,23 @@ recovery.ts). Decisions:
 
 Not moved: Estela's Strava-export and RunningAhead readers, its ids, its
 device naming.
+
+## [PND-FITBREAKS] — stops, walk breaks, heart rate recovery (part of [PND-FITESTELA])
+
+**Built.** Estela's `recovery/breaks.ts` and the generic half of
+`recovery/index.ts`, ported to `packages/fit/src/recovery`. Same algorithm and
+constants; output identical to Estela's on its three real test runs (city
+stops, two run/walk runs), checked locally against Estela's copy and not
+committed (personal recordings). Pond's tests use made-up runs, including a
+run/walk with wavering walking pace in place of Estela's canal fixture.
+
+Changes from Estela's copy: `null` samples and fixes are accepted (a missing
+distance carries the last one; a missing fix adds no distance); GPS distance
+uses pond's `haversineMeters` (Earth radius 6,371,008.8 m vs Estela's
+6,371,000, about 1 part in a million). The Apple Watch record reader
+(`recoveryFromWatch`) stays in Estela since its record format is Estela's;
+its core is `recoveryFromReadings`. `recoverySummary` keeps any extra fields
+(Estela adds Apple's one-minute figure) and no longer returns undefined.
+`looksForBreaks` and `pastRecoveries` stay in Estela: both depend on its
+sport-family table. `RECOVERY_MAX_SECONDS` now lives here and the FIT reader
+imports it.

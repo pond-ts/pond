@@ -12,9 +12,9 @@
  */
 import type { HeartRateRecovery } from '../types.js';
 import type { FitData } from './fitParser.js';
+import { RECOVERY_MAX_SECONDS } from '../recovery/index.js';
 
-/** Readings further than this after the stop are left out (seconds). */
-export const RECOVERY_MAX_SECONDS = 300;
+export { RECOVERY_MAX_SECONDS };
 
 /** FIT's event number for `recovery_hr`. */
 const RECOVERY_HR_EVENT = 21;

@@ -80,6 +80,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**
+  ([PND-FITBREAKS]). `findBreaks(streams)` finds the stops and walk breaks
+  inside a run (30 s or longer, after a minute mostly running, not the
+  finish) and reads heart rate at 15–120 s into each (`RunBreak`);
+  `slowCutOff` places "slow" between a run/walk run's walking and running
+  speeds. Across runs, `pastBreaks` + `breakTrend` give the typical fall
+  over the 30 days up to each run, adjusted to one starting heart rate.
+  After the stop: `recoveryFromReadings` (heart rate around the end →
+  `HeartRateRecovery`), `recoveryAt`, `recoverySummary`, `twoMinuteDrop`.
+  Ported from Estela; identical output on Estela's real runs (checked
+  there, not committed here). Accepts `null` samples and fixes.
+
 - **`@pond-ts/fit/files`: FIT, GPX and TCX readers** ([PND-FITFILES]).
   `parseFit(bytes)`, `parseGpx(xml)`, `parseTcx(xml)` turn an activity file
   into an `ImportedActivity` ready for `Activity.fromStreams`: streams, laps,
