@@ -125,3 +125,18 @@ export {
   type ChannelProfile,
   type ChannelSample,
 } from './summary/index.js';
+
+export {
+  trackShape,
+  trackStart,
+  isUsableFix,
+  simplifyToPoints,
+  trackLevels,
+  levelFor,
+  encodePolyline,
+  decodePolyline,
+  OUTLINE_POINTS,
+  LEVEL_METRES,
+  type TrackShape,
+  type TrackLevel,
+} from './outline/index.js';

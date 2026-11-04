@@ -78,6 +78,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: track outlines** ([PND-FITOUTLINE]). Small copies of a
+  track for lists, thumbnails and maps: `trackShape(latlng, maxPoints = 100)`
+  (whether it has GPS, where it starts, an encoded outline of at most N
+  points), `simplifyToPoints`, detail levels by distance error
+  (`trackLevels(latlng, [40, 10, 2.5])`, each keeping every recorded point
+  within that many metres) with `levelFor(levels, metresPerPixel)` to pick
+  one, and the encoded polyline format (`encodePolyline` /
+  `decodePolyline`, Google's, 5 decimal places). `isUsableFix` leaves out
+  samples with no fix and the 0,0 some devices write before they find one.
+  Also `trackStart`, `OUTLINE_POINTS`, `LEVEL_METRES` and the `TrackShape` /
+  `TrackLevel` types. From Estela's `packages/core/src/shape`, whose tests
+  it passes.
+
 ### Fixed
 
 - **`live.window()` no longer slows down as the window grows.** A window view
