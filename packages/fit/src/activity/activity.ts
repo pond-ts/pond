@@ -20,9 +20,10 @@ import { Distance, Duration } from '../quantities.js';
 import { sportOf, type Sport } from './sport.js';
 import { toStats, type Stats, type StatsOptions } from './stats.js';
 
-/** Where a section starts and ends, on both axes. */
+/** Where a section starts and ends, on both axes. `elapsed` is null when
+ *  the recording has no timestamps. */
 export interface SectionBounds {
-  elapsed: { from: Duration; to: Duration };
+  elapsed: { from: Duration; to: Duration } | null;
   distance: { from: Distance; to: Distance };
 }
 
@@ -113,10 +114,12 @@ export class Section implements Span {
   /** Where it starts and ends, in elapsed time and in distance. */
   get bounds(): SectionBounds {
     return (this.#bounds ??= {
-      elapsed: {
-        from: Duration.seconds(this.fromSeconds),
-        to: Duration.seconds(this.toSeconds),
-      },
+      elapsed: this.prep.hasTime
+        ? {
+            from: Duration.seconds(this.fromSeconds),
+            to: Duration.seconds(this.toSeconds),
+          }
+        : null,
       distance: {
         from: Distance.meters(metersAtSeconds(this.prep, this.fromSeconds)),
         to: Distance.meters(metersAtSeconds(this.prep, this.toSeconds)),
@@ -319,9 +322,13 @@ export class Activity extends Section {
     return this.#laps;
   }
 
-  /** Any stretch, by elapsed time or by distance from the start. Throws a
-   *  RangeError when its end comes before its start. */
+  /** Any stretch, by elapsed time or by distance from the start, held to
+   *  the recording. Throws a RangeError when its end comes before its start,
+   *  when it lies wholly outside the recording, or when it asks for elapsed
+   *  time from a recording with no timestamps. */
   section(range: SectionRange, label = 'Section'): Section {
+    if ('elapsed' in range && !this.prep.hasTime)
+      throw new RangeError('section: the recording has no timestamps');
     const [from, to] =
       'elapsed' in range
         ? [range.elapsed.from.seconds, range.elapsed.to.seconds]
@@ -331,9 +338,11 @@ export class Activity extends Section {
           ];
     if (!(to >= from))
       throw new RangeError('section: the end comes before the start');
+    if (to < this.fromSeconds || from > this.toSeconds)
+      throw new RangeError('section: outside the recording');
     return new Section(this.prep, 'section', label, {
-      fromSeconds: from,
-      toSeconds: to,
+      fromSeconds: Math.max(from, this.fromSeconds),
+      toSeconds: Math.min(to, this.toSeconds),
     });
   }
 
@@ -348,7 +357,8 @@ export class Activity extends Section {
       const total = cum.length ? cum[cum.length - 1]! - cum[0]! : 0;
       const base = cum.length ? cum[0]! : 0;
       const items: Section[] = [];
-      for (let k = 0; k * step < total; k++) {
+      // a sliver under a millimetre left by rounding is not a split
+      for (let k = 0; k * step < total - 1e-3; k++) {
         const a = base + k * step;
         const b = base + Math.min((k + 1) * step, total);
         items.push(

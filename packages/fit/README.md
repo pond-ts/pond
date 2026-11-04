@@ -31,7 +31,7 @@ run.startedAt; // Date
 
 const stats = run.stats(); // elapsed time basis by default
 stats.distance?.format('mi'); // "6.21 mi"
-stats.time.elapsed.format(); // "55:40"
+stats.time.elapsed?.format(); // "55:40"
 stats.time.moving?.format(); // "52:14"
 stats.heartRate.average?.format(); // "152 bpm"
 run.stats({ time: 'moving' }).pace.average?.format('metric');

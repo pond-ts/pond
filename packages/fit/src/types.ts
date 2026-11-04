@@ -95,7 +95,10 @@ export interface Lap {
   distanceMeters: number;
   /** Wall-clock for the lap (total_elapsed_time). */
   elapsedSeconds: number;
-  /** Timer time, i.e. moving time (total_timer_time). */
+  /** The lap's moving time as the reader estimates it. FIT fills it from
+   *  `total_timer_time` (else elapsed), TCX from elapsed, so today it is
+   *  timer time under another name; {@link timerSeconds} is the file's own
+   *  timer, and the clocks work will untangle the two. */
   movingSeconds: number;
   /** Time the recording timer ran over the lap (FIT `total_timer_time`).
    *  Absent when the file doesn't record it — never filled from elapsed. */

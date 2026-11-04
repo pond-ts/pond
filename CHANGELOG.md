@@ -100,8 +100,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   `usingProfile`, `ProfiledActivity`, `ProfiledSection`, `Sample`,
   `SectionMetrics`. The functional layer they wrapped (`computePower`,
   `powerBestEfforts`, `hrZoneDistribution`, `windowChannels`, …) stays;
-  `analyze({ athlete })` brings the athlete-dependent answers back as
-  methods. Added shorthands `km`, `miles`, `meters`, `seconds`, `minutes`,
+  a planned `analyze({ athlete })` brings the athlete-dependent answers back
+  as methods. With no timestamps, `time.elapsed` is `null` and a section by
+  elapsed time throws; a section is held to the recording. Added shorthands `km`, `miles`, `meters`, `seconds`, `minutes`,
   `hours`, and `sportOf`.
 
 ### Added

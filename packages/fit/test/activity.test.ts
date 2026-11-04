@@ -141,7 +141,7 @@ describe('stats(): one contract', () => {
     const st = a.stats();
     expect(st.basis).toBe('elapsed');
     expect(st.distance!.meters).toBe(2520);
-    expect(st.time.elapsed.seconds).toBe(720);
+    expect(st.time.elapsed!.seconds).toBe(720);
     expect(st.time.moving!.seconds).toBe(720);
     expect(st.time.timer!.seconds).toBe(720);
     expect(st.heartRate.max!.bpm).toBe(160);
@@ -164,7 +164,7 @@ describe('stats(): one contract', () => {
     expect(st.distance!.meters).toBe(raw.distanceMeters);
     expect(st.distance!.meters).toBe(sum.distanceMeters);
     expect(st.time.moving!.seconds).toBe(sum.movingTimeSeconds);
-    expect(st.time.elapsed.seconds).toBe(sum.elapsedTimeSeconds);
+    expect(st.time.elapsed!.seconds).toBe(sum.elapsedTimeSeconds);
     expect(st.heartRate.average!.bpm).toBeCloseTo(raw.channels.hr!.avg!, 9);
   });
 
@@ -191,7 +191,7 @@ describe('clocks', () => {
     const m = a.stats({ time: 'moving' });
     expect(e.basis).toBe('elapsed');
     expect(m.basis).toBe('moving');
-    expect(e.time.elapsed.seconds).toBe(180);
+    expect(e.time.elapsed!.seconds).toBe(180);
     expect(e.time.moving!.seconds).toBe(120);
     // the clocks are the same whatever the basis
     expect(m.time).toEqual(e.time);
@@ -243,6 +243,17 @@ describe('clocks', () => {
     expect(st.pace.average).toBeNull();
     expect(a.stats({ time: 'moving' }).pace.average).toBeNull();
     expect(st.distance!.meters).toBe(20);
+    // no wall clock either: not a made-up zero
+    expect(st.time.elapsed).toBeNull();
+    expect(a.bounds.elapsed).toBeNull();
+    expect(() =>
+      a.section({ elapsed: { from: seconds(0), to: seconds(1) } }),
+    ).toThrow(/no timestamps/);
+    // distance still picks a stretch
+    expect(
+      a.section({ distance: { from: meters(0), to: meters(10) } }).stats()
+        .distance!.meters,
+    ).toBe(10);
   });
 });
 
@@ -273,6 +284,15 @@ describe('section(): any stretch', () => {
     const half = a.section({ distance: { from: meters(150), to: km(0.36) } });
     expect(half.fromSeconds).toBeCloseTo(30, 6);
     expect(half.toSeconds).toBeCloseTo(90, 6);
+  });
+
+  it('held to the recording; wholly outside is an error', () => {
+    const s = a.section({ elapsed: { from: minutes(11), to: minutes(20) } });
+    expect(s.fromSeconds).toBe(660);
+    expect(s.toSeconds).toBe(720);
+    expect(() =>
+      a.section({ elapsed: { from: minutes(13), to: minutes(14) } }),
+    ).toThrow(/outside the recording/);
   });
 
   it('an end before the start is an error', () => {
@@ -327,7 +347,7 @@ describe('laps and splits: collections of sections', () => {
     // closes the minute before, comes from it)
     expect(st.heartRate.average!.bpm).toBeGreaterThan(159);
     expect(st.heartRate.max!.bpm).toBe(160);
-    expect(st.time.elapsed.seconds).toBe(360);
+    expect(st.time.elapsed!.seconds).toBe(360);
     expect(st.time.timer!.seconds).toBe(360);
     // pace is total distance over total time
     expect(st.distance!.meters).toBeCloseTo(1800, 6);
@@ -357,6 +377,20 @@ describe('laps and splits: collections of sections', () => {
     expect(sp.at(2)!.toSeconds).toBe(720);
     expect(a.splits(km(1))).toBe(sp);
     expect(() => a.splits(km(0))).toThrow(RangeError);
+  });
+
+  it('no empty split from rounding at the end', () => {
+    const r = fromSpeeds([0, 500, 500.00001]);
+    const sp = Activity.from(r).splits(km(1));
+    expect(sp.length).toBe(1);
+    expect(sp.at(0)!.stats().distance!.meters).toBeCloseTo(1000, 3);
+  });
+
+  it('a group on the timer basis uses the summed lap timers', () => {
+    const hard = a.laps.filter((l) => kind(l) === 'hard');
+    const t = hard.stats({ time: 'timer' });
+    expect(t.basis).toBe('timer');
+    expect(t.pace.average!.secondsPerKm).toBeCloseTo(200, 6);
   });
 
   it('no distance, no splits', () => {
@@ -427,7 +461,7 @@ describe('readActivity: bytes in, an Activity out', () => {
     const a = readActivity(GPX, { name: 'Mine' });
     expect(a.name).toBe('Mine');
     expect(a.hasRoute).toBe(true);
-    expect(a.stats().time.elapsed.seconds).toBe(30);
+    expect(a.stats().time.elapsed!.seconds).toBe(30);
     // GPX has no timer
     expect(a.stats().time.timer).toBeNull();
     expect(readActivity(new TextEncoder().encode(GPX)).id).toBe(a.id);

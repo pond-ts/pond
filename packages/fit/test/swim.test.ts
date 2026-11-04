@@ -62,7 +62,7 @@ describe('swims', () => {
     expect(computeActivitySummary(act.record).movingTimeSeconds).toBe(1600);
     expect(act.record.swim?.pool).toEqual({ lengthMeters: 25, unit: 'm' });
     // elapsed and distance still come from the samples
-    expect(st.time.elapsed.seconds).toBe(2400);
+    expect(st.time.elapsed!.seconds).toBe(2400);
     expect(st.distance!.meters).toBe(1000);
     // and the moving pace uses the swim time
     expect(act.stats({ time: 'moving' }).pace.average!.secondsPerKm).toBe(1600);
@@ -96,6 +96,9 @@ describe('swims', () => {
       elapsed: { from: Duration.seconds(0), to: Duration.seconds(2400) },
     });
     expect(whole.stats().time.moving!.seconds).toBe(0);
+    // and so do the whole activity's channel numbers on a moving basis:
+    // only the time and pace use the swim time (until the swimming clock)
+    expect(act.stats({ time: 'moving' }).speed.max).toBeNull();
   });
 
   it('swimMovingSeconds adds up the laps that covered distance', () => {

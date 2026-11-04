@@ -4,6 +4,17 @@ import { parseGpx } from './gpx.js';
 import { parseTcx } from './tcx.js';
 import type { ReadOptions } from './options.js';
 
+/** UTF-8 bytes as text. `TextDecoder` is in every browser and in Node, but
+ *  not in the ES lib the package compiles against, so it is looked up. */
+function decode(b: ArrayBuffer | Uint8Array): string {
+  const TD = (
+    globalThis as unknown as {
+      TextDecoder: new () => { decode(b: ArrayBuffer | Uint8Array): string };
+    }
+  ).TextDecoder;
+  return new TD().decode(b);
+}
+
 /** Which format some bytes are: FIT by its header (`.FIT` at byte 8), GPX or
  *  TCX by their root element. `null` when it's none of them. */
 export function activityFormat(
@@ -20,9 +31,10 @@ export function activityFormat(
     )
       return 'fit';
   }
-  const head = (
-    typeof input === 'string' ? input : new TextDecoder().decode(input)
-  ).slice(0, 4096);
+  const head = (typeof input === 'string' ? input : decode(input)).slice(
+    0,
+    4096,
+  );
   if (/<gpx[\s>]/.test(head)) return 'gpx';
   if (/<TrainingCenterDatabase[\s>]/.test(head)) return 'tcx';
   return null;
@@ -42,8 +54,7 @@ export function readActivity(
     return Activity.from(parseFit(input as ArrayBuffer | Uint8Array, options));
   if (format === null)
     throw new Error('readActivity: not a FIT, GPX or TCX file');
-  const text =
-    typeof input === 'string' ? input : new TextDecoder().decode(input);
+  const text = typeof input === 'string' ? input : decode(input);
   return Activity.from(
     format === 'gpx' ? parseGpx(text, options) : parseTcx(text, options),
   );

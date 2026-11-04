@@ -43,7 +43,8 @@ export interface StatsOptions {
 
 /** The three clocks, whatever the basis. */
 export interface Clocks {
-  elapsed: Duration;
+  /** Wall-clock time; null with no timestamps in the recording. */
+  elapsed: Duration | null;
   /** By the moving rule; null with no timestamps to judge by. */
   moving: Duration | null;
   /** As the file records it; null when it doesn't. */
@@ -98,7 +99,9 @@ export interface StatsContext {
   /** The recording has a distance (GPS or a distance channel). */
   hasDistance: boolean;
   /** Moving time known better than the samples tell it (a swim watch's own
-   *  swim time for the whole activity). */
+   *  swim time for the whole activity). Known limit until the swimming
+   *  clock lands: the channel numbers on a moving basis still come from the
+   *  samples judged moving. */
   movingSeconds?: number;
 }
 
@@ -128,13 +131,15 @@ export function toStats(
   const movingSeconds = ctx.movingSeconds ?? raw.movingSeconds;
   const movingKnown = hasTime || ctx.movingSeconds !== undefined;
   const time: Clocks = {
-    elapsed: Duration.seconds(raw.elapsedSeconds),
+    elapsed: hasTime ? Duration.seconds(raw.elapsedSeconds) : null,
     moving: movingKnown ? Duration.seconds(movingSeconds) : null,
     timer: q(timerSeconds, Duration.seconds),
   };
   const basisSeconds =
     basis === 'elapsed'
-      ? raw.elapsedSeconds
+      ? hasTime
+        ? raw.elapsedSeconds
+        : undefined
       : basis === 'moving'
         ? movingKnown
           ? movingSeconds
