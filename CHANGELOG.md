@@ -80,6 +80,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: cutting a recording** ([PND-FITCUT]).
+  `editRecording(imported, edit, { keepClock })` crops an `ImportedActivity`
+  to the part you keep (`from` / `to`, seconds on the recording's clock),
+  splits laps (`splitLapsAt`) and joins a lap to the one before
+  (`joinLapsAt`). The cropped streams start again at 0 s and 0 m, the start
+  time (UTC and local) moves on, and the totals are the recording's own shared
+  out by how much the kept part holds. A lap the edit doesn't touch stays as
+  recorded; a split, joined or cropped lap shares out its distance, time,
+  work, calories and climb, with heart rate and power from the samples. A
+  swim keeps the lengths in the kept part and its swim time is worked out
+  again from the new laps. `keepClock` changes only the laps, for an editor
+  drawing them over the whole recording. Also `isEmptyEdit`,
+  `recordingSeconds`, `lapStartSeconds`, `editedLapStarts` and the
+  `RecordingEdit` type. From Estela's timeline editor
+  (`packages/core/src/version`), whose tests it passes.
 - **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
   (`SwimData`: the swim time, the pool length and unit, and every length as a
   `SwimLength` with its strokes and stroke) and `activity.swim`. When an import

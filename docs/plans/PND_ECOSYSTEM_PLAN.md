@@ -144,6 +144,19 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
 
+## [PND-FITCUT] — cutting a recording (part of [PND-FITESTELA])
+
+**Built.** `editRecording` (crop, split laps, join laps) with `RecordingEdit`,
+`isEmptyEdit`, `recordingSeconds`, `lapStartSeconds`, `editedLapStarts`, in
+`packages/fit/src/edit`. Lifted from Estela's `applyVersion`
+(`packages/core/src/version/index.ts`); Estela keeps what is its own: splitting
+an activity into several, the totals it stores with an edit, reading a stored
+edit back, and moving stretches between the two clocks. New here: cropping a
+swim keeps the lengths in the kept part and works the swim time out again from
+the new laps (the note under [PND-FITSWIM]). Not done: the edit works on the
+imported activity, not on an `Activity`; a split that falls inside a pool
+length is not moved to the length's edge.
+
 ## [PND-FITSWIM] — swims (part of [PND-FITESTELA])
 
 **Shipped.** `ImportedActivity.swim` (`SwimData`, `SwimLength`), `activity.swim`,
@@ -152,5 +165,5 @@ import carries one (finite and above 0), else the sample estimate. Lifted from
 Estela's `packages/core/src/swim/index.ts` and the general half of `fitSwim`
 (`packages/ingest/src/fit.ts`). Reading the pool and lengths from a FIT file
 comes with the readers. Not done: a range or lap inside a swim still takes its
-moving time from samples; per-length sections. Cropping a swim (the cutting
-step) will have to share the swim time out too.
+moving time from samples; per-length sections. Cropping a swim is done in
+[PND-FITCUT].
