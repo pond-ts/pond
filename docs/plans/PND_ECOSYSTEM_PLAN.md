@@ -125,6 +125,16 @@ line (Estela read `prepared.cols.lat/lng` for it). Peter's direction the same
 day: `@pond-ts/fit` should be the API version of Estela's activity analysis;
 next in that wave are track outlines, stops and walk breaks with heart rate
 recovery, and lap groups by type and name.
+## [PND-FITOUTLINE] — track outlines (part of [PND-FITESTELA])
+
+**Built.** Estela's `packages/core/src/shape` moved as it was (same algorithm,
+same tests), so outlines Estela has already stored stay valid: an outline of
+at most N points (thin by index to 2,000, then Ramer–Douglas–Peucker with a
+searched tolerance), detail levels by metres, the encoded polyline format,
+and the usable-fix rule (finite, on the globe, not 0,0). The summary's own
+`polyline` keeps using the private metres-based `simplify` in the geo module,
+so summary output is unchanged; folding the two together is left for later.
+Estela keeps the 100-point size choice and storing the shape on its docs.
 
 ## [PND-FITPUB] — `@pond-ts/fit` first-publish pass
 
