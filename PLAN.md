@@ -1306,6 +1306,12 @@ depend on. Plan:
   which of `simplify`, `elevationProfile`, `profileByDistance` and
   `rollingSpread` get a public path (all four are in `src/geo/` and none is
   exported today), the units-preference home, then hand estela the swap.
+- **[PND-FITAPI]** — the `@pond-ts/fit` API redesign
+  ([docs/rfcs/fit-api.md](docs/rfcs/fit-api.md)): `readActivity` returning an
+  `Activity`, one `stats()` contract over any `Section`, explicit clocks
+  (elapsed / timer / moving / swimming), and a typed pool-swim model. The next
+  release waits on these four (pjm17971, 2026-11-04); `analyze`, best efforts
+  by metric, `edit` in durations and `views` follow.
 
 ---
 

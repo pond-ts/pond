@@ -143,3 +143,20 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 [docs/rfcs/geo.md](../rfcs/geo.md) §10–§13, estela's `docs/pond-friction.md`,
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
+
+## [PND-FITAPI] — records, sections, analysis
+
+Design direction from pjm17971 (2026-11-04), recorded with a mapping to the
+code in [docs/rfcs/fit-api.md](../rfcs/fit-api.md). Written in reply to a
+walk-through of the API after the Estela extraction wave, which showed the
+newer pieces (stats, breaks, edits, outlines, swims) arriving as free
+functions rather than on the façade. Rather than adding them all as `Activity`
+methods (the walk-through's proposal), the direction splits the surface:
+`Activity` (the recording) and `Section` (any stretch) share one `stats()`
+contract, `Sections` aggregate laps and groups, `Analysis` applies athlete
+settings, and presentation moves to `@pond-ts/fit/views`.
+
+Next release: `readActivity`, `stats()` + sections, explicit clocks, typed
+pool swims. Decision taken with it: the current `Activity` methods are
+replaced, not deprecated beside the new ones (pre-1.0; Estela is the only
+known user and is switching). Open: moving rules per sport (RFC §12).
