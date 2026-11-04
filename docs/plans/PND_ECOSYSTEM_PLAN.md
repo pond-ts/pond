@@ -198,8 +198,12 @@ stops, two run/walk runs), checked locally against Estela's copy and not
 committed (personal recordings). Pond's tests use made-up runs, including a
 run/walk with wavering walking pace in place of Estela's canal fixture.
 
-Changes from Estela's copy: `null` samples and fixes are accepted (a missing
-distance carries the last one; a missing fix adds no distance); GPS distance
+Changes from Estela's copy: `null` samples and fixes are accepted, and a
+sample with no distance (or no fix) is passed over, so a stretch of them is
+treated like a watch pause (unknown past 10 s) instead of reading as a stop
+(Estela's NaN case drew nothing; the first port read a 45 s gap as a 43 s
+stop, caught in review). `BREAKS_VERSION` is 3 so Estela finds stored breaks
+again. `breakTrend` sorts its input. GPS distance
 uses pond's `haversineMeters` (Earth radius 6,371,008.8 m vs Estela's
 6,371,000, about 1 part in a million). The Apple Watch record reader
 (`recoveryFromWatch`) stays in Estela since its record format is Estela's;

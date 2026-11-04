@@ -24,7 +24,7 @@ export type BreakKind = 'stop' | 'walk';
 export const BREAK_OFFSETS = [15, 30, 45, 60, 90, 120] as const;
 
 /** Bump when {@link findBreaks} changes, so stored breaks are found again. */
-export const BREAKS_VERSION = 2;
+export const BREAKS_VERSION = 3;
 
 export interface RunBreak {
   /** Seconds from the activity's start when the slowdown began (found from
@@ -99,35 +99,42 @@ const isHr = (b: number | null | undefined): b is number =>
 const fix = (p: GeoPoint | null | undefined): p is GeoPoint =>
   !!p && Number.isFinite(p[0]) && Number.isFinite(p[1]);
 
-/** Distance from the start at each sample: the recorded distance, else
- *  measured along the GPS line. A missing distance takes the one before it
- *  (0 before any); a sample with no fix adds nothing, and the next fix is
- *  measured from the last one. */
-function distances(s: BreakStreams, n: number): number[] | undefined {
+/** Distance from the start at each sample (the recorded distance, else
+ *  measured along the GPS line), and whether it is known there (a missing
+ *  distance or fix is not; the next known one takes up the distance
+ *  covered). */
+function distances(
+  s: BreakStreams,
+  n: number,
+): { d: number[]; ok: boolean[] } | undefined {
   const rec = s.distanceMeters;
+  const d: number[] = [];
+  const ok: boolean[] = [];
   if (rec && rec.length === n) {
-    const out: number[] = [];
     let prev = 0;
     for (const v of rec) {
-      if (typeof v === 'number' && Number.isFinite(v)) prev = v;
-      out.push(prev);
+      const has = typeof v === 'number' && Number.isFinite(v);
+      if (has) prev = v;
+      d.push(prev);
+      ok.push(has);
     }
-    return out;
+    return { d, ok };
   }
   const line = s.latlng;
   if (!line || line.length !== n) return undefined;
-  const out: number[] = [0];
-  let last = fix(line[0]) ? line[0] : undefined;
-  for (let i = 1; i < n; i++) {
+  let last: GeoPoint | undefined;
+  let total = 0;
+  for (let i = 0; i < n; i++) {
     const p = line[i];
-    let step = 0;
-    if (fix(p)) {
-      if (last) step = haversineMeters(last[0], last[1], p[0], p[1]);
+    const has = fix(p);
+    if (has) {
+      if (last) total += haversineMeters(last[0], last[1], p[0], p[1]);
       last = p;
     }
-    out.push(out[i - 1]! + step);
+    d.push(total);
+    ok.push(has);
   }
-  return out;
+  return { d, ok };
 }
 
 function median(xs: readonly number[]): number {
@@ -158,12 +165,14 @@ const mean = (xs: readonly number[]) =>
  * the walking speeds do (and the slower group is under half the seconds and
  * at walking speed). Otherwise slow is under three quarters of the usual
  * speed. `usual` is the running group's middle speed when there are two
- * groups, else the middle speed of all moving seconds.
+ * groups, else the middle speed of all moving seconds. Both are 0 for no
+ * speeds.
  */
 export function slowCutOff(moving: readonly number[]): {
   usual: number;
   cut: number;
 } {
+  if (moving.length === 0) return { usual: 0, cut: 0 };
   const usual = median(moving);
   const plain = { usual, cut: SLOW_SHARE * usual };
   const s = [...moving].sort((a, b) => a - b);
@@ -216,26 +225,39 @@ export function findBreaks(s: BreakStreams): RunBreak[] {
   const t = s.timeSeconds;
   const hr = s.heartrate;
   if (!t || !hr || t.length < 2 || hr.length !== t.length) return [];
-  const d = distances(s, t.length);
-  if (!d) return [];
+  const measured = distances(s, t.length);
+  if (!measured) return [];
+  const { d, ok } = measured;
   if (!hr.some(isHr)) return [];
 
   // One value a second: distance between samples is drawn straight, and a
-  // second inside a pause is marked unknown.
+  // second inside a pause is marked unknown. A sample with no distance (or
+  // no fix) is passed over, so a stretch of them counts as a pause: unknown
+  // when it runs past 10 s, else drawn straight across.
+  const kt: number[] = [];
+  const kd: number[] = [];
+  for (let i = 0; i < t.length; i++)
+    if (ok[i]) {
+      kt.push(t[i]!);
+      kd.push(d[i]!);
+    }
+  if (kt.length < 2) return [];
   const t0 = t[0]!;
   const len = Math.floor(t[t.length - 1]! - t0) + 1;
   if (len < RUN_BEFORE + MIN_BREAK) return [];
   const dist = new Float64Array(len);
   const known = new Uint8Array(len);
+  const kLast = kt.length - 1;
   let j = 0;
   for (let sec = 0; sec < len; sec++) {
     const at = t0 + sec;
-    while (j < t.length - 2 && t[j + 1]! <= at) j++;
-    const ta = t[j]!;
-    const tb = t[j + 1]!;
+    while (j < kLast - 1 && kt[j + 1]! <= at) j++;
+    const ta = kt[j]!;
+    const tb = kt[j + 1]!;
     const f = tb > ta ? Math.min(1, Math.max(0, (at - ta) / (tb - ta))) : 0;
-    dist[sec] = d[j]! + f * (d[j + 1]! - d[j]!);
-    known[sec] = tb - ta <= MAX_SAMPLE_GAP ? 1 : 0;
+    dist[sec] = kd[j]! + f * (kd[j + 1]! - kd[j]!);
+    known[sec] =
+      at >= kt[0]! && at <= kt[kLast]! && tb - ta <= MAX_SAMPLE_GAP ? 1 : 0;
   }
   const speed = new Float64Array(len);
   for (let sec = 0; sec < len; sec++) {
@@ -433,7 +455,12 @@ export function breakTrend(
   kind: BreakKind,
   refBpm = trendRefBpm(breaks.filter((b) => b.kind === kind)),
 ): BreakTrend | undefined {
-  const xs = breaks.filter((b) => b.kind === kind);
+  // Oldest run first, each run's breaks together (any order in).
+  const xs = breaks
+    .filter((b) => b.kind === kind)
+    .map((b) => ({ b, ms: Date.parse(b.startUtc) }))
+    .sort((x, y) => x.ms - y.ms || x.b.activityId.localeCompare(y.b.activityId))
+    .map((x) => x.b);
   if (xs.length < TREND_MIN_BREAKS) return undefined;
   const fitted = fitSlope(xs);
   const slope = fitted ?? 0;

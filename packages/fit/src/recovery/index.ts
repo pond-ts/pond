@@ -47,7 +47,7 @@ export function recoveryAt(
  * `readings` are `[time, bpm]` on any clock, `endTime` is the stop on the
  * same clock. The last reading up to 30 seconds before the stop is the heart
  * rate at the stop; readings up to 5 minutes after are the line (seconds
- * rounded). Values outside 25–250 bpm are left out. Undefined when there is
+ * rounded, at least 1). Values outside 25–250 bpm are left out. Undefined when there is
  * no reading after the stop.
  */
 export function recoveryFromReadings(
@@ -63,7 +63,7 @@ export function recoveryFromReadings(
     if (sec <= 0) {
       if (sec >= -AT_STOP_SECONDS) atStopBpm = bpm;
     } else if (sec <= RECOVERY_MAX_SECONDS)
-      after.push({ sec: Math.round(sec), bpm });
+      after.push({ sec: Math.max(1, Math.round(sec)), bpm });
   }
   if (after.length === 0) return undefined;
   return { ...(atStopBpm !== undefined ? { atStopBpm } : {}), after };

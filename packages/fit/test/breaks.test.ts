@@ -66,6 +66,28 @@ describe('findBreaks', () => {
     expect(findBreaks({ ...r, heartrate: nullHr })).toHaveLength(1);
   });
 
+  it('does not take a stretch with no distance for a stop', () => {
+    // A steady run with 45 s of distance missing: unknown, not standing.
+    const r = run([[900, 3, 160]], { bpm: 160 });
+    const blank = <T>(v: T) =>
+      r.distanceMeters.map((d, i) => (i >= 400 && i < 445 ? v : d));
+    expect(findBreaks({ ...r, distanceMeters: blank(null) })).toEqual([]);
+    expect(findBreaks({ ...r, distanceMeters: blank(NaN) })).toEqual([]);
+    // the same with the GPS fixes missing instead
+    const latlng = r.distanceMeters.map((d, i) =>
+      i >= 400 && i < 445
+        ? null
+        : ([37 + d / 111195, -122] as [number, number]),
+    );
+    expect(
+      findBreaks({
+        timeSeconds: r.timeSeconds,
+        heartrate: r.heartrate,
+        latlng,
+      }),
+    ).toEqual([]);
+  });
+
   it('skips samples with no GPS fix when measuring along the line', () => {
     const r = run([
       [300, 3, 160],
@@ -257,6 +279,7 @@ describe('slowCutOff', () => {
     expect(slowCutOff([...many(1.5, 10), ...many(2.4, 1000)]).cut).toBeCloseTo(
       0.75 * 2.48,
     );
+    expect(slowCutOff([])).toEqual({ usual: 0, cut: 0 });
     // Too few seconds to tell.
     expect(slowCutOff([2, 3]).cut).toBeCloseTo(0.75 * 2.5);
   });
@@ -308,6 +331,22 @@ describe('pastBreaks', () => {
     ]);
     expect(pastBreaks(runs, 45)).toEqual([]);
     expect(BREAK_OFFSETS[1]).toBe(30);
+  });
+});
+
+describe('breakTrend input order', () => {
+  it('sorts the breaks itself', () => {
+    const day = (n: number) =>
+      new Date(Date.UTC(2026, 0, 1) + n * 86_400_000).toISOString();
+    const xs: PastBreak[] = [0, 1, 2, 3, 4, 40, 41, 42, 43, 44].map((n) => ({
+      activityId: `r${n}`,
+      startUtc: day(n),
+      kind: 'stop',
+      startBpm: 140,
+      bpm: n < 40 ? 130 : 110,
+    }));
+    const shuffled = [...xs].reverse();
+    expect(breakTrend(shuffled, 'stop')).toEqual(breakTrend(xs, 'stop'));
   });
 });
 
