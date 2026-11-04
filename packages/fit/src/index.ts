@@ -125,3 +125,17 @@ export {
   type ChannelProfile,
   type ChannelSample,
 } from './summary/index.js';
+export {
+  groupLaps,
+  lapsGrouped,
+  summarizeLaps,
+  lapSpeed,
+  lapExtremes,
+  UNTYPED,
+} from './laps/groups.js';
+export type {
+  GroupLap,
+  LapGroup,
+  LapAverages,
+  LapsSummary,
+} from './laps/groups.js';
