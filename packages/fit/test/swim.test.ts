@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Activity } from '../src/activity/index.js';
 import { swimMovingSeconds } from '../src/swim.js';
+import { computeActivitySummary } from '../src/summary/index.js';
+import { Duration } from '../src/quantities.js';
 import type { ImportedActivity, Lap } from '../src/types.js';
 
 const META = {
@@ -46,7 +48,7 @@ function poolSwim(swim?: ImportedActivity['swim']): Activity {
 }
 
 describe('swims', () => {
-  it('from the samples alone a pool swim reads as standing still', () => {
+  it('the problem: from the samples alone a pool swim reads as standing still', () => {
     expect(poolSwim().movingTime().seconds).toBe(0);
   });
 
@@ -66,6 +68,25 @@ describe('swims', () => {
   it('a zero or missing swim time falls back to the samples', () => {
     expect(poolSwim({ movingSeconds: 0 }).movingTime().seconds).toBe(0);
     expect(poolSwim({ movingSeconds: NaN }).movingTime().seconds).toBe(0);
+  });
+
+  it('a swim time longer than the clock ran is held to the elapsed time', () => {
+    expect(poolSwim({ movingSeconds: 9999 }).movingTime().seconds).toBe(2400);
+  });
+
+  it('a swim with no samples still reports the swim time', () => {
+    const s = computeActivitySummary({
+      activity: META,
+      streams: { latlng: [] },
+      swim: { movingSeconds: 1500 },
+    });
+    expect(s.movingTimeSeconds).toBe(1500);
+  });
+
+  it('known limit: a range inside a swim still reads moving time from samples', () => {
+    const act = poolSwim({ movingSeconds: 1600 });
+    const whole = act.range(Duration.seconds(0), Duration.seconds(2400));
+    expect(whole.movingTime().seconds).toBe(0);
   });
 
   it('swimMovingSeconds adds up the laps that covered distance', () => {

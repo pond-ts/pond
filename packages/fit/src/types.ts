@@ -121,13 +121,18 @@ export interface SwimLength {
 /**
  * What a swim watch records beyond the streams.
  *
- * `movingSeconds` is the time spent swimming: the summed timer time of the
- * laps that covered distance, leaving out the rests between sets (`swimMovingSeconds`). When present it is the activity's moving time.
- * Working it out from the samples instead (as for a run or ride) comes out
- * far too low on a pool swim, which logs one sample per length: a length
- * timed together with its rest at the wall reads as too slow to be moving.
- * Checked against Strava on 20 real FIT swims (pool and open water): the lap
- * figure matched Strava's moving time to within a second on all of them.
+ * `movingSeconds` is the time spent swimming. When present (finite and above
+ * 0) the summary takes it as the activity's moving time, held to the elapsed
+ * time, without checking it further. Readers fill it with the summed timer
+ * time of the laps that covered distance (`swimMovingSeconds`), which leaves
+ * out the rests between sets; on 20 real FIT swims (pool and open water) that
+ * matched Strava's moving time to within a second. Working it out from the
+ * samples instead (as for a run or ride) comes out far too low on a pool
+ * swim, which logs one sample per length: a length timed together with its
+ * rest at the wall reads as too slow to be moving.
+ *
+ * Only the whole-activity moving time uses it: a lap, split or `range()`
+ * inside a swim still works its moving time out from the samples.
  */
 export interface SwimData {
   movingSeconds: number;

@@ -60,7 +60,9 @@ export interface ActivitySummary {
   distanceMeters: number;
   /** Time the clock ran (last sample − first sample). */
   elapsedTimeSeconds: number;
-  /** Time actually moving (speed above the stopped threshold). */
+  /** Time actually moving: the time between samples at or above
+   *  `MOVING_SPEED_MPS`, or a swim watch's swim time when the import carries
+   *  one (`ImportedActivity.swim`). */
   movingTimeSeconds: number;
   elevationGainMeters: number;
   elevationLossMeters: number;
@@ -498,10 +500,18 @@ function neverDecreases(distance: Float64Array | undefined): boolean {
   return true;
 }
 
-/** The swim watch's swim time, when the import carries a usable one. */
-function swimMoving(imported: ImportedActivity): number | undefined {
+/** The swim watch's swim time, when the import carries a usable one (finite
+ *  and above 0), held to `elapsedSeconds` when that is known: moving time
+ *  can't be longer than the clock ran. */
+function swimMoving(
+  imported: ImportedActivity,
+  elapsedSeconds?: number,
+): number | undefined {
   const v = imported.swim?.movingSeconds;
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return undefined;
+  return elapsedSeconds != null && elapsedSeconds > 0
+    ? Math.min(v, elapsedSeconds)
+    : v;
 }
 
 /** Decode an activity's streams into the shared per-sample arrays. ONE path now:
@@ -724,14 +734,16 @@ export function summaryFromPrepared(
     speed: prep.hasTime ? prep.speed : undefined,
   };
 
+  const elapsed = n > 1 ? cols.timeSec[n - 1]! - cols.timeSec[0]! : 0;
   return {
     startTimeUtc: activity.startTimeUtc,
     pointCount: n,
     distanceMeters: cum[n - 1] ?? 0,
-    elapsedTimeSeconds: n > 1 ? cols.timeSec[n - 1]! - cols.timeSec[0]! : 0,
+    elapsedTimeSeconds: elapsed,
     // A swim watch's own swim time beats the estimate from samples (SwimData).
     movingTimeSeconds:
-      swimMoving(imported) ?? geo.movingTimeSeconds(step, cols.timeSec),
+      swimMoving(imported, elapsed) ??
+      geo.movingTimeSeconds(step, cols.timeSec),
     elevationGainMeters: gainMeters,
     elevationLossMeters: lossMeters,
     bounds: prep.hasTrack && track ? geo.boundsViaPond(track) : null,
@@ -773,7 +785,7 @@ export function computeActivitySummary(
       pointCount: 0,
       distanceMeters: 0,
       elapsedTimeSeconds: 0,
-      movingTimeSeconds: 0,
+      movingTimeSeconds: swimMoving(imported) ?? 0,
       elevationGainMeters: 0,
       elevationLossMeters: 0,
       bounds: null,
