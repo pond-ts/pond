@@ -794,3 +794,47 @@ with these nouns from the start. `segments` stays the bottom layer (each a
 recorded laps with their source marked, and `pool.length` is a `Distance` with
 a course label. Sets, workouts, send-offs and repair follow in the swimming
 release.
+
+## 17. Editing: Estela's timeline editor as the reference
+
+**Authorship:** prompt by pjm17971 (2026-11-04: "estela's activity editor,
+crop, split, etc."). Comparison with the code by the pond-ts library agent
+(Claude), from Estela's `packages/core/src/version/index.ts` and pond's
+`packages/fit/src/edit/index.ts` (#886).
+
+§10 sets the shape (`run.edit({...})`, immutable, positions on the original
+recording). Estela's editor is the working version of it, used on real
+activities since 2026-10-22, and does more than #886 ported:
+
+| Estela edit (`ActivityVersion`)                             | What it does                                                                                                                     | In pond                                                              |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `from` / `to`                                               | Crop either end                                                                                                                  | Yes: `editRecording({ from, to })`                                   |
+| `lapCuts`                                                   | Split a lap at a second                                                                                                          | Yes: `splitLapsAt`                                                   |
+| `lapJoins`                                                  | Join a recorded lap to the one before                                                                                            | Yes: `joinLapsAt`                                                    |
+| `splits` (`firstPart`, `versionParts`, `partVersion`)       | Split one recording into several activities (a run, then the walk home); each part gets its own crop and the lap edits inside it | No                                                                   |
+| `versionChanges`                                            | The edit as a list (crop start, crop end, split, join, part) for showing what changed                                            | No                                                                   |
+| `stretchOnVersion`, `stretchOnRecording`, `recordingSecond` | Move a stretch (a custom segment, a note) between the recording's clock and the edited one's                                     | No (the edited record's clock starts at the crop; nothing maps back) |
+| `totals`                                                    | Totals saved with the edit for lists that don't load the recording                                                               | No, and shouldn't be: an app cache, not library                      |
+
+Proposed additions to §10, all in durations on the original recording:
+
+```ts
+const fixed = run.edit({
+  crop: { from: minutes(2), to: minutes(58) },
+  laps: { splitAt: [minutes(10)], removeBoundaryAt: [minutes(30)] },
+  parts: { splitAt: [minutes(52)] }, // the walk home becomes its own activity
+});
+
+fixed.parts; // Activity[]: the first is `fixed` itself
+fixed.edit; // the description, kept, in the original's terms
+fixed.changes; // [{ kind: 'crop-start', at }, …] for a "what changed" list
+fixed.original; // the untouched recording
+fixed.toOriginal(section); // a stretch on the edited clock, on the original's
+fixed.fromOriginal({ from, to }); // a saved stretch on the edited clock, or null if cropped off
+```
+
+The clock mapping matters because apps keep their own marks (custom segments,
+notes, lap labels) on the original recording so they survive re-editing;
+Estela needed exactly these three functions. The swimming repair edits in
+§16.8 (missed length, pool size, stroke label) join the same `edit()` as
+further kinds, with the same rule that an edit never invents a measurement.
