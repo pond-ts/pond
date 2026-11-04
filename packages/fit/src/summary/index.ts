@@ -24,7 +24,8 @@ export type ChannelKey =
  * One resampled point carrying BOTH axes — distance and elapsed time — so the
  * chart can switch x-axis without recomputing. Buckets are even in distance;
  * `timeSeconds` is the elapsed time reached at that distance, so the time axis
- * spans 0 → total elapsed. `value` is native units (m, m/s, bpm, W, rpm, °C).
+ * spans 0 → total elapsed; it is always finite (a bucket with no sample takes
+ * the time before it, or the first time). `value` is native units (m, m/s, bpm, W, rpm, °C).
  */
 export interface ChannelSample {
   distanceMeters: number;
@@ -231,6 +232,31 @@ function bucketCoast(
 }
 
 /**
+ * The time reached at each distance bucket, never NaN: a bucket with no
+ * sample (before the first one, as in a pool swim whose first record sits at
+ * the end of the first length, or inside a gap) takes the time before it, or
+ * the first known time when it comes before any, so the time axis never runs
+ * backwards. 0 throughout when no bucket has a time.
+ */
+function finiteTimes(timeProf: ProfileSample[], n: number): number[] {
+  let prev = 0;
+  for (let i = 0; i < n; i++) {
+    const v = timeProf[i]?.value;
+    if (v !== undefined && Number.isFinite(v)) {
+      prev = v;
+      break;
+    }
+  }
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const v = timeProf[i]?.value;
+    if (v !== undefined && Number.isFinite(v)) prev = v;
+    out[i] = prev;
+  }
+  return out;
+}
+
+/**
  * Zip a distance-bucketed profile with the matching time axis (`timeProf`, same
  * bucketing) and the rolling variance spread into a ChannelProfile. The band
  * edges come from `spread` (a fixed-window percentile of the raw samples), NOT
@@ -245,13 +271,14 @@ function zipProfile(
   spread: geo.Spread[],
   coast: boolean[],
 ): ChannelProfile {
+  const times = finiteTimes(timeProf, prof.length);
   return {
     key,
     points: prof.map((p, i) => {
       const isCoast = coast[i] ?? false;
       return {
         distanceMeters: p.distanceMeters,
-        timeSeconds: timeProf[i]?.value ?? 0,
+        timeSeconds: times[i]!,
         value: isCoast ? NaN : p.value,
         bandLo: isCoast ? NaN : (spread[i]?.bandLo ?? NaN),
         bandHi: isCoast ? NaN : (spread[i]?.bandHi ?? NaN),
@@ -776,4 +803,20 @@ export function computeActivitySummary(
     };
   }
   return summaryFromPrepared(prepareActivity(imported), options);
+}
+
+/**
+ * The line to draw for an activity, at full resolution: its fixes in order
+ * (samples with no fix left out), except an open water swim's, whose raw
+ * fixes zigzag; that one gets the cleaned line the summary draws with. Empty
+ * for an activity with no GPS.
+ */
+export function trackLine(prep: PreparedActivity): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (!prep.hasTrack) return out;
+  const { lat, lng } = prep.cols;
+  for (let i = 0; i < lat.length; i++)
+    if (Number.isFinite(lat[i]!) && Number.isFinite(lng[i]!))
+      out.push([lat[i]!, lng[i]!]);
+  return out;
 }

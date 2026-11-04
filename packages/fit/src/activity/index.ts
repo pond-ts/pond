@@ -23,6 +23,7 @@ import {
   prepareActivity,
   summaryFromPrepared,
   windowChannels,
+  trackLine,
   type PreparedActivity,
   type ActivitySummary,
   type ActivitySummaryOptions,
@@ -309,6 +310,11 @@ export class Activity {
    *  the functional path (e.g. the chart) while they migrate to the façade. */
   prepared(): PreparedActivity {
     return this.prep;
+  }
+  /** The line to draw, at full resolution: the fixes, or an open water
+   *  swim's cleaned line (see {@link trackLine}). */
+  trackLine(): Array<[number, number]> {
+    return trackLine(this.prep);
   }
   /** The full journey summary (totals, channels, polyline, splits, laps). */
   summary(options: ActivitySummaryOptions = {}): ActivitySummary {

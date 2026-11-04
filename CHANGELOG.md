@@ -78,7 +78,25 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: `activity.trackLine()` / `trackLine(prepared)`**
+  ([PND-FITCLEAN]). The line to draw at full resolution: the fixes in order,
+  or an open water swim's cleaned line (the one the summary's map line is
+  drawn from). Consumers had been reading the prepared columns to get it.
+
 ### Fixed
+
+- **`@pond-ts/fit`: channel times are never `NaN`** ([PND-FITCLEAN]). A
+  distance bucket with no sample (before the first sample, as in a pool swim
+  whose first record is at the end of the first length) had a `NaN`
+  `timeSeconds`, which left a hole at the start of the time axis. It now
+  takes the time before it, or the first time, so the axis never runs
+  backwards. Applies to `summary().channels` and `windowChannels`.
+- **`@pond-ts/fit`: a missing sample written as `null` is documented and
+  tested as a gap**, the same as `NaN` (an activity read back from JSON has
+  `null`, since JSON has no `NaN`). It already read that way; nothing
+  changes but the guarantee.
 
 - **`live.window()` no longer slows down as the window grows.** A window view
   (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
