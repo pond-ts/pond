@@ -326,6 +326,16 @@ export function totalDistanceMeters(
   return total;
 }
 
+/** Elevation changes smaller than this (metres) are sensor jitter, not climb:
+ *  the default threshold of {@link elevationGainLoss}. */
+export const CLIMB_THRESHOLD_METERS = 3;
+
+/** At or above this speed (m/s, ≈ 1.8 km/h) the time between two samples is
+ *  moving; below it you're stopped or drifting. The default threshold of
+ *  {@link movingTimeSeconds}, and the rule section stats use for their moving
+ *  numbers. */
+export const MOVING_SPEED_MPS = 0.5;
+
 /**
  * Cumulative elevation gain/loss with a hysteresis threshold to reject the
  * metre-scale jitter in barometric/GPS elevation. We only commit a move once it
@@ -335,7 +345,7 @@ export function totalDistanceMeters(
  */
 export function elevationGainLoss(
   ele: Float64Array,
-  thresholdMeters = 3,
+  thresholdMeters = CLIMB_THRESHOLD_METERS,
 ): { gainMeters: number; lossMeters: number } {
   let gain = 0;
   let loss = 0;
@@ -361,13 +371,13 @@ export function elevationGainLoss(
 
 /**
  * Moving time: sum of inter-sample intervals where instantaneous speed is at or
- * above `speedThresholdMps` (default 0.5 m/s ≈ 1.8 km/h — below this you're
- * stopped/drifting). This is what separates "moving time" from "elapsed time".
+ * above `speedThresholdMps` (default {@link MOVING_SPEED_MPS}, 0.5 m/s ≈ 1.8
+ * km/h — below this you're stopped/drifting). This is what separates "moving time" from "elapsed time".
  */
 export function movingTimeSeconds(
   step: Float64Array,
   timeSec: Float64Array,
-  speedThresholdMps = 0.5,
+  speedThresholdMps = MOVING_SPEED_MPS,
 ): number {
   let moving = 0;
   for (let i = 1; i < step.length; i++) {

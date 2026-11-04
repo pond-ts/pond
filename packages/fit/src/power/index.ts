@@ -68,6 +68,8 @@ export function totalWorkKj(
  * 4th-rooted. The rolling step is pond-native — we build a time-keyed power
  * series and call `rolling('30s', { watts: 'mean' })`, then read the smoothed
  * column back via `toFloat64Array()`. The 4th-power reduction is array-side.
+ * Returns 0 when there is no finite sample: check for power first if a
+ * missing reading must not read as 0 W (as `Section` does).
  */
 export function normalizedPower(
   timeSec: Float64Array,

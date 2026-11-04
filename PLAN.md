@@ -1306,6 +1306,11 @@ depend on. Plan:
   which of `simplify`, `elevationProfile`, `profileByDistance` and
   `rollingSpread` get a public path (all four are in `src/geo/` and none is
   exported today), the units-preference home, then hand estela the swap.
+- **[PND-FITESTELA]** — take Estela's general activity code into fit, from its
+  2026-11-04 review: section stats + public moving/climb/NP rules (shipped as
+  [PND-FITSTATS]), then swims, the FIT/GPX/TCX readers, and cutting a
+  recording (crop, lap split/join). One PR each; plan in
+  [PND_ECOSYSTEM_PLAN.md](docs/plans/PND_ECOSYSTEM_PLAN.md).
 
 ---
 

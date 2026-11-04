@@ -212,3 +212,44 @@ its core is `recoveryFromReadings`. `recoverySummary` keeps any extra fields
 `looksForBreaks` and `pastRecoveries` stay in Estela: both depend on its
 sport-family table. `RECOVERY_MAX_SECONDS` now lives here and the FIT reader
 imports it.
+## [PND-FITESTELA] — take Estela's general activity code into fit
+
+Estela's 2026-11-04 code review (estela-app/estela, project file
+`code-review/estela-review-2026-11-04.md`, §2–§3) found that the newest Estela
+features had grown a second copy of fit: the moving rule (0.5 m/s) written in
+four places, the 3 m climb rule, normalized power, haversine, and Estela's
+lap/segment stats reading `PreparedActivity`'s private columns. The work, in
+the review's order of value, one PR each:
+
+1. **[PND-FITSTATS] — section stats + public rules. Shipped** (this entry's
+   first PR). `Activity.stats` / `groupStats` / `bestAveragePower` /
+   `movingClock` (`src/stats/`), lifted from Estela's
+   `packages/core/src/interval/stats.ts`; `MOVING_SPEED_MPS`,
+   `CLIMB_THRESHOLD_METERS`, `movingTimeSeconds`, `elevationGainLoss`,
+   `normalizedPower`, `haversineMeters` exported; recorded laps carry NP.
+   Decisions: the stats live on `Activity`, not `Section` — a `Section` is a
+   metric bundle with no reference to the samples, and giving it one would
+   make every split and lap hold the whole activity. Any `{ fromSeconds,
+toSeconds }` is a span, so `activity.stats(lap)` takes a `Section` as it
+   is. Numbers are raw SI, not quantities: a stats bundle is ~40 numbers read
+   by tables, and wrapping each would cost more than it gives. Normalized
+   power reuses `normalizedPower` (pond rolling) on a moving clock; checked
+   bit-identical to Estela's own sample-window NP on its fixtures, so the
+   numbers on Estela's page don't move. The 5-sample running median on speed
+   (for first / last / min / max only) came across as is: one wide GPS fix
+   showed 188 mph on a real ride.
+2. **Swims** — pool length, every length with strokes and stroke type, and
+   moving time from the swum laps, so the summary's moving time is right for
+   a pool swim (Estela overrides it in three places today).
+3. **File readers** — FIT / GPX / TCX (`Activity.fromFit` etc., promised in
+   the `fromStreams` comment), FIT sport names, local start time, laps,
+   device names, Garmin's after-stop heart rate. Estela keeps its ids and the
+   Strava-export / RunningAhead readers.
+4. **Cutting a recording** — crop to `[from, to]`, split a lap at a second,
+   join two laps (Estela `packages/core/src/version/index.ts`; also copied
+   in Swift on its iPhone app).
+
+Not moving: `null` as a missing sample. The review thought pond read a JSON
+`null` as 0; `buildTrackFromStreams` already treats it as a gap, and NP,
+averages, zones, best efforts and channels came out identical with `null`
+and with `NaN` on 0.74 and on main. Estela can delete its two converters.
