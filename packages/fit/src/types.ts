@@ -155,18 +155,26 @@ export interface ImportedActivity {
    *  creator name (FIT `product_name`, TCX `<Creator><Name>`, GPX
    *  `creator`). As stated; turning a Garmin product number into a model
    *  name is left to the app. */
-  creator?:
-    | { manufacturer?: string | number; product?: number; name?: string }
-    | undefined;
+  creator?: FileCreator | undefined;
   /** Heart rate after the stop, when the file has it (a Garmin watch's
    *  two-minute `recovery_hr` reading). */
   recovery?: HeartRateRecovery | undefined;
 }
 
+/** What an activity file says made it (see {@link ImportedActivity.creator}). */
+export interface FileCreator {
+  /** FIT maker: FIT's name for it (`"garmin"`) or its number. */
+  manufacturer?: string | number | undefined;
+  /** FIT product number. */
+  product?: number | undefined;
+  /** Product or creator name as the file states it. */
+  name?: string | undefined;
+}
+
 /** Heart rate after the activity stopped. */
 export interface HeartRateRecovery {
   /** Heart rate when the activity stopped, bpm. */
-  atStopBpm?: number;
+  atStopBpm?: number | undefined;
   /** Readings after the stop, oldest first: seconds after the stop, bpm. */
   after: { sec: number; bpm: number }[];
 }

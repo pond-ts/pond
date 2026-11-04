@@ -8,6 +8,7 @@ export type {
   SwimData,
   SwimLength,
   HeartRateRecovery,
+  FileCreator,
 } from './types.js';
 export { swimMovingSeconds } from './swim.js';
 

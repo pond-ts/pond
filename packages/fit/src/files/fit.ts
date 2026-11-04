@@ -10,6 +10,7 @@ import type {
   ActivityMeta,
   ActivityStreams,
   ImportedActivity,
+  FileCreator,
   Lap,
   SwimData,
   SwimLength,
@@ -30,7 +31,8 @@ type FileId = {
  * `fit-file-parser`, then projected to parallel stream arrays. `timeSeconds`
  * are offsets from the first sample; absent optional channels are omitted.
  * Name: `options.name`, else "Untitled"; sport: `options.sportType`, else the
- * file's sport as a Strava-style label (see {@link fitSport}).
+ * file's sport as a Strava-style label (see {@link fitSport}); id:
+ * `options.id`, else `fit:<start time>`.
  */
 export function parseFit(
   buffer: ArrayBuffer | Uint8Array,
@@ -136,7 +138,7 @@ export function parseFit(
   if ((openWater || !gps || gaps) && hasDist)
     streams.distanceMeters = distanceMeters;
   const startTimeLocal = fitLocalStart(data, startMs);
-  const id = options.id ?? `fit:${name}`;
+  const id = options.id ?? `fit:${new Date(startMs).toISOString()}`;
   const activity: ActivityMeta = {
     id,
     source: options.source ?? 'file',
@@ -169,8 +171,8 @@ export function parseFit(
 }
 
 /** The `file_id`'s maker and product as the file states them. */
-function fitCreator(fileId: FileId): ImportedActivity['creator'] {
-  const out: NonNullable<ImportedActivity['creator']> = {};
+function fitCreator(fileId: FileId): FileCreator | undefined {
+  const out: FileCreator = {};
   if (fileId.manufacturer != null) out.manufacturer = fileId.manufacturer;
   if (typeof fileId.product === 'number') out.product = fileId.product;
   const name =

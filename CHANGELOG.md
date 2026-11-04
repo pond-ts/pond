@@ -89,14 +89,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   name), and a Garmin watch's heart rate two minutes after the stop
   (`recovery`; `fitRecoveryFromBytes` reads just that from the bytes, fast).
   A FIT file keeps the records before the watch found GPS (null positions;
-  distance from the watch, as the summary already handles). A separate entry
+  distance from the watch, as the summary already handles); GPX and TCX drop
+  points with no position. GPX points may be self-closing, single-quoted or
+  namespaced; names and creators decode CDATA and entities; a sample with no
+  time takes the time before it. The default id is `<format>:<start time>`
+  (`options.id` overrides). A separate entry
   point, so the FIT decoder (`fit-file-parser`, MIT, now a dependency of
   `@pond-ts/fit`) only loads for consumers that read files. From Estela's
   `packages/ingest`, where these were tested on real files: on Estela's nine
   real fixtures the output is identical apart from the kept no-fix records.
-- **`ImportedActivity.creator` / `.recovery`**, type `HeartRateRecovery`, and
-  `'file'` as an `ActivitySource` (the readers' default; `options.source`
-  overrides).
+- **`ImportedActivity.creator` / `.recovery`**, types `FileCreator` and
+  `HeartRateRecovery`, and `'file'` as an `ActivitySource` (the readers'
+  default; `options.source` overrides). **Breaking (types only):** a `switch`
+  over `ActivitySource` that checks every case, or a
+  `Record<ActivitySource, …>`, now needs a `'file'` entry.
 
 - **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
   (`SwimData`: the swim time, the pool length and unit, and every length as a

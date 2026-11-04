@@ -53,7 +53,7 @@ describe('parseFit: a run that found GPS after a minute', () => {
     // the activity's local_timestamp is an hour ahead of UTC
     expect(imp.activity.startTimeLocal).toBe('2024-03-02T10:00:00');
     expect(imp.activity.source).toBe('file');
-    expect(imp.activity.id).toBe('fit:Untitled');
+    expect(imp.activity.id).toBe('fit:2024-03-02T09:00:00.000Z');
     const named = parseFit(fit('gps-lock-run'), {
       id: 'x:1',
       name: 'Hill run',
@@ -223,7 +223,7 @@ describe('parseGpx', () => {
       sportType: 'cycling',
       startTimeUtc: '2024-05-01T09:00:00.000Z',
       source: 'file',
-      id: 'gpx:Lunch ride',
+      id: 'gpx:2024-05-01T09:00:00.000Z',
     });
     expect(imp.creator).toEqual({ name: 'StravaGPX iPhone' });
   });
@@ -233,6 +233,42 @@ describe('parseGpx', () => {
     );
     expect(untimed.streams.timeSeconds).toBeUndefined();
     expect(untimed.creator).toBeUndefined();
+  });
+  it('self-closing points, single quotes and a namespace prefix', () => {
+    const odd = parseGpx(
+      `<gpx:gpx creator='A &amp; B'><gpx:trk><gpx:name><![CDATA[Up & over]]></gpx:name>
+       <gpx:trkseg>
+        <gpx:trkpt lat='1' lon='2'/>
+        <gpx:trkpt lat="1.001" lon="2"><gpx:time>2024-05-01T09:00:10Z</gpx:time></gpx:trkpt>
+        <gpx:trkpt lat="1.002" lon="2"><gpx:time>2024-05-01T09:00:20Z</gpx:time></gpx:trkpt>
+       </gpx:trkseg></gpx:trk></gpx:gpx>`,
+    );
+    expect(odd.streams.latlng).toEqual([
+      [1, 2],
+      [1.001, 2],
+      [1.002, 2],
+    ]);
+    expect(odd.activity.name).toBe('Up & over');
+    expect(odd.creator).toEqual({ name: 'A & B' });
+    // the first point has no time: it takes the first time there is
+    expect(odd.streams.timeSeconds).toEqual([0, 0, 10]);
+    expect(odd.activity.startTimeUtc).toBe('2024-05-01T09:00:10.000Z');
+  });
+  it('a point with no time in the middle takes the time before it', () => {
+    const gap = parseGpx(
+      `<gpx><trk><trkseg>
+        <trkpt lat="1" lon="2"><time>2024-05-01T09:00:00Z</time></trkpt>
+        <trkpt lat="1.001" lon="2"></trkpt>
+        <trkpt lat="1.002" lon="2"><time>2024-05-01T09:00:20Z</time></trkpt>
+      </trkseg></trk></gpx>`,
+    );
+    expect(gap.streams.timeSeconds).toEqual([0, 0, 20]);
+  });
+  it('the name comes from the track, not a later waypoint', () => {
+    const named = parseGpx(
+      `<gpx><trk><trkseg><trkpt lat="1" lon="2"><name>pt</name></trkpt></trkseg></trk></gpx>`,
+    );
+    expect(named.activity.name).toBe('Untitled');
   });
 });
 
@@ -404,6 +440,30 @@ function syntheticFit(opts: { cut?: number } = {}): Uint8Array {
   const all = new Uint8Array([...header, ...body, 0, 0]);
   return opts.cut ? all.subarray(0, opts.cut) : all;
 }
+
+describe('parseTcx: names, ids and missing times', () => {
+  const tcx = parseTcx(
+    `<TrainingCenterDatabase><Activities><Activity Sport="Running">
+      <Id>2024-05-01T09:00:00Z</Id><Notes><![CDATA[Track & field]]></Notes>
+      <Lap StartTime="2024-05-01T09:00:00Z"><Track>
+       <Trackpoint><Time>2024-05-01T09:00:00Z</Time><HeartRateBpm><Value>120</Value></HeartRateBpm></Trackpoint>
+       <Trackpoint><HeartRateBpm><Value>121</Value></HeartRateBpm></Trackpoint>
+       <Trackpoint><Time>2024-05-01T09:00:10Z</Time><HeartRateBpm><Value>122</Value></HeartRateBpm></Trackpoint>
+      </Track></Lap>
+      <Creator><Name>Forerunner &amp; Co</Name></Creator>
+    </Activity></Activities></TrainingCenterDatabase>`,
+  );
+  it('decodes CDATA and entities', () => {
+    expect(tcx.activity.name).toBe('Track & field');
+    expect(tcx.creator).toEqual({ name: 'Forerunner & Co' });
+  });
+  it('never runs backwards', () => {
+    expect(tcx.streams.timeSeconds).toEqual([0, 0, 10]);
+  });
+  it('defaults the id to the start time', () => {
+    expect(tcx.activity.id).toBe('tcx:2024-05-01T09:00:00.000Z');
+  });
+});
 
 describe('fitRecoveryFromBytes on a file built by hand', () => {
   it('follows compressed times, big-endian messages and developer fields', () => {

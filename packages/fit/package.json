@@ -40,7 +40,15 @@
     },
     "./files": {
       "types": "./dist/files/index.d.ts",
-      "import": "./dist/files/index.js"
+      "import": "./dist/files/index.js",
+      "require": "./dist/cjs-fallback.cjs"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "files": [
+        "dist/files/index.d.ts"
+      ]
     }
   },
   "engines": {

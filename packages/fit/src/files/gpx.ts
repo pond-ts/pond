@@ -4,22 +4,25 @@ import type {
   ImportedActivity,
 } from '../types.js';
 import type { ReadOptions } from './options.js';
+import { attr, childText, offsetSeconds } from './xml.js';
 
-const TRKPT = /<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>/g;
-const LAT = /\blat="([^"]+)"/;
-const LON = /\blon="([^"]+)"/;
-const ELE = /<ele>([^<]+)<\/ele>/;
-const TIME = /<time>([^<]+)<\/time>/;
-const HR = /<(?:\w+:)?hr>([^<]+)<\/(?:\w+:)?hr>/;
-/** The program or device that wrote the file: `<gpx creator="…">`. */
-const CREATOR = /<gpx\b[^>]*\bcreator="([^"]*)"/;
-const TRK_NAME = /<trk>[\s\S]*?<name>([^<]+)<\/name>/;
-const TRK_TYPE = /<trk>[\s\S]*?<type>([^<]+)<\/type>/;
+// One track point, self-closing or not, with any namespace prefix
+// (`<trkpt …/>`, `<gpx:trkpt …>…</gpx:trkpt>`).
+const TRKPT =
+  /<(?:[\w-]+:)?trkpt\b((?:[^>"']|"[^"]*"|'[^']*')*?)(?:\/>|>([\s\S]*?)<\/(?:[\w-]+:)?trkpt>)/g;
+/** The first `<trk>`, for its name and type. */
+const TRK = /<(?:[\w-]+:)?trk\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?trk>/;
+/** The root element's attributes, for `creator`. */
+const GPX = /<(?:[\w-]+:)?gpx\b((?:[^>"']|"[^"]*"|'[^']*')*)>/;
 
 /**
  * Parse a GPX track into an {@link ImportedActivity}. Name: `options.name`,
  * else the track's `<name>`, else "Untitled"; sport: `options.sportType`,
- * else its `<type>`, else "Unknown". Regex-based and
+ * else its `<type>`, else "Unknown"; id: `options.id`, else
+ * `gpx:<start time>`. A point with no `<time>` takes the time before it, so
+ * `timeSeconds` never runs backwards; a file with no times at all has no
+ * `timeSeconds` and a start of 1970-01-01, since the file can't say when it was.
+ * Points without a position are dropped. Regex-based and
  * single-pass — for a 15k-point track this is fast and avoids a DOM. Streams
  * are parallel arrays; `timeSeconds` are offsets from the first sample (Strava
  * convention), with `activity.startTimeUtc` the absolute base. Activity
@@ -36,52 +39,48 @@ export function parseGpx(
   const epochMs: number[] = [];
   let hasEle = false;
   let hasHr = false;
-  let hasTime = false;
 
   let m: RegExpExecArray | null;
   TRKPT.lastIndex = 0;
   while ((m = TRKPT.exec(xml)) !== null) {
     const attrs = m[1]!;
-    const body = m[2]!;
-    const lat = LAT.exec(attrs);
-    const lon = LON.exec(attrs);
-    if (!lat || !lon) continue;
-    latlng.push([parseFloat(lat[1]!), parseFloat(lon[1]!)]);
+    const body = m[2] ?? '';
+    const lat = parseFloat(attr(attrs, 'lat') ?? '');
+    const lon = parseFloat(attr(attrs, 'lon') ?? '');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    latlng.push([lat, lon]);
 
-    const ele = ELE.exec(body);
-    if (ele) {
-      altitudeMeters.push(parseFloat(ele[1]!));
+    const ele = childText(body, 'ele');
+    if (ele !== undefined) {
+      altitudeMeters.push(parseFloat(ele));
       hasEle = true;
     } else {
       altitudeMeters.push(NaN);
     }
 
-    const hr = HR.exec(body);
-    if (hr) {
-      heartrate.push(parseFloat(hr[1]!));
+    const hr = childText(body, 'hr');
+    if (hr !== undefined) {
+      heartrate.push(parseFloat(hr));
       hasHr = true;
     } else {
       heartrate.push(NaN);
     }
 
-    const time = TIME.exec(body);
-    if (time) {
-      epochMs.push(Date.parse(time[1]!));
-      hasTime = true;
-    } else {
-      epochMs.push(NaN);
-    }
+    const time = childText(body, 'time');
+    epochMs.push(time !== undefined ? Date.parse(time) : NaN);
   }
 
-  const startMs = hasTime ? (epochMs.find((t) => !Number.isNaN(t)) ?? 0) : 0;
-  const timeSeconds = hasTime
-    ? epochMs.map((t) => (Number.isNaN(t) ? 0 : (t - startMs) / 1000))
-    : undefined;
+  const timeSeconds = offsetSeconds(epochMs);
+  const startMs = timeSeconds ? epochMs.find((t) => !Number.isNaN(t))! : 0;
 
-  const name = options.name ?? TRK_NAME.exec(xml)?.[1]?.trim() ?? 'Untitled';
+  const trk = TRK.exec(xml)?.[1] ?? '';
+  // The track's own name and type, not a <name> inside a later element.
+  const trkHead = trk.split(/<(?:[\w-]+:)?trkseg\b/)[0]!;
+  const name = options.name ?? childText(trkHead, 'name') ?? 'Untitled';
   const sportType =
-    options.sportType ?? TRK_TYPE.exec(xml)?.[1]?.trim() ?? 'Unknown';
-  const id = options.id ?? `gpx:${name}`;
+    options.sportType ?? childText(trkHead, 'type') ?? 'Unknown';
+  const startTimeUtc = new Date(startMs).toISOString();
+  const id = options.id ?? `gpx:${startTimeUtc}`;
 
   const streams: ActivityStreams = { latlng };
   if (hasEle) streams.altitudeMeters = altitudeMeters;
@@ -93,7 +92,7 @@ export function parseGpx(
     source: options.source ?? 'file',
     externalId: id,
     name,
-    startTimeUtc: new Date(startMs).toISOString(),
+    startTimeUtc,
     distanceMeters: 0,
     movingTimeSeconds: 0,
     elapsedTimeSeconds: 0,
@@ -101,7 +100,7 @@ export function parseGpx(
     sportType,
   };
 
-  const creator = CREATOR.exec(xml)?.[1]?.trim();
+  const creator = attr(GPX.exec(xml)?.[1] ?? '', 'creator');
   return creator
     ? { activity, streams, creator: { name: creator } }
     : { activity, streams };
