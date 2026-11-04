@@ -143,3 +143,18 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 [docs/rfcs/geo.md](../rfcs/geo.md) §10–§13, estela's `docs/pond-friction.md`,
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
+
+## [PND-FITLAPGROUPS] — lap groups by type and name (part of [PND-FITESTELA])
+
+**Built.** The grouping half of Estela's `ui/lapSummaryData.ts`: which laps go
+together and in what order (`groupLaps`), the lap-average combination for laps
+with no samples behind them (`summarizeLaps`), and a group's highest and
+lowest lap (`lapExtremes`). For laps with samples, `sectionGroupStats` (#883)
+gives the group numbers from the recording. Tests are Estela's, renamed.
+
+Changed on the way: a lap's type is a plain string or undefined, so the
+caller maps its own type list first (Estela reads a deleted or "default"
+type as none); the summary fields are named for what they are
+(`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
+Estela: the column sets, narrowing steps and chart-channel mapping (display),
+and the user's interval type list with its colours.
