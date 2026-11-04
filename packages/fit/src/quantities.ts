@@ -204,3 +204,11 @@ export class Cadence {
     return `${this.rpm.toFixed(decimals)} rpm`;
   }
 }
+
+/** Shorthands for building quantities: `km(5)`, `minutes(20)`. */
+export const meters = (m: number): Distance => Distance.meters(m);
+export const km = (v: number): Distance => Distance.km(v);
+export const miles = (v: number): Distance => Distance.miles(v);
+export const seconds = (s: number): Duration => Duration.seconds(s);
+export const minutes = (m: number): Duration => Duration.minutes(m);
+export const hours = (h: number): Duration => Duration.hours(h);

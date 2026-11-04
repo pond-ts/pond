@@ -78,6 +78,32 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`@pond-ts/fit`: a new `Activity` model** ([PND-FITAPI],
+  docs/rfcs/fit-api.md). Breaking: replaces the old façade outright.
+  `readActivity(bytes)` (in `@pond-ts/fit/files`) tells FIT, GPX or TCX from
+  the bytes and returns an `Activity`. Properties hold what the recording
+  contains (`name`, `sport`, `sportType`, `startedAt`, `device`, `laps`);
+  methods select or calculate. Every `Section` (the activity, a lap, a split,
+  `section({ elapsed | distance })`) and every `Sections` collection
+  (`laps`, `splits(km(1))`, `laps.groupBy(fn)`) answers one `stats()`
+  contract: grouped, unit-carrying answers (`stats.heartRate.average`,
+  `stats.time.moving`), `null` when unavailable, on a stated time basis
+  (`'elapsed'` default, `'moving'`, `'timer'`). Timer time comes only from
+  the file (`Lap.timerSeconds`, new, set by the FIT reader from
+  `total_timer_time`); without it `time.timer` is `null`. Group stats cover
+  the chosen sections only, pace as total distance over total time.
+  Removed: `Activity.fromStreams`, the per-number methods (`distance()`,
+  `movingTime()`, …), `range`, `summary`, `windowChannels`, `power`,
+  `powerCurve`, `distanceBestEfforts`, `hrZones`, `paceZones`, `at`,
+  `usingProfile`, `ProfiledActivity`, `ProfiledSection`, `Sample`,
+  `SectionMetrics`. The functional layer they wrapped (`computePower`,
+  `powerBestEfforts`, `hrZoneDistribution`, `windowChannels`, …) stays;
+  `analyze({ athlete })` brings the athlete-dependent answers back as
+  methods. Added shorthands `km`, `miles`, `meters`, `seconds`, `minutes`,
+  `hours`, and `sportOf`.
+
 ### Added
 
 - **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**

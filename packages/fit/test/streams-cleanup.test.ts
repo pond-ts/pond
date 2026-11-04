@@ -2,10 +2,35 @@ import { describe, expect, it } from 'vitest';
 import {
   Activity,
   computeActivitySummary,
+  computePower,
+  summaryFromPrepared,
   trackLine,
   prepareActivity,
+  windowChannels,
   type ImportedActivity,
+  type WindowChannelOptions,
 } from '../src/index.js';
+
+/** One recording through the model and the functional layer. */
+function open(r: ImportedActivity) {
+  const a = Activity.from(r);
+  const prep = a.prepared();
+  return {
+    summary: () => summaryFromPrepared(prep),
+    power: (ftp: number) =>
+      computePower(
+        prep.cols.timeSec,
+        Float64Array.from(prep.cols.power!, (v) =>
+          Number.isFinite(v) ? v : NaN,
+        ),
+        ftp,
+        prep.timeRel[prep.n - 1] ?? 0,
+      ),
+    laps: () => a.laps.map((l) => l),
+    windowChannels: (o: WindowChannelOptions) => windowChannels(prep, o),
+    trackLine: () => trackLine(prep),
+  };
+}
 
 const META = {
   id: 'test:x',
@@ -61,11 +86,11 @@ function ride(gap: number | null): ImportedActivity {
 describe('a missing sample written as null', () => {
   it('reads exactly as one written as NaN', () => {
     const read = (gap: number | null) => {
-      const a = Activity.fromStreams(ride(gap));
+      const a = open(ride(gap));
       return {
         summary: a.summary(),
         power: a.power(250),
-        laps: a.laps().map((l) => l.normalizedPower()?.watts),
+        laps: a.laps().map((l) => l.stats().power.normalized?.watts),
         window: a.windowChannels({ startMeters: 500, endMeters: 1500 }),
       };
     };
@@ -94,7 +119,7 @@ describe('channel times', () => {
   }
 
   it('are finite and never run backwards, even before the first sample', () => {
-    const a = Activity.fromStreams(pool());
+    const a = open(pool());
     for (const chs of [
       a.summary().channels,
       a.windowChannels({ startMeters: 0, endMeters: 200, minBucketMeters: 1 }),
@@ -133,7 +158,7 @@ describe('channel times in a zoomed window', () => {
   ) => pts.find((p) => p.distanceMeters >= m)!.timeSeconds;
 
   it('give an empty stretch the time before it, as the summary does', () => {
-    const a = Activity.fromStreams(gappy());
+    const a = open(gappy());
     const whole = a.summary().channels[0]!.points;
     const win = a.windowChannels({ startMeters: 2500, endMeters: 4500 })[0]!
       .points;
@@ -144,7 +169,7 @@ describe('channel times in a zoomed window', () => {
   });
 
   it('inside a gap or past the end, carry the time already reached', () => {
-    const a = Activity.fromStreams(gappy());
+    const a = open(gappy());
     const inGap = a.windowChannels({ startMeters: 2000, endMeters: 3000 });
     const past = a.windowChannels({ startMeters: 6000, endMeters: 7000 });
     expect(inGap[0]!.points.length).toBeGreaterThan(0);
@@ -158,7 +183,7 @@ describe('trackLine', () => {
   it('is the fixes in order, leaving out samples with no fix', () => {
     const r = ride(NaN);
     r.streams.latlng = r.streams.latlng.map((p, i) => (i < 30 ? null : p));
-    const line = Activity.fromStreams(r).trackLine();
+    const line = open(r).trackLine();
     expect(line).toHaveLength(570);
     expect(line[0]).toEqual(r.streams.latlng[30]);
   });
@@ -195,6 +220,6 @@ describe('trackLine', () => {
   it('is empty with no GPS', () => {
     const r = ride(NaN);
     r.streams.latlng = [];
-    expect(Activity.fromStreams(r).trackLine()).toEqual([]);
+    expect(open(r).trackLine()).toEqual([]);
   });
 });

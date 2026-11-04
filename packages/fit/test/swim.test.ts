@@ -35,7 +35,7 @@ const lap = (
  *  speed between samples, 25 m / 60 s, is under the 0.5 m/s moving rule. */
 function poolSwim(swim?: ImportedActivity['swim']): Activity {
   const n = 41; // 40 lengths, 1,000 m
-  return Activity.fromStreams({
+  return Activity.from({
     activity: META,
     streams: {
       latlng: [],
@@ -49,7 +49,7 @@ function poolSwim(swim?: ImportedActivity['swim']): Activity {
 
 describe('swims', () => {
   it('the problem: from the samples alone a pool swim reads as standing still', () => {
-    expect(poolSwim().movingTime().seconds).toBe(0);
+    expect(poolSwim().stats().time.moving!.seconds).toBe(0);
   });
 
   it('the swim watch’s swim time is the moving time', () => {
@@ -57,21 +57,28 @@ describe('swims', () => {
       movingSeconds: 1600,
       pool: { lengthMeters: 25, unit: 'm' },
     });
-    expect(act.movingTime().seconds).toBe(1600);
-    expect(act.summary().movingTimeSeconds).toBe(1600);
-    expect(act.swim?.pool).toEqual({ lengthMeters: 25, unit: 'm' });
+    const st = act.stats();
+    expect(st.time.moving!.seconds).toBe(1600);
+    expect(computeActivitySummary(act.record).movingTimeSeconds).toBe(1600);
+    expect(act.record.swim?.pool).toEqual({ lengthMeters: 25, unit: 'm' });
     // elapsed and distance still come from the samples
-    expect(act.elapsedTime().seconds).toBe(2400);
-    expect(act.distance().meters).toBe(1000);
+    expect(st.time.elapsed.seconds).toBe(2400);
+    expect(st.distance!.meters).toBe(1000);
+    // and the moving pace uses the swim time
+    expect(act.stats({ time: 'moving' }).pace.average!.secondsPerKm).toBe(1600);
   });
 
   it('a zero or missing swim time falls back to the samples', () => {
-    expect(poolSwim({ movingSeconds: 0 }).movingTime().seconds).toBe(0);
-    expect(poolSwim({ movingSeconds: NaN }).movingTime().seconds).toBe(0);
+    expect(poolSwim({ movingSeconds: 0 }).stats().time.moving!.seconds).toBe(0);
+    expect(poolSwim({ movingSeconds: NaN }).stats().time.moving!.seconds).toBe(
+      0,
+    );
   });
 
   it('a swim time longer than the clock ran is held to the elapsed time', () => {
-    expect(poolSwim({ movingSeconds: 9999 }).movingTime().seconds).toBe(2400);
+    expect(poolSwim({ movingSeconds: 9999 }).stats().time.moving!.seconds).toBe(
+      2400,
+    );
   });
 
   it('a swim with no samples still reports the swim time', () => {
@@ -85,8 +92,10 @@ describe('swims', () => {
 
   it('known limit: a range inside a swim still reads moving time from samples', () => {
     const act = poolSwim({ movingSeconds: 1600 });
-    const whole = act.range(Duration.seconds(0), Duration.seconds(2400));
-    expect(whole.movingTime().seconds).toBe(0);
+    const whole = act.section({
+      elapsed: { from: Duration.seconds(0), to: Duration.seconds(2400) },
+    });
+    expect(whole.stats().time.moving!.seconds).toBe(0);
   });
 
   it('swimMovingSeconds adds up the laps that covered distance', () => {

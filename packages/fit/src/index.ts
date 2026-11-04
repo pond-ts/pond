@@ -45,13 +45,24 @@ export {
   HeartRate,
   Cadence,
 } from './quantities.js';
+export { meters, km, miles, seconds, minutes, hours } from './quantities.js';
 export {
   Activity,
   Section,
-  ProfiledActivity,
-  ProfiledSection,
+  LapSection,
+  Sections,
+  sportOf,
 } from './activity/index.js';
-export type { Sample, SectionMetrics } from './activity/index.js';
+export type {
+  Sport,
+  Stats,
+  StatsOptions,
+  TimeBasis,
+  Clocks,
+  SectionBounds,
+  SectionRange,
+  SectionKind,
+} from './activity/index.js';
 export { Track } from './track/index.js';
 
 // Curated flat surface — the four operator modules (geo / power / zones /
@@ -59,7 +70,7 @@ export { Track } from './track/index.js';
 // Those published each module's entire internal surface (readColumns, raw
 // schemas, friction-probe helpers) by accident and had no shipping consumer.
 // The named exports below are the deliberate public API. Quantities, the
-// Activity/Section façade, Track, Profile, and the units helpers are kept by
+// Activity/Section model, Track, Profile, and the units helpers are kept by
 // intent — the library's headline surface plus the façade's return-type
 // closure — not because any single consumer imports them today.
 export {

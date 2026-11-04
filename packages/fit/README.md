@@ -6,10 +6,10 @@
 
 **Fitness & activity analytics on [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
-Turn raw activity streams (GPS, power, heart rate, cadence, …) into a typed,
-immutable activity model with unit-safe quantities and the analytics you'd
-expect — splits, power (NP / IF / TSS / curve), zones, elevation, best efforts —
-behind a small `Activity` / `Section` façade.
+Read an activity file (FIT, GPX, TCX) into a typed, immutable `Activity` with
+unit-safe quantities. Ask the same questions of the whole activity, a lap, or
+any stretch of it. See [docs/rfcs/fit-api.md](../../docs/rfcs/fit-api.md) for
+where the API is going.
 
 ```sh
 npm install @pond-ts/fit pond-ts
@@ -20,48 +20,50 @@ npm install @pond-ts/fit pond-ts
 ## Quick start
 
 ```ts
-import { Activity, Distance } from '@pond-ts/fit';
+import { km, minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
 
-// `imported` is an ImportedActivity — your raw streams (time, lat/lon, power, hr, …)
-const activity = Activity.fromStreams(imported);
+const run = readActivity(bytes); // FIT, GPX or TCX, told from the bytes
 
-activity.summary(); // { distance, duration, elevation, avg/max metrics, … }
-activity.splits(Distance.km(1)); // per-kilometre Section[]
-activity.power(260); // PowerSummary at FTP 260 W — NP, IF, TSS, curve, zones
+run.name; // "Morning Run"
+run.sport; // "run"
+run.startedAt; // Date
+
+const stats = run.stats(); // elapsed time basis by default
+stats.distance?.format('mi'); // "6.21 mi"
+stats.time.elapsed.format(); // "55:40"
+stats.time.moving?.format(); // "52:14"
+stats.heartRate.average?.format(); // "152 bpm"
+run.stats({ time: 'moving' }).pace.average?.format('metric');
+
+run.laps.at(2)?.stats();
+run.section({ elapsed: { from: minutes(10), to: minutes(20) } }).stats();
+for (const split of run.splits(km(1)))
+  console.log(split.label, split.stats().pace.average?.format('metric'));
+
+// your own labels for laps, kept by your app
+for (const [label, laps] of run.laps.groupBy((lap) => labels.get(lap.id)))
+  console.log(label, laps.stats()); // the chosen laps only, never the recovery between
 ```
 
-Attach an athlete `Profile` for zone-aware, type-safe analytics — the
-`ProfiledActivity` knows the athlete, so power/zone calls need no thresholds
-passed in:
-
-```ts
-import { Profile } from '@pond-ts/fit';
-
-const profiled = activity.usingProfile(
-  Profile.of({ ftpWatts: 260, weightKg: 72 }),
-);
-profiled.power(); // zone-aware — FTP comes from the profile
-profiled.splits(Distance.km(1)); // ProfiledSection[] — slices carry the profile through
-```
-
-Quantities are unit-safe and format themselves:
-
-```ts
-import { Speed } from '@pond-ts/fit';
-
-Speed.mps(5.5).format('imperial'); // "12.3 mph"
-```
+`null` means unavailable (no power meter, no timer data in the file); a real
+zero stays zero. Timer time comes only from the file: GPX has none, so its
+`time.timer` is `null`.
 
 ## What's in the box
 
-- **Façade** — `Activity` / `Section`: load once, then ask for summary / splits /
-  laps / ranges.
-- **Quantities** — `Distance` / `Speed` / `Pace` / `Power` / `HeartRate` /
-  `Cadence` / … with unit conversions and `.format()`.
-- **Analytics** — geo (distance, elevation, best efforts), power (NP / IF / TSS /
-  curve), and zone distributions.
-- **Profiles** — `Profile` + `usingProfile()` → type-safe `ProfiledActivity` /
-  `ProfiledSection`.
+- **Model** — `Activity`, `Section`, `Sections`: one `stats()` contract on a
+  stated time basis (`'elapsed'`, `'moving'`, `'timer'`).
+- **Readers** — `@pond-ts/fit/files`: `readActivity`, plus `parseFit` /
+  `parseGpx` / `parseTcx` to the plain `ImportedActivity` record.
+- **Quantities** — `Distance` / `Duration` / `Speed` / `Pace` / `Power` /
+  `HeartRate` / `Cadence` / `Elevation`, with `.format()`, and the shorthands
+  `km`, `miles`, `meters`, `seconds`, `minutes`, `hours`.
+- **Functional layer** — power (NP / IF / TSS / curve), zones, best efforts,
+  breaks and heart-rate recovery, lap groups, outlines, recording edits; each a
+  plain function over the prepared activity (`activity.prepared()`).
+- **Profiles** — `Profile` resolves dated athlete settings (FTP, weight,
+  zones).
 
 ## Documentation
 

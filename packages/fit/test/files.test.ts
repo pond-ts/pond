@@ -37,8 +37,8 @@ describe('parseFit: a run that found GPS after a minute', () => {
 
   it('keeps the watch’s distance, so the minute without GPS still counts', () => {
     expect(s.distanceMeters?.[240]).toBe(720);
-    const act = Activity.fromStreams(imp);
-    expect(act.distance().meters).toBeCloseTo(720, 6);
+    const act = Activity.from(imp);
+    expect(act.stats().distance!.meters).toBeCloseTo(720, 6);
   });
 
   it('reads heart rate, cadence, and enhanced_altitude as the height', () => {
@@ -128,7 +128,7 @@ describe('parseFit: a pool swim', () => {
   });
 
   it('the swim time is the activity’s moving time', () => {
-    expect(Activity.fromStreams(imp).movingTime().seconds).toBe(180);
+    expect(Activity.from(imp).stats().time.moving!.seconds).toBe(180);
   });
 });
 
@@ -138,7 +138,7 @@ describe('parseFit: an open water swim', () => {
     expect(imp.streams.openWater).toBe(true);
     expect(imp.streams.distanceMeters?.at(-1)).toBe(300);
     // the zigzagging fixes are far longer than the 300 m swum
-    expect(Activity.fromStreams(imp).distance().meters).toBeCloseTo(300, 6);
+    expect(Activity.from(imp).stats().distance!.meters).toBeCloseTo(300, 6);
   });
 });
 
@@ -394,7 +394,7 @@ describe('parseTcx', () => {
       </Track></Lap></Activity></Activities></TrainingCenterDatabase>`);
     expect(t.streams.latlng).toEqual([]);
     expect(t.streams.distanceMeters).toEqual([0, 80]);
-    expect(Activity.fromStreams(t).distance().meters).toBe(80);
+    expect(Activity.from(t).stats().distance!.meters).toBe(80);
   });
 });
 

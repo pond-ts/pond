@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Activity } from '../src/activity/index.js';
+import {
+  bestAveragePower,
+  movingClock,
+  sectionGroupStats,
+  sectionStats,
+  type Span,
+} from '../src/stats/index.js';
 import { Duration } from '../src/quantities.js';
 import {
   CLIMB_THRESHOLD_METERS,
@@ -29,7 +36,7 @@ function fromSpeeds(
   extra: Partial<ActivityStreams> = {},
   laps?: Lap[],
   timeSeconds = speeds.map((_, i) => i),
-): Activity {
+): Engine {
   const distanceMeters: number[] = [];
   let at = 0;
   speeds.forEach((v, i) => {
@@ -41,8 +48,30 @@ function fromSpeeds(
     streams: { latlng: [], timeSeconds, distanceMeters, ...extra },
     ...(laps ? { laps } : {}),
   };
-  return Activity.fromStreams(imported);
+  return engine(imported);
 }
+
+/** The functional engine over one recording, with the model's activity
+ *  alongside (these tests pin the engine; activity.test.ts the model). */
+function engine(imported: ImportedActivity) {
+  const a = Activity.from(imported);
+  const prep = a.prepared();
+  return {
+    stats: (s: Span) => sectionStats(prep, s),
+    groupStats: (s: readonly Span[]) => sectionGroupStats(prep, s),
+    bestAveragePower: (
+      s: readonly Span[],
+      d: number,
+      o?: { moving?: boolean },
+    ) => bestAveragePower(prep, s, d, o),
+    movingClock: () => movingClock(prep),
+    movingTime: () => a.stats().time.moving!,
+    range: (from: Duration, to: Duration) =>
+      a.section({ elapsed: { from, to } }),
+    laps: () => a.laps,
+  };
+}
+type Engine = ReturnType<typeof engine>;
 
 const span = (fromSeconds: number, toSeconds: number) => ({
   fromSeconds,
@@ -59,7 +88,7 @@ describe('the public rules', () => {
   });
 });
 
-describe('Activity.stats', () => {
+describe('sectionStats', () => {
   // 0–10 s at 4 m/s, 10–20 s stopped, 20–30 s at 5 m/s
   const speeds = [
     0,
@@ -177,13 +206,16 @@ describe('Activity.stats', () => {
   it('a Section fits as the span, and agrees with range()', () => {
     const sec = act.range(Duration.seconds(5), Duration.seconds(25));
     const st = act.stats(sec);
-    expect(st.movingSeconds).toBe(sec.movingTime().seconds);
-    expect(st.distanceMeters).toBe(sec.distance().meters);
-    expect(st.channels.hr!.avg).toBeCloseTo(sec.avgHeartRate()!.bpm, 9);
+    expect(st.movingSeconds).toBe(sec.stats().time.moving!.seconds);
+    expect(st.distanceMeters).toBe(sec.stats().distance!.meters);
+    expect(st.channels.hr!.avg).toBeCloseTo(
+      sec.stats().heartRate.average!.bpm,
+      9,
+    );
   });
 });
 
-describe('Activity.groupStats', () => {
+describe('sectionGroupStats', () => {
   // three 10 s reps at 4, 5 and 3 m/s, each followed by 10 s of walking
   const speeds = [
     0,
@@ -237,7 +269,7 @@ describe('Activity.groupStats', () => {
   });
 });
 
-describe('Activity.bestAveragePower', () => {
+describe('bestAveragePower', () => {
   // 0–200 s: 100 W, then 60 s at 300 W, a 60 s stop at 0 W, 60 s at 300 W
   const n = 381;
   const speeds = Array.from({ length: n }, (_, i) =>
@@ -284,7 +316,7 @@ describe('Activity.bestAveragePower', () => {
   });
 });
 
-describe('Activity.movingClock', () => {
+describe('movingClock', () => {
   // 0–10 s moving, 10–20 s stopped, 20–30 s moving
   const speeds = [
     0,
@@ -327,8 +359,8 @@ describe('recorded laps carry normalized power', () => {
       lap(2, 60, 60),
     ]);
     const [a, b] = act.laps();
-    expect(a!.normalizedPower()!.watts).toBeCloseTo(200, 0);
-    expect(b!.normalizedPower()!.watts).toBeGreaterThan(290);
+    expect(a!.stats().power.normalized!.watts).toBeCloseTo(200, 0);
+    expect(b!.stats().power.normalized!.watts).toBeGreaterThan(290);
   });
 
   it('no power, no NP', () => {
@@ -341,7 +373,7 @@ describe('recorded laps carry normalized power', () => {
         startDistanceMeters: 0,
       },
     ]);
-    expect(act.laps()[0]!.normalizedPower()).toBeUndefined();
+    expect(act.laps().at(0)!.stats().power.normalized).toBeNull();
   });
 });
 
@@ -399,7 +431,7 @@ describe('edges', () => {
   });
 
   it('no timestamps: no elapsed or moving time, no speed', () => {
-    const untimed = Activity.fromStreams({
+    const untimed = engine({
       activity: META,
       streams: {
         latlng: [],
@@ -428,10 +460,10 @@ describe('laps memo', () => {
   ]);
 
   it('a caller changing the array doesn’t change the next call', () => {
-    const a = act.laps();
+    const a = act.laps().toArray();
     a.pop();
     expect(act.laps()).toHaveLength(1);
-    expect(act.laps()[0]).toBe(act.laps()[0]); // the Sections are shared
+    expect(act.laps().at(0)).toBe(act.laps().at(0)); // the Sections are shared
   });
 
   it('a lap outside the recording has no NP', () => {
@@ -443,12 +475,6 @@ describe('laps memo', () => {
         ).toISOString(),
       },
     ]);
-    expect(late.laps()[0]!.normalizedPower()).toBeUndefined();
-  });
-
-  it('a profiled activity’s laps carry it too', async () => {
-    const { Profile } = await import('../src/profile/index.js');
-    const p = act.usingProfile(Profile.of({ ftpWatts: 250 }));
-    expect(p.laps()[0]!.normalizedPower()!.watts).toBeCloseTo(200, 6);
+    expect(late.laps().at(0)!.stats().power.normalized).toBeNull();
   });
 });

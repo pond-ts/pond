@@ -556,8 +556,9 @@ function neverDecreases(distance: Float64Array | undefined): boolean {
 
 /** The swim watch's swim time, when the import carries a usable one (finite
  *  and above 0), held to `elapsedSeconds` when that is known: moving time
- *  can't be longer than the clock ran. */
-function swimMoving(
+ *  can't be longer than the clock ran. Internal: not re-exported from the
+ *  package. */
+export function swimMoving(
   imported: ImportedActivity,
   elapsedSeconds?: number,
 ): number | undefined {

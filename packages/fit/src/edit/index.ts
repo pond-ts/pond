@@ -2,7 +2,7 @@
  * Editing a recording: crop it to the stretch you keep (the warm-up and the
  * walk home off), split a lap at a second, or join a lap to the one before.
  * Works on the imported activity, so the result goes straight into
- * `Activity.fromStreams` and every number downstream (totals, splits, laps,
+ * `Activity.from` and every number downstream (totals, splits, laps,
  * stats) follows the edit.
  *
  * The edit is seconds on the recording's own clock (seconds from its first

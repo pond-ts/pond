@@ -1,7 +1,7 @@
 /**
  * `@pond-ts/fit/files` — read activity files: FIT (binary, via
  * `fit-file-parser`), GPX and TCX (regex, no DOM) into an
- * {@link ImportedActivity}, ready for `Activity.fromStreams`. A separate entry
+ * {@link ImportedActivity}, or straight into an `Activity` with `readActivity`. A separate entry
  * so the FIT decoder only ships to consumers that read files.
  */
 export {
@@ -12,6 +12,7 @@ export {
   fitSwim,
 } from './fit.js';
 export { parseGpx } from './gpx.js';
+export { readActivity, activityFormat } from './read.js';
 export { parseTcx } from './tcx.js';
 export {
   fitRecovery,

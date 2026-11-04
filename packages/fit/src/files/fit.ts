@@ -327,6 +327,7 @@ function projectLaps(raw: FitLap[]): Lap[] {
         elapsedSeconds: num(l.total_elapsed_time) ?? 0,
         movingSeconds:
           num(l.total_timer_time) ?? num(l.total_elapsed_time) ?? 0,
+        timerSeconds: num(l.total_timer_time),
         avgSpeedMps: num(l.avg_speed),
         maxSpeedMps: num(l.max_speed),
         avgWatts: num(l.avg_power),

@@ -97,6 +97,9 @@ export interface Lap {
   elapsedSeconds: number;
   /** Timer time, i.e. moving time (total_timer_time). */
   movingSeconds: number;
+  /** Time the recording timer ran over the lap (FIT `total_timer_time`).
+   *  Absent when the file doesn't record it — never filled from elapsed. */
+  timerSeconds?: number;
   avgSpeedMps?: number;
   maxSpeedMps?: number;
   avgWatts?: number;
