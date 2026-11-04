@@ -131,9 +131,10 @@ function boundaries(
     ...starts.filter((s, i) => i === 0 || !joined(s)),
     ...(edit.splitLapsAt ?? []),
   ]
-    .filter((s) => s > from && s < to)
+    .filter((s) => Number.isFinite(s) && s > from && s < to - SAME_SECOND)
     .sort((a, b) => a - b);
-  // two boundaries within a second of each other are one
+  // two boundaries within a second of each other are one, and none sits
+  // within a second of either end
   const out = [from];
   for (const s of all) if (s - out[out.length - 1]! > SAME_SECOND) out.push(s);
   return out;
@@ -156,22 +157,22 @@ export function editedLapStarts(
 interface Piece {
   lap: Lap;
   /** The part of the lap in the new one, on the recording's clock. */
-  a: number;
-  b: number;
+  from: number;
+  to: number;
   /** The lap's own stretch. */
-  la: number;
-  lb: number;
+  lapFrom: number;
+  lapTo: number;
 }
 
 /** The share of a recorded lap's distance in [a, b], by the distance the
  *  recording covered (by time when it covered none). */
 function share(p: Piece, dist: (sec: number) => number | undefined): number {
-  if (p.a <= p.la && p.b >= p.lb) return 1;
-  const whole = (dist(p.lb) ?? 0) - (dist(p.la) ?? 0);
-  const part = (dist(p.b) ?? 0) - (dist(p.a) ?? 0);
+  if (p.from <= p.lapFrom && p.to >= p.lapTo) return 1;
+  const whole = (dist(p.lapTo) ?? 0) - (dist(p.lapFrom) ?? 0);
+  const part = (dist(p.to) ?? 0) - (dist(p.from) ?? 0);
   if (whole > 0) return Math.min(1, Math.max(0, part / whole));
-  const span = p.lb - p.la;
-  return span > 0 ? (p.b - p.a) / span : 0;
+  const span = p.lapTo - p.lapFrom;
+  return span > 0 ? (p.to - p.from) / span : 0;
 }
 
 /** Mean and max of a channel over [a, b) on the recording's clock. */
@@ -209,8 +210,18 @@ function channelStats(
  *
  * `keepClock` keeps the whole recording on its own clock and only changes
  * the laps (for an editor that draws the new laps over the whole
- * recording). An empty edit, or one that keeps nothing, returns the
- * recording as it is.
+ * recording). An empty edit returns the recording as it is.
+ *
+ * The kept part starts at the first sample at or after `from`, so after a
+ * crop between samples the first time and distance can be a little above
+ * zero. A lap boundary within a second of another, or of either end, is
+ * dropped. A lap the edit made has no max speed (the recorded laps' maxima
+ * don't say where in the lap they fell).
+ *
+ * Throws a `RangeError` when `from` or `to` is not a finite number, when
+ * the edit keeps nothing (`from` at or past `to`, after holding both to the
+ * recording), or when cropping a recording with no `timeSeconds`.
+ * Non-finite seconds in `splitLapsAt` / `joinLapsAt` are ignored.
  */
 export function editRecording<T extends ImportedActivity>(
   imported: T,
@@ -218,11 +229,25 @@ export function editRecording<T extends ImportedActivity>(
   options: { keepClock?: boolean } = {},
 ): T {
   if (!edit || isEmptyEdit(edit)) return imported;
+  for (const [k, v] of [
+    ['from', edit.from],
+    ['to', edit.to],
+  ] as const)
+    if (v !== undefined && !Number.isFinite(v))
+      throw new RangeError(`editRecording: ${k} must be a finite number`);
+  const times = imported.streams.timeSeconds ?? [];
+  const cropping = edit.from !== undefined || edit.to !== undefined;
+  if (cropping && !times.length && !options.keepClock)
+    throw new RangeError(
+      'editRecording: a recording with no time stream cannot be cropped',
+    );
   const total = recordingSeconds(imported);
   const from = Math.max(0, edit.from ?? 0);
   const to = Math.min(total, edit.to ?? total);
-  if (!(to > from)) return imported;
-  const times = imported.streams.timeSeconds ?? [];
+  if (!(to > from))
+    throw new RangeError(
+      `editRecording: the edit keeps nothing (from ${from} s, to ${to} s, recording ${total} s)`,
+    );
   const cum = sampleDistances(imported);
   const dist = (sec: number) => (cum ? valueAt(times, cum, sec) : undefined);
   const t0 = Date.parse(imported.activity.startTimeUtc);
@@ -240,25 +265,25 @@ export function editRecording<T extends ImportedActivity>(
   const spans = recorded.length
     ? recorded.map((l, i) => ({
         lap: l,
-        la: starts[i]!,
-        lb:
+        lapFrom: starts[i]!,
+        lapTo:
           i + 1 < recorded.length
             ? starts[i + 1]!
             : starts[i]! + l.elapsedSeconds,
       }))
     : lapEdits
-      ? [{ lap: wholeLap(imported, total), la: 0, lb: total }]
+      ? [{ lap: wholeLap(imported, total), lapFrom: 0, lapTo: total }]
       : [];
   let laps: Lap[] | undefined = imported.laps;
   if (spans.length) {
     // An end not cropped is where the device's laps start or end, which can
     // be a little past the samples, so the laps there stay as recorded.
     const lapsFrom =
-      edit.from === undefined ? Math.min(from, spans[0]!.la) : from;
+      edit.from === undefined ? Math.min(from, spans[0]!.lapFrom) : from;
     const lapsTo =
-      edit.to === undefined ? Math.max(to, spans[spans.length - 1]!.lb) : to;
+      edit.to === undefined ? Math.max(to, spans[spans.length - 1]!.lapTo) : to;
     const edges = boundaries(
-      spans.map((s) => s.la),
+      spans.map((s) => s.lapFrom),
       edit,
       lapsFrom,
       lapsTo,
@@ -270,12 +295,16 @@ export function editRecording<T extends ImportedActivity>(
     edges.forEach((a, i) => {
       const b = i + 1 < edges.length ? edges[i + 1]! : lapsTo;
       const pieces: Piece[] = spans
-        .filter((s) => s.lb > a && s.la < b)
-        .map((s) => ({ ...s, a: Math.max(a, s.la), b: Math.min(b, s.lb) }));
+        .filter((s) => s.lapTo > a && s.lapFrom < b)
+        .map((s) => ({
+          ...s,
+          from: Math.max(a, s.lapFrom),
+          to: Math.min(b, s.lapTo),
+        }));
       if (!pieces.length) return;
       const only = pieces.length === 1 ? pieces[0]! : undefined;
       const lap: Lap =
-        only && only.a === only.la && only.b === only.lb
+        only && only.from === only.lapFrom && only.to === only.lapTo
           ? { ...only.lap }
           : combine(pieces, (p) => share(p, dist), times, hr, watts);
       lap.index = out.length + 1;
@@ -289,7 +318,6 @@ export function editRecording<T extends ImportedActivity>(
     laps = out;
   }
 
-  const cropping = edit.from !== undefined || edit.to !== undefined;
   if (options.keepClock || !cropping) return { ...imported, laps };
 
   // Crop the streams to [from, to], their clock and distance from zero.
@@ -312,7 +340,7 @@ export function editRecording<T extends ImportedActivity>(
   }
   const cropped = { ...imported, streams, laps } as T;
   const swim = imported.swim
-    ? croppedSwim(imported.swim, laps, from, to, t0)
+    ? croppedSwim(imported.swim, laps, from, to, t0, total)
     : undefined;
   if (swim) cropped.swim = swim;
   else delete cropped.swim;
@@ -326,21 +354,28 @@ export function editRecording<T extends ImportedActivity>(
 }
 
 /** A swim's record cut to [from, to]: the lengths that start inside it, and
- *  the swim time from the new laps (else shared out by time). */
+ *  the swim time from the new laps, else from the swum lengths kept, else
+ *  shared out by time. */
 function croppedSwim(
   swim: SwimData,
   laps: readonly Lap[] | undefined,
   from: number,
   to: number,
   t0: number,
+  total: number,
 ): SwimData | undefined {
   const fromLaps = laps?.length ? swimMovingSeconds(laps) : undefined;
   const lengths = swim.lengths?.filter((l) => {
     const s = (Date.parse(l.startTimeUtc) - t0) / 1000;
     return Number.isFinite(s) && s >= from - SAME_SECOND && s < to;
   });
+  // with no laps: the swum lengths kept, else shared out by time
+  const fromLengths = lengths?.length
+    ? lengths.reduce((t, l) => t + (l.active ? l.seconds : 0), 0)
+    : undefined;
+  const byTime = total > 0 ? (swim.movingSeconds * (to - from)) / total : 0;
   const out: SwimData = {
-    movingSeconds: Math.min(to - from, fromLaps ?? swim.movingSeconds),
+    movingSeconds: Math.min(to - from, fromLaps ?? fromLengths ?? byTime),
   };
   if (swim.pool) out.pool = swim.pool;
   if (lengths?.length) out.lengths = lengths;
@@ -400,9 +435,10 @@ function combine(
   for (const p of pieces) {
     const f = shareOf(p);
     distanceMeters += p.lap.distanceMeters * f;
-    elapsedSeconds += p.b - p.a;
-    const span = p.lb - p.la;
-    movingSeconds += span > 0 ? (p.lap.movingSeconds * (p.b - p.a)) / span : 0;
+    elapsedSeconds += p.to - p.from;
+    const span = p.lapTo - p.lapFrom;
+    movingSeconds +=
+      span > 0 ? (p.lap.movingSeconds * (p.to - p.from)) / span : 0;
     if (p.lap.totalWorkKj !== undefined) {
       work += p.lap.totalWorkKj * f;
       workKnown = true;
@@ -416,8 +452,8 @@ function combine(
       gainKnown = true;
     }
   }
-  const a = pieces[0]!.a;
-  const b = pieces[pieces.length - 1]!.b;
+  const a = pieces[0]!.from;
+  const b = pieces[pieces.length - 1]!.to;
   const lap: Lap = {
     index: 0,
     startDistanceMeters: 0,

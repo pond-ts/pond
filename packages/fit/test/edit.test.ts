@@ -60,8 +60,57 @@ describe('editRecording', () => {
     expect(editRecording(r, undefined)).toBe(r);
     expect(editRecording(r, {})).toBe(r);
     expect(isEmptyEdit({ splitLapsAt: [] })).toBe(true);
-    // keeps nothing: returned as it is
-    expect(editRecording(r, { from: 50, to: 40 })).toBe(r);
+  });
+
+  it('refuses an edit it cannot carry out', () => {
+    const r = recording();
+    expect(() => editRecording(r, { from: 50, to: 40 })).toThrow(RangeError);
+    expect(() => editRecording(r, { from: 200, splitLapsAt: [30] })).toThrow(
+      RangeError,
+    );
+    expect(() => editRecording(r, { to: NaN, splitLapsAt: [30] })).toThrow(
+      RangeError,
+    );
+    const { timeSeconds: _, ...untimed } = r.streams;
+    expect(() =>
+      editRecording({ ...r, streams: untimed }, { from: 10 }),
+    ).toThrow(RangeError);
+    // non-finite lap edits are ignored
+    expect(
+      editRecording(r, { splitLapsAt: [NaN, 55] }).laps!.map(
+        (l) => l.elapsedSeconds,
+      ),
+    ).toEqual([40, 15, 15, 30]);
+    // a join that matches no lap changes nothing
+    expect(
+      editRecording(r, { joinLapsAt: [20] }).laps!.map((l) => l.elapsedSeconds),
+    ).toEqual([40, 30, 30]);
+  });
+
+  it('drops a lap boundary within a second of either crop end', () => {
+    const r = recording();
+    expect(
+      editRecording(r, { to: 70.5 }).laps!.map((l) => l.elapsedSeconds),
+    ).toEqual([40, 30.5]);
+    expect(
+      editRecording(r, { from: 39.5 }).laps!.map((l) => l.elapsedSeconds),
+    ).toEqual([30.5, 30]);
+  });
+
+  it('shares out work and climb by distance and averages power from the samples', () => {
+    const r = recording();
+    r.streams.watts = r.streams.timeSeconds!.map((t) => 200 + t);
+    r.laps = r.laps!.map((l) => ({
+      ...l,
+      totalWorkKj: l.elapsedSeconds,
+      elevationGainMeters: l.elapsedSeconds / 10,
+    }));
+    const v = editRecording(r, { splitLapsAt: [20] });
+    expect(v.laps![0]!.totalWorkKj).toBeCloseTo(20, 5);
+    expect(v.laps![1]!.elevationGainMeters).toBeCloseTo(2, 5);
+    // samples 0 … 19: 200 … 219
+    expect(v.laps![0]!.avgWatts).toBe(210);
+    expect(v.laps![0]!.maxWatts).toBe(219);
   });
 
   it('crops the streams onto a clock that starts again at zero', () => {
@@ -207,6 +256,25 @@ describe('editRecording', () => {
     // laps that covered distance: 25 s of the first, all of the last
     expect(v.swim!.movingSeconds).toBe(50);
     expect(v.activity.movingTimeSeconds).toBe(50);
+  });
+});
+
+describe('a swim with no laps', () => {
+  it('shares its swim time out by time, or by the lengths kept', () => {
+    const r = recording();
+    r.laps = undefined;
+    r.swim = { movingSeconds: 60 };
+    expect(editRecording(r, { to: 50 }).swim!.movingSeconds).toBe(30);
+    r.swim = {
+      movingSeconds: 75,
+      lengths: [0, 25, 50, 75].map((s, i) => ({
+        startTimeUtc: at(s),
+        seconds: 25,
+        active: i !== 2,
+      })),
+    };
+    // lengths at 25 (swum) and 50 (rest) kept
+    expect(editRecording(r, { from: 25, to: 75 }).swim!.movingSeconds).toBe(25);
   });
 });
 

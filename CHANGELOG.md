@@ -93,7 +93,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   again from the new laps. `keepClock` changes only the laps, for an editor
   drawing them over the whole recording. Also `isEmptyEdit`,
   `recordingSeconds`, `lapStartSeconds`, `editedLapStarts` and the
-  `RecordingEdit` type. From Estela's timeline editor
+  `RecordingEdit` type. An edit that keeps nothing, a non-finite `from` /
+  `to`, or a crop of a recording with no time stream throws a `RangeError`.
+  From Estela's timeline editor
   (`packages/core/src/version`), whose tests it passes.
 - **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
   (`SwimData`: the swim time, the pool length and unit, and every length as a
