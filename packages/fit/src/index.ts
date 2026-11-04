@@ -146,6 +146,7 @@ export {
   prepareActivity,
   summaryFromPrepared,
   windowChannels,
+  trackLine,
   buildTrackFromStreams,
   type ActivitySummary,
   type ActivitySummaryOptions,

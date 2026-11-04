@@ -18,6 +18,11 @@ export type ActivitySource = 'strava' | 'file' | 'manual';
  * The time-series channels recorded during an activity. `latlng` is the track;
  * everything else is optional and present only if the source provided it.
  * Channels are parallel arrays — index i of each is the same sample.
+ *
+ * A sample a channel is missing is `NaN`, or `null` as an activity read back
+ * from JSON has it (JSON has no `NaN`): every reading in this package treats
+ * the two the same, as a gap, never as 0. `timeSeconds` is the exception: it
+ * must be finite at every sample.
  */
 export interface ActivityStreams {
   /** The position at each sample; `null` for a sample the device recorded

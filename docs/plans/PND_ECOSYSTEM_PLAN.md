@@ -114,6 +114,18 @@ Definition of done:
 
 ---
 
+## [PND-FITCLEAN] — stream gaps, channel times, the line to draw (part of [PND-FITESTELA])
+
+**Built.** From Estela's 2026-11-04 review, items 5–7. `null` samples: already
+read as gaps everywhere (`Number.isFinite(null)` is false), so this only
+documents and tests it; Estela's `withNaNGaps` copies can go. Channel
+`timeSeconds` filled where a bucket had no sample (Estela's
+`finiteChannelTimes`). `trackLine` hands out the open water swim's cleaned
+line (Estela read `prepared.cols.lat/lng` for it). Peter's direction the same
+day: `@pond-ts/fit` should be the API version of Estela's activity analysis;
+next in that wave are track outlines, stops and walk breaks with heart rate
+recovery, and lap groups by type and name.
+
 ## [PND-FITPUB] — `@pond-ts/fit` first-publish pass
 
 **Status 2026-09-23:** `@pond-ts/fit` is now `private: false` and publishes
