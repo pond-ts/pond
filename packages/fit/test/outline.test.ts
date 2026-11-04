@@ -171,3 +171,24 @@ describe('levelFor', () => {
     expect(levelFor([], 10)).toBeUndefined();
   });
 });
+
+describe('simplifyToPoints limits', () => {
+  it('needs room for both ends', () => {
+    const pts: [number, number][] = [
+      [37, -122],
+      [37.001, -122.001],
+      [37.002, -122],
+    ];
+    expect(() => simplifyToPoints(pts, 1)).toThrow(RangeError);
+    expect(() => simplifyToPoints(pts, NaN)).toThrow(RangeError);
+    expect(() => trackShape(pts, 0)).toThrow(RangeError);
+  });
+
+  it('returns a short track as it is', () => {
+    const pts: [number, number][] = [
+      [37, -122],
+      [37.001, -122.001],
+    ];
+    expect(simplifyToPoints(pts, 5)).toEqual(pts);
+  });
+});

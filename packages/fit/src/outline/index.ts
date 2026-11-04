@@ -71,12 +71,18 @@ export function trackShape(
  * long track by index (a day's hike can be 20,000 points), then drop the
  * points that bend the line least (Ramer–Douglas–Peucker), searching for the
  * smallest tolerance that fits. Distances are in degrees with longitude
- * scaled by latitude, which is plenty for a thumbnail.
+ * scaled by latitude, which is plenty for a thumbnail. A track crossing the
+ * 180th meridian is not split, so a map would draw it across the globe.
+ * Throws a RangeError when `max` is under 2 (a line needs both ends).
  */
 export function simplifyToPoints(
   points: readonly GeoPoint[],
   max: number,
 ): GeoPoint[] {
+  if (!(max >= 2))
+    throw new RangeError(
+      `simplifyToPoints: max must be at least 2, got ${max}`,
+    );
   if (points.length <= max) return [...points];
   const thin = thinByIndex(points, 2000);
   const k = Math.cos(((thin[0]![0] as number) * Math.PI) / 180) || 1;
@@ -158,7 +164,9 @@ export interface TrackLevel {
 export const LEVEL_METRES = [40, 10, 2.5] as const;
 
 /** Detail levels of a track, coarse to fine (see {@link TrackLevel}); empty
- *  without GPS. */
+ *  without GPS. Every point is kept going in (no thinning first), so the
+ *  cost grows with the track: a 100,000-point track takes a fraction of a
+ *  second, but a very long, very jagged one can take far longer. */
 export function trackLevels(
   latlng: readonly (GeoPoint | null)[],
   metres: readonly number[] = LEVEL_METRES,
@@ -194,7 +202,10 @@ export function levelFor(
 /** Metres of latitude in one degree (and of longitude at the equator). */
 const METRES_PER_DEGREE = 111_320;
 
-/** Encode points as a polyline string, 5 decimal places. */
+/** Encode points as a polyline string, 5 decimal places (Google's format).
+ *  Exact halves round up (`Math.round`), where Google's reference rounds
+ *  away from zero, so a value like -0.000005 encodes as 0; kept so stored
+ *  outlines don't change. */
 export function encodePolyline(points: readonly GeoPoint[]): string {
   let out = '';
   let pLat = 0;
