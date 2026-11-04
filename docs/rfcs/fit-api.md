@@ -267,3 +267,190 @@ explicit clocks, the typed pool-swim model. In order:
 3. Pool swim model.
 4. After the release: `analyze`, best efforts by metric, `edit` with durations,
    `views`, `explain`.
+
+## 14. Cycling depth: ride analysis, history, models
+
+**Authorship:** direction by pjm17971 (2026-11-04), in reply to §7. Mapping to
+the code by the pond-ts library agent (Claude). References Peter gave:
+TrainingPeaks' metric glossary, efficiency-factor and decoupling article and
+Performance Manager article; GoldenCheetah's features, `WPrime.cpp` and chart
+guide; WKO's power-duration model notes.
+
+Basic ride numbers are covered (§7). Matching TrainingPeaks or GoldenCheetah
+takes three more layers: **better analysis of one ride, analysis across rides,
+and explicit performance models**. The largest addition is a first-class
+`TrainingHistory`.
+
+| Capability                      | Question it answers                                          | Priority   |
+| ------------------------------- | ------------------------------------------------------------ | ---------- |
+| Pacing and aerobic response     | How steady was the ride? Did heart rate drift against power? | Essential  |
+| Power and cadence distributions | Time coasting, grinding, spinning, above threshold?          | Essential  |
+| Effort detection and comparison | Where were the intervals? Did power fade across repeats?     | Essential  |
+| Historical power records        | Personal best? This month against last season?               | Essential  |
+| Training-load timeline          | How have recent and longer-term loads changed?               | Essential  |
+| Workout execution               | How closely did the ride match its planned intervals?        | Next       |
+| Power-duration modelling        | What do efforts suggest about critical power and W′?         | Next       |
+| W′ balance and repeated surges  | How did modelled work capacity drain and recover?            | Next       |
+| Durability                      | What power after substantial prior work?                     | Next       |
+| Pedalling and aerodynamics      | Cadence, torque, pedal force, field testing                  | Specialist |
+
+### 14.1 One ride
+
+```ts
+const a = ride.analyze({ athlete: me });
+a.power.variabilityIndex; // NP / average power
+a.aerobic.efficiencyFactor; // NP / average heart rate (cycling)
+a.distribution('power', { binWidth: watts(25) });
+a.distribution('cadence', { binWidth: rpm(5) });
+a.coasting.duration;
+```
+
+Decoupling works on a chosen section with its method named, and says whether
+the stretch suits the question, so an erratic interval session does not produce
+an authoritative-looking endurance verdict:
+
+```ts
+const endurance = ride.section({
+  elapsed: { from: minutes(20), to: minutes(100) },
+});
+const d = endurance.analyze({ athlete: me }).aerobic.decoupling({
+  method: 'efficiency-factor-halves',
+});
+d.change;
+d.firstHalf;
+d.secondHalf;
+d.coverage; // + suitability
+```
+
+### 14.2 Efforts
+
+Best efforts return the section that produced them, and repeated
+non-overlapping efforts are supported. Detected efforts are ordinary
+`Section`s, so stats and grouping work on them at once.
+
+```ts
+a.power.bestEffort(minutes(5)); // { power, section, coverage }
+a.power.bestEfforts({ duration: minutes(5), count: 5, overlap: 'none' });
+a.efforts.detect({
+  powerAbove: watts(300),
+  minimumDuration: seconds(30),
+  mergeGapsUnder: seconds(5),
+});
+```
+
+Comparing repeats: average power, cadence, heart rate and recovery time; first
+to last power change and spread; time inside the target range; missing,
+short or long repeats. Workout execution needs a separate **planned workout**
+model; recorded laps and planned steps stay distinct, with an explicit match.
+
+### 14.3 `TrainingHistory`
+
+Promotes the walk-through's tentative season idea to a core object; a season is
+a date-filtered history.
+
+```ts
+const history = TrainingHistory.of(rides);
+const season = history.between({ from: '2026-01-01', to: '2026-11-05' });
+const s = season.analyze({ athlete: me });
+s.power.curve();
+s.power.records({
+  durations: [seconds(5), minutes(1), minutes(5), minutes(20)],
+});
+```
+
+Every record keeps its activity and winning section; every curve point traces
+back to the effort behind it. Also: period comparisons, rolling records, W/kg
+using the rider's weight **on the effort's date**.
+
+```ts
+const timeline = history.analyze({ athlete: me }).load.timeline({
+  score: 'power-tss',
+  chronicTimeConstant: days(42),
+  acuteTimeConstant: days(7),
+  timezone: 'Europe/Madrid',
+});
+timeline.points; // date, dailyLoad, chronicLoad, acuteLoad, balance
+```
+
+Exponentially weighted, 42 and 7 days by convention. Expose the plain meanings
+alongside the familiar CTL / ATL / TSB labels. The spec must state: how the
+model starts, where day boundaries fall, whether balance is start or end of
+day, and the difference between **a known rest day and a gap in the history**.
+
+### 14.4 Observed curves apart from fitted models
+
+```ts
+const observed = s.power.curve();
+const model = s.power.fit({
+  model: 'critical-power-2p',
+  fitRange: { from: minutes(3), to: minutes(20) },
+});
+model.parameters.criticalPower;
+model.parameters.wPrime;
+model.diagnostics;
+model.predict(minutes(10));
+```
+
+Observed = the rider did average this. Modelled = a named model estimates it
+from supplied efforts. Return fit range, supporting efforts, residuals and
+whether the data is enough. **FTP and critical power stay separate
+parameters.** Other models (WKO's mFTP, FRC, Pmax) are named models with their
+own outputs.
+
+```ts
+const reserve = a.wPrime.balance({ model: 'skiba-2012' });
+reserve.series;
+reserve.minimum;
+```
+
+Rule: **a lap's W′ balance inherits what happened before the lap.** Selecting
+lap five never resets capacity to full.
+
+### 14.5 Durability
+
+```ts
+s.power.curve({ afterWork: kilojoules(1500) });
+s.power.bestEffort(minutes(5), { afterWork: kilojoules(2000) });
+```
+
+Each candidate effort lies wholly after the threshold. Also prior elapsed time
+and work per kilogram. It stays an observed comparison: a lower number may just
+mean fewer hard attempts late in rides.
+
+### 14.6 Specialist modules, later
+
+Power against cadence, quadrant analysis, crank torque, recorded left/right
+balance, field aerodynamics (GoldenCheetah's Aerolab). Optional modules; each
+needs extra inputs and provenance: measured or inferred, crank length, where
+the measurement was taken.
+
+### 14.7 Rules across every calculation
+
+Keep real zero-power samples; tell sensor dropouts from pauses; report coverage
+and the algorithm version. Needed before comparisons with other software mean
+anything.
+
+### 14.8 First release of this layer (pjm17971)
+
+VI, aerobic decoupling, distributions, effort comparison, historical power
+records, the training-load timeline.
+
+### 14.9 What exists today
+
+_Library agent (Claude), from `packages/fit/src` on the integration branch._
+
+| Proposed                          | Today                                                                    | Note                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| VI, efficiency factor             | `normalizedPower`, `averagePower`; average HR in `sectionStats`          | Ratios only; nothing missing underneath                                                                                     |
+| Decoupling                        | nothing                                                                  | New; works on any `Section` once §4 lands                                                                                   |
+| Power distribution                | `powerDistribution(time, watts, binWatts)` (`PowerBin`)                  | Cadence distribution and coasting are new                                                                                   |
+| Best effort with its section      | `powerCurve` / `powerBestEfforts` return `startIndex` / `endIndex`       | Turning the indexes into a `Section` is small; repeated non-overlapping efforts and detection are new                       |
+| Intensity factor, load            | `intensityFactor`, `trainingLoad` (TSS on elapsed seconds)               | **Both return `0` when FTP is missing**, not `null`; breaks §7's rule and must change. Load is per ride; no timeline exists |
+| W/kg on the effort date           | `profileAsOf` resolves dated weight; `powerBestEfforts({ weightKg })`    | Per ride today; history needs it per effort                                                                                 |
+| `TrainingHistory`, records, curve | nothing in pond; Estela builds season curves app-side                    | New object                                                                                                                  |
+| CP / W′ fit, W′ balance           | nothing                                                                  | New                                                                                                                         |
+| Durability                        | nothing; the curve's cumulative-work pass could start from a work offset | New option on curve / best effort                                                                                           |
+| Zero power vs dropout             | readers keep gaps as `null` (#887); power curve clamps gaps              | Coverage and algorithm version are not reported yet                                                                         |
+
+Dependency: everything here sits on `analyze()` and `Section` (§13 steps 1 and
+4). Build order for this layer follows §14.8 once those exist.
