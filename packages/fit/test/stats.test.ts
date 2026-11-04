@@ -448,7 +448,7 @@ describe('laps memo', () => {
 
   it('a profiled activity’s laps carry it too', async () => {
     const { Profile } = await import('../src/profile/index.js');
-    const p = act.usingProfile(new Profile({ ftp: 250 } as never));
+    const p = act.usingProfile(Profile.of({ ftpWatts: 250 }));
     expect(p.laps()[0]!.normalizedPower()!.watts).toBeCloseTo(200, 6);
   });
 });
