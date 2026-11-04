@@ -181,3 +181,12 @@ export type {
   BreakTrendPoint,
   RecoveryReading,
 } from './recovery/index.js';
+
+export {
+  editRecording,
+  isEmptyEdit,
+  recordingSeconds,
+  lapStartSeconds,
+  editedLapStarts,
+  type RecordingEdit,
+} from './edit/index.js';

@@ -144,6 +144,19 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
 
+## [PND-FITCUT] — cutting a recording (part of [PND-FITESTELA])
+
+**Built.** `editRecording` (crop, split laps, join laps) with `RecordingEdit`,
+`isEmptyEdit`, `recordingSeconds`, `lapStartSeconds`, `editedLapStarts`, in
+`packages/fit/src/edit`. Lifted from Estela's `applyVersion`
+(`packages/core/src/version/index.ts`); Estela keeps what is its own: splitting
+an activity into several, the totals it stores with an edit, reading a stored
+edit back, and moving stretches between the two clocks. New here: cropping a
+swim keeps the lengths in the kept part and works the swim time out again from
+the new laps (the note under [PND-FITSWIM]). Not done: the edit works on the
+imported activity, not on an `Activity`; a split that falls inside a pool
+length is not moved to the length's edge.
+
 ## [PND-FITSWIM] — swims (part of [PND-FITESTELA])
 
 **Shipped.** `ImportedActivity.swim` (`SwimData`, `SwimLength`), `activity.swim`,
@@ -253,3 +266,5 @@ Not moving: `null` as a missing sample. The review thought pond read a JSON
 `null` as 0; `buildTrackFromStreams` already treats it as a gap, and NP,
 averages, zones, best efforts and channels came out identical with `null`
 and with `NaN` on 0.74 and on main. Estela can delete its two converters.
+moving time from samples; per-length sections. Cropping a swim is done in
+[PND-FITCUT].
