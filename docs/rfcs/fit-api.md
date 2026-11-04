@@ -44,7 +44,8 @@ select, calculate or transform.** `run.name`, `run.sport`, `run.startedAt`,
 ## 3. The everyday experience
 
 ```ts
-import { readActivity, km, minutes } from '@pond-ts/fit';
+import { km, minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files'; // keeps the FIT decoder out of apps that don't read files
 
 const run = readActivity(bytes); // an Activity, not a record to wrap
 
@@ -249,8 +250,10 @@ switching to it anyway.
    moves only during lengths, so rests are its stopped time; open water keeps
    the speed rule. Whether ride wants a different threshold is open.
 2. **Where timer time comes from.** FIT has it (session and lap
-   `total_timer_time`); TCX laps carry `TotalTimeSeconds` (timer); GPX has
-   none, so `time.timer` is `null` for GPX.
+   `total_timer_time`); GPX has none, so `time.timer` is `null` for GPX.
+   TCX laps carry `TotalTimeSeconds`, which may be timer time on Garmin
+   exports; that is unverified, so the TCX reader treats it as elapsed and
+   leaves `time.timer` `null` until checked against real files.
 3. **Basis for channel stats.** On a moving basis, are heart rate average and
    max taken over moving time only? Proposed: yes, every number in one
    `stats()` result uses its basis, and the result says which.
