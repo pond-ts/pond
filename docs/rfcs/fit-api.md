@@ -619,3 +619,178 @@ _Library agent (Claude), from `packages/fit/src` on the integration branch._
 
 Shared with §14: `analyze()`, `TrainingHistory`, effort detection, named load
 methods, observed-versus-modelled. Building those once serves both sports.
+
+## 16. Swimming depth: lengths, repeats, sets, rests
+
+**Authorship:** direction by pjm17971 (2026-11-04), after §15. Mapping to the
+code by the pond-ts library agent (Claude). References Peter gave: Garmin's
+swim terminology and SWOLF note, Garmin's pool recording guidance,
+TrainingPeaks on swim threshold and swim TSS.
+
+Swimming needs the most distinctive model. The analytics explain both
+performance and **how the session was structured**. Already covered
+(walk-through): pool lengths, rests, swimming time, open-water routes.
+
+| Capability                    | Question it answers                                          | Priority  |
+| ----------------------------- | ------------------------------------------------------------ | --------- |
+| Repeat and set analysis       | How did my 10 × 100 compare across repeats?                  | Essential |
+| Pacing consistency            | Did I start too fast? Where did I slow down?                 | Essential |
+| Stroke metrics                | How did stroke count and rate change at a comparable pace?   | Essential |
+| Critical swim speed and zones | What training paces do recent tests support?                 | Essential |
+| Historical performances       | Are my 100, 400 and 1,500 improving?                         | Essential |
+| Volume and training load      | How are distance, intensity and frequency changing?          | Essential |
+| Recording correction          | Can I repair a missed length without inventing measurements? | Essential |
+| Workout execution             | Did I meet the prescribed pace, rest and send-off?           | Next      |
+| Technique durability          | Did holding pace take more strokes late in the set?          | Next      |
+| Open-water analysis           | How consistent were pace, stroke rate and navigation?        | Next      |
+
+### 16.1 Structure made explicit
+
+| Object     | Meaning                                    |
+| ---------- | ------------------------------------------ |
+| `Length`   | One traversal of the pool                  |
+| `Repeat`   | One effort, possibly several lengths       |
+| `Recovery` | Rest belonging to an effort                |
+| `Set`      | An ordered group of repeats and recoveries |
+| `Workout`  | The prescribed session, when there is one  |
+
+For 10 × 100 m freestyle on 2:00 the model knows ten efforts, their lengths
+and their recoveries. Recorded lap boundaries stay intact; sets and repeats
+can come from the workout, annotations or detection, and **keep which source
+supplied them**. Drills are explicit: a 200 m kick block may have a distance
+and duration but no per-length times or stroke counts, and those stay
+unavailable.
+
+### 16.2 Swimming time, rest and send-off apart
+
+```ts
+const stats = swim.stats({ time: 'swimming' });
+stats.distance;
+stats.time.elapsed;
+stats.time.swimming;
+stats.time.rest;
+stats.pace.average?.format('/100m');
+
+repeat.stats().pace.average;
+repeat.recoveryAfter?.duration;
+repeat.execution.swimTime;
+repeat.execution.startToStart;
+repeat.execution.targetSendOff;
+repeat.execution.sendOffDeviation;
+```
+
+100 m in 1:40 on a 2:00 send-off leaves 20 s; in 1:50 it leaves 10 s. That
+difference is central to reading the session. Wall rest, timer pauses and
+unclassified time stay distinguishable.
+
+### 16.3 Repeat comparison is the main experience
+
+```ts
+const repeats = a.repeats.detect({ distance: metres(100) });
+repeats.compare({
+  metrics: ['swimTime', 'pace', 'strokeRate', 'strokesPerLength', 'recovery'],
+});
+```
+
+Returns fastest, slowest and typical repeat; spread and first-to-last change;
+length-by-length pacing inside each repeat; recovery and send-off
+consistency; target compliance when a workout is supplied. Medleys keep each
+length's stroke; "mixed" describes an aggregate without losing the sequence.
+
+### 16.4 Stroke metrics with their counting convention
+
+```ts
+a.technique.strokeRate;
+a.technique.strokesPerLength;
+a.technique.distancePerCycle;
+a.technique.swolf;
+```
+
+Counts carry provenance: Garmin counts cycles of the watch arm, not every arm
+pull. Keep the reported convention; normalize only where the mapping is known.
+SWOLF (length seconds + strokes) is compared only within the same pool length,
+stroke and convention, and stays descriptive, not a technique score. Better
+history questions: faster at a similar stroke count? More strokes to hold the
+same pace? Does that change late in a set?
+
+### 16.5 Critical swim speed tests
+
+```ts
+const test = SwimTests.criticalSpeed({
+  protocol: '400m-200m',
+  efforts: [test400, test200],
+});
+test.speed;
+test.pace.format('/100m');
+test.diagnostics;
+```
+
+Distance difference over time difference. Keep the test date, stroke, course
+and supporting efforts. A test **proposes** a threshold; adopting it into the
+dated profile is explicit. Zones and targets relative to it, e.g. CSS + 5 s
+per 100 m.
+
+### 16.6 Course and equipment in history
+
+```ts
+const h = TrainingHistory.of(swims).analyze({ athlete: me });
+h.pace.records({
+  distances: [metres(100), metres(400), metres(1500)],
+  stroke: 'freestyle',
+  course: '25m',
+  equipment: 'none',
+});
+h.volume.weekly();
+h.load.timeline({ score: 'swim-tss' });
+```
+
+25 m, 50 m and 25 yd courses stay distinct (converting units doesn't account
+for the number of turns). Annotations for fins, paddles, pull buoy, kickboard,
+wetsuit. Pool best efforts default to **whole lengths**; estimating a partial
+length is an explicit, labelled option. Swim TSS (threshold pace, distance,
+moving time without rests) sits beside swimming time, rest, distance by
+stroke, drill volume and frequency; thresholds scoped to stroke and context.
+
+### 16.7 Open water
+
+Distance splits with GPS coverage; pace and stroke-rate change over long
+sections; stops where the recording supports them; navigation deviation
+against an intended course; comparisons by wetsuit, venue and known
+conditions. Raw positions and the processed route are exposed separately;
+smoothing keeps its method and never implies the exact path, currents or
+drafting are known.
+
+### 16.8 Recording repair in the core
+
+Correct pool length, stroke labels, false boundaries, missed lengths and drill
+distance; dependent stats recalculate while uncertainty is kept: **adding a
+missed length supplies distance, not its time or stroke count.**
+
+### 16.9 First release of this layer (pjm17971)
+
+Repeats and recoveries, set comparisons, stroke-count conventions, CSS tests,
+course-specific records, recording repair.
+
+### 16.10 What exists today
+
+_Library agent (Claude), from `packages/fit/src` on the integration branch._
+
+| Proposed                       | Today                                                                                                                              | Note                                                                                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `Length` with stroke and count | `SwimLength { startTimeUtc, seconds, active, strokes?, stroke? }` from FIT `length` messages (`fitSwim`)                           | Rests are `active: false` lengths (§6 wants them separate). Counts are FIT `total_strokes` as given; the convention isn't recorded     |
+| Repeat / Recovery              | Garmin pool laps: a lap with distance is an effort, a lap with none is the rest after it                                           | Pairing is a small step from the laps; detection by distance is new                                                                    |
+| Set, Workout, send-off         | nothing; FIT workout steps aren't read                                                                                             | New. Sets need a source (workout, annotation, detection)                                                                               |
+| Swimming time / rest           | `SwimData.movingSeconds` = timer time of laps with distance (`swimMovingSeconds`); matched Strava within a second on 20 real swims | Whole activity only today; per repeat and per section comes with the swimming clock. Timer pauses aren't told apart from wall rest yet |
+| Pool and course                | `pool: { lengthMeters, unit }` from the session's `pool_length` / `pool_length_unit`                                               | Becomes `pool.length` as a `Distance` plus a course label (25m / 50m / 25yd)                                                           |
+| Drills                         | lengths with stroke `drill` keep no strokes; manual drill blocks aren't modelled                                                   | Explicit drill blocks are new                                                                                                          |
+| Stroke rate, SWOLF, DPS        | nothing                                                                                                                            | Derivable from lengths once the convention is kept                                                                                     |
+| CSS tests, swim TSS, records   | nothing                                                                                                                            | New; history shares `TrainingHistory`                                                                                                  |
+| Repair                         | `editRecording` crops, splits and joins laps (#886; swim crop is new there)                                                        | Length-level repair (missed length, pool size, stroke label) is new and must not invent time or strokes                                |
+| Open water                     | cleaned swim line apart from raw fixes (`trackLine`, #887); distance from the watch when present                                   | Coverage and smoothing method aren't reported yet                                                                                      |
+
+**Effect on §13 step 3 (the typed pool-swim model, this release):** build it
+with these nouns from the start. `segments` stays the bottom layer (each a
+`Length` or a rest, with drills explicit), repeats and recoveries come from the
+recorded laps with their source marked, and `pool.length` is a `Distance` with
+a course label. Sets, workouts, send-offs and repair follow in the swimming
+release.
