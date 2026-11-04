@@ -195,6 +195,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   Also `trackStart`, `OUTLINE_POINTS`, `LEVEL_METRES` and the `TrackShape` /
   `TrackLevel` types. From Estela's `packages/core/src/shape`, whose tests
   it passes.
+- **`@pond-ts/fit`: lap groups by type and name** ([PND-FITLAPGROUPS]).
+  `groupLaps(laps)` groups laps that carry types or names (warm-up, "400m"
+  reps, "200m" jogs): types in the order the session reaches them, untyped
+  laps last, and a type with several names split under a heading, shortest
+  first. `summarizeLaps` combines laps' own averages (total distance over
+  total time, time-weighted heart rate and power, NP from each lap's NP⁴,
+  slowest / fastest lap); `lapExtremes` picks a group's highest and lowest
+  lap. Ported from Estela's lap summary.
 
 ### Fixed
 

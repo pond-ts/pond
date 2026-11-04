@@ -290,3 +290,20 @@ averages, zones, best efforts and channels came out identical with `null`
 and with `NaN` on 0.74 and on main. Estela can delete its two converters.
 moving time from samples; per-length sections. Cropping a swim is done in
 [PND-FITCUT].
+## [PND-FITLAPGROUPS] — lap groups by type and name (part of [PND-FITESTELA])
+
+**Built.** The grouping half of Estela's `ui/lapSummaryData.ts`: which laps go
+together and in what order (`groupLaps`), the lap-average combination for laps
+with no samples behind them (`summarizeLaps`), and a group's highest and
+lowest lap (`lapExtremes`). For laps with samples, `sectionGroupStats` (#883)
+gives the group numbers from the recording. Tests are Estela's, renamed.
+
+Changed on the way: a lap's type is a plain string (undefined or `''` for
+none), so the caller maps its own type list first (Estela reads a deleted or
+"default" type as none); group keys are JSON of type and name, so no type
+or name can make two groups share a key (Estela's `default` and `type/name`
+keys could, once types are free strings); repeated lap ids throw;
+`lapExtremes` returns `lowest`/`highest` + the lap, like `sectionGroupStats`; the summary fields are named for what they are
+(`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
+Estela: the column sets, narrowing steps and chart-channel mapping (display),
+and the user's interval type list with its colours.

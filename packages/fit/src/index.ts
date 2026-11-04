@@ -206,3 +206,16 @@ export {
   type TrackShape,
   type TrackLevel,
 } from './outline/index.js';
+  groupLaps,
+  hasLapGroups,
+  summarizeLaps,
+  lapSpeed,
+  lapExtremes,
+} from './laps/groups.js';
+export type {
+  GroupLap,
+  LapGroup,
+  LapAverages,
+  LapsSummary,
+  LapExtremes,
+} from './laps/groups.js';
