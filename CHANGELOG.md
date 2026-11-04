@@ -120,6 +120,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   the whole swim (`'swim-time'`); a part's swimming time is then unknown.
   The summary pipeline's moving time is unchanged.
 
+- **`@pond-ts/fit`: typed pool swims** ([PND-FITAPI], RFC §6, §16).
+  `Activity.from` returns a `PoolSwim` for a pool swim; narrow with
+  `activity.isPoolSwim()`. `activity.environment` is `'pool'`,
+  `'open-water'` or null. A `PoolSwim` has `pool` (`length` as a `Distance`,
+  `course` such as `'25m'` / `'25yd'`), `segments` (`LengthSection` with
+  `number`, `stroke`, `strokeCount`, `drill`; `RestSection` with `duration`:
+  a rest is not an inactive length), `lengths`, and `repeats`
+  (`RepeatSection`: a recorded lap that covered distance, with its
+  `lengths`, the `recoveryAfter` it, and `source: 'laps'`). Every one is a
+  `Section`, so `stats()` works on all of them. Added `Distance.yards`,
+  `.yards` and the `yards` shorthand. `ImportedActivity.swim` is unchanged.
+
 ### Added
 
 - **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**

@@ -18,6 +18,17 @@
 import type { ImportedActivity } from '../types.js';
 import { sportOf } from './sport.js';
 
+/** Whether a record is a pool swim: a swim, not open water, with the pool's
+ *  details or length records. */
+export function isPoolRecord(imported: ImportedActivity): boolean {
+  const { activity, streams, swim } = imported;
+  return (
+    sportOf(activity.sportType) === 'swim' &&
+    !streams.openWater &&
+    (!!swim?.pool || !!swim?.lengths?.some((l) => l.active))
+  );
+}
+
 /** Which rule decided moving. */
 export type MovingRule = 'speed' | 'pool-lengths' | 'pool-laps' | 'swim-time';
 
@@ -30,7 +41,7 @@ export function movingRuleOf(imported: ImportedActivity): {
   const { activity, streams, swim, laps } = imported;
   const swimming = sportOf(activity.sportType) === 'swim' && !streams.openWater;
   if (!swimming) return { rule: 'speed' };
-  const pool = !!swim?.pool || !!swim?.lengths?.some((l) => l.active);
+  const pool = isPoolRecord(imported);
   const noGps = !streams.latlng.some((p) => p != null);
   const swimTime =
     noGps &&

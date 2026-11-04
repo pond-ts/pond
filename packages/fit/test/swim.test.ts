@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Activity } from '../src/activity/index.js';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { Activity, PoolSwim } from '../src/activity/index.js';
+import { readActivity } from '../src/files/index.js';
 import { swimMovingSeconds } from '../src/swim.js';
 import { computeActivitySummary } from '../src/summary/index.js';
 import { Duration } from '../src/quantities.js';
@@ -198,5 +202,91 @@ describe('swimMovingSeconds', () => {
     ).toBe(1590);
     expect(swimMovingSeconds([lap(1, 0, 120)])).toBeUndefined();
     expect(swimMovingSeconds([])).toBeUndefined();
+  });
+});
+
+describe('pool swim model', () => {
+  const fit = (name: string) =>
+    gunzipSync(
+      readFileSync(
+        fileURLToPath(new URL(`./fixtures/${name}.fit.gz`, import.meta.url)),
+      ),
+    );
+  const a = readActivity(fit('pool-swim'));
+
+  it('narrows to a pool swim', () => {
+    expect(a.environment).toBe('pool');
+    expect(a.isPoolSwim()).toBe(true);
+    expect(a).toBeInstanceOf(PoolSwim);
+    const run = Activity.from({
+      ...lengthsSwim(),
+      activity: { ...META, sportType: 'Run' },
+    });
+    expect(run.isPoolSwim()).toBe(false);
+    expect(run.environment).toBeNull();
+  });
+
+  it('the pool is a Distance with its course', () => {
+    if (!a.isPoolSwim()) throw new Error('not a pool swim');
+    expect(a.pool!.length.meters).toBe(25);
+    expect(a.pool!.course).toBe('25m');
+    const yd = lengthsSwim();
+    yd.swim!.pool = { lengthMeters: 22.86, unit: 'yd' };
+    const b = Activity.from(yd);
+    if (!b.isPoolSwim()) throw new Error('not a pool swim');
+    expect(b.pool!.course).toBe('25yd');
+    expect(b.pool!.length.yards).toBeCloseTo(25, 9);
+  });
+
+  it('segments: lengths and rests, a rest is not a length', () => {
+    if (!a.isPoolSwim()) throw new Error('not a pool swim');
+    expect(a.segments.map((s) => s.kind)).toEqual([
+      'length',
+      'length',
+      'length',
+      'length',
+      'rest',
+      'length',
+      'length',
+    ]);
+    expect(a.lengths.length).toBe(6);
+    const first = a.lengths.at(0)!;
+    expect(first.number).toBe(1);
+    expect(first.stroke).toBe('freestyle');
+    expect(first.strokeCount).toBe(18);
+    expect(first.drill).toBe(false);
+    expect(first.stats().time.elapsed!.seconds).toBe(30);
+    expect(first.stats().distance!.meters).toBe(25);
+    const rest = a.segments[4]!;
+    if (rest.kind !== 'rest') throw new Error('expected a rest');
+    expect(rest.duration.seconds).toBe(30);
+    expect(rest.stats().time.swimming!.seconds).toBe(0);
+  });
+
+  it('repeats from the laps, each with its lengths and the rest after it', () => {
+    if (!a.isPoolSwim()) throw new Error('not a pool swim');
+    expect(a.repeats.length).toBe(2);
+    const [r1, r2] = a.repeats;
+    expect(r1!.source).toBe('laps');
+    expect(r1!.lengths.length).toBe(4);
+    expect(r1!.stats().distance!.meters).toBe(100);
+    expect(r1!.recoveryAfter!.kind).toBe('recovery');
+    expect(r1!.recoveryAfter!.stats().time.elapsed!.seconds).toBe(30);
+    expect(r2!.lengths.length).toBe(2);
+    expect(r2!.recoveryAfter).toBeNull();
+    // the repeats' stats leave the recovery out
+    expect(a.repeats.stats({ time: 'swimming' }).distance!.meters).toBe(150);
+    expect(a.repeats.stats().time.swimming!.seconds).toBe(180);
+  });
+
+  it('no length records: no segments, repeats still from the laps', () => {
+    const r = lengthsSwim();
+    delete r.swim!.lengths;
+    r.laps = [lap(1, 100, 120), lap(2, 0, 60), lap(3, 100, 120)];
+    const b = Activity.from(r);
+    if (!b.isPoolSwim()) throw new Error('not a pool swim');
+    expect(b.segments).toEqual([]);
+    expect(b.repeats.length).toBe(2);
+    expect(b.repeats.at(0)!.recoveryAfter).not.toBeNull();
   });
 });

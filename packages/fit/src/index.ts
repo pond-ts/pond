@@ -51,11 +51,18 @@ export {
   Section,
   LapSection,
   Sections,
+  PoolSwim,
+  LengthSection,
+  RestSection,
+  RepeatSection,
   sportOf,
 } from './activity/index.js';
 export type {
   Sport,
   MovingRule,
+  Pool,
+  SwimSegment,
+  RepeatSource,
   Stats,
   StatsOptions,
   TimeBasis,

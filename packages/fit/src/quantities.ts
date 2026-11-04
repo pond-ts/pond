@@ -26,6 +26,9 @@ import {
 } from './units.js';
 
 /** A length — canonical metres. */
+/** One yard in metres (exact). */
+const METERS_PER_YARD = 0.9144;
+
 export class Distance {
   private constructor(readonly meters: number) {}
   static meters(m: number): Distance {
@@ -37,11 +40,17 @@ export class Distance {
   static miles(mi: number): Distance {
     return new Distance(mi * METERS_PER_MILE);
   }
+  static yards(yd: number): Distance {
+    return new Distance(yd * METERS_PER_YARD);
+  }
   get km(): number {
     return this.meters / 1000;
   }
   get miles(): number {
     return this.meters / METERS_PER_MILE;
+  }
+  get yards(): number {
+    return this.meters / METERS_PER_YARD;
   }
   /** Numeric value in the chosen unit — the dynamic-unit peer of `.km` / `.miles`
    *  (for when the unit is a runtime preference). */
@@ -209,6 +218,7 @@ export class Cadence {
 export const meters = (m: number): Distance => Distance.meters(m);
 export const km = (v: number): Distance => Distance.km(v);
 export const miles = (v: number): Distance => Distance.miles(v);
+export const yards = (v: number): Distance => Distance.yards(v);
 export const seconds = (s: number): Duration => Duration.seconds(s);
 export const minutes = (m: number): Duration => Duration.minutes(m);
 export const hours = (h: number): Duration => Duration.hours(h);

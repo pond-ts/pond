@@ -50,6 +50,21 @@ A swim also has `stats.time.swimming` and `stats.time.rest`, and
 `swim.stats({ time: 'swimming' })` leaves the rests at the wall out of every
 number; a pool swim counts as moving only during its lengths.
 
+```ts
+if (swim.isPoolSwim()) {
+  swim.pool?.course; // "25m"
+  for (const segment of swim.segments)
+    if (segment.kind === 'length')
+      console.log(segment.stroke, segment.strokeCount, segment.stats());
+    else console.log('rest', segment.duration.format());
+  for (const rep of swim.repeats)
+    console.log(
+      rep.stats().pace.average,
+      rep.recoveryAfter?.stats().time.elapsed,
+    );
+}
+```
+
 `null` means unavailable (no power meter, no timer data in the file); a real
 zero stays zero. Timer time comes only from the file: GPX has none, so its
 `time.timer` is `null`.
