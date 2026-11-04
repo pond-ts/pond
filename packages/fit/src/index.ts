@@ -66,9 +66,34 @@ export {
   segmentsInRange,
   lineDistanceAt,
   lineRange,
+  haversineMeters,
+  elevationGainLoss,
+  movingTimeSeconds,
+  MOVING_SPEED_MPS,
+  CLIMB_THRESHOLD_METERS,
 } from './geo/index.js';
 export type { Segment, GpsSpan } from './geo/index.js';
-export { computePower, powerBestEfforts } from './power/index.js';
+export {
+  computePower,
+  powerBestEfforts,
+  normalizedPower,
+} from './power/index.js';
+export {
+  sectionStats,
+  sectionGroupStats,
+  bestAveragePower,
+  movingClock,
+  STAT_CHANNELS,
+} from './stats/index.js';
+export type {
+  Span,
+  StatChannel,
+  ChannelStats,
+  SectionStats,
+  GroupChannelStats,
+  SectionGroupStats,
+  MovingClock,
+} from './stats/index.js';
 export type {
   PowerBin,
   PowerZone,

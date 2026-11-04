@@ -50,6 +50,16 @@ import {
 } from '../zones/index.js';
 import { Profile, type ZoneDef } from '../profile/index.js';
 import {
+  sectionStats,
+  sectionGroupStats,
+  bestAveragePower,
+  movingClock,
+  type Span,
+  type SectionStats,
+  type SectionGroupStats,
+  type MovingClock,
+} from '../stats/index.js';
+import {
   Distance,
   Elevation,
   Duration,
@@ -279,6 +289,8 @@ export class Activity {
   private _watts?: Float64Array | null;
   /** Splits memoized per interval (metres) — the summary recompute isn't cheap. */
   private readonly _splits = new Map<number, Section[]>();
+  /** Recorded laps, memoized — each works its NP out from the samples. */
+  private _laps?: Section[];
 
   private constructor(private readonly prep: PreparedActivity) {}
 
@@ -355,16 +367,53 @@ export class Activity {
     return sections;
   }
 
-  /** Device-recorded laps as Sections (empty if the source recorded none). */
+  /** Device-recorded laps as Sections (empty if the source recorded none). A
+   *  lap's normalized power isn't recorded, so it is worked out from the power
+   *  samples over the lap's time. Memoized. */
   laps(): Section[] {
+    if (this._laps) return this._laps;
     const laps = this.prep.imported.laps ?? [];
     const startMs = Date.parse(this.meta.startTimeUtc);
     let acc = 0; // fallback elapsed cursor when a lap has no start time
-    return laps.map((lap) => {
+    return (this._laps = laps.map((lap) => {
       const sec = sectionFromLap(lap, startMs, acc);
       acc = sec.toSec;
+      if (this.hasPower && this.prep.n > 0)
+        sec.normalizedWatts = this.range(
+          Duration.seconds(sec.fromSec),
+          Duration.seconds(sec.toSec),
+        ).normalizedPower()?.watts;
       return new Section(sec);
-    });
+    }));
+  }
+
+  /** The full numbers for one stretch — a lap, a split, a range, or any
+   *  `{ fromSeconds, toSeconds }`: first / last / min / max / average per
+   *  channel, the same for the moving time only, normalized power (all and
+   *  moving), climb and descent. See {@link SectionStats}. */
+  stats(span: Span): SectionStats {
+    return sectionStats(this.prep, span);
+  }
+  /** The numbers for a group of stretches (all the 800 m reps, every split):
+   *  totals, the min / max / averages over their samples, and the lowest and
+   *  highest of their own averages. See {@link SectionGroupStats}. */
+  groupStats(spans: readonly Span[]): SectionGroupStats {
+    return sectionGroupStats(this.prep, spans);
+  }
+  /** The highest average power held for `seconds` inside any one of the
+   *  spans (never across two). `moving`: on the moving time only. `undefined`
+   *  with no power or no span that long. */
+  bestAveragePower(
+    spans: readonly Span[],
+    seconds: number,
+    options: { moving?: boolean } = {},
+  ): number | undefined {
+    return bestAveragePower(this.prep, spans, seconds, options);
+  }
+  /** A clock that only runs while moving (stops take no time) — for drawing
+   *  the activity with its stops taken out. Same rule as {@link movingTime}. */
+  movingClock(): MovingClock {
+    return movingClock(this.prep);
   }
 
   /** An arbitrary slice `[from, to]` (elapsed time) as a Section, with metrics
@@ -588,7 +637,7 @@ function sectionFromLap(
     durationSeconds: lap.elapsedSeconds,
     movingSeconds: lap.movingSeconds,
     elevationGainMeters: lap.elevationGainMeters ?? 0,
-    normalizedWatts: undefined, // not recorded per lap; compute via range() if needed
+    normalizedWatts: undefined, // not recorded per lap; laps() works it out
     avgWatts: lap.avgWatts,
     maxWatts: lap.maxWatts,
     avgHeartrate: lap.avgHeartrate,

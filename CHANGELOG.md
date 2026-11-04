@@ -78,6 +78,37 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: section stats** ([PND-FITSTATS]). `activity.stats(span)`
+  gives the full numbers for one stretch (a lap, a split, a range, or any
+  `{ fromSeconds, toSeconds }`): first / last / min / max / average per
+  channel (speed, heart rate, power, cadence, elevation), the same for the
+  moving time only, normalized power over all of it and over the moving time,
+  and climb and descent. `activity.groupStats(spans)` does a group of them
+  (all the 800 m reps): totals, min / max / averages over the samples inside
+  them, and the lowest and highest of their own averages with which one had
+  it. `activity.bestAveragePower(spans, seconds, { moving })` is the best
+  average power held inside any one span, and `activity.movingClock()` a
+  clock that stops while you stop (for drawing an activity with its stops
+  taken out). Functional forms `sectionStats`, `sectionGroupStats`,
+  `bestAveragePower`, `movingClock` take a `PreparedActivity`. Extracted from
+  Estela, which had written these beside `Section` and read the prepared
+  activity's private columns to do it; the numbers are identical to Estela's
+  on its fixtures.
+- **`@pond-ts/fit`: the activity rules are public** ([PND-FITSTATS]):
+  `MOVING_SPEED_MPS` (0.5 m/s) and `movingTimeSeconds`, `CLIMB_THRESHOLD_METERS`
+  (3 m) and `elevationGainLoss`, `normalizedPower`, `haversineMeters`. A
+  consumer that needs "is this moving?" or "how much did this climb?" no
+  longer has to copy the rule and hope it stays in step.
+
+### Changed
+
+- **`@pond-ts/fit`: recorded laps carry normalized power.** `activity.laps()`
+  works each lap's NP out from the power samples over the lap's time (a FIT
+  lap doesn't record it), so `lap.normalizedPower()` is no longer always
+  `undefined` on a ride with power.
+
 ### Fixed
 
 - **`live.window()` no longer slows down as the window grows.** A window view
