@@ -769,7 +769,12 @@ events; every partitioned operation ends in it (`collect`). Now
   pins `concat([a]).at(0) === a.at(0)`): the result's `SeriesStore` hands
   out each row's event from the input store it came from (`#delegate`, the
   same mechanism `dedupe` / `outliers` / `sample` use), so the event is
-  built once whichever side asks first.
+  built once whichever side asks first. Trade-off: a concat result keeps
+  every input's column storage alive while it lives (before, it held only
+  their events), as `dedupe` / `filter` results already do. This matters
+  most when collecting over many partitions. Chains of concats are
+  flattened to the store that owns each event, so they stay one step
+  deep (10,000 chained concats overflowed the stack before).
 
 Checked: 400 random lists of 1–6 inputs (time / time-range / interval
 keys, ties within and across inputs, `-0`, empty inputs, number / text /

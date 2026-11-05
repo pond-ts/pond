@@ -810,7 +810,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   identity. `partitionBy('symbol').diff('close').collect()` over 500
   symbols × 1000 rows: 726 → 151 ms; partitioned `align` over 4 hosts:
   2.3 s → 82 ms. One case is slower: 100k one-row inputs whose events were
-  already built, 36–53 → ~70 ms.
+  already built, 36–53 → ~70 ms. A concat result now keeps its inputs'
+  column storage alive while it lives (it hands back their `Event`s), as
+  `dedupe` and `filter` results already do.
 - **`smooth` (`movingAverage`, `loess`), `baseline`, `outliers` and
   `sample({ stride })` work on columns** ([PND-SMOOTHSLOW]) instead of
   building an `Event` per row and rebuilding the series from rows. Same

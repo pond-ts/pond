@@ -5,7 +5,7 @@
  * ties kept in input order.
  */
 import { describe, expect, it } from 'vitest';
-import { Interval, TimeSeries } from '../src/index.js';
+import { Event, Interval, Time, TimeSeries } from '../src/index.js';
 
 function rng(seed: number): () => number {
   let s = seed >>> 0;
@@ -134,5 +134,65 @@ describe('concat of concat results stays one step from the source events', () =>
     expect(s.at(0)).toBe(base.at(0));
     expect(s.at(1)).toBe(base.at(1));
     expect(s.toJSON().rows).toEqual(base.toJSON().rows);
+  });
+});
+
+describe('concat paths the random check covered, pinned', () => {
+  it('more than 64 inputs with text, boolean and array columns', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 's', kind: 'string', required: false },
+      { name: 'b', kind: 'boolean', required: false },
+      { name: 'a', kind: 'array', required: false },
+    ] as const;
+    // 90 one-row inputs in reverse time order, so every row moves.
+    const rows = Array.from({ length: 90 }, (_, i) => {
+      const t = (89 - i) * 1000;
+      return [
+        t,
+        i % 7 === 0 ? undefined : `s${i % 3}`,
+        i % 5 === 0 ? undefined : i % 2 === 0,
+        i % 4 === 0 ? undefined : [`t${i}`, i],
+      ] as const;
+    });
+    const inputs = rows.map(
+      (r) => new TimeSeries({ name: 's', schema, rows: [r as never] }),
+    );
+    const out = TimeSeries.concat(inputs);
+    const expected = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [...rows].reverse() as never,
+    });
+    expect(out.toJSON()).toEqual(expected.toJSON());
+    expect(out.at(0)).toBe(inputs[89]!.at(0));
+  });
+
+  it('inputs from fromEvents keep their events, NaN included', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'x', kind: 'number', required: false },
+    ] as const;
+    const a = TimeSeries.fromEvents(
+      [
+        new Event(new Time(0), { x: NaN }),
+        new Event(new Time(2000), { x: 2 }),
+      ] as never,
+      { name: 's', schema },
+    );
+    const b = TimeSeries.fromEvents(
+      [new Event(new Time(1000), { x: 1 })] as never,
+      {
+        name: 's',
+        schema,
+      },
+    );
+    const out = TimeSeries.concat([a, b]);
+    expect(out.at(0)).toBe(a.at(0));
+    expect(out.at(1)).toBe(b.at(0));
+    expect(out.at(2)).toBe(a.at(1));
+    const points = out.toPoints();
+    expect(Number.isNaN(points[0]!.x)).toBe(true);
+    expect(points.map((p) => p.x).slice(1)).toEqual([1, 2]);
   });
 });
