@@ -81,6 +81,8 @@ import {
   normalizeAggregateColumns,
   tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
+  tryRollingTimeColumnarNumeric,
+  rollingWindowBoundsByTime,
 } from './aggregate-columns.js';
 import {
   cumulativeOp,
@@ -4527,6 +4529,37 @@ export class TimeSeries<S extends SeriesSchema> {
           fastOutColumns,
         );
         return TimeSeries.#fromTrustedStore(this.name, resultSchema, fastStore);
+      }
+    }
+    // Duration-window numeric fast path: the same per-column sweep, over
+    // windows found once from the keys (`rollingWindowBoundsByTime`, which
+    // follows the three alignment loops below row for row).
+    if (countWindow === null) {
+      const timeColumns = tryRollingTimeColumnarNumeric(
+        (name) => store.columns.get(name),
+        rowCount,
+        columnSpecs,
+        () =>
+          rollingWindowBoundsByTime(
+            store.keys.begin,
+            rowCount,
+            windowMs,
+            alignment,
+          ),
+        alignment,
+        minSamples,
+      );
+      if (timeColumns !== null) {
+        const timeOutColumns = new Map<string, ColumnarColumn>();
+        for (let c = 0; c < columnSpecs.length; c += 1) {
+          timeOutColumns.set(columnSpecs[c]!.output, timeColumns[c]!);
+        }
+        const timeStore = ColumnarStore.fromTrustedStore(
+          resultSchema as unknown as ColumnSchema,
+          store.keys,
+          timeOutColumns,
+        );
+        return TimeSeries.#fromTrustedStore(this.name, resultSchema, timeStore);
       }
     }
     const sourceCols = columnSpecs.map(
