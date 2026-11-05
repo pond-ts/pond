@@ -1,0 +1,230 @@
+---
+title: Normalized power and training stress
+sidebar_position: 4
+description: Normalized power, intensity factor, training stress and variability index, built from the samples in pond and Python, then with fit.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import ChartExample from '@site/src/components/ChartExample';
+import FitNormalizedPower from '@site/src/examples/fit-normalized-power';
+
+# Normalized power and training stress
+
+**Average power undersells a hard, uneven ride.** Surging up a climb and
+coasting down the other side costs more than riding the same average
+steadily. Normalized power (NP) is a number for what the ride cost, as if it
+had been ridden steadily; from it come intensity and training stress.
+
+## The idea
+
+- **Normalized power:** take the 30-second rolling average of power, raise
+  each value to the fourth power, take the mean, then the fourth root. The
+  30 seconds is roughly how long the body takes to respond to a change of
+  effort; the fourth power makes hard stretches count for more than easy ones.
+- **Intensity factor (IF):** NP divided by the rider's FTP (functional
+  threshold power, roughly the best they can hold for an hour). 1.0 is an
+  hour-long race effort.
+- **Training stress (TSS):** `seconds × NP × IF ÷ (FTP × 3600) × 100`. An hour
+  at FTP scores 100.
+- **Variability index (VI):** NP divided by average power. 1.0 is perfectly
+  steady; a hilly ride is well above.
+
+This guide uses the ride, with an FTP of 250 W.
+
+## From scratch
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+The ride's power column, without the two meter dropouts (missing samples are
+not 0 W; see the traps below). The 30-second rolling average is pond's
+`rolling`; the fourth-power mean is a reduce over its output:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { col } from 'pond-ts';
+import { readActivity } from '@pond-ts/fit/files';
+
+const FTP = 250;
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const power = ride
+  .toSeries()
+  .select('power')
+  .filter(col('power').isMissing().not());
+
+const p30 = power
+  .rolling('30s', { power: 'avg' })
+  .column('power')!
+  .toFloat64Array();
+const np = (p30.reduce((sum, w) => sum + w ** 4, 0) / p30.length) ** 0.25;
+const average = Number(power.reduce({ power: 'avg' }).power);
+console.log('NP', np.toFixed(2), 'average', average.toFixed(2));
+```
+
+```text output
+NP 228.17 average 190.16
+```
+
+Intensity, stress and variability are arithmetic on top. Training stress uses
+the ride's elapsed seconds, from its first sample to its last:
+
+```ts
+const times = ride.toSeries().keyColumn().begin;
+const elapsed = (times[times.length - 1]! - times[0]!) / 1000;
+const intensity = np / FTP;
+const tss = ((elapsed * np * intensity) / (FTP * 3600)) * 100;
+console.log(
+  'IF',
+  intensity.toFixed(3),
+  'TSS',
+  tss.toFixed(1),
+  'VI',
+  (np / average).toFixed(3),
+);
+```
+
+```text output
+IF 0.913 TSS 138.7 VI 1.200
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+The power column without the dropouts, pond's `rolling` for the 30-second
+average, and the fourth-power mean in polars:
+
+```python
+import polars as pl
+import pond_rs
+from pond_rs import col
+
+FTP = 250
+ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
+power = pond_rs.TimeSeries(ride.select("time", "power"), key="time").filter(
+    ~col("power").is_missing()
+)
+
+p30 = power.rolling("30s", {"p30": ("power", "avg")}).to_polars()["p30"]
+np_ = (p30**4).mean() ** 0.25
+average = power.reduce({"avg": ("power", "avg")})["avg"]
+print("NP", f"{np_:.2f}", "average", f"{average:.2f}")
+```
+
+```text output
+NP 228.17 average 190.16
+```
+
+Then the arithmetic, with the ride's elapsed seconds:
+
+```python
+elapsed = (ride["time"][-1] - ride["time"][0]).total_seconds()
+intensity = np_ / FTP
+tss = elapsed * np_ * intensity / (FTP * 3600) * 100
+print("IF", f"{intensity:.3f}", "TSS", f"{tss:.1f}", "VI", f"{np_ / average:.3f}")
+```
+
+```text output
+IF 0.913 TSS 138.7 VI 1.200
+```
+
+</TabItem>
+</Tabs>
+
+## With fit
+
+NP is in every section's stats. Intensity and stress need the FTP, so they
+come from `analyze`:
+
+```ts
+const analysis = ride.analyze({
+  athlete: { ftpWatts: [{ at: '2026-01-01', value: FTP }] },
+});
+const { power: p, load } = analysis;
+console.log(
+  'NP',
+  p.normalized?.watts.toFixed(2),
+  'average',
+  p.average?.watts.toFixed(2),
+);
+console.log(
+  'IF',
+  p.intensityFactor?.toFixed(3),
+  'TSS',
+  load?.value.toFixed(1),
+  'VI',
+  p.variabilityIndex?.toFixed(3),
+);
+```
+
+```text output
+NP 228.17 average 190.16
+IF 0.913 TSS 138.7 VI 1.200
+```
+
+The same numbers. And since NP is a section's stat, any stretch has one:
+
+```ts
+for (const lap of ride.laps)
+  console.log(
+    lap.label,
+    lap.stats().power.average?.format(),
+    '→ NP',
+    lap.stats().power.normalized?.format(),
+  );
+```
+
+```text output
+Lap 1 181 W → NP 201 W
+Lap 2 186 W → NP 232 W
+Lap 3 227 W → NP 243 W
+Lap 4 179 W → NP 250 W
+Lap 5 158 W → NP 162 W
+```
+
+Lap 5, the steady spin home, has an NP close to its average. Lap 4 holds the
+top of the hard second climb and then the descent, mostly coasting, so its NP
+is 40 % above its average: the same work, done unevenly.
+
+## Chart it
+
+Power second by second (faint), its 30-second rolling average (the line NP is
+built from), and the ride's NP. Coasting seconds are left blank so the
+descents read as gaps rather than drops to zero.
+
+<ChartExample name="fit-normalized-power" height={240}>
+  {(width) => <FitNormalizedPower width={width} />}
+</ChartExample>
+
+## Traps
+
+- **A dropout is not 0 W.** The ride's meter dropped out for 8 s and 15 s.
+  Left out, as above, NP is 228.17 W. Filled as zeros it drops, because the
+  30-second windows around each dropout then hold zeros the rider never rode:
+
+  ```ts
+  const withZeros = ride.toSeries().select('power').fill('zero');
+  const z30 = withZeros
+    .rolling('30s', { power: 'avg' })
+    .column('power')!
+    .toFloat64Array();
+  console.log(
+    ((z30.reduce((s, w) => s + w ** 4, 0) / z30.length) ** 0.25).toFixed(2),
+  );
+  ```
+
+  ```text output
+  227.38
+  ```
+
+- **Which seconds count toward stress.** Training stress here uses elapsed
+  seconds, which include the six-minute café pause. On the timer's seconds
+  (the pause left out) it would be about 6 % lower. fit's `load` uses elapsed
+  seconds; whichever you choose, use the same one for every ride, or the
+  numbers won't compare.
+- **A paused timer breaks the rolling window.** The 30-second window is 30
+  seconds of clock time. After the café pause the first window holds only the
+  samples since the restart, not the last seconds before the stop. That is
+  what you want: the rider rested.
+- **NP needs power.** With no power meter, NP is `null` in fit; a heart-rate
+  based stress score is a different model.

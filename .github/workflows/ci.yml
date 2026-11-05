@@ -252,3 +252,10 @@ jobs:
         # compiles package source, and the one that broke at v0.54.0.
         working-directory: website
         run: npm run build
+
+      - name: Check the fit guide examples
+        # Runs every TypeScript example on the @pond-ts/fit pages and checks
+        # it prints what the page shows. The Python examples need a pond_rs
+        # build, so they're checked by hand (see scripts/check-fit-guides.mts).
+        working-directory: website
+        run: npm run check:fit-guides -- --no-python
