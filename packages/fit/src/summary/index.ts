@@ -508,6 +508,9 @@ export interface PreparedActivity {
   /** Whether the samples carry timestamps (so speed is meaningful and a
    *  sample has a place on the time axis). */
   hasTime: boolean;
+  /** Where the distance axis comes from: a pool swim's lengths, the GPS
+   *  line, the device's own distance, or nothing. */
+  distanceSource: 'pool-lengths' | 'gps' | 'device' | 'none';
   /** Whether the activity has a time axis at all: its samples' timestamps,
    *  or a pool swim's timed lengths and rests (which need no pool size and
    *  no samples). Elapsed, moving and swimming time need it. */
@@ -911,6 +914,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     n,
     hasTime,
     hasClock: hasTime || !!segments,
+    distanceSource: pool.poolLengths
+      ? 'pool-lengths'
+      : hasTrack && !deviceDistance
+        ? 'gps'
+        : n && cum[n - 1]! > 0
+          ? 'device'
+          : 'none',
     hasTrack,
     positionGaps,
     movingRule: moving.rule,

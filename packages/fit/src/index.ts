@@ -67,6 +67,8 @@ export {
   Analysis,
   PowerEfforts,
   PaceEfforts,
+  Measured,
+  Route,
   sportOf,
 } from './activity/index.js';
 export type {
@@ -89,6 +91,14 @@ export type {
   ZoneAnalysis,
   PowerBestEffort,
   PaceBestEffort,
+  ActivitySeries,
+  SeriesChannel,
+  SeriesPoint,
+  LatLng,
+  ActivityEdit,
+  EditChange,
+  Explainable,
+  Explanation,
 } from './activity/index.js';
 export { Track } from './track/index.js';
 

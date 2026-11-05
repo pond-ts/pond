@@ -78,6 +78,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: series, route, edits, explain and views** ([PND-FITAPI],
+  RFC §8–§10, §17). `section.series.heartRate` (also `power`, `cadence`,
+  `speed`, `elevation`, `distance`) gives a channel's samples on the
+  activity's clock as a `Measured` (`at`, `times`, `values`, gaps as
+  `null`), with `toTimeSeries()` as the explicit way down to pond.
+  `activity.route` is the line and its bounds (null with no GPS).
+  `activity.edit({ crop, laps: { splitAt, removeBoundaryAt }, parts })`
+  takes durations on the original recording and returns a new activity
+  with `original`, `appliedEdit`, `changes`, `parts`, and `toOriginal` /
+  `fromOriginal` to move a stretch between the edited clock and the
+  original's; editing an edited activity starts again from the original.
+  `activity.explain('distance' | 'elapsed' | 'moving' | …)` gives the
+  source, method, coverage and edits behind a number. New entry point
+  `@pond-ts/fit/views`: `chartData(section, options)` (a pond series over
+  time or distance, for `@pond-ts/charts`) and `mapData(route, options)`.
+
 ### Changed
 
 - **`@pond-ts/fit`: a new `Activity` model** ([PND-FITAPI],

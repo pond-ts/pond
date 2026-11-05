@@ -1,0 +1,183 @@
+/**
+ * Measured values over time (RFC §8): `run.series.heartRate`. Each channel is
+ * its samples as recorded, on the activity's clock (seconds from its start),
+ * with gaps kept as gaps. The way down to pond is explicit:
+ * `series.toTimeSeries()`.
+ */
+import { TimeSeries } from 'pond-ts';
+import { hasDistance, type PreparedActivity } from '../summary/index.js';
+import type { Span } from '../stats/index.js';
+import {
+  Cadence,
+  Distance,
+  Duration,
+  Elevation,
+  HeartRate,
+  Power,
+  Speed,
+} from '../quantities.js';
+
+/** One sample: when it was taken, and its value (`null` in a gap). */
+export interface SeriesPoint<Q> {
+  elapsed: Duration;
+  value: Q | null;
+}
+
+/** Which channel a series holds. */
+export type SeriesChannel =
+  | 'heartRate'
+  | 'power'
+  | 'cadence'
+  | 'speed'
+  | 'elevation'
+  | 'distance';
+
+const SERIES_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'value', kind: 'number', required: false },
+] as const;
+
+/** One channel's samples, in order. */
+export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
+  readonly channel: SeriesChannel;
+  /** The unit `values()` and `toTimeSeries()` hold: `'bpm'`, `'W'`, `'rpm'`,
+   *  `'m/s'` or `'m'`. */
+  readonly unit: string;
+  readonly #t: Float64Array;
+  readonly #v: Float64Array;
+  readonly #make: (v: number) => Q;
+  readonly #startMs: number;
+
+  /** @internal */
+  constructor(
+    channel: SeriesChannel,
+    unit: string,
+    t: Float64Array,
+    v: Float64Array,
+    make: (v: number) => Q,
+    startMs: number,
+  ) {
+    this.channel = channel;
+    this.unit = unit;
+    this.#t = t;
+    this.#v = v;
+    this.#make = make;
+    this.#startMs = startMs;
+  }
+
+  get length(): number {
+    return this.#t.length;
+  }
+
+  /** The sample at `index` (negative counts from the end). */
+  at(index: number): SeriesPoint<Q> | undefined {
+    const i = index < 0 ? this.#t.length + index : index;
+    if (i < 0 || i >= this.#t.length) return undefined;
+    const v = this.#v[i]!;
+    return {
+      elapsed: Duration.seconds(this.#t[i]!),
+      value: Number.isFinite(v) ? this.#make(v) : null,
+    };
+  }
+
+  *[Symbol.iterator](): Iterator<SeriesPoint<Q>> {
+    for (let i = 0; i < this.#t.length; i++) yield this.at(i)!;
+  }
+
+  /** Seconds from the activity's start, one per sample (a copy). */
+  times(): Float64Array {
+    return this.#t.slice();
+  }
+
+  /** The values in {@link unit}, one per sample, `NaN` in a gap (a copy). */
+  values(): Float64Array {
+    return this.#v.slice();
+  }
+
+  /** As a pond `TimeSeries` with one `value` column (in {@link unit}), keyed
+   *  by each sample's instant. A gap is a missing cell. */
+  toTimeSeries(): TimeSeries<typeof SERIES_SCHEMA> {
+    const rows: [number, number | undefined][] = [];
+    for (let i = 0; i < this.#t.length; i++) {
+      const v = this.#v[i]!;
+      rows.push([
+        this.#startMs + this.#t[i]! * 1000,
+        Number.isFinite(v) ? v : undefined,
+      ]);
+    }
+    return new TimeSeries({
+      name: this.channel,
+      schema: SERIES_SCHEMA,
+      rows,
+    });
+  }
+}
+
+/** The channels a stretch recorded. A channel the activity didn't record is
+ *  `null`, and so is every one when its samples have no timestamps. */
+export interface ActivitySeries {
+  heartRate: Measured<HeartRate> | null;
+  power: Measured<Power> | null;
+  cadence: Measured<Cadence> | null;
+  /** Worked out from distance and time between samples, not recorded. */
+  speed: Measured<Speed> | null;
+  elevation: Measured<Elevation> | null;
+  /** Metres from the start, on the activity's distance axis (a pool swim's
+   *  lengths, else GPS or the device's distance). */
+  distance: Measured<Distance> | null;
+}
+
+function recorded(a: Float64Array | undefined): a is Float64Array {
+  if (!a) return false;
+  for (let i = 0; i < a.length; i++) if (Number.isFinite(a[i]!)) return true;
+  return false;
+}
+
+/** The samples of `prep` inside `span` (both ends included), by channel.
+ *  @internal */
+export function seriesOf(prep: PreparedActivity, span: Span): ActivitySeries {
+  const none: ActivitySeries = {
+    heartRate: null,
+    power: null,
+    cadence: null,
+    speed: null,
+    elevation: null,
+    distance: null,
+  };
+  if (!prep.hasTime) return none;
+  const t = prep.timeRel;
+  let lo = 0;
+  while (lo < t.length && t[lo]! < span.fromSeconds - 1e-9) lo++;
+  let hi = t.length - 1;
+  while (hi >= lo && t[hi]! > span.toSeconds + 1e-9) hi--;
+  const times = t.subarray(lo, hi + 1);
+  const startMs = Date.parse(prep.imported.activity.startTimeUtc);
+  const make = <Q>(
+    channel: SeriesChannel,
+    unit: string,
+    vals: Float64Array | undefined,
+    q: (v: number) => Q,
+  ): Measured<Q> | null =>
+    recorded(vals) && times.length
+      ? new Measured(
+          channel,
+          unit,
+          times,
+          vals.subarray(lo, hi + 1),
+          q,
+          startMs,
+        )
+      : null;
+  const { cols } = prep;
+  const hasDist = hasDistance(prep);
+  return {
+    heartRate: make('heartRate', 'bpm', cols.hr, HeartRate.bpm),
+    power: make('power', 'W', cols.power, Power.watts),
+    cadence: make('cadence', 'rpm', cols.cadence, Cadence.rpm),
+    speed: hasDist
+      ? make('speed', 'm/s', prep.speed, Speed.metersPerSecond)
+      : null,
+    elevation: make('elevation', 'm', cols.ele, Elevation.meters),
+    distance: hasDist ? make('distance', 'm', prep.cum, Distance.meters) : null,
+  };
+}

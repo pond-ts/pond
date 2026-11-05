@@ -1,0 +1,98 @@
+---
+title: Editing and explaining
+sidebar_position: 10
+description: Crop an activity, split or join its laps, split it into parts, and see where each number comes from.
+---
+
+# Editing and explaining
+
+## Edits
+
+`edit()` crops an activity, splits or joins its laps, or splits it into
+several activities. Positions are durations from the original recording's
+start, so an edit always means the same thing, and editing an edited
+activity starts again from the original. The original is never changed.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { minutes, seconds } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+
+const fixed = run.edit({
+  crop: { from: minutes(2) },
+  laps: { splitAt: [minutes(20)] },
+});
+console.log(
+  run.stats().time.elapsed?.format(),
+  '→',
+  fixed.stats().time.elapsed?.format(),
+);
+console.log(run.laps.length, '→', fixed.laps.length);
+console.log(fixed.original === run);
+console.log(fixed.changes.map((c) => `${c.kind} at ${c.at.format()}`));
+```
+
+```text output
+51:23 → 49:23
+13 → 14
+true
+[ 'crop-start at 2:00', 'lap-split at 20:00' ]
+```
+
+`parts` splits one recording into several activities, a run and then the
+walk home. Each part is an activity of its own, with its clock starting at
+its own start.
+
+```ts
+const split = run.edit({ parts: { splitAt: [minutes(30)] } });
+console.log(split.parts.map((p) => p.stats().time.elapsed?.format()));
+```
+
+```text output
+[ '30:00', '21:23' ]
+```
+
+## Moving between the clocks
+
+An app keeps its own marks (a note, a custom segment) on the original
+recording, so they survive re-editing. `fromOriginal` puts a saved stretch
+on the edited activity's clock, cut to what was kept, or `null` when it was
+cropped off. `toOriginal` goes the other way.
+
+```ts
+const mark = { from: minutes(10), to: minutes(11) };
+const onEdited = fixed.fromOriginal(mark)!;
+console.log(onEdited.fromSeconds, onEdited.toSeconds);
+const back = fixed.toOriginal(onEdited);
+console.log(back.fromSeconds, back.toSeconds);
+console.log(fixed.fromOriginal({ from: seconds(0), to: seconds(60) }));
+```
+
+```text output
+480 540
+600 660
+null
+```
+
+## Where a number comes from
+
+`explain()` says where one of an activity's numbers comes from: its
+source, how it is worked out, how much of the recording backs it, and the
+edits it went through.
+
+```ts
+const d = run.explain('distance');
+console.log(d.source, d.coverage);
+console.log(d.method);
+console.log(run.explain('moving').source, run.explain('timer').source);
+console.log(fixed.explain('distance').edits.length);
+```
+
+```text output
+gps 1
+Measured along the GPS line between fixes.
+speed file
+2
+```

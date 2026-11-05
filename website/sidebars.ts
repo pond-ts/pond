@@ -100,6 +100,8 @@ const sidebars: SidebarsConfig = {
         'fit/analysis',
         'fit/best-efforts',
         'fit/pool-swims',
+        'fit/series-and-views',
+        'fit/editing',
         'fit/under-the-hood',
         'fit/charting',
         {
