@@ -94,7 +94,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   functions**, which can differ from pond-ts in the last digit (on a
   haversine over 1M rows, 99.6% of results are identical and the largest
   difference is 4 parts in 10^16); the shared parity cases allow for it.
-  A haversine over 36,000 rows takes 6 to 8 ms in pond-ts and 4 ms in
+  A haversine over 36,000 rows takes about 6 ms in pond-ts and 4 ms in
   `@pond-ts/rs`, against 1 ms for a hand-written loop
   (`packages/core/scripts/perf-expr-maths.mjs`).
 

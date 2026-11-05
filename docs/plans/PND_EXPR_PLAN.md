@@ -115,7 +115,7 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
   largest relative difference 3.9e-16.
 - Considered and not done: compiling a whole tree into one JS function so it
   runs as one loop. The column-at-a-time design costs one pass and one
-  array per step; a haversine (about 22 steps) over 36,000 rows takes 6 to 8 ms
+  array per step; a haversine (about 22 steps) over 36,000 rows takes about 6 ms
   in pond-ts, 4 ms in `@pond-ts/rs` (wasm), 1 ms as a hand loop. Fine for
   fit today; revisit if a consumer needs it.
 - Speed notes: the maths loops sit in their own functions (`math1`,

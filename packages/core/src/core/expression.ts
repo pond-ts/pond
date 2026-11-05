@@ -263,8 +263,10 @@ export type ExprColumn = { readonly name: string; readonly kind: string };
 export type CheckedKind = 'number' | 'string' | 'boolean';
 
 const COMPARE = new Set(['gt', 'ge', 'lt', 'le']);
-const ARITH = new Set(['add', 'sub', 'mul', 'div', 'atan2', 'pow']);
-const MATH1 = new Set(['neg', 'abs', 'sqrt', 'sin', 'cos', 'asin']);
+/** Steps that take two numbers and give a number. */
+const NUMBER2 = new Set(['add', 'sub', 'mul', 'div', 'atan2', 'pow']);
+/** Steps that take one number and give a number. */
+const NUMBER1 = new Set(['neg', 'abs', 'sqrt', 'sin', 'cos', 'asin']);
 const ARITY: Record<ExprOp, number> = {
   eq: 2,
   ne: 2,
@@ -366,7 +368,7 @@ export function checkExpr(
         fail(`${op} needs true/false values, got ${kinds.join(' and ')}`);
       return 'boolean';
     }
-    if (ARITH.has(op) || MATH1.has(op)) {
+    if (NUMBER2.has(op) || NUMBER1.has(op)) {
       if (kinds.some((k) => k !== 'number'))
         fail(`${op} needs numbers, got ${kinds.join(' and ')}`);
       return 'number';

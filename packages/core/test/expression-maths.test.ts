@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LiveSeries, TimeSeries, col, lit, when } from '../src/index.js';
+import { evaluateRow } from '../src/core/expression.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -171,6 +172,34 @@ describe('maths in expressions', () => {
     ];
     rows.forEach((r) => live.push(r));
     expect(keep.toTimeSeries().length).toBe(2); // 5 and 2.83
+  });
+
+  it('the per-row evaluator (live) gives the same values as batch', () => {
+    const exprs = [
+      col('x').sqrt(),
+      col('x').sin(),
+      col('x').cos(),
+      col('y').asin(),
+      col('y').atan2(col('x')),
+      col('x').pow(col('y')),
+      col('x').pow(0),
+      col('x').pow(2),
+      lit(2).pow(col('y')),
+      col('x').atan2(-2),
+    ];
+    const xs = [...s.column('x').toFloat64Array()];
+    const ys = [...s.column('y').toFloat64Array()];
+    const gap = (v: number) => (Number.isNaN(v) ? undefined : v);
+    for (const e of exprs) {
+      const batch = out(s.withColumn('o', e));
+      const row = xs.map((_, i) => {
+        const v = evaluateRow(e.toJSON(), (c) =>
+          gap(c === 'x' ? xs[i]! : ys[i]!),
+        ) as number | undefined;
+        return v === undefined || Number.isNaN(v) ? undefined : v;
+      });
+      expect(row).toEqual(batch);
+    }
   });
 
   it('writes haversine distance with the same bits as a plain loop', () => {

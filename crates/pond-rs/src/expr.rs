@@ -913,7 +913,6 @@ fn compare(op: Op, a: &Vals<'_>, b: &Vals<'_>, n: usize) -> Vec<i8> {
     }
 }
 
-#[cfg(any(feature = "live", test))]
 /// pond-ts `pow`: a gap on either side is a gap (`powf` gives 1 for
 /// `NaN.powf(0.0)` and `1.0.powf(NaN)`, where JavaScript gives 1 and `NaN`).
 fn pow(x: f64, y: f64) -> f64 {
@@ -924,6 +923,7 @@ fn pow(x: f64, y: f64) -> f64 {
     }
 }
 
+#[cfg(any(feature = "live", test))]
 fn arith(op: Op) -> fn(f64, f64) -> f64 {
     match op {
         Op::Add => |x, y| x + y,
