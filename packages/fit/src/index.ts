@@ -45,7 +45,15 @@ export {
   HeartRate,
   Cadence,
 } from './quantities.js';
-export { meters, km, miles, seconds, minutes, hours } from './quantities.js';
+export {
+  meters,
+  km,
+  miles,
+  yards,
+  seconds,
+  minutes,
+  hours,
+} from './quantities.js';
 export {
   Activity,
   Section,
