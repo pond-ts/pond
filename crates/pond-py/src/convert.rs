@@ -431,9 +431,12 @@ pub fn column_reducers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Cumulati
                         ),
                     })
                 })?;
+                // As pond-ts: a missing threshold is 0, `None` is refused
+                // (a NaN threshold, which `cumulative` rejects).
                 match d.get_item("threshold")? {
-                    Some(t) if !t.is_none() => base.threshold(t.extract::<f64>()?),
-                    _ => base,
+                    Some(t) if t.is_none() => base.threshold(f64::NAN),
+                    Some(t) => base.threshold(t.extract::<f64>()?),
+                    None => base,
                 }
             } else {
                 return Err(PyTypeError::new_err(format!(

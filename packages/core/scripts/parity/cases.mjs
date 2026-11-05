@@ -3540,6 +3540,12 @@ const CASES = [
     [{ a: { using: 'increase', threshold: -1 } }],
   ],
   [
+    'error-cumulative-threshold-null',
+    'gappy',
+    'cumulative',
+    [{ a: { using: 'decrease', threshold: null } }],
+  ],
+  [
     'error-cumulative-using',
     'gappy',
     'cumulative',

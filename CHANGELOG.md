@@ -91,9 +91,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   views, and in pond-rs (`Cumulative::increase().threshold(3.0)`; the
   `@pond-ts/rs` and Python bridges take the same spec as pond-ts). Through
   `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
-  step (0.15 against 10 ms on 36,000 rows).
+  step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
+  `CumulativeAccumulator` and `CumulativeChange`.
 
 ### Changed
+
+- **`cumulative` refuses an unknown accumulator name** ([PND-SCANDATA]).
+  Batch used to fail with an unhelpful error and live `cumulative` used to
+  pass the column through unchanged; both now throw a `TypeError` naming
+  the column. In pond-rs, `cumulative` is now generic over
+  `Into<Cumulative>`: specs of `Reducer`s compile as before, but an empty
+  literal (`cumulative(&[])`) or the method used as a function value now
+  needs the type spelled out.
 
 - **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A
   duration window (`rolling('30s', …)`, any alignment) with built-in

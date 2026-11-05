@@ -711,7 +711,6 @@ fn decimal_fit(call: &'static str, column: &str, row: usize, value: Option<i128>
         })
 }
 
-/// pond-ts's running sum / max / min / count over `f64` values.
 /// One column's entry in [`TimeSeries::cumulative`]: a [`Reducer`] (`Sum`,
 /// `Max`, `Min`, `Count`; a `Reducer` converts with `.into()`, and a spec of
 /// plain reducers needs no conversion), or the running rises / falls of
@@ -854,6 +853,7 @@ fn running_change(values: &[f64], increase: bool, threshold: f64) -> Vec<f64> {
         .collect()
 }
 
+/// pond-ts's running sum / max / min / count over `f64` values.
 fn running(values: &[f64], reducer: Reducer) -> Vec<f64> {
     let mut acc = 0.0f64;
     let mut seen = false;

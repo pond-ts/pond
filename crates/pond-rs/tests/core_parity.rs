@@ -539,13 +539,15 @@ fn cumulative_spec(json: &Value) -> Vec<(&str, Cumulative)> {
                     let base = match o["using"].as_str() {
                         Some("increase") => Cumulative::increase(),
                         Some("decrease") => Cumulative::decrease(),
-                        // pond-ts refuses any other direction: so does pond-rs
-                        // (a NaN threshold is refused by `cumulative`).
+                        // A bad direction cannot be written in Rust (the enum
+                        // has two), so this case stands in a value pond-rs
+                        // refuses for another reason: a NaN threshold.
                         _ => return (c.as_str(), Cumulative::increase().threshold(f64::NAN)),
                     };
-                    match o.get("threshold").and_then(Value::as_f64) {
-                        Some(t) => base.threshold(t),
+                    match o.get("threshold") {
                         None => base,
+                        // `null`: pond-ts refuses it; NaN is refused here.
+                        Some(t) => base.threshold(t.as_f64().unwrap_or(f64::NAN)),
                     }
                 }
                 other => panic!("cumulative entry {other}"),

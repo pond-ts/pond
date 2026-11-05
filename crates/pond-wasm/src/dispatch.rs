@@ -68,10 +68,12 @@ pub(crate) fn cumulative_entry(column: &str, r: &Value) -> Res<Cumulative> {
                         "cumulative: column '{column}': {{ using }} takes 'increase' or 'decrease'"
                     )
                 })?;
+            // pond-ts takes a missing threshold as 0 and refuses `null`;
+            // `-0` arrives tagged (`{"f64": "-0"}`), as every number does.
             match o.get("threshold") {
-                None | Some(Value::Null) => Ok(using),
+                None => Ok(using),
                 Some(t) => {
-                    let t = t.as_f64().ok_or_else(|| {
+                    let t = decode_f64(t).ok_or_else(|| {
                         format!(
                             "cumulative: column '{column}': threshold must be a number, got {t}"
                         )

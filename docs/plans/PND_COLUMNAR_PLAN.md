@@ -2376,7 +2376,8 @@ operator: rejected because it is a running accumulation like `sum`, and
 threshold rides on an object entry (`{ using, threshold }`), so plain names
 keep working. In pond-rs, `cumulative` became generic over
 `Into<Cumulative>`, so existing `&[("v", Reducer::Sum)]` calls compile
-unchanged.
+unchanged (an empty literal, or the method as a function value, now needs
+the type spelled out).
 
 **Parity.** Same operations in the same order in both cores, so the same
 bits. The core parity fixture has seven new cases (both directions, a

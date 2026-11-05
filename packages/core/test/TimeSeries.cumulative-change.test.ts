@@ -213,6 +213,13 @@ describe('cumulative increase / decrease', () => {
     expect(() => s.cumulative({ v: { using: 'sideways' } as any })).toThrow(
       /'increase' or 'decrease'/,
     );
+    const live = new LiveSeries({ name: 's', schema });
+    expect(() => live.cumulative({ v: 'nope' as any })).toThrow(
+      /unknown accumulator/,
+    );
+    expect(() =>
+      s.cumulative({ v: { using: 'increase', threshold: null as any } }),
+    ).toThrow(/threshold/);
     expect(() => s.cumulative({ v: 'nope' as any })).toThrow(
       /unknown accumulator/,
     );
