@@ -16,6 +16,12 @@
  * false (a function comparing two gaps gets `undefined === undefined`),
  * and a non-finite arithmetic result (division by zero) is a gap at once
  * rather than `Infinity`.
+ *
+ * The maths functions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) follow the
+ * same rule: a gap in gives a gap out, and so does a result that is not a
+ * finite number (`sqrt` of a negative, `pow` that overflows). pond-rs
+ * computes them with Rust's own functions, which can differ from
+ * JavaScript's `Math` in the last digit.
  */
 
 /** The kind of value an expression gives; `'any'` when only the schema can say (a bare `col`). */
@@ -56,6 +62,12 @@ export type ExprOp =
   | 'div'
   | 'neg'
   | 'abs'
+  | 'sqrt'
+  | 'sin'
+  | 'cos'
+  | 'asin'
+  | 'atan2'
+  | 'pow'
   | 'isMissing'
   | 'fill'
   | 'when';
@@ -151,6 +163,33 @@ export class Expr<K extends ExprKind = ExprKind> {
   abs(): Expr<'number'> {
     return this.#op('abs');
   }
+  /** Square root (a negative value gives a gap). */
+  sqrt(): Expr<'number'> {
+    return this.#op('sqrt');
+  }
+  /** Sine, of an angle in radians. */
+  sin(): Expr<'number'> {
+    return this.#op('sin');
+  }
+  /** Cosine, of an angle in radians. */
+  cos(): Expr<'number'> {
+    return this.#op('cos');
+  }
+  /** Arcsine, in radians (a value outside −1…1 gives a gap). */
+  asin(): Expr<'number'> {
+    return this.#op('asin');
+  }
+  /**
+   * The angle in radians, from −π to π, of the point (`x`, this): this
+   * is `y`, as in `Math.atan2(y, x)`.
+   */
+  atan2(x: ExprInput): Expr<'number'> {
+    return this.#op('atan2', x);
+  }
+  /** Raised to the power `exponent` (a result that is not a finite number is a gap). */
+  pow(exponent: ExprInput): Expr<'number'> {
+    return this.#op('pow', exponent);
+  }
   /** `true` where the value is a gap. */
   isMissing(): Expr<'boolean'> {
     return this.#op('isMissing');
@@ -224,7 +263,8 @@ export type ExprColumn = { readonly name: string; readonly kind: string };
 export type CheckedKind = 'number' | 'string' | 'boolean';
 
 const COMPARE = new Set(['gt', 'ge', 'lt', 'le']);
-const ARITH = new Set(['add', 'sub', 'mul', 'div']);
+const ARITH = new Set(['add', 'sub', 'mul', 'div', 'atan2', 'pow']);
+const MATH1 = new Set(['neg', 'abs', 'sqrt', 'sin', 'cos', 'asin']);
 const ARITY: Record<ExprOp, number> = {
   eq: 2,
   ne: 2,
@@ -242,6 +282,12 @@ const ARITY: Record<ExprOp, number> = {
   div: 2,
   neg: 1,
   abs: 1,
+  sqrt: 1,
+  sin: 1,
+  cos: 1,
+  asin: 1,
+  atan2: 2,
+  pow: 2,
   isMissing: 1,
   fill: 2,
   when: 3,
@@ -320,7 +366,7 @@ export function checkExpr(
         fail(`${op} needs true/false values, got ${kinds.join(' and ')}`);
       return 'boolean';
     }
-    if (ARITH.has(op) || op === 'neg' || op === 'abs') {
+    if (ARITH.has(op) || MATH1.has(op)) {
       if (kinds.some((k) => k !== 'number'))
         fail(`${op} needs numbers, got ${kinds.join(' and ')}`);
       return 'number';
@@ -416,6 +462,22 @@ export function evaluateRow(
       return -num(0);
     case 'abs':
       return Math.abs(num(0));
+    case 'sqrt':
+      return finiteOrGap(Math.sqrt(num(0)));
+    case 'sin':
+      return finiteOrGap(Math.sin(num(0)));
+    case 'cos':
+      return finiteOrGap(Math.cos(num(0)));
+    case 'asin':
+      return finiteOrGap(Math.asin(num(0)));
+    case 'atan2':
+      return finiteOrGap(Math.atan2(num(0), num(1)));
+    case 'pow': {
+      // A gap on either side is a gap: `NaN ** 0` would be 1.
+      const b = num(0);
+      const e = num(1);
+      return b !== b || e !== e ? NaN : finiteOrGap(b ** e);
+    }
     case 'isMissing':
       return missing(at(0));
     case 'fill': {

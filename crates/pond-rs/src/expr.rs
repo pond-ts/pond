@@ -18,6 +18,11 @@
 //!   gap;
 //! - `and` / `or` / `not` / `when` read a gap as false.
 //!
+//! The maths steps (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) use Rust's
+//! own `f64` functions, which can differ from pond-ts (JavaScript's `Math`)
+//! in the last digit. As with arithmetic, a result that is not a finite
+//! number is a gap, and `pow` with a gap on either side is a gap.
+//!
 //! ```
 //! # use pond_rs::{col, lit, when, Column, TimeSeries};
 //! let s = TimeSeries::new("s", vec![0, 1000, 2000], vec![
@@ -93,6 +98,18 @@ pub(crate) enum Op {
     Neg,
     /// Absolute value.
     Abs,
+    /// Square root.
+    Sqrt,
+    /// Sine.
+    Sin,
+    /// Cosine.
+    Cos,
+    /// Arcsine.
+    Asin,
+    /// Two-argument arctangent (`y.atan2(x)`).
+    Atan2,
+    /// Power.
+    Pow,
     /// True where the value is a gap.
     IsMissing,
     /// Gaps replaced.
@@ -101,7 +118,7 @@ pub(crate) enum Op {
     When,
 }
 
-const OPS: [(Op, &str, usize); 19] = [
+const OPS: [(Op, &str, usize); 25] = [
     (Op::Eq, "eq", 2),
     (Op::Ne, "ne", 2),
     (Op::Gt, "gt", 2),
@@ -118,6 +135,12 @@ const OPS: [(Op, &str, usize); 19] = [
     (Op::Div, "div", 2),
     (Op::Neg, "neg", 1),
     (Op::Abs, "abs", 1),
+    (Op::Sqrt, "sqrt", 1),
+    (Op::Sin, "sin", 1),
+    (Op::Cos, "cos", 1),
+    (Op::Asin, "asin", 1),
+    (Op::Atan2, "atan2", 2),
+    (Op::Pow, "pow", 2),
     (Op::IsMissing, "isMissing", 1),
     (Op::Fill, "fill", 2),
     (Op::When, "when", 3),
@@ -313,6 +336,32 @@ impl Expr {
     /// Absolute value.
     pub fn abs(self) -> Expr {
         Expr::op(Op::Abs, vec![self])
+    }
+    /// Square root (a negative value gives a gap).
+    pub fn sqrt(self) -> Expr {
+        Expr::op(Op::Sqrt, vec![self])
+    }
+    /// Sine, of an angle in radians.
+    pub fn sin(self) -> Expr {
+        Expr::op(Op::Sin, vec![self])
+    }
+    /// Cosine, of an angle in radians.
+    pub fn cos(self) -> Expr {
+        Expr::op(Op::Cos, vec![self])
+    }
+    /// Arcsine, in radians (a value outside −1…1 gives a gap).
+    pub fn asin(self) -> Expr {
+        Expr::op(Op::Asin, vec![self])
+    }
+    /// The angle in radians, from −π to π, of the point (`x`, self): self
+    /// is `y`, as in `f64::atan2`.
+    pub fn atan2(self, x: impl Into<Expr>) -> Expr {
+        self.bin(Op::Atan2, x)
+    }
+    /// Raised to the power `exponent` (a result that is not a finite
+    /// number, or a gap on either side, gives a gap).
+    pub fn pow(self, exponent: impl Into<Expr>) -> Expr {
+        self.bin(Op::Pow, exponent)
     }
     /// `true` where the value is a gap.
     pub fn is_missing(self) -> Expr {
@@ -571,7 +620,18 @@ pub(crate) fn check(e: &Expr, columns: &[ColumnDef], call: &'static str) -> Resu
                     }
                     Ok(Kind::Boolean)
                 }
-                Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Neg | Op::Abs => {
+                Op::Add
+                | Op::Sub
+                | Op::Mul
+                | Op::Div
+                | Op::Neg
+                | Op::Abs
+                | Op::Sqrt
+                | Op::Sin
+                | Op::Cos
+                | Op::Asin
+                | Op::Atan2
+                | Op::Pow => {
                     if kinds.iter().any(|&k| k != Kind::Number) {
                         return Err(fail(format!("{} needs numbers, got {}", op.name(), all())));
                     }
@@ -693,7 +753,7 @@ pub(crate) fn evaluate<'a>(e: &Expr, src: &'a dyn Source) -> Vals<'a> {
                     }
                     Vals::Boolean(p)
                 }
-                Op::Add | Op::Sub | Op::Mul | Op::Div => {
+                Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Atan2 | Op::Pow => {
                     let (Vals::Number(q), Vals::Number(p)) =
                         (vals.pop().expect("two"), vals.pop().expect("two"))
                     else {
@@ -703,18 +763,23 @@ pub(crate) fn evaluate<'a>(e: &Expr, src: &'a dyn Source) -> Vals<'a> {
                         Op::Add => binary(p, q, |x, y| x + y),
                         Op::Sub => binary(p, q, |x, y| x - y),
                         Op::Mul => binary(p, q, |x, y| x * y),
+                        Op::Atan2 => binary(p, q, f64::atan2),
+                        Op::Pow => binary(p, q, pow),
                         _ => binary(p, q, |x, y| x / y),
                     };
                     Vals::Number(Cow::Owned(out))
                 }
-                Op::Neg | Op::Abs => {
+                Op::Neg | Op::Abs | Op::Sqrt | Op::Sin | Op::Cos | Op::Asin => {
                     let Some(Vals::Number(p)) = vals.pop() else {
                         unreachable!("checked: number operand")
                     };
-                    Vals::Number(Cow::Owned(if *op == Op::Neg {
-                        unary(p, |x| -x)
-                    } else {
-                        unary(p, f64::abs)
+                    Vals::Number(Cow::Owned(match op {
+                        Op::Neg => unary(p, |x| -x),
+                        Op::Abs => unary(p, f64::abs),
+                        Op::Sqrt => unary(p, f64::sqrt),
+                        Op::Sin => unary(p, f64::sin),
+                        Op::Cos => unary(p, f64::cos),
+                        _ => unary(p, f64::asin),
                     }))
                 }
                 Op::IsMissing => {
@@ -849,6 +914,16 @@ fn compare(op: Op, a: &Vals<'_>, b: &Vals<'_>, n: usize) -> Vec<i8> {
 }
 
 #[cfg(any(feature = "live", test))]
+/// pond-ts `pow`: a gap on either side is a gap (`powf` gives 1 for
+/// `NaN.powf(0.0)` and `1.0.powf(NaN)`, where JavaScript gives 1 and `NaN`).
+fn pow(x: f64, y: f64) -> f64 {
+    if x.is_nan() || y.is_nan() {
+        f64::NAN
+    } else {
+        x.powf(y)
+    }
+}
+
 fn arith(op: Op) -> fn(f64, f64) -> f64 {
     match op {
         Op::Add => |x, y| x + y,
@@ -1145,6 +1220,12 @@ fn row_value<'a>(e: &'a Expr, get: &dyn Fn(&str) -> Option<&'a Value>) -> Option
                 Op::Add | Op::Sub | Op::Mul | Op::Div => gap_or(arith(*op)(num(0), num(1))),
                 Op::Neg => gap_or(-num(0)),
                 Op::Abs => gap_or(num(0).abs()),
+                Op::Sqrt => gap_or(num(0).sqrt()),
+                Op::Sin => gap_or(num(0).sin()),
+                Op::Cos => gap_or(num(0).cos()),
+                Op::Asin => gap_or(num(0).asin()),
+                Op::Atan2 => gap_or(num(0).atan2(num(1))),
+                Op::Pow => gap_or(pow(num(0), num(1))),
                 Op::IsMissing => b(at(0).is_none()),
                 Op::Fill => at(0).or_else(|| at(1)),
                 Op::When => {
@@ -1234,7 +1315,7 @@ mod tests {
                 }
                 let x = tree(r, Kind::Number, depth - 1);
                 let y = tree(r, Kind::Number, depth - 1);
-                match r.pick(8) {
+                match r.pick(14) {
                     0 => x.add(y),
                     1 => x.sub(y),
                     2 => x.mul(y),
@@ -1242,6 +1323,12 @@ mod tests {
                     4 => x.neg(),
                     5 => x.abs(),
                     6 => x.fill(y),
+                    7 => x.sqrt(),
+                    8 => x.sin(),
+                    9 => x.cos(),
+                    10 => x.asin(),
+                    11 => x.atan2(y),
+                    12 => x.pow(y),
                     _ => when(tree(r, Kind::Boolean, depth - 1), x, y),
                 }
             }
