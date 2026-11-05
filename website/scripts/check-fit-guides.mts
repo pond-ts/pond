@@ -240,6 +240,15 @@ function fillOutputs(text: string, printed: Map<number, string>): string {
   );
 }
 
+type Track = ReturnType<
+  ReturnType<typeof import('@pond-ts/fit').Activity.from>['toSeries']
+>;
+const CHANNELS = ['lat', 'lng', 'ele', 'hr', 'power', 'cadence', 'distance'];
+const columnOf = (t: Track, name: string) =>
+  (t.column(name as 'lat')?.toFloat64Array() ?? null) as Float64Array | null;
+const same = (x: number, y: number, tol: number) =>
+  (Number.isNaN(x) && Number.isNaN(y)) || Math.abs(x - y) <= tol;
+
 // The live charts use the model; the code reads the files. They must agree.
 {
   const { Activity } = await import('@pond-ts/fit');
@@ -260,11 +269,66 @@ function fillOutputs(text: string, printed: Map<number, string>): string {
         x.stats({ time: 'moving' }),
         x.laps.length,
       ]);
-    if (view(a) !== view(b)) {
+    if (view(a) !== view(b) || sampleDiff(a.toSeries(), b.toSeries())) {
       failures++;
       console.error(`✗ ${slug}.fit doesn't match the model in fit-fixtures.ts`);
     } else console.log(`✓ ${slug}.fit matches the model`);
+
+    // The Python reads the CSV: every row must be the model's sample.
+    const csvProblem = csvDiff(join(DATA, `${slug}.csv`), b.toSeries());
+    if (csvProblem) {
+      failures++;
+      console.error(`✗ ${slug}.csv doesn't match the model: ${csvProblem}`);
+    } else console.log(`✓ ${slug}.csv matches the model`);
   }
+}
+
+/** First difference between two tracks' samples, or '' when they agree. */
+function sampleDiff(a: Track, b: Track): string {
+  const ta = a.keyColumn().begin;
+  const tb = b.keyColumn().begin;
+  if (ta.length !== tb.length) return `${ta.length} vs ${tb.length} samples`;
+  for (let i = 0; i < ta.length; i++)
+    if (ta[i] !== tb[i]) return `time of sample ${i}`;
+  for (const name of CHANNELS) {
+    const x = columnOf(a, name);
+    const y = columnOf(b, name);
+    if (!x && !y) continue;
+    if (!x || !y) return `${name} present in only one`;
+    for (let i = 0; i < x.length; i++)
+      if (!same(x[i]!, y[i]!, 1e-9)) return `${name} at sample ${i}`;
+  }
+  return '';
+}
+
+/** First difference between a CSV and the model's samples, or ''. */
+function csvDiff(path: string, model: Track): string {
+  const [header, ...rows] = readFileSync(path, 'utf8').trim().split('\n');
+  const names = header!.split(',');
+  const toModel: Record<string, string> = {
+    altitude_m: 'ele',
+    heart_rate: 'hr',
+    distance_m: 'distance',
+  };
+  const times = model.keyColumn().begin;
+  if (rows.length !== times.length)
+    return `${rows.length} rows vs ${times.length} samples`;
+  const cols = names.map((n) =>
+    n === 'time' ? null : columnOf(model, toModel[n] ?? n),
+  );
+  for (let r = 0; r < rows.length; r++) {
+    const cells = rows[r]!.split(',');
+    if (Date.parse(cells[0]!) !== times[r]) return `time on row ${r + 1}`;
+    for (let c = 1; c < names.length; c++) {
+      const col = cols[c];
+      if (!col) return `no model column for ${names[c]}`;
+      const v = cells[c] === '' ? NaN : Number(cells[c]);
+      // lat/lng are written to 9 decimals
+      const tol = names[c] === 'lat' || names[c] === 'lng' ? 1e-9 : 1e-6;
+      if (!same(v, col[r]!, tol)) return `${names[c]} on row ${r + 1}`;
+    }
+  }
+  return '';
 }
 
 // The TypeScript must also type-check, as a reader's editor would check it.

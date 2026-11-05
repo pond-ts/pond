@@ -200,13 +200,15 @@ squashed against the left edge.
   ```
 
   fit counts a dropout as no work, so a gap in the data can't make an effort
-  look harder than it was.
+  look harder than it was. Normalized power does the opposite and leaves
+  dropouts out, because zeros there would drag the 30-second averages down;
+  see [its traps](./normalized-power#traps).
 
 - **Pauses.** A window of clock time across the café pause holds six minutes
   less riding than its length, so counting samples leaves it out, and here
-  that leaves no full hour. fit counts a pause as at most 10 seconds, so an
-  effort can run across a stop, with the stop counted as a short rest. Its
-  section is then longer than its duration.
+  that leaves no full hour. fit counts a pause as at most 10 seconds (at the
+  power of the first sample after it), so an effort can run across a stop.
+  Its section is then longer than its duration.
 - **Recording rate.** Counting samples to find full windows works because the
   ride records once a second. For a file that records less often, or only
   when something changes, count seconds instead of samples, or use fit.

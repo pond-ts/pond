@@ -121,9 +121,12 @@ console.log(secondClimb.power.bestEffort(minutes(5))?.power.format());
   and a dropout did no measured work. The ride's best 20 minutes contains its
   15-second dropout; [Power curve and best efforts](./guides/power-curve)
   shows what changes if you skip it instead.
-- **A pause counts as 10 seconds at most.** An effort can run across a stop:
-  the riding either side of a café pause can make one 20-minute effort, with
-  the pause counted as a 10-second rest. Its section then runs longer than its
-  duration. On the example ride, the best hour is made that way.
+- **A pause counts as 10 seconds at most.** Each sample stands for the time
+  since the one before, capped at 10 seconds, at its own power. So after a
+  café pause the first sample stands for 10 seconds at whatever it recorded,
+  and the pause adds nothing else. An effort can run across a stop this way:
+  the riding either side of it makes one 20-minute effort, whose section runs
+  longer than its duration. On the example ride, the best hour is made that
+  way.
 - **Pace efforts are on elapsed time.** The fastest kilometre includes any
   time stood still inside it, as a race result would.

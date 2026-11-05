@@ -199,7 +199,8 @@ descents read as gaps rather than drops to zero.
 ## Traps
 
 - **A dropout is not 0 W.** The ride's meter dropped out for 8 s and 15 s.
-  Left out, as above, NP is 228.17 W. Filled as zeros it drops, because the
+  (The power curve counts dropouts as 0 W, for its own reason; see
+  [its traps](./power-curve#traps).) Left out, as above, NP is 228.17 W. Filled as zeros it drops, because the
   30-second windows around each dropout then hold zeros the rider never rode:
 
   ```ts

@@ -145,7 +145,7 @@ print(int(totals["elapsed"]), int(totals["moving"]), f'{totals["meters"]:.2f}')
 </TabItem>
 </Tabs>
 
-So the run took 3,083 seconds and moved for 2,947 of them, over 9.7 km: the six
+So the run took 3,083 seconds and moved for 2,947 of them, over 9.7 km: the five
 recoveries' standing starts, and the slowing down and speeding up around
 them, are the difference.
 
@@ -179,6 +179,8 @@ recoveries; on moving time it doesn't.
 fit decides moving the same way for runs, rides, walks, hikes and open water
 swims. A pool swim is different: its moving time is the time spent swimming
 lengths, from the watch's length records (see [Pool swims](../pool-swims)).
+A swim with neither GPS nor length records uses the moving time the watch
+itself saved in the file, when there is one.
 
 ## Chart it
 
