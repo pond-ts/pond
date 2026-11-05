@@ -830,15 +830,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `aggregate`; the fast path already drives the same window states, so
   answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
   Found 2026-10-20 (pond-rs R1b step 8g).
-- **[PND-SMOOTHSLOW]** — pond-ts `smooth` (`movingAverage`, `loess`) and
-  `baseline` build one `Event` per row and rebuild the series from rows. On
-  1M rows `movingAverage` over 5 minutes takes ~2 s and `baseline` ~3.9 s,
-  where `rolling` with the same `avg` and `stdev` takes ~0.3 s; making the
-  `Event`s alone takes ~1.2 s. `outliers` ~2 s, `scan` 80 ms, `sample({
-stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
-  the column and write the result column directly, as `ema`'s fast path
-  already does. Repro: `crates/pond-rs/bench/smooth_pond_ts.mjs`. Found
-  2026-10-21 (pond-rs R1b step 8h).
+- **[PND-ROLLTIME]** — pond-ts duration `rolling` (`rolling('5m', …)`)
+  takes ~330 ms per number reducer on 1M rows (`avg` 330 ms, `avg` + `stdev`
+  ~550 ms). After [PND-SMOOTHSLOW] it is the whole cost of `baseline` and
+  `outliers` (~0.8 s). Not profiled yet. Repro:
+  `packages/core/scripts/perf-smooth.mjs` (`baseline-5m-1M`). Found
+  2026-10-22.
 - **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
   unknown name gives the series back unchanged, and a text column gives a
   gap in every row (`baseline` on a text column also gives gaps). pond-rs

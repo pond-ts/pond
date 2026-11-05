@@ -802,6 +802,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`smooth` (`movingAverage`, `loess`), `baseline`, `outliers` and
+  `sample({ stride })` work on columns** ([PND-SMOOTHSLOW]) instead of
+  building an `Event` per row and rebuilding the series from rows. Same
+  output and errors. On 1M rows: `movingAverage` 2.1 s → 0.2 s, `baseline`
+  4.3 → 0.8 s, `outliers` 2.4 → 0.8 s (both now mostly the `rolling` call
+  inside them), `sample({ stride: 10 })` 31 → 8 ms. A text or unknown target
+  column keeps the old path. As in `dedupe`, a kept row's `Event` is the
+  source row's.
 - **`align`, `materialize` and `dedupe` work on columns** ([PND-ALIGNHOLD],
   [PND-DEDUPEMAP]) instead of building an `Event` per bucket or row. Each
   picks a source row per output row from the key buffers and copies columns
