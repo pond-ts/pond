@@ -1078,10 +1078,6 @@ consumer signal. Plan:
   `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
   payload-free change signal the hooks use when the source offers it.
   `useEventRate` gains nothing (its window view stores `Event`s anyway).
-- **[PND-TRIMCOL]** — `trim` builds and trims an `Event` for every row:
-  1.7 s on 1M rows, against 2 ms for `slice`. Fix: clip the key columns
-  directly and gather the value columns, keeping the re-sort when
-  clipping reorders keys ([PND-TRIMORDER]). Found 2026-11-05.
 - **[PND-LIVEREPLAY]** — A live operator attached to a `LiveSeries` that
   already holds rows replays them through `at(i)`, one `Event` each. On
   200k rows set-up costs 2–3× handling the same rows as they arrive:

@@ -2076,6 +2076,46 @@ frozen-ness: 81,000/81,000 equal. A planted `>=` for `>` in `after` gave
 caches it so the row's later event shares it; that cache is most of what is
 left.
 
+**[PND-TRIMCOL] shipped — `trim` on the key buffers.** Keep the rows whose
+key overlaps the range (`b <= re && rb <= e` on the range `toTimeRange`
+gives, which every key kind's `trim` reads), clip `timeRange` / `interval`
+edges with the same `Math.max` / `Math.min` as `TimeRange.intersection`,
+re-sort stably by begin then end only when clipping broke the order, and
+gather the value columns. `time` keys are not clipped and `Time.trim`
+returned the key itself, so the result keeps the source's key objects: new
+`SeriesStore._selectRowsSharingKeysModulePrivate` builds a store whose
+`keyAt(i)` is the source's event key for that row while its events stay new
+objects (`out.at(j) !== s.at(i)`, `out.at(j).key() === s.at(i).key()`, as
+before). The event path still runs for an empty series (it never read the
+range), a store whose events may differ from its columns, and array columns.
+Oracle (main vs this build): 4,000 random series × 11 ranges, 44,000/44,000
+equal (output, errors, event / key identity, frozen-ness); planted bugs:
+no re-sort 402 mismatches, no end clip 3,679, key sharing dropped 6,324.
+1M rows, median of 5, two runs each (`scripts/perf-trim.mjs`):
+
+| call                              | before (ms) | after (ms) |
+| --------------------------------- | ----------: | ---------: |
+| `time`, trim to all but the edges | 3,948–4,090 |      33–49 |
+| `time`, trim to half              | 2,028–2,989 |      18–33 |
+| `timeRange`, clips both ends      | 2,332–2,633 |      51–64 |
+| `interval`, clips both ends       | 3,896–4,056 |      85–94 |
+| `timeRange`, events already built | 1,051–1,095 |     90–453 |
+
+(The audit's 1.7 s was a smaller range on a lighter heap; the last row's
+spread is garbage collection with 1M built events alive.)
+
+**Chains of selections flattened.** The post-merge review of #901 found that
+`s = s.after(t)` (or `dedupe`, `tail`, …) in a loop built a chain of
+delegated stores that every `at()` / `rows` walked one call per link:
+10,000 links overflowed the stack, 1,000 were ~35× slower. A delegated
+store holds none of its own events, so `_selectRowsModulePrivate` on one now
+points at its sources with composed row numbers, and
+`_selectRowsSharingKeysModulePrivate` walks to the store that owns the keys.
+Lookups stay one step deep. Not changed, and worth knowing: a small
+selection (`tail('10s')` of 1M rows) keeps the whole source store alive,
+because its events are the source's; the old `filter` path held only the
+kept events.
+
 **[PND-GROUPEVENTS] shipped.** `groupBy` groups row numbers by
 `String(column.read(i))` (`'undefined'` for a gap, so a gap and the text
 `'undefined'` still share a group, as before) in first-seen order and

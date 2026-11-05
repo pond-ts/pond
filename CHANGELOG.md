@@ -574,6 +574,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`trim` clips on the key columns** ([PND-TRIMCOL]) instead of trimming
+  an `Event` per row. Output is identical: same rows, clipped keys, re-sort
+  when clipping breaks the key order, and errors; `time` keys still come
+  back as the source's key objects. 1M rows: 2.3–4.1 s → 18–94 ms. Also,
+  selections of selections now point straight at the original rows, so a
+  loop like `s = s.after(t)` or `s = s.dedupe()` no longer builds a chain
+  that every lookup walks (10,000 links overflowed the stack; this came in
+  with the `dedupe` / span-selector rewrites above and never shipped).
+
 - **`before`, `after`, `within`, `tail`, `overlapping` and `containedBy`
   read the key columns** ([PND-SPANFILTER]) instead of building an `Event`
   per row to test its key, and **`rows` / `toRows` / `toObjects` write rows
