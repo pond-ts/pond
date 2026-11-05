@@ -25,6 +25,14 @@ import { Distance, Duration } from '../quantities.js';
 import { sportOf, type Sport } from './sport.js';
 import { isPoolRecord } from './moving.js';
 import { toStats, type Stats, type StatsOptions } from './stats.js';
+import {
+  Analysis,
+  PaceEfforts,
+  PowerEfforts,
+  resolveAthlete,
+  type AnalysisSource,
+  type AnalyzeOptions,
+} from './analysis.js';
 
 /** Where a section starts and ends, on both axes. `elapsed` is null when
  *  the recording has no timestamps. */
@@ -39,7 +47,7 @@ export type SectionRange =
   | { distance: { from: Distance; to: Distance } };
 
 /** What a section is: the whole recording, a recorded lap, a computed split,
- *  or a stretch someone picked. */
+ *  a stretch someone picked, a pool swim's parts, or a best effort. */
 export type SectionKind =
   | 'activity'
   | 'lap'
@@ -48,7 +56,8 @@ export type SectionKind =
   | 'length'
   | 'rest'
   | 'repeat'
-  | 'recovery';
+  | 'recovery'
+  | 'effort';
 
 /** Elapsed seconds at `meters` along the activity: the first sample that far,
  *  with the time drawn straight from the sample before. */
@@ -108,6 +117,8 @@ export class Section implements Span {
   protected readonly timerSeconds: number | undefined;
   #bounds?: SectionBounds;
   #stats = new Map<string, Stats>();
+  #power?: PowerEfforts<Section>;
+  #pace?: PaceEfforts<Section>;
 
   /** @internal sections are made by an {@link Activity}, not directly */
   constructor(
@@ -157,6 +168,35 @@ export class Section implements Span {
       this.#stats.set(basis, s);
     }
     return s;
+  }
+
+  /** This stretch read for one athlete: intensity, load and zones from
+   *  their settings in force on the activity's date. */
+  analyze(options: AnalyzeOptions): Analysis {
+    const start = this.prep.imported.activity.startTimeUtc;
+    return new Analysis(this.#source(), resolveAthlete(options.athlete, start));
+  }
+
+  /** Best efforts by power: `ride.power.bestEffort(minutes(20))`. */
+  get power(): PowerEfforts<Section> {
+    return (this.#power ??= new PowerEfforts(this.#source(), (span, label) =>
+      this.#effort(span, label),
+    ));
+  }
+
+  /** Best efforts by pace: `run.pace.bestEffort(km(5))`. */
+  get pace(): PaceEfforts<Section> {
+    return (this.#pace ??= new PaceEfforts(this.#source(), (span, label) =>
+      this.#effort(span, label),
+    ));
+  }
+
+  #source(): AnalysisSource {
+    return { prep: this.prep, span: this, stats: () => this.stats() };
+  }
+
+  #effort(span: Span, label: string): Section {
+    return new Section(this.prep, 'effort', label, span);
   }
 
   /** @internal the watch's swim time, when this is the whole activity */

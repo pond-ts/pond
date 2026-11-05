@@ -64,6 +64,9 @@ export {
   RestSection,
   RepeatSection,
   RecoverySection,
+  Analysis,
+  PowerEfforts,
+  PaceEfforts,
   sportOf,
 } from './activity/index.js';
 export type {
@@ -79,6 +82,13 @@ export type {
   SectionBounds,
   SectionRange,
   SectionKind,
+  AnalyzeOptions,
+  AthleteInput,
+  PowerAnalysis,
+  Load,
+  ZoneAnalysis,
+  PowerBestEffort,
+  PaceBestEffort,
 } from './activity/index.js';
 export { Track } from './track/index.js';
 

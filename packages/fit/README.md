@@ -58,11 +58,23 @@ if (swim.isPoolSwim()) {
       console.log(segment.stroke, segment.strokeCount, segment.stats());
     else console.log('rest', segment.duration.format());
   for (const rep of swim.repeats)
-    console.log(
-      rep.stats().pace.average,
-      rep.recoveryAfter?.stats().time.elapsed,
-    );
+    console.log(rep.stats().pace.average, rep.recoveryAfter?.duration.format());
 }
+```
+
+The athlete goes on an analysis, not on the activity. Pass a `Profile`, or
+the stored profile with its dated history (resolved to the activity's date):
+
+```ts
+const a = ride.analyze({ athlete: profile });
+a.power.intensityFactor; // null without FTP
+a.power.variabilityIndex;
+a.load; // { model: 'cycling-tss', value: 112 }, or null without FTP
+a.zones.heartRate; // time in each zone; null without HR zones
+
+ride.power.bestEffort(minutes(20))?.power.format(); // "291 W"
+ride.power.curve(); // shortest first, never rising
+run.pace.bestEffort(km(5))?.time.format(); // with .section: where it was
 ```
 
 `null` means unavailable (no power meter, no timer data in the file); a real
@@ -81,7 +93,9 @@ zero stays zero. Timer time comes only from the file: GPX has none, so its
 - **Functional layer** — power (NP / IF / TSS / curve), zones, best efforts,
   breaks and heart-rate recovery, lap groups, outlines, recording edits; each a
   plain function over the prepared activity (`activity.prepared()`).
-- **Profiles** — `Profile` resolves dated athlete settings (FTP, weight,
+- **Analysis** — `section.analyze({ athlete })`: intensity, load and zones
+  from the athlete's settings; best efforts under `section.power` and
+  `section.pace`. `Profile` resolves dated athlete settings (FTP, weight,
   zones).
 
 ## Documentation

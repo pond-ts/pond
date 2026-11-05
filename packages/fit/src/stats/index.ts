@@ -474,6 +474,17 @@ export function spanNormalizedPower(
   return w.empty ? undefined : windowNp(s, s.power, w.lo, w.hi, false);
 }
 
+/** The sample indexes a section covers, both ends included (snapped as
+ *  {@link sectionStats} snaps them); null when the span misses the
+ *  recording. @internal */
+export function sectionWindow(
+  prep: PreparedActivity,
+  span: Span,
+): { lo: number; hi: number } | null {
+  const w = measure(samplesOf(prep), span);
+  return w.empty ? null : { lo: w.lo, hi: w.hi };
+}
+
 /** The stats for one section of a prepared activity. Throws `RangeError` on
  *  a span with a non-finite end or ends reversed; a span that misses the
  *  recording gives zeros and no channels. */

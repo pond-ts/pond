@@ -132,6 +132,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   `Section`, so `stats()` works on all of them. Added `Distance.yards`,
   `.yards` and the `yards` shorthand. `ImportedActivity.swim` is unchanged.
 
+- **`@pond-ts/fit`: analysis for an athlete, best efforts by metric**
+  ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`
+  or the stored profile JSON (resolved to the activity's start) and returns
+  an `Analysis`: `power` (`average`, `normalized`, `intensityFactor`,
+  `variabilityIndex`), `load` (`{ model: 'cycling-tss', value }`) and
+  `zones` (`power`, `heartRate`, `pace`), with `athlete` the settings used.
+  A missing setting makes only what needs it `null`: no FTP means no
+  intensity factor, load or power zones (the functional `intensityFactor` /
+  `trainingLoad` still return 0 there). Best efforts sit under the metric:
+  `section.power.bestEffort(minutes(20))`, `section.power.curve()`,
+  `section.pace.bestEffort(km(5))`, `section.pace.bestEfforts()`; each
+  effort carries its stretch as a `Section` (kind `'effort'`). Works on any
+  section, so a lap or a picked stretch has its own analysis and efforts.
+
 ### Added
 
 - **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**

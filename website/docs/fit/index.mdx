@@ -34,6 +34,11 @@ const window = ride.section({
   elapsed: { from: minutes(20), to: minutes(40) },
 });
 window.stats().elevation.gain?.feet;
+
+const analysis = ride.analyze({ athlete: profile });
+analysis.power.intensityFactor; // null without FTP
+analysis.load?.value; // cycling TSS
+ride.power.bestEffort(minutes(20))?.power.watts;
 ```
 
 ## The stack (three layers)
@@ -55,10 +60,11 @@ objects — both first-class.
 
 ## Design tenets
 
-- **Profile-agnostic.** Anything needing FTP / body weight / zone definitions
-  takes them as **arguments** (the caller resolves them from the athlete
-  profile as-of the activity date). `Activity` wraps only the activity's own
-  evidence.
+- **The athlete goes on an analysis.** Anything needing FTP / body weight /
+  zone definitions comes from `section.analyze({ athlete })`, which resolves
+  the athlete's dated settings to the activity's date. `Activity` wraps only
+  the activity's own evidence; a missing setting makes only the results that
+  need it `null`.
 - **Gap-honest.** Sustained coasts/dropouts break the line (NaN), never
   interpolate across a hole; missing channels are absent, not zero.
 - **Ingest membrane.** Messy formats in (Strava exports, `.fit`/`.gpx`/`.tcx`,
