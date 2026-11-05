@@ -3,6 +3,7 @@
  * published types don't depend on the parser's own (its fields are `any`).
  */
 import FitParser from 'fit-file-parser';
+import { expandCompressedTimestamps } from './fitCompressed.js';
 
 export interface FitRecord {
   timestamp?: Date | string;
@@ -57,7 +58,12 @@ export function parseFitBytes(buffer: ArrayBuffer | Uint8Array): FitData {
   });
   let data: FitData | undefined;
   let error: unknown = null;
-  fp.parse(buffer as ArrayBuffer, (err: unknown, d: unknown) => {
+  // the parser can't read compressed-timestamp headers: write them out
+  const bytes = expandCompressedTimestamps(
+    buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer),
+  );
+  const input = bytes === buffer ? buffer : bytes;
+  fp.parse(input as unknown as ArrayBuffer, (err: unknown, d: unknown) => {
     error = err;
     data = d as FitData;
   });

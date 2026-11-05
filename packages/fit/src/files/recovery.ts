@@ -87,6 +87,9 @@ interface MessageDef {
   little: boolean;
   fields: { num: number; size: number }[];
   size: number;
+  /** Bytes of the timestamp field (253) in the definition, 0 without one.
+   *  A message with a compressed time leaves them out of its payload. */
+  tsSize: number;
 }
 
 /**
@@ -124,6 +127,8 @@ export function fitRecoveryFromBytes(
     const v = new Map<number, number>();
     let p = at;
     for (const f of d.fields) {
+      // a compressed-time message has no timestamp bytes of its own
+      if (compressedTs !== undefined && f.num === 253) continue;
       if (f.size === 1) v.set(f.num, b[p]!);
       else if (f.size === 2) v.set(f.num, view.getUint16(p, d.little));
       else if (f.size === 4) v.set(f.num, view.getUint32(p, d.little));
@@ -155,13 +160,14 @@ export function fitRecoveryFromBytes(
     if (h & 0x80) {
       // A data message with a compressed time: 5 bits of seconds on the last.
       const d = defs.get((h >> 5) & 3);
-      if (!d || pos + d.size > end) throw broken();
+      const size = d ? d.size - d.tsSize : 0;
+      if (!d || pos + size > end) throw broken();
       const off = h & 0x1f;
       let t = (ts & ~0x1f) + off;
       if (off < (ts & 0x1f)) t += 0x20;
       ts = t;
       read(d, pos, t);
-      pos += d.size;
+      pos += size;
       continue;
     }
     const local = h & 0x0f;
@@ -183,7 +189,8 @@ export function fitRecoveryFromBytes(
         if (pos + 3 * dev > end) throw broken();
         for (let i = 0; i < dev; i++, pos += 3) size += b[pos + 1]!;
       }
-      defs.set(local, { global, little, fields, size });
+      const tsSize = fields.find((f) => f.num === 253)?.size ?? 0;
+      defs.set(local, { global, little, fields, size, tsSize });
       continue;
     }
     const d = defs.get(local);

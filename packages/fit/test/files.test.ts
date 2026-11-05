@@ -403,7 +403,20 @@ describe('parseTcx', () => {
  * with a compressed time header, a big-endian event definition, and a
  * developer field. Times are FIT seconds; the last record is at T + 3.
  */
-function syntheticFit(opts: { cut?: number } = {}): Uint8Array {
+function syntheticFit(
+  opts: {
+    cut?: number;
+    /** Compress the second record on local 0's definition, which has a
+     *  timestamp field (its 4 bytes are then left out), instead of on
+     *  local 1's, which has none. */
+    onTimestampDef?: boolean;
+    /** Write a real file CRC (the parser checks it). */
+    crc?: boolean;
+    /** No developer field (fit-file-parser needs a field description for
+     *  one, which this file doesn't carry). */
+    noDeveloperField?: boolean;
+  } = {},
+): Uint8Array {
   const T = 1_000_000_000; // FIT seconds
   const body: number[] = [];
   const u16le = (v: number) => [v & 0xff, (v >> 8) & 0xff];
@@ -416,12 +429,38 @@ function syntheticFit(opts: { cut?: number } = {}): Uint8Array {
   const u32be = (v: number) => u32le(v).reverse();
   // Definition, local 0: record (20), little-endian: timestamp (253, 4 B),
   // heart rate (3, 1 B), plus one 2-byte developer field.
-  body.push(0x60, 0, 0, ...u16le(20), 2, 253, 4, 0x86, 3, 1, 0x02, 1, 0, 2, 0);
-  body.push(0x00, ...u32le(T), 150, 0xaa, 0xbb); // record at T, 150 bpm
-  // Definition, local 1: record with heart rate only (for compressed times).
-  body.push(0x41, 0, 0, ...u16le(20), 1, 3, 1, 0x02);
-  // Compressed header for local 1, 3 s on: 0x80 | (1 << 5) | ((T + 3) & 0x1f).
-  body.push(0x80 | (1 << 5) | ((T + 3) & 0x1f), 148);
+  const dev = opts.noDeveloperField ? [] : [0xaa, 0xbb];
+  if (opts.noDeveloperField)
+    body.push(0x40, 0, 0, ...u16le(20), 2, 253, 4, 0x86, 3, 1, 0x02);
+  else
+    body.push(
+      0x60,
+      0,
+      0,
+      ...u16le(20),
+      2,
+      253,
+      4,
+      0x86,
+      3,
+      1,
+      0x02,
+      1,
+      0,
+      2,
+      0,
+    );
+  body.push(0x00, ...u32le(T), 150, ...dev); // record at T, 150 bpm
+  if (opts.onTimestampDef) {
+    // Compressed header for local 0, 3 s on: heart rate and the developer
+    // field, no timestamp bytes.
+    body.push(0x80 | (0 << 5) | ((T + 3) & 0x1f), 148, ...dev);
+  } else {
+    // Definition, local 1: record with heart rate only (for compressed times).
+    body.push(0x41, 0, 0, ...u16le(20), 1, 3, 1, 0x02);
+    // Compressed header for local 1, 3 s on: 0x80 | (1 << 5) | ((T + 3) & 0x1f).
+    body.push(0x80 | (1 << 5) | ((T + 3) & 0x1f), 148);
+  }
   // Definition, local 2: event (21), big-endian: timestamp, event (0), data (3).
   body.push(0x42, 0, 1, 0, 21, 3, 253, 4, 0x86, 0, 1, 0x00, 3, 4, 0x86);
   body.push(0x02, ...u32be(T + 123), 21, ...u32be(125)); // recovery_hr 125 bpm
@@ -438,7 +477,29 @@ function syntheticFit(opts: { cut?: number } = {}): Uint8Array {
     0,
   ];
   const all = new Uint8Array([...header, ...body, 0, 0]);
+  if (opts.crc) {
+    const c = fitCrc(all.subarray(0, all.length - 2));
+    all[all.length - 2] = c & 0xff;
+    all[all.length - 1] = c >> 8;
+  }
   return opts.cut ? all.subarray(0, opts.cut) : all;
+}
+
+/** FIT's CRC-16, written out here so the test doesn't trust the code it
+ *  checks. */
+function fitCrc(bytes: Uint8Array): number {
+  const t = [
+    0x0000, 0xcc01, 0xd801, 0x1400, 0xf001, 0x3c00, 0x2800, 0xe401, 0xa001,
+    0x6c00, 0x7800, 0xb401, 0x5000, 0x9c01, 0x8801, 0x4400,
+  ];
+  let crc = 0;
+  for (const byte of bytes) {
+    let tmp = t[crc & 0xf]!;
+    crc = ((crc >> 4) & 0x0fff) ^ tmp ^ t[byte & 0xf]!;
+    tmp = t[crc & 0xf]!;
+    crc = ((crc >> 4) & 0x0fff) ^ tmp ^ t[(byte >> 4) & 0xf]!;
+  }
+  return crc;
 }
 
 describe('parseTcx: names, ids and missing times', () => {
@@ -473,6 +534,12 @@ describe('fitRecoveryFromBytes on a file built by hand', () => {
     });
   });
 
+  it('leaves out the timestamp bytes when a compressed message uses a definition that has one', () => {
+    expect(
+      fitRecoveryFromBytes(syntheticFit({ onTimestampDef: true })),
+    ).toEqual({ atStopBpm: 148, after: [{ sec: 120, bpm: 125 }] });
+  });
+
   it('throws on a file cut short or not a FIT file', () => {
     expect(() => fitRecoveryFromBytes(syntheticFit({ cut: 40 }))).toThrow();
     expect(() =>
@@ -483,6 +550,25 @@ describe('fitRecoveryFromBytes on a file built by hand', () => {
   it('none in a file without a reading', () => {
     expect(fitRecoveryFromBytes(fit('pool-swim'))).toBeUndefined();
   });
+});
+
+describe('parseFit: compressed timestamps', () => {
+  for (const onTimestampDef of [false, true])
+    it(`reads them ${onTimestampDef ? 'on a definition with a timestamp field' : 'on a definition without one'}`, () => {
+      const bytes = syntheticFit({
+        onTimestampDef,
+        crc: true,
+        noDeveloperField: true,
+      });
+      const r = parseFit(bytes);
+      expect(r.streams.timeSeconds).toEqual([0, 3]);
+      expect(r.streams.heartrate).toEqual([150, 148]);
+      expect(r.recovery).toEqual({
+        atStopBpm: 148,
+        after: [{ sec: 120, bpm: 125 }],
+      });
+      expect(() => Activity.from(r)).not.toThrow();
+    });
 });
 
 describe('recoveryFromFitReadings', () => {
