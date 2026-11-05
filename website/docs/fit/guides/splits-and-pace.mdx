@@ -1,0 +1,264 @@
+---
+title: Splits and pace
+sidebar_position: 3
+description: Kilometre splits from GPS, the exact moment each kilometre ends, and an average pace that adds up.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import ChartExample from '@site/src/components/ChartExample';
+import FitSplits from '@site/src/examples/fit-splits';
+
+# Splits and pace
+
+**A split is the time taken for each kilometre (or mile) in turn.** It is the
+first thing most runners look at after a run: where they were fast, where they
+slowed.
+
+## The idea
+
+Add up the distance as the run goes. A kilometre ends where that running total
+reaches 1,000 m, 2,000 m, and so on; each split is the time between two of
+those moments.
+
+Two details make splits right:
+
+- **No sample falls exactly on a kilometre.** One sample is at 998.6 m, the
+  next at 1,002.1 m. The kilometre ended between them, so its time is read
+  between them too, in proportion (linear interpolation).
+- **Pace is time over distance.** A split's pace is its time per kilometre.
+  The whole run's average pace is its total time over its total distance, not
+  the mean of the split paces: the last split is usually short and would
+  count as much as a whole one.
+
+## From scratch
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+The distance between samples, as in [Moving time](./moving-time) (fit exports
+the same haversine formula as `haversineMeters`), then pond's `cumulative`
+turns it into a running total:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { haversineMeters, km } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+const track = run.toSeries();
+const lat = track.column('lat')!.toFloat64Array();
+const lng = track.column('lng')!.toFloat64Array();
+const step = lat.map((_, i) =>
+  i ? haversineMeters(lat[i - 1]!, lng[i - 1]!, lat[i]!, lng[i]!) : 0,
+);
+const times = track.keyColumn().begin;
+const sec = Float64Array.from(times, (ms) => (ms - times[0]!) / 1000);
+
+const along = track
+  .withColumn('meters', step)
+  .withColumn('sec', sec)
+  .cumulative({ meters: 'sum' });
+```
+
+`byColumn` buckets rows by a value instead of by time: here, by distance, in
+1,000 m bins. The last second in each bin is close to where its kilometre
+ended:
+
+```ts
+const mmss = (s: number) =>
+  `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+
+const bins = along.byColumn(
+  'meters',
+  { width: 1000 },
+  { lastSec: { from: 'sec', using: 'last' } },
+);
+let before = 0;
+for (const bin of bins) {
+  const end = Number(bin.lastSec);
+  console.log(`km ${bin.start / 1000 + 1}`, mmss(end - before));
+  before = end;
+}
+```
+
+```text output
+km 1 5:36.0
+km 2 5:33.0
+km 3 4:31.0
+km 4 4:57.0
+km 5 4:59.0
+km 6 6:07.0
+km 7 5:03.0
+km 8 4:30.0
+km 9 5:56.0
+km 10 4:11.0
+```
+
+That is the time to the last sample inside each kilometre, so each split can
+be up to a second out. To get the moment each kilometre ended, find the two
+samples either side of it and read the time between them in proportion:
+
+```ts
+const cum = along.column('meters')!.toFloat64Array();
+
+/** Seconds when the running distance reached `target`. */
+function timeAt(target: number): number {
+  let i = 1;
+  while (i < cum.length - 1 && cum[i]! < target) i++;
+  const f = (target - cum[i - 1]!) / (cum[i]! - cum[i - 1]! || 1);
+  return sec[i - 1]! + f * (sec[i]! - sec[i - 1]!);
+}
+
+const total = cum[cum.length - 1]!;
+const ends: number[] = [];
+for (let m = 1000; m < total; m += 1000) ends.push(timeAt(m));
+ends.push(sec[sec.length - 1]!);
+const splitSeconds = ends.map((t, k) => t - (k ? ends[k - 1]! : 0));
+console.log(splitSeconds.map(mmss).join('  '));
+```
+
+```text output
+5:36.4  5:33.5  4:30.8  4:57.2  4:58.5  6:06.9  5:03.2  4:29.9  5:56.4  4:10.2
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+The same distance steps as in [Moving time](./moving-time), with polars, then
+pond's `cumulative` for the running total:
+
+```python
+import numpy as np
+import polars as pl
+import pond_rs
+
+run = pl.read_csv("interval-run.csv", try_parse_dates=True)
+R = 6_371_008.8
+lat, lng = pl.col("lat").radians(), pl.col("lng").radians()
+a = ((lat - lat.shift(1)) / 2).sin() ** 2 + lat.shift(1).cos() * lat.cos() * (
+    (lng - lng.shift(1)) / 2
+).sin() ** 2
+run = run.with_columns(
+    meters=(2 * R * a.sqrt().arcsin()).fill_null(0.0),
+    sec=(pl.col("time") - pl.col("time").first()).dt.total_milliseconds() / 1000,
+)
+along = pond_rs.TimeSeries(run, key="time").cumulative({"meters": "sum"})
+```
+
+`by_column` buckets rows by a value instead of by time: by distance, in
+1,000 m bins. It gives back plain lists, one per output:
+
+```python
+def mmss(s):
+    return f"{int(s // 60)}:{s % 60:04.1f}"
+
+bins = along.by_column("meters", {"last_sec": ("sec", "last")}, width=1000)
+before = 0.0
+for start, end in zip(bins["start"], bins["last_sec"]):
+    print(f"km {int(start // 1000) + 1}", mmss(end - before))
+    before = end
+```
+
+```text output
+km 1 5:36.0
+km 2 5:33.0
+km 3 4:31.0
+km 4 4:57.0
+km 5 4:59.0
+km 6 6:07.0
+km 7 5:03.0
+km 8 4:30.0
+km 9 5:56.0
+km 10 4:11.0
+```
+
+That is the time to the last sample in each kilometre. For the moment each
+kilometre ended, read between the samples either side: numpy's `interp` does
+exactly that, for every boundary at once:
+
+```python
+frame = along.to_polars()
+cum, sec = frame["meters"].to_numpy(), frame["sec"].to_numpy()
+bounds = np.arange(1000, cum[-1], 1000)
+ends = np.append(np.interp(bounds, cum, sec), sec[-1])
+split_seconds = np.diff(ends, prepend=0.0)
+print("  ".join(mmss(s) for s in split_seconds))
+```
+
+```text output
+5:36.4  5:33.5  4:30.8  4:57.2  4:58.5  6:06.9  5:03.2  4:29.9  5:56.4  4:10.2
+```
+
+</TabItem>
+</Tabs>
+
+## With fit
+
+`splits(km(1))` does the same, and each split is a full section, with its
+own stats:
+
+```ts
+const splits = run.splits(km(1));
+console.log(
+  splits.map((s) => mmss(s.stats().time.elapsed!.seconds)).join('  '),
+);
+console.log(splits.at(-1)!.stats().distance?.format('km'));
+```
+
+```text output
+5:36.4  5:33.5  4:30.8  4:57.2  4:58.5  6:06.9  5:03.2  4:29.9  5:56.4  4:10.2
+0.70 km
+```
+
+The same times as the interpolated version, and the last split is the 0.70 km
+left over.
+
+### Average pace
+
+```ts
+const s = run.stats();
+const meanOfSplitPaces =
+  splits
+    .map((sp) => sp.stats().pace.average!.secondsPerKm)
+    .reduce((a, b) => a + b) / splits.length;
+console.log(
+  'total time / total distance:',
+  mmss(s.pace.average!.secondsPerKm),
+  '/km',
+);
+console.log('mean of the split paces:   ', mmss(meanOfSplitPaces), '/km');
+```
+
+```text output
+total time / total distance: 5:17.8 /km
+mean of the split paces:    5:18.9 /km
+```
+
+The two are 1.1 seconds per km apart here. The mean of the split paces lets
+the last split, 0.70 km at an easy pace, count as much as each full
+kilometre, so it comes out slow. The gap grows when splits are less even
+(laps of different lengths, a long stop in one of them). Total time over total
+distance is the run's average. (`Pace.format()` rounds to the second, so the
+example prints both with `mmss`.)
+
+## Chart it
+
+Each split as a bar, its height its pace in minutes per kilometre. The fast
+splits are the ones with most of a repeat in them.
+
+<ChartExample name="fit-splits" height={220}>
+  {(width) => <FitSplits width={width} />}
+</ChartExample>
+
+## Traps
+
+- **Splits by GPS and by the watch differ.** A watch's own distance (from its
+  GPS, smoothed, or its motion sensor) won't match the distance measured
+  along the line of fixes exactly. fit uses the GPS line for activities that
+  have a fix on every sample, and the watch's distance where there are samples
+  without one (before it found satellites, or in open water).
+- **Splits include stops.** A split is elapsed time, so a kilometre with a
+  standing recovery in it is slow. For pace while moving, ask a split for
+  `stats({ time: 'moving' })`.
+- **Miles are splits too.** `run.splits(miles(1))`.
