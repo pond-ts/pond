@@ -880,17 +880,18 @@ filter's test). Instead, each push **returns** what it caused, as a list
 of `Output`s, for the nodes and kinds you asked for with
 `live.watch(node, kind)`:
 
-| Kind                 | Comes from         | Means                                              |
-| -------------------- | ------------------ | -------------------------------------------------- |
-| `OutputKind::Event`  | the series, a view | It took an event                                   |
-| `OutputKind::Event`  | an aggregation     | A bucket closed (the event is the finished bucket) |
-| `OutputKind::Batch`  | the series         | All the events one push stored                     |
-| `OutputKind::Evict`  | the series, a view | Events it dropped (retention or `clear`)           |
-| `OutputKind::Bucket` | an aggregation     | A bucket as it stands after an event joined it     |
-| `OutputKind::Update` | an aggregation     | It took an event, even one too late for any bucket |
-| `OutputKind::Event`  | a rolling window   | It emitted (per its trigger)                       |
-| `OutputKind::Update` | a rolling window   | It took an event; carries its values as they stand |
-| `OutputKind::Event`  | a reduce           | It emitted (at the end of a push)                  |
+| Kind                  | Comes from         | Means                                              |
+| --------------------- | ------------------ | -------------------------------------------------- |
+| `OutputKind::Event`   | the series, a view | It took an event                                   |
+| `OutputKind::Event`   | an aggregation     | A bucket closed (the event is the finished bucket) |
+| `OutputKind::Batch`   | the series         | All the events one push stored                     |
+| `OutputKind::Columns` | the series         | The rows one push stored, as a batch `TimeSeries`  |
+| `OutputKind::Evict`   | the series, a view | Events it dropped (retention or `clear`)           |
+| `OutputKind::Bucket`  | an aggregation     | A bucket as it stands after an event joined it     |
+| `OutputKind::Update`  | an aggregation     | It took an event, even one too late for any bucket |
+| `OutputKind::Event`   | a rolling window   | It emitted (per its trigger)                       |
+| `OutputKind::Update`  | a rolling window   | It took an event; carries its values as they stand |
+| `OutputKind::Event`   | a reduce           | It emitted (at the end of a push)                  |
 
 Nothing is returned for what you don't watch, so an unwatched node costs
 nothing extra. The outputs come in the order pond-ts's listeners would
@@ -898,6 +899,22 @@ fire: each event travels down the tree (a node's subscribers in the order
 they were built), then the series' own retention, `Batch` and `Evict`.
 `output.node()` says which node it came from; compare it with
 `handle.id()`. `live.unwatch(node, kind)` stops it.
+
+`Columns` is pond-ts's `on('columns')`: one batch series per push, in key
+order, for code that reads whole columns (a chart buffer, an Arrow file, the
+wire). Watched alone on the series, a push builds no `LiveEvent`: the batch
+is copied out of the stored columns. A `reorder` push with a late row, or
+anything else watched on the series, builds events as usual and the batch is
+made from them. Building the batch has a fixed cost per push, so it beats
+`Batch` from about 10 rows a push (1M rows, summing one column, from
+`examples/perf_live.rs`):
+
+| Rows a push | `Batch` | `Columns` |
+| ----------: | ------: | --------: |
+|       1,000 |  296 ms |    232 ms |
+|         100 |  280 ms |    243 ms |
+|          10 |  318 ms |    332 ms |
+|           1 |  413 ms |    861 ms |
 
 ```rust
 use pond_rs::live::{LiveSeries, Output, OutputKind};

@@ -100,12 +100,12 @@ const KNOWN_OPS: &[&str] = &[
     "partitionClockRolling",
 ];
 
-const KINDS: &[&str] = &["event", "batch", "evict", "bucket", "update"];
+const KINDS: &[&str] = &["event", "batch", "evict", "bucket", "update", "columns"];
 
 /// The output kinds each pond-ts live class emits (its `on(...)` types).
 fn kinds_of(class: &str) -> &'static [&'static str] {
     match class {
-        "LiveSeries" => &["event", "batch", "evict"],
+        "LiveSeries" => &["event", "batch", "columns", "evict"],
         "LiveView" => &["event", "evict"],
         "LiveAggregation" => &["event", "bucket", "update"],
         "LiveRollingAggregation" => &["event", "update"],
@@ -133,9 +133,10 @@ struct Case {
     #[serde(default)]
     #[cfg_attr(not(feature = "live"), allow(dead_code))]
     options: Option<Map<String, Value>>,
-    /// `false`: pond-ts attached no listeners to the root.
+    /// `false`: pond-ts attached no listeners to the root; a list: only
+    /// those kinds.
     #[serde(default)]
-    watch: Option<bool>,
+    watch: Option<Watch>,
     /// The root could not be built (then `steps` is empty).
     #[serde(default)]
     error: Option<ErrorJson>,
@@ -184,9 +185,32 @@ struct NodeSpec {
     from: String,
     #[cfg_attr(not(feature = "live"), allow(dead_code))]
     args: Vec<Value>,
-    /// `false`: pond-ts attached no listeners to this node.
+    /// `false`: pond-ts attached no listeners to this node; a list: only
+    /// those kinds.
     #[serde(default)]
-    watch: Option<bool>,
+    watch: Option<Watch>,
+}
+
+/// Which output kinds pond-ts listened to on a node.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+enum Watch {
+    All(bool),
+    Only(Vec<String>),
+}
+
+/// No listener at all.
+fn unwatched(w: &Option<Watch>) -> bool {
+    matches!(w, Some(Watch::All(false)))
+}
+
+/// Whether kind `k` was listened to (of the kinds the node emits).
+fn watches_kind(w: &Option<Watch>, k: &str) -> bool {
+    match w {
+        Some(Watch::All(false)) => false,
+        Some(Watch::Only(kinds)) => kinds.iter().any(|x| x == k),
+        _ => true,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -283,10 +307,10 @@ fn check_event(event: &Value) -> Result<(), String> {
 fn check_payload(out: &Output) -> Result<(), String> {
     match out.kind.as_str() {
         "event" | "bucket" => check_event(&out.payload),
-        "batch" | "evict" => out
+        "batch" | "evict" | "columns" => out
             .payload
             .as_array()
-            .ok_or("batch / evict carry a list".to_string())?
+            .ok_or("batch / evict / columns carry a list".to_string())?
             .iter()
             .try_for_each(check_event),
         "update" => match &out.payload {
@@ -404,10 +428,12 @@ fn fixture_is_well_formed() {
         }
         let finals = case.r#final.as_ref().expect("final");
         let mut live: BTreeSet<&str> = BTreeSet::from(["root"]);
-        let mut unwatched: BTreeSet<&str> = BTreeSet::new();
-        if case.watch == Some(false) {
-            unwatched.insert("root");
+        let mut unwatched_nodes: BTreeSet<&str> = BTreeSet::new();
+        let mut only: BTreeMap<&str, &Option<Watch>> = BTreeMap::new();
+        if unwatched(&case.watch) {
+            unwatched_nodes.insert("root");
         }
+        only.insert("root", &case.watch);
         for step in &case.steps {
             actions.insert(step.action());
             if let Some(node) = &step.node {
@@ -422,9 +448,10 @@ fn fixture_is_well_formed() {
                 // A node that failed to build never exists.
                 if step.error.is_none() {
                     assert!(live.insert(node.id.as_str()), "{}: dup id", case.name);
-                    if node.watch == Some(false) {
-                        unwatched.insert(node.id.as_str());
+                    if unwatched(&node.watch) {
+                        unwatched_nodes.insert(node.id.as_str());
                     }
+                    only.insert(node.id.as_str(), &node.watch);
                 }
             }
             if let Some(id) = &step.dispose {
@@ -466,7 +493,18 @@ fn fixture_is_well_formed() {
                 out.node,
                 out.kind
             );
-            assert!(!unwatched.contains(out.node.as_str()), "{}", case.name);
+            assert!(
+                !unwatched_nodes.contains(out.node.as_str()),
+                "{}",
+                case.name
+            );
+            assert!(
+                watches_kind(only[out.node.as_str()], &out.kind),
+                "{}: {} emitted unwatched {}",
+                case.name,
+                out.node,
+                out.kind
+            );
         }
         for (id, state) in finals {
             let class = state.class.as_str();
@@ -530,12 +568,19 @@ fn fixture_is_well_formed() {
             .cases
             .iter()
             .flat_map(|c| &c.steps)
-            .any(|s| s.node.as_ref().is_some_and(|n| n.watch == Some(false))),
+            .any(|s| s.node.as_ref().is_some_and(|n| unwatched(&n.watch))),
         "an unwatched node"
     );
     assert!(
-        fixture.cases.iter().any(|c| c.watch == Some(false)),
+        fixture.cases.iter().any(|c| unwatched(&c.watch)),
         "an unwatched root"
+    );
+    assert!(
+        fixture
+            .cases
+            .iter()
+            .any(|c| matches!(&c.watch, Some(Watch::Only(k)) if k == &["columns"])),
+        "a root watched for columns alone"
     );
 }
 
@@ -1138,6 +1183,7 @@ mod runner {
             OutputKind::Evict => "evict",
             OutputKind::Bucket => "bucket",
             OutputKind::Update => "update",
+            OutputKind::Columns => "columns",
         }
     }
 
@@ -1156,6 +1202,7 @@ mod runner {
                 node,
                 values: Some(values),
             } => record_json(&columns[node], values),
+            RsOutput::Columns { series, .. } => Value::Array(series_rows(series)),
         };
         Output {
             node: names[&o.node()].clone(),
@@ -1164,13 +1211,22 @@ mod runner {
         }
     }
 
-    fn watch(live: &mut LiveSeries, id: NodeId, class: &str) -> Result<(), String> {
+    fn watch(
+        live: &mut LiveSeries,
+        id: NodeId,
+        class: &str,
+        spec: &Option<Watch>,
+    ) -> Result<(), String> {
         for kind in kinds_of(class) {
+            if !watches_kind(spec, kind) {
+                continue;
+            }
             let k = match *kind {
                 "event" => OutputKind::Event,
                 "batch" => OutputKind::Batch,
                 "evict" => OutputKind::Evict,
                 "bucket" => OutputKind::Bucket,
+                "columns" => OutputKind::Columns,
                 _ => OutputKind::Update,
             };
             live.watch(id, k).map_err(|e| e.to_string())?;
@@ -1396,9 +1452,7 @@ mod runner {
         let mut columns: HashMap<NodeId, Vec<String>> = HashMap::new();
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let root = live.root();
-        if case.watch != Some(false) {
-            watch(&mut live, root, &class("root"))?;
-        }
+        watch(&mut live, root, &class("root"), &case.watch)?;
         let id_of = |h: Handle, live: &LiveSeries| match h {
             Handle::Root => live.root(),
             Handle::View(n) => n.id(),
@@ -1515,14 +1569,12 @@ mod runner {
                             _ => Vec::new(),
                         };
                         columns.insert(id, schema.iter().skip(1).map(|c| c.name.clone()).collect());
-                        if spec.watch != Some(false) {
-                            watch(&mut live, id, &class(&spec.id))?;
-                        }
+                        watch(&mut live, id, &class(&spec.id), &spec.watch)?;
                         // A reduce built over history emits for it at the
                         // build, into its events; pond-ts emits the same
                         // event just after (the step's `deferred`).
                         let replayed: Vec<RsOutput> = match h {
-                            Handle::Reduce(n) if spec.watch != Some(false) => live[n]
+                            Handle::Reduce(n) if watches_kind(&spec.watch, "event") => live[n]
                                 .events()
                                 .map(|event| RsOutput::Event { node: id, event })
                                 .collect(),

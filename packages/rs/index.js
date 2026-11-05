@@ -1057,10 +1057,10 @@ const liveFinalizer = new FinalizationRegistry((id) => {
   LIVE_OWNERS.delete(id);
   wasm.live_free(id);
 });
-const OUTPUT_KINDS = ['event', 'batch', 'evict', 'bucket', 'update'];
+const OUTPUT_KINDS = ['event', 'batch', 'evict', 'bucket', 'update', 'columns'];
 // The output kinds each pond-ts live class emits (its `on(type)` types).
 const KINDS_OF = {
-  LiveSeries: ['event', 'batch', 'evict'],
+  LiveSeries: ['event', 'batch', 'columns', 'evict'],
   LiveView: ['event', 'evict'],
   LiveAggregation: ['event', 'bucket', 'update'],
   LiveRollingAggregation: ['event', 'update'],
@@ -1142,10 +1142,15 @@ class LiveOwner {
       const h = outs[i];
       const k = outs[i + 1];
       const set = this.listening(h, k);
-      if (!set) continue;
       const p = outs[i + 2];
+      if (!set) {
+        // A batch series is stored for us; free it if no one takes it.
+        if (k === 5) wasm.series_free(p);
+        continue;
+      }
       let value = p;
-      if (k === 0 || k === 3) value = new Event(this.schema(h), p);
+      if (k === 5) value = new TimeSeries(TOKEN, p);
+      else if (k === 0 || k === 3) value = new Event(this.schema(h), p);
       else if (k === 1 || k === 2) {
         const s = this.schema(h);
         value = p.map((row) => new Event(s, row));
@@ -1354,8 +1359,9 @@ class LiveNode {
   }
   /**
    * Call `fn` with each output of `type` (`'event'`, `'batch'`, `'evict'`,
-   * `'bucket'`, `'update'`, as the node's pond-ts class has them) during
-   * each push. Returns a function that removes the listener.
+   * `'bucket'`, `'update'`, `'columns'`, as the node's pond-ts class has
+   * them) during each push. `'columns'` hands over the rows a series took
+   * in that push as a batch `TimeSeries`, without an `Event` per row. Returns a function that removes the listener.
    */
   on(type, fn) {
     const kinds = KINDS_OF[this.#cls];

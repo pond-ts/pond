@@ -694,10 +694,6 @@ the study oracle) is done.
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
   snippets also pass against the published 0.1.0. Open: run the script in
   CI.
-- **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
-  `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose
-  output holds each push's added rows as columns instead of `LiveEvent`s.
-  Not scheduled; the live parity fixture doesn't cover `'columns'`.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except

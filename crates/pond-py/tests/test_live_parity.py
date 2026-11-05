@@ -35,7 +35,7 @@ REFUSED = {("aggregate-bad-mapping", "b"), ("diff-rate-pct", "bad")}
 PUSH_REFUSED_WHOLE = {("partition-groups", 6)}
 
 KINDS_OF = {
-    "LiveSeries": ["event", "batch", "evict"],
+    "LiveSeries": ["event", "batch", "columns", "evict"],
     "LiveView": ["event", "evict"],
     "LiveAggregation": ["event", "bucket", "update"],
     "LiveRollingAggregation": ["event", "update"],
@@ -90,6 +90,8 @@ def output_json(o, names) -> dict:
         payload = event_json(o.event)
     elif o.kind in ("batch", "evict"):
         payload = [event_json(e) for e in o.events]
+    elif o.kind == "columns":
+        payload = [row_json(r) for r in o.series]
     else:
         payload = o.values
     return {"node": names[o.node], "kind": o.kind, "payload": payload}
@@ -331,6 +333,16 @@ def same_schema(defs, schema):
     ]
 
 
+def watched(spec, kinds):
+    """The kinds a node is watched for: all (no spec / True), none (False),
+    or the listed ones."""
+    if spec is False:
+        return []
+    if isinstance(spec, list):
+        return [k for k in kinds if k in spec]
+    return kinds
+
+
 def run_case(case):
     try:
         live = LiveSeries(schema_of(case["schema"]), name=case["name"], **options_of(case.get("options")))
@@ -346,8 +358,9 @@ def run_case(case):
     partitioned = set()
     refused = set()
     refused_rows = []
-    if case.get("watch") is not False:
-        live.watch(*KINDS_OF[finals["root"]["class"]])
+    root_kinds = watched(case.get("watch"), KINDS_OF[finals["root"]["class"]])
+    if root_kinds:
+        live.watch(*root_kinds)
     for s, step in enumerate(case["steps"]):
         outputs = []
         error = None
@@ -394,12 +407,12 @@ def run_case(case):
                 names[made] = spec["id"]
                 if made.kind in ("partitioned", "partitioned_view"):
                     partitioned.add(spec["id"])
-                kinds = KINDS_OF[finals[spec["id"]]["class"]]
-                if spec.get("watch") is not False and kinds:
+                kinds = watched(spec.get("watch"), KINDS_OF[finals[spec["id"]]["class"]])
+                if kinds:
                     made.watch(*kinds)
                     # A reduce built over history emits at the build, into
                     # its events; pond-ts emits the same event just after.
-                    if made.kind == "reduce":
+                    if made.kind == "reduce" and "event" in kinds:
                         outputs = [
                             {"node": spec["id"], "kind": "event", "payload": event_json(e)} for e in made.events()
                         ]

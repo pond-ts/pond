@@ -18,11 +18,13 @@
  *   { dispose: id }       nodes[id].dispose()
  *
  * Every node (and the root) gets one listener per output kind its class
- * has, unless built with `watch: false` (a case with `watch: false` attaches
+ * has, unless built with `watch: false`, or with `watch: [kinds]` for just
+ * those kinds (a root watched for `columns` alone stores pushes without
+ * building events in pond-rs). A case with `watch: false` attaches
  * none to the root, so nothing takes its events: pond-rs stores such a
  * push without building events, and must still hold the same rows): pond-ts disposes an intermediate
  * view along with the last view built on it only if nothing else listens
- * to it, so case `view-dispose-chain` needs a node with no listeners (LiveSeries: event, batch, evict; LiveView: event, evict;
+ * to it, so case `view-dispose-chain` needs a node with no listeners (LiveSeries: event, batch, columns, evict; LiveView: event, evict;
  * LiveAggregation: event, bucket, update; LiveRollingAggregation: event,
  * update; the rest: event). Each step records, in dispatch order, the
  * outputs it caused as `{ node, kind, payload }`, and `error`
@@ -36,7 +38,8 @@
  *
  * Payloads: an event is `[key, ...values]` in the emitting node's schema
  * order (key as `Event.toJsonRow`: ms, `[begin, end]` or `[label, begin,
- * end]`); `batch` / `evict` carry a list of events; a rolling `update`
+ * end]`); `batch` / `evict` carry a list of events, and `columns` the rows
+ * of the batch series it hands over (same encoding); a rolling `update`
  * carries the value record (`{ column: cell }`); an aggregation `update`
  * carries `null`. Cells are JSON, with `null` for a gap and `-0`, `NaN`,
  * `±Infinity` tagged `{ "f64": "-0" | "NaN" | "inf" | "-inf" }` (rows in
@@ -342,6 +345,148 @@ const CASES = [
     steps: [
       ...LATE_STEPS,
       { pushMany: [ROWS[14], [100, 'a', 1, 1], ROWS[15]] },
+    ],
+  },
+  // [PND-COLOUT] Only 'columns' watched on the root: pond-rs reads each
+  // push's rows off its stored columns without building events, except a
+  // reorder push that places a late row among older ones.
+  {
+    name: 'series-columns-only',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: { retention: { maxEvents: 5 } },
+    steps: [
+      ...each(ROWS.slice(0, 3)),
+      { push: [] },
+      { pushMany: ROWS.slice(3, 12) },
+      { push: [[2000, 'a', 1, 1]] },
+      { clear: true },
+      { pushMany: ROWS.slice(12) },
+      { pushJson: [[50000, 'c', 3, null]] },
+    ],
+  },
+  {
+    name: 'series-columns-only-drop-late',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: { ordering: 'drop', retention: { maxEvents: 6 } },
+    steps: [
+      ...LATE_STEPS,
+      { pushMany: [ROWS[14], [100, 'a', 1, 1], ROWS[15]] },
+      { pushMany: [[100, 'a', 1, 1]] },
+    ],
+  },
+  {
+    name: 'series-columns-only-reorder',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: {
+      ordering: 'reorder',
+      graceWindow: '3s',
+      retention: { maxAge: '4s', maxEvents: 6 },
+    },
+    steps: [
+      ...LATE_STEPS,
+      { pushMany: [ROWS[14], [ROWS[14][0] - 200, 'a', 1, 1], ROWS[15]] },
+      { pushMany: [ROWS[16], ROWS[16]] },
+    ],
+  },
+  {
+    name: 'series-columns-only-interval',
+    schema: INTERVAL_SCHEMA,
+    watch: ['columns'],
+    options: { retention: { maxEvents: 3 } },
+    steps: [
+      { pushMany: INTERVAL_ROWS.slice(0, 2) },
+      ...each(INTERVAL_ROWS.slice(2)),
+    ],
+  },
+  {
+    name: 'series-columns-only-tags',
+    schema: TAG_SCHEMA,
+    watch: ['columns'],
+    steps: [{ pushMany: TAG_ROWS }],
+  },
+  {
+    name: 'series-columns-only-then-view',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: { retention: { maxEvents: 6 } },
+    steps: [
+      { pushMany: ROWS.slice(0, 5) },
+      node('f', 'filter', 'root', filterGt('cpu', 1)),
+      { pushMany: ROWS.slice(5, 9) },
+      { dispose: 'f' },
+      { pushMany: ROWS.slice(9) },
+    ],
+  },
+  {
+    // A partition watched for 'columns' alone, on a strict root (column
+    // route) and through a reorder root (event route).
+    name: 'partition-columns-only',
+    schema: SCHEMA,
+    watch: false,
+    steps: [
+      {
+        node: {
+          id: 'p',
+          op: 'partitionBy',
+          from: 'root',
+          args: ['host', { retention: { maxEvents: 3 } }],
+          watch: false,
+        },
+      },
+      { pushMany: ROWS.slice(0, 4) },
+      {
+        node: {
+          id: 'pa',
+          op: 'partition',
+          from: 'p',
+          args: ['a'],
+          watch: ['columns'],
+        },
+      },
+      {
+        node: {
+          id: 'pb',
+          op: 'partition',
+          from: 'p',
+          args: ['b'],
+          watch: ['columns'],
+        },
+      },
+      { pushMany: ROWS.slice(4, 12) },
+      ...each(ROWS.slice(12, 15)),
+      { pushMany: ROWS.slice(15) },
+    ],
+  },
+  {
+    name: 'partition-columns-only-reorder',
+    schema: SCHEMA,
+    watch: false,
+    options: { ordering: 'reorder', graceWindow: '3s' },
+    steps: [
+      {
+        node: {
+          id: 'p',
+          op: 'partitionBy',
+          from: 'root',
+          args: ['host'],
+          watch: false,
+        },
+      },
+      { pushMany: ROWS.slice(0, 4) },
+      {
+        node: {
+          id: 'pa',
+          op: 'partition',
+          from: 'p',
+          args: ['a'],
+          watch: ['columns'],
+        },
+      },
+      { pushMany: [ROWS[6], ROWS[5], ROWS[7]] },
+      { pushMany: ROWS.slice(8) },
     ],
   },
   {
@@ -1443,7 +1588,7 @@ const CASES = [
 // ── Runner ───────────────────────────────────────────────────────
 
 const KINDS = {
-  LiveSeries: ['event', 'batch', 'evict'],
+  LiveSeries: ['event', 'batch', 'columns', 'evict'],
   LiveView: ['event', 'evict'],
   LiveAggregation: ['event', 'bucket', 'update'],
   LiveRollingAggregation: ['event', 'update'],
@@ -1533,15 +1678,18 @@ function rowsOf(source) {
   return rows;
 }
 
-function attach(obj, id, record) {
+function attach(obj, id, record, only) {
   const kind = obj.constructor.name;
   const kinds = KINDS[kind];
   if (kinds === undefined) throw new Error(`no listener table for ${kind}`);
   for (const type of kinds) {
+    if (only !== undefined && !only.includes(type)) continue;
     obj.on(type, (payload) => {
       let encoded;
       if (type === 'batch' || type === 'evict') {
         encoded = payload.map((e) => encodeEvent(e, obj.schema));
+      } else if (type === 'columns') {
+        encoded = rowsOf(payload);
       } else if (type === 'update') {
         encoded = payload === undefined ? null : encodeRecord(payload);
       } else {
@@ -1592,7 +1740,10 @@ async function runCase(pond, spec) {
   const nodes = new Map([['root', root]]);
   const disposed = new Set();
   if (spec.watch === false) out.watch = false;
-  else attach(root, 'root', record);
+  else if (Array.isArray(spec.watch)) {
+    out.watch = spec.watch;
+    attach(root, 'root', record, spec.watch);
+  } else attach(root, 'root', record);
   out.steps = [];
   for (const step of spec.steps) {
     sink = [];
@@ -1620,7 +1771,10 @@ async function runCase(pond, spec) {
               : parent[op](...args.map((a) => decodeArg(pond, a)));
         if (made === undefined) throw new Error(`${op} gave nothing`);
         nodes.set(id, made);
-        if (step.node.watch !== false) attach(made, id, record);
+        const watch = step.node.watch;
+        if (watch !== false) {
+          attach(made, id, record, Array.isArray(watch) ? watch : undefined);
+        }
       } else throw new Error(`unknown step ${JSON.stringify(step)}`);
     } catch (e) {
       result.error = errorOf(e);

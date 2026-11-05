@@ -11,7 +11,10 @@
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::ops::Range;
 use std::sync::Arc;
+
+use arrow_array::builder::StringBuilder;
 
 use crate::column::{
     ArrayColumn, BooleanColumn, ColumnData, Float64Column, Scalar, StringColumn, Value,
@@ -126,15 +129,25 @@ impl Cells {
         }
     }
 
-    fn column(&self, name: &str, required: bool) -> Column {
+    fn column(&self, name: &str, required: bool, rows: Range<usize>) -> Column {
         let data: ColumnData = match self {
             Cells::Number(c) => {
-                Float64Column::from_options(c.iter().map(|v| Some(*v).filter(|v| !v.is_nan())))
+                Float64Column::from_options(c.range(rows).map(|v| Some(*v).filter(|v| !v.is_nan())))
                     .into()
             }
-            Cells::String(c) => StringColumn::from_options(c.iter().map(Option::as_deref)).into(),
-            Cells::Boolean(c) => BooleanColumn::from_options(c.iter().copied()).into(),
-            Cells::Array(c) => ArrayColumn::from_options(c.iter().cloned()).into(),
+            Cells::String(c) => {
+                // Sized up front: a push of a few rows would otherwise pay
+                // for the builder's default buffers.
+                let cells = c.range(rows);
+                let bytes = cells.clone().flatten().map(String::len).sum();
+                let mut b = StringBuilder::with_capacity(cells.len(), bytes);
+                for s in cells {
+                    b.append_option(s.as_deref());
+                }
+                StringColumn::plain(b.finish()).into()
+            }
+            Cells::Boolean(c) => BooleanColumn::from_options(c.range(rows).copied()).into(),
+            Cells::Array(c) => ArrayColumn::from_options(c.range(rows).cloned()).into(),
         };
         Column::from_data(name.to_string(), data, required)
     }
@@ -492,14 +505,31 @@ impl EventBuffer {
 
     /// The events held as a batch series, built column by column.
     pub(crate) fn snapshot(&self, call: &'static str, name: &str) -> Result<TimeSeries> {
+        self.snapshot_rows(call, name, 0..self.len())
+    }
+
+    /// Events `rows` (positions, oldest first) as a batch series, built
+    /// column by column: no event is built per row.
+    pub(crate) fn snapshot_rows(
+        &self,
+        call: &'static str,
+        name: &str,
+        rows: Range<usize>,
+    ) -> Result<TimeSeries> {
         let key_def = &self.schema.columns[0];
-        let begin: Vec<i64> = self.begin.iter().copied().collect();
-        let end = || -> Vec<i64> { self.end.iter().flatten().copied().collect() };
+        let begin: Vec<i64> = self.begin.range(rows.clone()).copied().collect();
+        let end = || -> Vec<i64> {
+            self.end
+                .iter()
+                .flat_map(|e| e.range(rows.clone()))
+                .copied()
+                .collect()
+        };
         let key = match &self.labels {
             None if self.end.is_none() => Key::Time(begin),
             None => Key::TimeRange(TimeRangeKeys { begin, end: end() }),
             Some(labels) => Key::Interval(IntervalKeys {
-                label: labels_of(labels.iter()),
+                label: labels_of(labels.range(rows.clone())),
                 begin,
                 end: end(),
             }),
@@ -509,7 +539,7 @@ impl EventBuffer {
             .values()
             .iter()
             .zip(&self.cells)
-            .map(|(def, cells)| cells.column(&def.name, def.required))
+            .map(|(def, cells)| cells.column(&def.name, def.required, rows.clone()))
             .collect();
         TimeSeries::with_key(call, name.to_string(), key_def.name.clone(), key, columns)
     }

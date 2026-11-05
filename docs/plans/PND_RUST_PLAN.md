@@ -669,6 +669,36 @@ studies rather than capping periods at 2^53. A sweep of every catalog bar
 option at usize::MAX, isize::MAX + 1 and 2^53 + 2 (catalog cap lifted for
 the run) found exactly the reviewed studies and no others.
 
+## [PND-RUSTCOLS] — `OutputKind::Columns` (2026-11-05)
+
+Peter asked for the pond-rs counterpart of pond-ts `live.on('columns')`
+([PND-COLOUT], PR #908) the same day it was built.
+
+- **Shape.** New `OutputKind::Columns` / `Output::Columns { node, series }`
+  on a series (root or partition): a batch `TimeSeries` of the rows one push
+  added, in key order, after `Batch` and before `Evict` (pond-ts's order).
+  Not in the bridges' default `watch()` set, since it costs a table per push.
+- **No event per row.** The root's "bare" path (no node, nothing watched)
+  stays bare when only `Columns` is watched: the batch is read off the end
+  of the stored columns (`EventBuffer::snapshot_rows`). A `reorder` push
+  with a late row would place it among older rows, so that push (only)
+  builds events, as do pushes with anything else watched; the batch is then
+  built from the added events, stable-sorted by key (pond-ts's
+  `TimeSeries.fromEvents`). Partitions build theirs from their added events.
+- **Cost.** Building the batch is ~15 allocations a push (names, key, one
+  buffer or more per column), and a `LiveEvent` is cheap in Rust, so the
+  win needs about 10 rows a push. `examples/perf_live.rs`, 1M rows, reader
+  sums `cpu`: 1,000 a push `Batch` 296 / `Columns` 232 ms; 100: 280 / 243;
+  10: 318 / 332; 1: 413 / 861 (bare push, nothing watched: 193 ms). A
+  sized string builder did not help (allocation count, not the builder).
+  Python 200k rows, 1,000 a push: 92 → 61 ms.
+- **Parity.** Fixture gained case- and node-level `watch: [kinds]`, and 8
+  `columns` cases (strict, drop, reorder with late rows, interval keys,
+  tags, a view built after, partitions strict + reorder): Rust, JS bridge
+  and Python all 79/79.
+- **Semver.** `Output` and `OutputKind` are not `#[non_exhaustive]`, so a
+  new variant breaks exhaustive matches: the next pond-rs release is 0.2.0.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

@@ -1797,3 +1797,137 @@ fn push_series_required_gap_on_the_event_path_stores_nothing() {
     assert_eq!(live.len(), 0);
     assert_eq!(live[f].len(), 0);
 }
+
+/// The batch series of each `Columns` output, in order.
+fn columns_of(out: &[Output]) -> Vec<&TimeSeries> {
+    out.iter()
+        .filter_map(|o| match o {
+            Output::Columns { series, .. } => Some(series),
+            _ => None,
+        })
+        .collect()
+}
+
+fn cpus(s: &TimeSeries) -> Vec<Option<f64>> {
+    s.rows().map(|r| r.number("cpu").unwrap()).collect()
+}
+
+#[test]
+fn columns_alone_keeps_the_root_bare() {
+    let mut live = series(LiveOptions::new().max_events(4));
+    live.watch(live.root(), OutputKind::Columns).unwrap();
+    assert!(live.bare_root());
+    let out = live
+        .push_many([
+            (0, row("a", 1.0)),
+            (1000, row("b", 2.0)),
+            (2000, row("a", 3.0)),
+        ])
+        .unwrap();
+    // Nothing else is watched: one Columns output, nothing built per row.
+    assert_eq!(out.len(), 1);
+    let batch = columns_of(&out)[0];
+    assert_eq!(batch.name(), "cpu");
+    assert_eq!(batch.key().begin(), [0, 1000, 2000]);
+    assert_eq!(cpus(batch), [Some(1.0), Some(2.0), Some(3.0)]);
+    let out = live.push(3000, vec![None, None]).unwrap();
+    assert_eq!(cpus(columns_of(&out)[0]), [None]);
+    // Retention runs after: the batch keeps all it took.
+    let out = live
+        .push_many([(4000, row("a", 5.0)), (5000, row("a", 6.0))])
+        .unwrap();
+    assert_eq!(columns_of(&out)[0].key().begin(), [4000, 5000]);
+    assert_eq!(live.len(), 4);
+    assert!(
+        live.push_many(Vec::<(i64, Vec<Option<Value>>)>::new())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn columns_with_batch_and_evict_come_in_order() {
+    let mut live = series(LiveOptions::new().max_events(2));
+    let root = live.root();
+    for k in [OutputKind::Evict, OutputKind::Columns, OutputKind::Batch] {
+        live.watch(root, k).unwrap();
+    }
+    assert!(!live.bare_root());
+    let out = live
+        .push_many([
+            (0, row("a", 1.0)),
+            (1000, row("a", 2.0)),
+            (2000, row("a", 3.0)),
+        ])
+        .unwrap();
+    let kinds: Vec<_> = out.iter().map(Output::kind).collect();
+    assert_eq!(
+        kinds,
+        [OutputKind::Batch, OutputKind::Columns, OutputKind::Evict]
+    );
+    assert_eq!(cpus(columns_of(&out)[0]), [Some(1.0), Some(2.0), Some(3.0)]);
+}
+
+#[test]
+fn a_late_row_under_reorder_comes_in_key_order() {
+    for watch_batch in [false, true] {
+        let mut live = series(LiveOptions::new().ordering(OrderingMode::Reorder));
+        let root = live.root();
+        live.watch(root, OutputKind::Columns).unwrap();
+        if watch_batch {
+            live.watch(root, OutputKind::Batch).unwrap();
+        }
+        live.push_many([(1000, row("a", 1.0)), (3000, row("a", 3.0))])
+            .unwrap();
+        let late = [EventKey::time(500), EventKey::time(4000)];
+        // A push with a late row takes the event path; one in order does not.
+        assert!(!live.bare_root_for(late.iter()));
+        assert_eq!(
+            live.bare_root_for([EventKey::time(5000)].iter()),
+            !watch_batch
+        );
+        let out = live
+            .push_many([
+                (4000, row("a", 4.0)),
+                (500, row("a", 0.5)),
+                (2000, row("a", 2.0)),
+            ])
+            .unwrap();
+        let batch = columns_of(&out)[0];
+        assert_eq!(batch.key().begin(), [500, 2000, 4000]);
+        assert_eq!(cpus(batch), [Some(0.5), Some(2.0), Some(4.0)]);
+        assert_eq!(begins(live.events()), [500, 1000, 2000, 3000, 4000]);
+        // push_series and one push go the same way.
+        let out = live.push(100, row("a", 0.1)).unwrap();
+        assert_eq!(columns_of(&out)[0].key().begin(), [100]);
+    }
+}
+
+#[test]
+fn drop_leaves_out_late_rows_and_fires_nothing_for_none() {
+    let mut live = series(LiveOptions::new().ordering(OrderingMode::Drop));
+    live.watch(live.root(), OutputKind::Columns).unwrap();
+    live.push_many([(1000, row("a", 1.0))]).unwrap();
+    let out = live
+        .push_many([(500, row("a", 0.5)), (2000, row("a", 2.0))])
+        .unwrap();
+    assert_eq!(columns_of(&out)[0].key().begin(), [2000]);
+    assert!(live.push(10, row("a", 0.0)).unwrap().is_empty());
+}
+
+#[test]
+fn a_view_on_the_root_still_gets_events_with_columns_watched() {
+    let mut live = series(LiveOptions::new());
+    let root = live.root();
+    live.watch(root, OutputKind::Columns).unwrap();
+    let f = live
+        .filter(root, |e| e.number("cpu").unwrap().is_some_and(|c| c > 1.5))
+        .unwrap();
+    live.watch(f, OutputKind::Event).unwrap();
+    let out = live
+        .push_many([(0, row("a", 1.0)), (1000, row("a", 2.0))])
+        .unwrap();
+    let kinds: Vec<_> = out.iter().map(Output::kind).collect();
+    assert_eq!(kinds, [OutputKind::Event, OutputKind::Columns]);
+    assert_eq!(columns_of(&out)[0].key().begin(), [0, 1000]);
+}

@@ -93,6 +93,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   partition sub-series fire it too. `'event'` / `'batch'` / `'evict'` are
   unchanged.
 
+- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
+  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
+  `output.series`). Each push returns `Output::Columns { node, series }`, a
+  batch `TimeSeries` of the rows it added, in key order. Watched alone on
+  the series, a push builds no `LiveEvent`. Pays off from about 10 rows a
+  push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
+  `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
+  matches on `Output` / `OutputKind` without a wildcard arm (new variant):
+  pond-rs's next release is 0.2.0.
+
 - **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
   ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
   over whole columns like the other expression steps, in pond-ts, pond-rs
