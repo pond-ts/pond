@@ -361,6 +361,13 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
    * them at adoption (`fromTrustedStore`).
    */
   _eventsMayDifferFromColumnsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    // A delegated row's event is its source's, so ask the sources.
+    if (delegate !== undefined) {
+      return delegate.sources.some((s) =>
+        s._eventsMayDifferFromColumnsModulePrivate(),
+      );
+    }
     return this.#dense !== undefined;
   }
 

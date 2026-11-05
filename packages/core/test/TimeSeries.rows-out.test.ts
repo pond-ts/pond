@@ -163,3 +163,51 @@ describe('row exports through a store that hands back source events', () => {
     expect(built.dedupe({ keep: 'last' }).toJSON()).toEqual(fresh);
   });
 });
+
+describe('grouping through a store that hands back source events', () => {
+  // Same idea for groupBy / pivotByGroup ([PND-GROUPEVENTS]): when the
+  // source's events may hold values its columns don't, a dedupe result
+  // must take the event path too.
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string' },
+    { name: 'x', kind: 'number', required: false },
+  ] as const;
+  const source = () =>
+    TimeSeries.fromEvents(
+      [
+        new Event(new Time(0), { host: 'a', x: 1 }),
+        new Event(new Time(5), { host: 'b', x: NaN }),
+        new Event(new Time(10), { host: 'a', x: 3 }),
+      ] as never,
+      { name: 'c', schema },
+    );
+
+  // Either a result or an error message, so a throw compares too (the
+  // event path re-validates rows, and NaN fails that).
+  const outcome = (f: () => unknown) => {
+    try {
+      return { ok: f() };
+    } catch (e) {
+      return { error: (e as Error).message };
+    }
+  };
+
+  it('pivotByGroup on a dedupe result matches the source', () => {
+    const s = source();
+    const d = s.dedupe();
+    expect(outcome(() => d.pivotByGroup('host', 'x').toJSON())).toEqual(
+      outcome(() => s.pivotByGroup('host', 'x').toJSON()),
+    );
+  });
+
+  it('groupBy on a dedupe result matches the source', () => {
+    const s = source();
+    const d = s.dedupe();
+    const rows = (m: Map<string, TimeSeries<any>>) =>
+      [...m].map(([k, g]) => [k, g.toJSON().rows]);
+    expect(outcome(() => rows(d.groupBy('host')))).toEqual(
+      outcome(() => rows(s.groupBy('host'))),
+    );
+  });
+});
