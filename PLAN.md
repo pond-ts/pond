@@ -1078,17 +1078,6 @@ consumer signal. Plan:
   `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
   payload-free change signal the hooks use when the source offers it.
   `useEventRate` gains nothing (its window view stores `Event`s anyway).
-- **[PND-SPANFILTER]** — `before`, `after`, `tail`, `within`,
-  `overlapping` and `containedBy` run `filter(fn)` with a test on the key
-  alone, so the first call on a series builds an `Event` for every row:
-  ~1.1–1.5 s on 1M rows, against ~1 ms for `slice` over the same rows.
-  Fix: read the stored begin/end times (binary search where the rows are
-  sorted by the tested time) and select rows, keeping the result's events
-  identical (`===`) to the source's as `filter` does.
-- **[PND-ROWSOUT]** — `toRows` and `toObjects` build an `Event` per row:
-  1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
-  row from the columns, keeping the key objects identical to the events'
-  (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
 - **[PND-TRIMCOL]** — `trim` builds and trims an `Event` for every row:
   1.7 s on 1M rows, against 2 ms for `slice`. Fix: clip the key columns
   directly and gather the value columns, keeping the re-sort when
