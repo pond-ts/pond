@@ -3926,6 +3926,89 @@ const CASES = [
     'withColumn',
     ['r', { expr: { op: 'div', args: [{ col: 'a' }, { col: 'b' }] } }],
   ],
+  // Maths ([PND-SCANDATA]): pond-rs uses Rust's functions, which can
+  // differ from JavaScript's in the last digit, so these carry a tolerance.
+  [
+    'withColumn-expr-hypot',
+    'gappy',
+    'withColumn',
+    [
+      'r',
+      {
+        expr: {
+          op: 'sqrt',
+          args: [
+            {
+              op: 'add',
+              args: [
+                { op: 'pow', args: [{ col: 'a' }, { lit: 2 }] },
+                { op: 'pow', args: [{ col: 'b' }, { lit: 2 }] },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    1e-9,
+  ],
+  [
+    'withColumn-expr-trig',
+    'noisy',
+    'withColumn',
+    [
+      't',
+      {
+        expr: {
+          op: 'add',
+          args: [
+            {
+              op: 'mul',
+              args: [
+                { op: 'sin', args: [{ col: 'x' }] },
+                { op: 'cos', args: [{ col: 'y' }] },
+              ],
+            },
+            { op: 'atan2', args: [{ col: 'y' }, { col: 'x' }] },
+          ],
+        },
+      },
+    ],
+    1e-12,
+  ],
+  [
+    // asin outside -1..1 and sqrt of a negative are gaps
+    'withColumn-expr-asin-sqrt-gaps',
+    'gappy',
+    'withColumn',
+    [
+      'g',
+      {
+        expr: {
+          op: 'add',
+          args: [
+            {
+              op: 'asin',
+              args: [{ op: 'div', args: [{ col: 'a' }, { lit: 4 }] }],
+            },
+            { op: 'sqrt', args: [{ col: 'a' }] },
+          ],
+        },
+      },
+    ],
+    1e-12,
+  ],
+  [
+    // a gap ** 0 stays a gap; an overflow is a gap
+    'mapColumns-expr-pow-gaps',
+    'gappy',
+    'mapColumns',
+    [
+      {
+        a: { expr: { op: 'pow', args: [{ col: 'a' }, { lit: 0 }] } },
+        b: { expr: { op: 'pow', args: [{ col: 'b' }, { lit: 400 }] } },
+      },
+    ],
+  ],
   [
     'withColumn-expr-fill',
     'gappy',

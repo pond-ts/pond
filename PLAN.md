@@ -1053,9 +1053,12 @@ consumer signal. Plan:
   A JS step function costs a tuple per row in pond-ts, and in pond-rs a
   call back into JavaScript per row. `@pond-ts/fit` wants to run its maths
   on either core, so the folds it needs should be named operators or
-  expressions. First one shipped: `cumulative` `'increase'` / `'decrease'`
-  with a threshold (the 3 m climb rule). Add the next as fit's port to
-  operators finds them (breaks / slow-run detection is the likely next).
+  expressions. Shipped: `cumulative` `'increase'` / `'decrease'` with a
+  threshold (the 3 m climb rule, #906) and maths in expressions (`sqrt`,
+  `sin`, `cos`, `asin`, `atan2`, `pow`, #907; detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md)). Add the next as fit's
+  port to operators finds them (breaks / slow-run detection is the likely
+  next).
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
   emit-side allocation slice; spike plan exists. Second consumer: the
   offscreen-stream spike's live chart, which needed each appended batch as

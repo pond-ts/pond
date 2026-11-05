@@ -93,6 +93,23 @@ include new features and type-level changes; patch bumps are strictly additive.
   `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
   step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
   `CumulativeAccumulator` and `CumulativeChange`.
+- **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
+  ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
+  over whole columns like the other expression steps, in pond-ts, pond-rs
+  (`Expr::sqrt` …, `Expr::pow`), `@pond-ts/rs` and Python (`col("w") ** 2`,
+  `.sqrt()`, …). Angles are radians; `y.atan2(x)` reads `this` as `y`, as
+  `Math.atan2(y, x)` does. Same gap rule as arithmetic: a gap in is a gap
+  out, and a result that is not a finite number is a gap (`sqrt` of a
+  negative, `asin(2)`, `0 ** -1`, an overflow). Unlike JavaScript,
+  `gap ** 0` stays a gap rather than becoming 1. Enough for haversine
+  distance between GPS points (bit-identical to the plain `Math` loop in
+  pond-ts) and a 4th-power average. **pond-rs uses Rust's own maths
+  functions**, which can differ from pond-ts in the last digit (on a
+  haversine over 1M rows, 99.6% of results are identical and the largest
+  difference is 4 parts in 10^16); the shared parity cases allow for it.
+  A haversine over 36,000 rows takes about 6 ms in pond-ts and 4 ms in
+  `@pond-ts/rs`, against 1 ms for a hand-written loop
+  (`packages/core/scripts/perf-expr-maths.mjs`).
 
 ### Changed
 

@@ -37,6 +37,19 @@ def test_reflected_operators_keep_the_plain_value_on_its_side(s):
     assert values(s.filter(5 > col("v")), "v") == [1.0, 3.0, -6.0]
 
 
+def test_power_and_maths(s):
+    assert values(s.with_column("r", col("w") ** 2), "r") == [4.0, 16.0, 0.0, 9.0]
+    assert values(s.with_column("r", 2 ** col("w")), "r") == [4.0, 16.0, 1.0, 8.0]
+    # (-6) ** 0.5 and a gap ** 0 are gaps, 0 ** -1 (infinite) too.
+    assert values(s.with_column("r", col("v") ** 0.5), "r")[1:] == [None, 3.0**0.5, None]
+    assert values(s.with_column("r", col("v") ** 0), "r") == [1.0, None, 1.0, 1.0]
+    assert values(s.with_column("r", col("w") ** -1), "r")[2] is None
+    assert values(s.with_column("r", col("w").sqrt()), "r")[1] == 2.0
+    assert values(s.with_column("r", col("v").atan2(col("w"))), "r")[1] is None
+    with pytest.raises(TypeError, match="no modulus"):
+        pow(col("w"), 2, 3)
+
+
 def test_gaps_follow_pond_ts(s):
     # A comparison with a gap is false, so != keeps the gap row.
     assert values(s.filter(col("v") != 1), "host") == ["b", "a", "c"]
