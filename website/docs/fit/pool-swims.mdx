@@ -1,0 +1,139 @@
+---
+title: Pool swims
+sidebar_position: 9
+description: The pool, its lengths and rests, and the repeats with the recovery after each.
+---
+
+# Pool swims
+
+A pool swim is told in its own words: the pool, the lengths swum, the rests
+at the wall, and the repeats. `isPoolSwim()` narrows an activity to a
+`PoolSwim`, which has them.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const swim = readActivity(readFileSync('pool-swim.fit'));
+console.log(swim.sport, swim.environment, swim.isPoolSwim());
+
+if (swim.isPoolSwim()) {
+  console.log(swim.pool?.course, swim.pool?.length.meters);
+  console.log(
+    swim.lengths.length,
+    'lengths,',
+    swim.segments.length - swim.lengths.length,
+    'rests',
+  );
+  console.log(swim.repeats.length, 'repeats');
+}
+```
+
+```text output
+swim pool true
+25m 25
+52 lengths, 11 rests
+12 repeats
+```
+
+The watch tells a swim apart from its rests by its length records, so moving
+time on a pool swim is the time spent in lengths. See
+[Clocks](./clocks#swimming-and-rest).
+
+## Lengths and rests
+
+`segments` is the swim in order: each a `LengthSection` or a `RestSection`.
+A rest is a rest at the wall, not a length with nothing in it.
+
+```ts
+if (swim.isPoolSwim()) {
+  for (const seg of swim.segments.slice(10, 16)) {
+    if (seg.kind === 'length')
+      console.log(
+        seg.label.padEnd(10),
+        seg.stats().time.elapsed?.format(),
+        seg.stroke,
+        seg.strokeCount,
+      );
+    else console.log('Rest'.padEnd(10), seg.duration.format());
+  }
+}
+```
+
+```text output
+Length 11  0:29 freestyle 21
+Length 12  0:30 freestyle 22
+Rest       0:40
+Length 13  0:22 freestyle 15
+Length 14  0:23 freestyle 16
+Length 15  0:24 freestyle 16
+```
+
+A length's `stroke` is what the watch recognised (`'freestyle'`, `'drill'`,
+…) and `strokeCount` is what it counted, as it counted it: a Garmin watch
+counts cycles of the arm wearing it, not every arm pull. A drill length
+(`drill === true`) has no swimming strokes.
+
+## Repeats and recovery
+
+The repeats come from the recorded laps: each lap that covered distance is a
+repeat, with the lengths inside it, and the no-distance lap after it is its
+`recoveryAfter`.
+
+```ts
+if (swim.isPoolSwim()) {
+  for (const rep of swim.repeats) {
+    const s = rep.stats();
+    const per100 = s.pace.average ? s.pace.average.secondsPerKm / 10 : null;
+    console.log(
+      rep.label.padEnd(10),
+      `${rep.lengths.length} × ${swim.pool?.course}`.padEnd(9),
+      s.time.elapsed?.format().padStart(5),
+      per100 !== null ? `${per100.toFixed(1)} s/100m` : '',
+      rep.recoveryAfter
+        ? `then ${rep.recoveryAfter.duration.format()} rest`
+        : '',
+    );
+  }
+}
+```
+
+```text output
+Repeat 1   12 × 25m   5:26 108.7 s/100m then 0:40 rest
+Repeat 2   4 × 25m    1:33 93.0 s/100m then 0:20 rest
+Repeat 3   4 × 25m    1:33 93.0 s/100m then 0:20 rest
+Repeat 4   4 × 25m    1:35 95.0 s/100m then 0:20 rest
+Repeat 5   4 × 25m    1:33 93.0 s/100m then 0:20 rest
+Repeat 6   4 × 25m    1:35 95.0 s/100m then 0:20 rest
+Repeat 7   4 × 25m    1:35 95.0 s/100m then 0:20 rest
+Repeat 8   2 × 25m    1:09 138.0 s/100m then 0:15 rest
+Repeat 9   2 × 25m    1:11 142.0 s/100m then 0:15 rest
+Repeat 10  2 × 25m    1:11 142.0 s/100m then 0:15 rest
+Repeat 11  2 × 25m    1:08 136.0 s/100m then 0:15 rest
+Repeat 12  8 × 25m    3:52 116.0 s/100m
+```
+
+fit formats pace per kilometre or per mile only, so the example works out
+seconds per 100 m from `secondsPerKm`.
+
+The six 100s are repeats 2 to 7; a group of them adds up the 100s alone,
+without the rests:
+
+```ts
+if (swim.isPoolSwim()) {
+  const hundreds = swim.repeats.filter((r) => r.lengths.length === 4);
+  const s = hundreds.stats();
+  console.log(hundreds.length, s.distance?.meters, s.time.elapsed?.format());
+}
+```
+
+```text output
+6 600 9:24
+```
+
+## Open water
+
+An open water swim has `environment === 'open-water'` and isn't a `PoolSwim`.
+Its distance comes from the watch's own count when the file has it, because
+GPS fixes in the water are sparse and zigzag; its line is cleaned up for the
+map.

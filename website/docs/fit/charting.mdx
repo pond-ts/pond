@@ -1,0 +1,65 @@
+---
+title: Charting an activity
+sidebar_position: 11
+description: Drawing an activity with @pond-ts/charts, over time and over distance, with laps marked.
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FitRunChart from '@site/src/examples/fit-run-chart';
+import FitRideProfile from '@site/src/examples/fit-ride-profile';
+
+# Charting an activity
+
+`toSeries()` gives the activity as a pond `TimeSeries`, and
+[@pond-ts/charts](../charts/) draws a `TimeSeries` directly. So charting an
+activity is the same as charting anything else in pond; this page shows the
+three things activity charts usually need.
+
+## Over time, with the laps marked
+
+The interval run: speed on top, heart rate underneath, the six repeats
+shaded. A lap's `fromSeconds` and `toSeconds` are seconds from the start, so
+a `Region` for a lap runs from `start + fromSeconds * 1000` to
+`start + toSeconds * 1000`. Hover to read both rows at one moment.
+
+<ChartExample name="fit-run-chart" height={330}>
+  {(width) => <FitRunChart width={width} />}
+</ChartExample>
+
+- **Speed is smoothed before it's drawn.** Speed worked out second by second
+  from GPS jumps by a couple of km/h either way. A 10-second rolling sum of the
+  distance steps reads as the runner's speed.
+- **`origin="data"`** labels the time axis as time into the run, not the time
+  of day.
+- **Gaps break the line.** A heart-rate dropout is a missing cell in the
+  series, and the chart leaves a hole there rather than joining across it.
+
+## Over distance
+
+A ride is often easier to read by distance: the climbs are where they are on
+the road, whatever the speed. `byValue('km')` turns a series keyed by time
+into one keyed by a column that only goes up, and the chart's x axis follows:
+
+<ChartExample name="fit-ride-profile" height={280}>
+  {(width) => <FitRideProfile width={width} />}
+</ChartExample>
+
+The six-minute café stop is invisible here: no distance passed. On a time
+axis it would be a flat gap in the middle of the ride.
+
+## Charts that come with fit
+
+Some results are ready to chart as they are. Time in zones and the power
+histogram come as bins with `start` and `end` edges, the shape
+`<BarChart bins>` takes:
+
+```tsx norun
+const zones = ride.analyze({ athlete }).zones.power!;
+<BarChart bins={zones} column="seconds" axis="time" />;
+```
+
+The analysis guides draw one chart each:
+[moving time](./guides/moving-time), [splits](./guides/splits-and-pace),
+[normalized power](./guides/normalized-power),
+[the power curve](./guides/power-curve) and
+[time in zones](./guides/time-in-zones).
