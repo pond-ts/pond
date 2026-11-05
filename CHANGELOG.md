@@ -80,6 +80,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
+  with just the rows that push added, as a `TimeSeries`, so a listener can
+  read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
+  instead of one `Event` per row. On a default (`strict`, time-keyed) series
+  no `Event` is built and no row is copied (handing the batch over costs
+  well under a microsecond a push). 1M rows in pushes of 1,000: a
+  listener summing a column 320 → 141 ms, copying a column into a buffer
+  356 → 142 ms, writing JSON rows 446 → 251 ms, against the same work on
+  `'batch'`. `reorder` / `drop` series build the batch from the added
+  events, sorted by key. Fires after `'batch'` and before `'evict'`;
+  partition sub-series fire it too. `'event'` / `'batch'` / `'evict'` are
+  unchanged.
+
 - **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
   ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
   over whole columns like the other expression steps, in pond-ts, pond-rs
