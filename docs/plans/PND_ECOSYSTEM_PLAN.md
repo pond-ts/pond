@@ -310,6 +310,7 @@ keys could, once types are free strings); repeated lap ids throw;
 (`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
 Estela: the column sets, narrowing steps and chart-channel mapping (display),
 and the user's interval type list with its colours.
+
 ## [PND-FITAPI] — records, sections, analysis
 
 Design direction from pjm17971 (2026-11-04), recorded with a mapping to the
