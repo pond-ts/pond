@@ -97,8 +97,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
   `output.series`). Each push returns `Output::Columns { node, series }`, a
   batch `TimeSeries` of the rows it added, in key order. Watched alone on
-  the series, a push builds no `LiveEvent`. Pays off from about 10 rows a
-  push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
+  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
+  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
   `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
   matches on `Output` / `OutputKind` without a wildcard arm (new variant):
   pond-rs's next release is 0.2.0.

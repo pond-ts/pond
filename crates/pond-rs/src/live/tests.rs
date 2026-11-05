@@ -1897,7 +1897,7 @@ fn a_late_row_under_reorder_comes_in_key_order() {
         assert_eq!(batch.key().begin(), [500, 2000, 4000]);
         assert_eq!(cpus(batch), [Some(0.5), Some(2.0), Some(4.0)]);
         assert_eq!(begins(live.events()), [500, 1000, 2000, 3000, 4000]);
-        // push_series and one push go the same way.
+        // One push with a late row goes the same way.
         let out = live.push(100, row("a", 0.1)).unwrap();
         assert_eq!(columns_of(&out)[0].key().begin(), [100]);
     }
@@ -1930,4 +1930,62 @@ fn a_view_on_the_root_still_gets_events_with_columns_watched() {
     let kinds: Vec<_> = out.iter().map(Output::kind).collect();
     assert_eq!(kinds, [OutputKind::Event, OutputKind::Columns]);
     assert_eq!(columns_of(&out)[0].key().begin(), [0, 1000]);
+}
+
+#[test]
+fn push_series_columns_match_batch_in_every_mode() {
+    // push_series takes its own bare path (`ingest_bare_series`): its
+    // Columns batch must hold exactly the rows a Batch watch reports.
+    let pushes = [
+        chunk(&[(0, "a", Some(1.0), None), (1000, "b", None, Some(2.0))]),
+        // Behind the tail, then at it, then in order.
+        chunk(&[
+            (500, "a", Some(5.0), None),
+            (1000, "c", Some(6.0), None),
+            (2000, "a", Some(7.0), Some(1.0)),
+            (3000, "b", None, None),
+        ]),
+        chunk(&[(4000, "a", Some(8.0), None)]),
+    ];
+    let cells = |s: &TimeSeries| -> Vec<(i64, Option<f64>)> {
+        s.rows()
+            .map(|r| (r.key().begin(), r.number("cpu").unwrap()))
+            .collect()
+    };
+    for mode in [OrderingMode::Drop, OrderingMode::Reorder] {
+        let opts = LiveOptions::new().ordering(mode).max_events(4);
+        let mut cols = LiveSeries::with_options("cpu", wide_schema(), opts.clone()).unwrap();
+        let mut rows = LiveSeries::with_options("cpu", wide_schema(), opts).unwrap();
+        cols.watch(cols.root(), OutputKind::Columns).unwrap();
+        rows.watch(rows.root(), OutputKind::Batch).unwrap();
+        for (k, batch) in pushes.iter().enumerate() {
+            // Drop always stays bare; reorder leaves it for the push with
+            // late rows only.
+            let keys: Vec<EventKey> = batch
+                .key()
+                .begin()
+                .iter()
+                .map(|&t| EventKey::time(t))
+                .collect();
+            let bare = mode == OrderingMode::Drop || k != 1;
+            assert_eq!(cols.bare_root_for(keys.iter()), bare, "{mode:?} push {k}");
+            let a = cols.push_series(batch).unwrap();
+            let b = rows.push_series(batch).unwrap();
+            let want: Vec<(i64, Option<f64>)> = match &b[..] {
+                [Output::Batch { events, .. }] => {
+                    let mut v: Vec<_> = events
+                        .iter()
+                        .map(|e| (e.begin(), e.number("cpu").unwrap()))
+                        .collect();
+                    v.sort_by_key(|x| x.0);
+                    v
+                }
+                other => panic!("{mode:?} push {k}: {other:?}"),
+            };
+            let got = columns_of(&a);
+            assert_eq!(got.len(), 1, "{mode:?} push {k}");
+            assert_eq!(cells(got[0]), want, "{mode:?} push {k}");
+        }
+        assert_eq!(begins(cols.events()), begins(rows.events()));
+    }
 }

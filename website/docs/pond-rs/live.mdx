@@ -906,7 +906,7 @@ wire). Watched alone on the series, a push builds no `LiveEvent`: the batch
 is copied out of the stored columns. A `reorder` push with a late row, or
 anything else watched on the series, builds events as usual and the batch is
 made from them. Building the batch has a fixed cost per push, so it beats
-`Batch` from about 10 rows a push (1M rows, summing one column, from
+`Batch` somewhere between 10 and 100 rows a push (1M rows, summing one column, from
 `examples/perf_live.rs`):
 
 | Rows a push | `Batch` | `Columns` |

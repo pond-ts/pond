@@ -1302,6 +1302,9 @@ impl LiveSeries {
                 .snapshot_rows("LiveSeries::push", &s.name, start..s.buffer.len())
             {
                 Ok(series) => self.emit_columns_series(0, series, out),
+                // Not reachable after the row checks; if it were, the rows
+                // stay stored and the push reports the error, as on the
+                // event path.
                 Err(e) => self.fail(e),
             }
         }

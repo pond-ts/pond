@@ -687,7 +687,7 @@ Peter asked for the pond-rs counterpart of pond-ts `live.on('columns')`
   `TimeSeries.fromEvents`). Partitions build theirs from their added events.
 - **Cost.** Building the batch is ~15 allocations a push (names, key, one
   buffer or more per column), and a `LiveEvent` is cheap in Rust, so the
-  win needs about 10 rows a push. `examples/perf_live.rs`, 1M rows, reader
+  win needs between 10 and 100 rows a push. `examples/perf_live.rs`, 1M rows, reader
   sums `cpu`: 1,000 a push `Batch` 296 / `Columns` 232 ms; 100: 280 / 243;
   10: 318 / 332; 1: 413 / 861 (bare push, nothing watched: 193 ms). A
   sized string builder did not help (allocation count, not the builder).

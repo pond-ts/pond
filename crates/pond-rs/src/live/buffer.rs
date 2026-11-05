@@ -14,8 +14,6 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
 
-use arrow_array::builder::StringBuilder;
-
 use crate::column::{
     ArrayColumn, BooleanColumn, ColumnData, Float64Column, Scalar, StringColumn, Value,
 };
@@ -136,15 +134,7 @@ impl Cells {
                     .into()
             }
             Cells::String(c) => {
-                // Sized up front: a push of a few rows would otherwise pay
-                // for the builder's default buffers.
-                let cells = c.range(rows);
-                let bytes = cells.clone().flatten().map(String::len).sum();
-                let mut b = StringBuilder::with_capacity(cells.len(), bytes);
-                for s in cells {
-                    b.append_option(s.as_deref());
-                }
-                StringColumn::plain(b.finish()).into()
+                StringColumn::from_options(c.range(rows).map(Option::as_deref)).into()
             }
             Cells::Boolean(c) => BooleanColumn::from_options(c.range(rows).copied()).into(),
             Cells::Array(c) => ArrayColumn::from_options(c.range(rows).cloned()).into(),
