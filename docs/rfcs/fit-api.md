@@ -122,11 +122,13 @@ bike and a swimmer resting at the wall are three different questions.
 
 Running and cycling fit a continuous recording. Pool swimming also has a
 discrete structure: lengths, strokes, sets, rests. No nullable `.swim` on every
-activity; the activity type narrows instead:
+activity; the activity type narrows instead (`environment` says `'pool'`,
+but only the `isPoolSwim()` guard narrows the type, because TypeScript can't
+narrow a class through a getter's value):
 
 ```ts
-if (activity.sport === 'swim' && activity.environment === 'pool') {
-  activity.pool.length.format(); // "25 yd" — a Distance
+if (activity.isPoolSwim()) {
+  activity.pool.length; // a Distance (a yards display unit comes later)
   for (const segment of activity.segments) {
     if (segment.kind === 'length') {
       segment.distance;
