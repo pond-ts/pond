@@ -310,3 +310,31 @@ keys could, once types are free strings); repeated lap ids throw;
 (`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
 Estela: the column sets, narrowing steps and chart-channel mapping (display),
 and the user's interval type list with its colours.
+## [PND-FITAPI] — records, sections, analysis
+
+Design direction from pjm17971 (2026-11-04), recorded with a mapping to the
+code in [docs/rfcs/fit-api.md](../rfcs/fit-api.md). Written in reply to a
+walk-through of the API after the Estela extraction wave, which showed the
+newer pieces (stats, breaks, edits, outlines, swims) arriving as free
+functions rather than on the façade. Rather than adding them all as `Activity`
+methods (the walk-through's proposal), the direction splits the surface:
+`Activity` (the recording) and `Section` (any stretch) share one `stats()`
+contract, `Sections` aggregate laps and groups, `Analysis` applies athlete
+settings, and presentation moves to `@pond-ts/fit/views`.
+
+Next release: `readActivity`, `stats()` + sections, explicit clocks, typed
+pool swims. Decision taken with it: the current `Activity` methods are
+replaced, not deprecated beside the new ones (pre-1.0; Estela is the only
+known user and is switching). Open: moving rules per sport (RFC §12).
+
+**Built** (2026-11-05, PRs #892–#895, gathered on one integration branch for
+review): `readActivity`, `Activity` / `Section` / `Sections` with `stats()`,
+the clocks (timer from the file only; moving by sport rule; swimming and rest
+for swims), the typed pool swim (`PoolSwim`, lengths, rests, repeats,
+recoveries), and `section.analyze({ athlete })` with best efforts under
+`section.power` / `section.pace`. Decisions from review: cycling TSS for rides
+only (running and swimming load need their own models); pace zones from a
+5 km time for runs, walks and hikes only; TSS keeps elapsed seconds, as
+`computePower` did, until checked against real numbers. Not yet: `edit` in
+durations with parts (RFC §17), `views`, `explain`, and the sport depth in RFC
+§14–§16.

@@ -1311,6 +1311,13 @@ depend on. Plan:
   [PND-FITSTATS]), then swims, the FIT/GPX/TCX readers, and cutting a
   recording (crop, lap split/join). One PR each; plan in
   [PND_ECOSYSTEM_PLAN.md](docs/plans/PND_ECOSYSTEM_PLAN.md).
+- **[PND-FITAPI]** — the `@pond-ts/fit` API redesign
+  ([docs/rfcs/fit-api.md](docs/rfcs/fit-api.md)): `readActivity` returning an
+  `Activity`, one `stats()` contract over any `Section`, explicit clocks
+  (elapsed / timer / moving / swimming), and a typed pool-swim model. The next
+  release waits on these four (pjm17971, 2026-11-04). Built, with `analyze`
+  and best efforts by metric (#892–#895); `edit` in durations and `views`
+  follow.
 
 ---
 
