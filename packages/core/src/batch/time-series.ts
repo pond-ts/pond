@@ -5054,13 +5054,104 @@ export class TimeSeries<S extends SeriesSchema> {
     // Anchor times + source values for the window-based methods
     // (movingAverage / loess). Materialized here — below the ema branch —
     // because ema never reads either (its fast path stays event-free).
-    const anchors = this.events.map((event) => eventAnchorTime(event.key()));
-    const sourceValues: ReadonlyArray<number | undefined> = this.events.map(
-      (event) => {
+    //
+    // A number target column is read straight off the store: anchors from
+    // the key buffers (a time key's timestamp, else `begin + (end − begin)
+    // / 2`, which is `timeRange().midpoint()`), values by `read`, and the
+    // result written as one number column ([PND-SMOOTHSLOW]). A missing or
+    // non-number target keeps the event path (its odd results are
+    // [PND-SMOOTHCHECK]).
+    const smoothStore = this.#store.store;
+    const targetCol = smoothStore.columns.get(column as string);
+    // The event path also stays when the events may hold values the columns
+    // don't (a dense event array, e.g. from `fromEvents`), and when `output`
+    // names the key column, so that error keeps row intake's text.
+    const columnar =
+      targetCol !== undefined &&
+      targetCol.kind === 'number' &&
+      !this.#store._eventsMayDifferFromColumnsModulePrivate() &&
+      output !== this.schema[0].name;
+    const rowCount = smoothStore.length;
+    let anchors: number[];
+    let sourceValues: ReadonlyArray<number | undefined>;
+    if (columnar) {
+      const keys = smoothStore.keys;
+      const kb = keys.begin;
+      const ke = keys.end;
+      anchors = new Array<number>(rowCount);
+      const values = new Array<number | undefined>(rowCount);
+      const isTime = keys.kind === 'time';
+      for (let i = 0; i < rowCount; i += 1) {
+        anchors[i] = isTime ? kb[i]! : kb[i]! + (ke[i]! - kb[i]!) / 2;
+        values[i] = targetCol.read(i) as number | undefined;
+      }
+      sourceValues = values;
+    } else {
+      anchors = this.events.map((event) => eventAnchorTime(event.key()));
+      sourceValues = this.events.map((event) => {
         const raw = event.get(column);
         return typeof raw === 'number' ? raw : undefined;
-      },
-    );
+      });
+    }
+    // Writes the smoothed values as the result: one number column replacing
+    // the target or appended as `output`; every other column and the key
+    // pass through. The event path rebuilds rows instead.
+    const finish = (
+      smoothedAt: (index: number) => number | undefined,
+    ): TimeSeries<
+      Output extends string
+        ? SmoothAppendSchema<S, Output>
+        : SmoothSchema<S, Target>
+    > => {
+      if (columnar) {
+        const out = new Float64Array(rowCount);
+        let allFinite = true;
+        for (let i = 0; i < rowCount; i += 1) {
+          const v = smoothedAt(i);
+          // Missing, or non-finite (an overflow): stored as missing, as row
+          // intake did ([PND-NANREP]).
+          if (v === undefined || v - v !== 0) {
+            out[i] = NaN;
+            allFinite = false;
+          } else {
+            out[i] = v;
+          }
+        }
+        const outColumn = new Float64Column(out, rowCount, allFinite);
+        const reshaped =
+          output === undefined || output === (column as string)
+            ? withColumnReplaced(smoothStore, column as string, outColumn)
+            : withColumnAppended(smoothStore, output, outColumn);
+        return TimeSeries.#fromTrustedStore(
+          this.name,
+          resultSchema as unknown as SeriesSchema,
+          reshaped,
+        ) as never;
+      }
+      const resultRows = this.events.map((event, index) => {
+        const smoothed = smoothedAt(index);
+        const nextEvent =
+          output === undefined
+            ? event.set(column, smoothed as EventDataForSchema<S>[Target])
+            : event.merge({ [output]: smoothed });
+        return Object.freeze([
+          nextEvent.key(),
+          ...resultSchema
+            .slice(1)
+            .map(
+              (nextColumn) =>
+                nextEvent.data()[
+                  nextColumn.name as keyof ReturnType<typeof nextEvent.data>
+                ],
+            ),
+        ]);
+      });
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as never;
+    };
     // Rows in anchor order. Time-range and interval keys sort by begin, so
     // their midpoints can run backwards (a long range before a short one);
     // the window sweep and the loess neighbour search both need anchors in
@@ -5097,37 +5188,11 @@ export class TimeSeries<S extends SeriesSchema> {
       // (don't fit a fabricated value across the hole from its present
       // neighbours). Default `'bridge'` is the prior behaviour (fit everywhere).
       const skipMissing = 'missing' in options && options.missing === 'skip';
-      const resultRows = this.events.map((event, index) => {
-        const smoothed =
-          skipMissing && sourceValues[index] === undefined
-            ? undefined
-            : loessAt(anchors[index]!, loessAnchors, loessValues, span);
-        const nextEvent =
-          output === undefined
-            ? event.set(column, smoothed as EventDataForSchema<S>[Target])
-            : event.merge({ [output]: smoothed });
-        return Object.freeze([
-          nextEvent.key(),
-          ...resultSchema
-            .slice(1)
-            .map(
-              (nextColumn) =>
-                nextEvent.data()[
-                  nextColumn.name as keyof ReturnType<typeof nextEvent.data>
-                ],
-            ),
-        ]);
-      });
-
-      return timeSeriesFromComputedRows(
-        this.name,
-        resultSchema as unknown as SeriesSchema,
-        resultRows,
-      ) as unknown as TimeSeries<
-        Output extends string
-          ? SmoothAppendSchema<S, Output>
-          : SmoothSchema<S, Target>
-      >;
+      return finish((index) =>
+        skipMissing && sourceValues[index] === undefined
+          ? undefined
+          : loessAt(anchors[index]!, loessAnchors, loessValues, span),
+      );
     }
 
     if (!('window' in options)) {
@@ -5137,7 +5202,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const windowMs = parseDuration(window!);
     const alignment = options.alignment ?? 'trailing';
     const skipMissing = options.missing === 'skip';
-    const resultValues = new Array<number | undefined>(this.events.length);
+    const resultValues = new Array<number | undefined>(rowCount);
     // Anchors and values in anchor order; positions below index these.
     const sorted =
       byAnchor === undefined
@@ -5173,15 +5238,15 @@ export class TimeSeries<S extends SeriesSchema> {
     const snapshot = (): number | undefined =>
       numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
-    for (let groupStart = 0; groupStart < this.events.length; ) {
+    for (let groupStart = 0; groupStart < rowCount; ) {
       const anchor = sorted[groupStart]!;
       let groupEnd = groupStart + 1;
-      while (groupEnd < this.events.length && sorted[groupEnd] === anchor) {
+      while (groupEnd < rowCount && sorted[groupEnd] === anchor) {
         groupEnd += 1;
       }
 
       if (alignment === 'trailing') {
-        while (windowEnd < this.events.length && sorted[windowEnd]! <= anchor) {
+        while (windowEnd < rowCount && sorted[windowEnd]! <= anchor) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -5208,10 +5273,7 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + windowMs;
-        while (
-          windowEnd < this.events.length &&
-          sorted[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && sorted[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -5236,10 +5298,7 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + halfWindow;
-        while (
-          windowEnd < this.events.length &&
-          sorted[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && sorted[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -5257,34 +5316,7 @@ export class TimeSeries<S extends SeriesSchema> {
       groupStart = groupEnd;
     }
 
-    const resultRows = this.events.map((event, index) => {
-      const smoothed = resultValues[index];
-      const nextEvent =
-        output === undefined
-          ? event.set(column, smoothed as EventDataForSchema<S>[Target])
-          : event.merge({ [output]: smoothed });
-      return Object.freeze([
-        nextEvent.key(),
-        ...resultSchema
-          .slice(1)
-          .map(
-            (nextColumn) =>
-              nextEvent.data()[
-                nextColumn.name as keyof ReturnType<typeof nextEvent.data>
-              ],
-          ),
-      ]);
-    });
-
-    return timeSeriesFromComputedRows(
-      this.name,
-      resultSchema as unknown as SeriesSchema,
-      resultRows,
-    ) as unknown as TimeSeries<
-      Output extends string
-        ? SmoothAppendSchema<S, Output>
-        : SmoothSchema<S, Target>
-    >;
+    return finish((index) => resultValues[index]);
   }
 
   /** Example: `series.slice(0, 10)`. Returns a positional half-open slice of the series. */
@@ -5452,11 +5484,20 @@ export class TimeSeries<S extends SeriesSchema> {
           `sample({ stride }): stride must be a positive integer (got ${String(stride)})`,
         );
       }
-      const sampled: EventForSchema<S>[] = [];
-      for (let i = stride - 1; i < this.events.length; i += stride) {
-        sampled.push(this.events[i]!);
-      }
-      return TimeSeries.#fromTrustedEvents(this.name, this.schema, sampled);
+      // Gather every `stride`-th row off the columns ([PND-SMOOTHSLOW]);
+      // events built before the call are carried into the result.
+      const n = this.#store.length;
+      const rows = new Int32Array(Math.max(0, Math.floor(n / stride)));
+      let k = 0;
+      for (let i = stride - 1; i < n; i += stride) rows[k++] = i;
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: Object.freeze(this.schema.slice()) as S,
+        [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+          rows.subarray(0, k),
+        ),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
     }
     const k = strategy.reservoir.size;
     if (!Number.isInteger(k) || k < 1) {
@@ -5730,6 +5771,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * re-sorted (stably) by key, so its rows may come back in a different order than the input's.
    */
   trim(range: RangeLike): TimeSeries<S> {
+    const fromColumns = this.#trimColumns(range);
+    if (fromColumns !== undefined) return fromColumns;
     const trimmedEvents = this.events
       .map((event) => event.trim(range))
       .filter((event): event is EventForSchema<S> => event !== undefined);
@@ -5749,6 +5792,103 @@ export class TimeSeries<S extends SeriesSchema> {
     }
 
     return TimeSeries.#fromTrustedEvents(this.name, this.schema, trimmedEvents);
+  }
+
+  /**
+   * [PND-TRIMCOL] `trim` on the key buffers: keep the rows whose key
+   * overlaps the range, clip `timeRange` / `interval` edges with the same
+   * `Math.max` / `Math.min` as `TimeRange.intersection`, re-sort (stably,
+   * by begin then end, as `compareEventKeys`) only if clipping broke the
+   * order, and gather the value columns. `time` keys are not clipped
+   * (`Time.trim` returns the key itself), so their rows keep the source's
+   * key objects. Returns `undefined` where the event path must run: an
+   * empty series (it never reads `range`), a store whose events may differ
+   * from its columns, or an array column (old events shared array cells).
+   */
+  #trimColumns(range: RangeLike): TimeSeries<S> | undefined {
+    const seriesStore = this.#store;
+    const n = seriesStore.length;
+    if (n === 0 || seriesStore._eventsMayDifferFromColumnsModulePrivate()) {
+      return undefined;
+    }
+    for (let c = 1; c < this.schema.length; c += 1) {
+      if (this.schema[c]!.kind === 'array') return undefined;
+    }
+    // Every key kind's `trim` reads the range through `toTimeRange`, so
+    // a bad range throws the same error here.
+    const r = toTimeRange(range);
+    const rb = r.begin();
+    const re = r.end();
+    const store = seriesStore.store;
+    const keys = store.keys;
+    const begins = keys.begin;
+    const ends = keys.end;
+    const kept = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      if (begins[i]! <= re && rb <= ends[i]!) kept[k++] = i;
+    }
+    let rows = k === n ? kept : kept.slice(0, k);
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    if (keys.kind === 'time') {
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: frozenSchema,
+        [TRUSTED_STORE_SENTINEL]:
+          seriesStore._selectRowsSharingKeysModulePrivate(rows),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+    }
+    let newBegin = new Float64Array(k);
+    let newEnd = new Float64Array(k);
+    let sorted = true;
+    for (let j = 0; j < k; j += 1) {
+      const i = rows[j]!;
+      newBegin[j] = Math.max(begins[i]!, rb);
+      newEnd[j] = Math.min(ends[i]!, re);
+      if (
+        j > 0 &&
+        (newBegin[j - 1]! > newBegin[j]! ||
+          (newBegin[j - 1] === newBegin[j] && newEnd[j - 1]! > newEnd[j]!))
+      ) {
+        sorted = false;
+      }
+    }
+    if (!sorted) {
+      const order = Array.from({ length: k }, (_, j) => j);
+      const b0 = newBegin;
+      const e0 = newEnd;
+      order.sort((a, b) => b0[a]! - b0[b]! || e0[a]! - e0[b]!);
+      const sortedRows = new Int32Array(k);
+      newBegin = new Float64Array(k);
+      newEnd = new Float64Array(k);
+      for (let j = 0; j < k; j += 1) {
+        const o = order[j]!;
+        sortedRows[j] = rows[o]!;
+        newBegin[j] = b0[o]!;
+        newEnd[j] = e0[o]!;
+      }
+      rows = sortedRows;
+    }
+    const gathered = withRowSelection(store, rows);
+    const newKeys =
+      keys.kind === 'timeRange'
+        ? new TimeRangeKeyColumn(newBegin, newEnd, k)
+        : new IntervalKeyColumn(
+            newBegin,
+            newEnd,
+            (gathered.keys as IntervalKeyColumn).labels,
+            k,
+          );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      frozenSchema,
+      ColumnarStore.fromTrustedStore(
+        store.schema,
+        newKeys,
+        gathered.columns,
+      ) as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /** Example: `series.before(Date.now())`. Returns the events ending strictly before the supplied temporal boundary. */
@@ -6676,36 +6816,94 @@ export class TimeSeries<S extends SeriesSchema> {
       { name: lowerName, kind: 'number' as const, required: false as const },
     ]) as unknown as BaselineSchema<S, AvgName, SdName, UpperName, LowerName>;
 
-    const resultRows = this.events.map((event, index) => {
-      const data = event.data() as Record<string, unknown>;
-      const rollEvent = rolling.at(index);
-      const rollData = (rollEvent?.data() ?? {}) as Record<string, unknown>;
-      const avg = rollData[avgName];
-      const sd = rollData[sdName];
-      const avgNum = typeof avg === 'number' ? avg : undefined;
-      const sdNum = typeof sd === 'number' ? sd : undefined;
+    // Events that may hold values their columns don't (a dense event array,
+    // e.g. from `fromEvents`) keep the row path, which rebuilds rows from
+    // `event.data()` through validation, so output and errors stay as before.
+    if (this.#store._eventsMayDifferFromColumnsModulePrivate()) {
+      const resultRows = this.events.map((event, index) => {
+        const data = event.data() as Record<string, unknown>;
+        const rollEvent = rolling.at(index);
+        const rollData = (rollEvent?.data() ?? {}) as Record<string, unknown>;
+        const avg = rollData[avgName];
+        const sd = rollData[sdName];
+        const avgNum = typeof avg === 'number' ? avg : undefined;
+        const sdNum = typeof sd === 'number' ? sd : undefined;
+        // sd === 0 means a flat rolling window — there is no meaningful
+        // deviation against it. Matching outliers(), we emit undefined
+        // bands so `value > upper || value < lower` doesn't flag every
+        // non-equal point as anomalous.
+        const bandValid =
+          avgNum !== undefined && sdNum !== undefined && sdNum > 0;
+        const upperNum = bandValid ? avgNum + sigma * sdNum : undefined;
+        const lowerNum = bandValid ? avgNum - sigma * sdNum : undefined;
+        return Object.freeze([
+          event.key(),
+          ...this.schema.slice(1).map((c) => data[c.name]),
+          avgNum,
+          sdNum,
+          upperNum,
+          lowerNum,
+        ]);
+      });
+
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as unknown as TimeSeries<
+        BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
+      >;
+    }
+
+    // Column-native ([PND-SMOOTHSLOW]): the rolling result has one row per
+    // source row, so its `avg` / `sd` columns are appended as they are and
+    // the bands are computed from them; the key and source columns pass
+    // through.
+    const store = this.#store.store;
+    const rollStore = rolling.#store.store;
+    const n = store.length;
+    const avgCol = rollStore.columns.get(avgName)!;
+    const sdCol = rollStore.columns.get(sdName)!;
+    const upper = new Float64Array(n);
+    const lower = new Float64Array(n);
+    let bandsFinite = true;
+    for (let i = 0; i < n; i += 1) {
+      const avg = avgCol.read(i);
+      const sd = sdCol.read(i);
       // sd === 0 means a flat rolling window — there is no meaningful
       // deviation against it. Matching outliers(), we emit undefined
       // bands so `value > upper || value < lower` doesn't flag every
       // non-equal point as anomalous.
-      const bandValid =
-        avgNum !== undefined && sdNum !== undefined && sdNum > 0;
-      const upperNum = bandValid ? avgNum + sigma * sdNum : undefined;
-      const lowerNum = bandValid ? avgNum - sigma * sdNum : undefined;
-      return Object.freeze([
-        event.key(),
-        ...this.schema.slice(1).map((c) => data[c.name]),
-        avgNum,
-        sdNum,
-        upperNum,
-        lowerNum,
-      ]);
-    });
-
-    return timeSeriesFromComputedRows(
+      if (typeof avg === 'number' && typeof sd === 'number' && sd > 0) {
+        const u = avg + sigma * sd;
+        const l = avg - sigma * sd;
+        // Non-finite (an overflow) is missing ([PND-NANREP]).
+        upper[i] = u - u === 0 ? u : NaN;
+        lower[i] = l - l === 0 ? l : NaN;
+        if (u - u !== 0 || l - l !== 0) bandsFinite = false;
+      } else {
+        upper[i] = NaN;
+        lower[i] = NaN;
+        bandsFinite = false;
+      }
+    }
+    // Built in one go against the result schema, so a repeated output name
+    // (`names: { avg: 'x', lower: 'x' }`) fails with the store's own
+    // duplicate-name error, as row intake did.
+    const columns = new Map(store.columns);
+    columns.set(avgName, avgCol);
+    columns.set(sdName, sdCol);
+    columns.set(upperName, new Float64Column(upper, n, bandsFinite));
+    columns.set(lowerName, new Float64Column(lower, n, bandsFinite));
+    const out = ColumnarStore.fromTrustedStore(
+      resultSchema as unknown as ColumnSchema,
+      store.keys,
+      columns,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      resultRows,
+      out as unknown as ColumnarStore<ColumnSchema>,
     ) as unknown as TimeSeries<
       BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
     >;
@@ -6781,23 +6979,38 @@ export class TimeSeries<S extends SeriesSchema> {
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
-    const kept: EventForSchema<S>[] = [];
-    for (let i = 0; i < this.events.length; i += 1) {
-      const src = this.events[i]!;
-      const rollEvent = rolling.at(i);
-      if (!rollEvent) continue;
-      const data = rollEvent.data() as Record<string, unknown>;
-      const avg = data[ROLL_AVG];
-      const sd = data[ROLL_SD];
+    // Column-native ([PND-SMOOTHSLOW]): compare column cells, keep row
+    // numbers, gather the kept rows. Events built before the call are
+    // carried into the result, as `dedupe` does.
+    const store = this.#store.store;
+    const rollStore = rolling.#store.store;
+    const avgCol = rollStore.columns.get(ROLL_AVG)!;
+    const sdCol = rollStore.columns.get(ROLL_SD)!;
+    const valueCol = store.columns.get(col as string);
+    const n = store.length;
+    const rows = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      const avg = avgCol.read(i);
+      const sd = sdCol.read(i);
       if (typeof avg !== 'number' || typeof sd !== 'number') continue;
       if (sd === 0) continue; // flat window — nothing to deviate from
-      const raw = src.get(col);
+      const raw = valueCol?.read(i);
       if (typeof raw !== 'number') continue;
       if (Math.abs(raw - avg) > sigma * sd) {
-        kept.push(src);
+        rows[k] = i;
+        k += 1;
       }
     }
-    return TimeSeries.#fromTrustedEvents(this.name, this.schema, kept);
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: frozenSchema,
+      [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+        rows.subarray(0, k),
+      ),
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**
