@@ -132,6 +132,22 @@ include new features and type-level changes; patch bumps are strictly additive.
   `Section`, so `stats()` works on all of them. Added `Distance.yards`,
   `.yards` and the `yards` shorthand. `ImportedActivity.swim` is unchanged.
 
+- **`@pond-ts/fit`: fixes from the integration review** ([PND-FITAPI]).
+  FIT files with compressed timestamps now read correctly (the decoder,
+  `fit-file-parser`, doesn't support them, so they are written out first;
+  the heart rate recovery reader handles them too). A section's time,
+  moving time and distance now run between its own ends rather than the
+  samples around them, so `splits(km(1))` measures 1 km each and the last
+  split is never empty (this changes `sectionStats` numbers for spans whose
+  ends fall between samples). Pool swims: swimming time is the overlap with
+  the lengths, a length's distance (from the pool length) reaches `stats()`,
+  and lengths, laps and samples share one clock from the activity's start.
+  Real zeros stay zero: a standstill has speed 0, 0 W laps count in lap
+  summaries; unknowns stay null: rest needs an elapsed clock. Group moving
+  averages no longer depend on member order; a two-sample section keeps its
+  moving max speed; namespaced GPX/TCX roots are recognised; cropping the
+  finish drops the heart rate recovery.
+
 - **`@pond-ts/fit`: analysis for an athlete, best efforts by metric**
   ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`
   or the stored profile JSON (resolved to the activity's start) and returns

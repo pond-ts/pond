@@ -7,6 +7,7 @@
 import {
   movingMask,
   movingRuleOf,
+  isPoolRecord,
   type MovingRule,
 } from '../activity/moving.js';
 import { TimeSeries } from 'pond-ts';
@@ -513,10 +514,46 @@ export interface PreparedActivity {
   /** For a rule other than speed: per sample i ≥ 1, whether the time before
    *  it counts as moving. */
   movingMask?: Uint8Array;
+  /** For a rule other than speed: the stretches that count as moving, in
+   *  seconds from the start. Moving time is the overlap with them, so a
+   *  sample gap that is half swimming counts half. */
+  movingSpans?: ReadonlyArray<readonly [number, number]>;
+  /** For a pool swim with a known pool length: each swum length, in seconds
+   *  from the start, and its distance. A section's distance is then the
+   *  lengths inside it (a length cut in two counts its share). */
+  poolLengths?: ReadonlyArray<{ from: number; to: number; meters: number }>;
   /** Per-sample sustained-coast mask per output channel (speed/power/cadence),
    *  computed ONCE here (it's window-independent and the pond-fill pass is the
    *  expensive part) and reused by every channel build / zoom. */
   coastMasks: Partial<Record<ChannelKey, boolean[]>>;
+}
+
+/** Whether an activity has a distance: GPS, a distance channel, or a pool
+ *  swim's lengths of a known pool. @internal */
+export function hasDistance(prep: PreparedActivity): boolean {
+  return (
+    prep.hasTrack ||
+    !!prep.imported.streams.distanceMeters?.length ||
+    !!prep.poolLengths
+  );
+}
+
+/** The swum lengths of a pool swim whose pool length is known. */
+function poolLengthsOf(
+  imported: ImportedActivity,
+): Pick<PreparedActivity, 'poolLengths'> {
+  const { swim, activity } = imported;
+  const meters = swim?.pool?.lengthMeters;
+  if (!isPoolRecord(imported) || !meters || !(meters > 0)) return {};
+  const start = Date.parse(activity.startTimeUtc);
+  const out = (swim?.lengths ?? [])
+    .filter((l) => l.active)
+    .map((l) => {
+      const from = (Date.parse(l.startTimeUtc) - start) / 1000;
+      return { from, to: from + l.seconds, meters };
+    })
+    .filter((l) => Number.isFinite(l.from) && l.to > l.from);
+  return out.length ? { poolLengths: out } : {};
 }
 
 /** Cumulative distance from the device's `distance` column (clamped
@@ -623,8 +660,17 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     speed[i] = dt > 0 ? step[i]! / dt : NaN;
   }
 
+  // Seconds from the activity's start, the axis laps, lengths and sections
+  // are given on. Usually the first sample is at the start; when it comes
+  // later, the axis still starts at the start. With no timestamps (or a
+  // start after the first sample) the first sample is 0.
+  const startSec = Date.parse(imported.activity.startTimeUtc) / 1000;
+  const origin =
+    streams.timeSeconds && n && Number.isFinite(startSec)
+      ? Math.min(startSec, cols.timeSec[0]!)
+      : (cols.timeSec[0] ?? 0);
   const timeRel = new Float64Array(n);
-  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - cols.timeSec[0]!;
+  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - origin;
 
   // sustained-coast masks for the output channels — once, not per zoom. Power /
   // cadence from the canonical `cols`; speed is the derived track speed.
@@ -653,7 +699,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     hasTrack,
     positionGaps,
     movingRule: moving.rule,
-    ...(moving.spans ? { movingMask: movingMask(timeRel, moving.spans) } : {}),
+    ...(moving.spans
+      ? {
+          movingMask: movingMask(timeRel, moving.spans),
+          movingSpans: moving.spans,
+        }
+      : {}),
+    ...poolLengthsOf(imported),
     coastMasks,
   };
 }

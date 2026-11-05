@@ -10,6 +10,7 @@ import { summarizeLaps } from '../src/laps/groups.js';
 import { prepareActivity } from '../src/summary/index.js';
 import { sectionGroupStats } from '../src/stats/index.js';
 import type { ActivityStreams, ImportedActivity } from '../src/types.js';
+import { km, seconds } from '../src/quantities.js';
 
 const META = {
   id: 'test:1',
@@ -159,5 +160,113 @@ describe('cropping the finish', () => {
 
   it('keeps it when only the start is cut', () => {
     expect(editRecording(twenty(), { from: 5 }).recovery).toEqual(recovery);
+  });
+});
+
+describe('pool swims', () => {
+  const start = Date.parse(META.startTimeUtc);
+  const at = (sec: number) => new Date(start + sec * 1000).toISOString();
+  const swimRec = (
+    streams: Partial<ActivityStreams>,
+    lengths: [number, number, boolean][],
+    movingSeconds = 60,
+  ): ImportedActivity => ({
+    activity: { ...META, sportType: 'Swim' },
+    streams: { latlng: [], ...streams },
+    swim: {
+      movingSeconds,
+      pool: { lengthMeters: 25, unit: 'm' },
+      lengths: lengths.map(([from, seconds, active]) => ({
+        startTimeUtc: at(from),
+        seconds,
+        active,
+      })),
+    },
+  });
+
+  it('count swimming time by overlap with the lengths, not per sample gap', () => {
+    // samples a minute apart; swum 0–30 and 90–120, rest between
+    const swim = Activity.from(
+      swimRec({ timeSeconds: [0, 60, 120], distanceMeters: [0, 25, 50] }, [
+        [0, 30, true],
+        [30, 60, false],
+        [90, 30, true],
+      ]),
+    );
+    const t = swim.stats().time;
+    expect(t.elapsed?.seconds).toBe(120);
+    expect(t.swimming?.seconds).toBe(60);
+    expect(t.rest?.seconds).toBe(60);
+  });
+
+  it('give each length its distance from the pool length', () => {
+    const swim = Activity.from(
+      swimRec(
+        { timeSeconds: [0, 30, 60, 90], heartrate: [120, 130, 125, 140] },
+        [
+          [0, 30, true],
+          [30, 30, false],
+          [60, 30, true],
+        ],
+      ),
+    );
+    if (!swim.isPoolSwim()) throw new Error('not a pool swim');
+    const first = swim.lengths.at(0)!;
+    expect(first.distance?.meters).toBe(25);
+    expect(first.stats().distance?.meters).toBe(25);
+    expect(
+      first.stats({ time: 'swimming' }).pace.average?.secondsPerKm,
+    ).toBeCloseTo(1200, 9); // 30 s per 25 m
+    expect(swim.stats().distance?.meters).toBe(50);
+    expect(swim.lengths.stats().distance?.meters).toBe(50);
+    // half a length counts half
+    const half = swim.section({
+      elapsed: { from: seconds(0), to: seconds(15) },
+    });
+    expect(half.stats().distance?.meters).toBeCloseTo(12.5, 9);
+  });
+
+  it('put lengths and samples on one clock when the first sample is late', () => {
+    // the watch's first sample comes 30 s after the start
+    const swim = Activity.from(
+      swimRec(
+        { timeSeconds: [30, 60, 90, 120], distanceMeters: [25, 25, 50, 75] },
+        [
+          [0, 30, true],
+          [30, 30, false],
+          [60, 30, true],
+          [90, 30, true],
+        ],
+        90,
+      ),
+    );
+    if (!swim.isPoolSwim()) throw new Error('not a pool swim');
+    const [l1, rest, l2, l3] = swim.segments;
+    expect(l1!.stats().distance?.meters).toBe(25);
+    expect(l1!.stats().time.elapsed?.seconds).toBe(30);
+    expect(rest!.stats().distance?.meters).toBe(0);
+    expect(l2!.stats().time.swimming?.seconds).toBe(30);
+    expect(l3!.stats().time.swimming?.seconds).toBe(30);
+    expect(swim.stats().time.elapsed?.seconds).toBe(120);
+    expect(swim.stats().time.swimming?.seconds).toBe(90);
+  });
+});
+
+describe('splits', () => {
+  it('measure their own bounds, not the samples around them', () => {
+    // a sample a minute at 10 m/s
+    const run = Activity.from(
+      rec({
+        timeSeconds: [0, 60, 120, 180, 240],
+        distanceMeters: [0, 600, 1200, 1800, 2400],
+      }),
+    );
+    const splits = run.splits(km(1)).map((s) => s.stats());
+    expect(splits.map((s) => s.distance?.meters)).toEqual([1000, 1000, 400]);
+    expect(splits.map((s) => s.time.elapsed?.seconds)).toEqual([100, 100, 40]);
+    expect(splits.map((s) => s.time.moving?.seconds)).toEqual([100, 100, 40]);
+    // the whole is the sum of its parts
+    expect(run.splits(km(1)).stats().distance?.meters).toBe(2400);
+    expect(run.splits(km(1)).stats().time.elapsed?.seconds).toBe(240);
   });
 });

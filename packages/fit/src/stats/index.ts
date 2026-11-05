@@ -15,6 +15,13 @@
  * same way the activity's does. A sample counts as moving when the time just
  * before it does (a window's first sample goes by the time just after it).
  *
+ * A section's time, moving time and distance run between its own two ends,
+ * drawn straight between samples (a 1 km split measures 1 km even when no
+ * sample falls on either end); its channel numbers come from the samples
+ * inside it. A pool swim with a known pool length takes its distance from
+ * its lengths, and its moving (swimming) time from their overlap with the
+ * section, samples or not.
+ *
  * Extracted from Estela's interval stats (estela-app/estela,
  * `packages/core/src/interval/stats.ts`), where these numbers were first
  * worked out for the lap list, the custom segments and Claude's answers.
@@ -68,8 +75,9 @@ export interface ChannelStats {
 
 /** The numbers for one section. */
 export interface SectionStats {
-  /** Elapsed seconds at the section's first and last sample (the span
-   *  snapped to samples, as `Activity.range` does). */
+  /** Elapsed seconds at the section's first and last sample inside it.
+   *  The section's own ends can fall between samples: `elapsedSeconds`,
+   *  `movingSeconds` and `distanceMeters` measure between those. */
   fromSeconds: number;
   toSeconds: number;
   elapsedSeconds: number;
@@ -142,6 +150,10 @@ interface Samples {
   hasTime: boolean;
   /** The sport's own moving rule, when it isn't the speed rule. */
   moving: Uint8Array | undefined;
+  /** …and the stretches it counts as moving (moving time by overlap). */
+  movingSpans: ReadonlyArray<readonly [number, number]> | undefined;
+  /** A pool swim's swum lengths, when the pool length is known. */
+  poolLengths: PreparedActivity['poolLengths'];
 }
 
 const samplesCache = new WeakMap<PreparedActivity, Samples>();
@@ -166,6 +178,8 @@ function samplesOf(prep: PreparedActivity): Samples {
       elevation: present(prep.cols.ele),
       hasTime: prep.hasTime,
       moving: prep.movingMask,
+      movingSpans: prep.movingSpans,
+      poolLengths: prep.poolLengths,
     };
     samplesCache.set(prep, s);
   }
@@ -324,32 +338,115 @@ function checkSpan(span: Span): void {
   if (a > b) throw new RangeError(`span starts after it ends: [${a}, ${b}]`);
 }
 
-/** Whether a span lies wholly outside the recording's samples. */
-function outside(s: Samples, span: Span): boolean {
-  const n = s.t.length;
-  return n === 0 || span.toSeconds < s.t[0]! || span.fromSeconds > s.t[n - 1]!;
+/** Where the recording's time axis starts: the activity's start (0), or
+ *  the first sample if that is earlier. */
+function axisStart(s: Samples): number {
+  return s.hasTime ? Math.min(0, s.t[0]!) : s.t[0]!;
 }
 
+/** Whether a span lies wholly outside the recording. */
+function outside(s: Samples, span: Span): boolean {
+  const n = s.t.length;
+  return (
+    n === 0 || span.toSeconds < axisStart(s) || span.fromSeconds > s.t[n - 1]!
+  );
+}
+
+/** Cumulative metres at `sec`, drawn straight between samples. */
+function cumAt(s: Samples, sec: number): number {
+  const { t, cum } = s;
+  const n = t.length;
+  if (sec <= t[0]!) return cum[0]!;
+  if (sec >= t[n - 1]!) return cum[n - 1]!;
+  const i = indexAt(t, sec); // first sample at or after sec
+  const t0 = t[i - 1]!;
+  const t1 = t[i]!;
+  const c0 = cum[i - 1]!;
+  const c1 = cum[i]!;
+  return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
+}
+
+/** Seconds of [a, b] inside the given stretches. */
+function overlap(
+  spans: ReadonlyArray<readonly [number, number]>,
+  a: number,
+  b: number,
+): number {
+  let sum = 0;
+  for (const [x, y] of spans) {
+    const ov = Math.min(b, y) - Math.max(a, x);
+    if (ov > 0) sum += ov;
+  }
+  return sum;
+}
+
+/** Moving seconds in [a, b]. By the sport's stretches when it has them;
+ *  else each sample gap judged moving counts for its part inside [a, b]. */
+function movingIn(s: Samples, a: number, b: number): number {
+  if (!s.hasTime) return 0;
+  if (s.movingSpans) return overlap(s.movingSpans, a, b);
+  let moving = 0;
+  for (let i = Math.max(1, indexAt(s.t, a)); i < s.t.length; i++) {
+    if (s.t[i - 1]! >= b) break;
+    const ov = Math.min(s.t[i]!, b) - Math.max(s.t[i - 1]!, a);
+    if (ov > 0 && movingBefore(s, i)) moving += ov;
+  }
+  return moving;
+}
+
+/** Metres in [a, b]: a pool swim's lengths (each counting its share), else
+ *  the distance drawn straight between samples. */
+function metersIn(s: Samples, a: number, b: number): number {
+  if (s.poolLengths) {
+    let m = 0;
+    for (const l of s.poolLengths) {
+      const ov = Math.min(b, l.to) - Math.max(a, l.from);
+      if (ov > 0) m += (l.meters * ov) / (l.to - l.from);
+    }
+    return m;
+  }
+  const d = cumAt(s, b) - cumAt(s, a);
+  return fin(d) ? d : 0;
+}
+
+/**
+ * The span measured on the recording. Its time and distance run between
+ * its own ends (held to the recording), drawn straight between samples, so
+ * a split from 1 km to 2 km measures 1 km. Its channel numbers come from
+ * the samples inside it (`lo`…`hi`: the first sample at or after each end).
+ */
 function measure(s: Samples, span: Span): Window {
   checkSpan(span);
   if (outside(s, span)) {
     const at = s.t.length ? indexAt(s.t, span.fromSeconds) : 0;
-    return { lo: at, hi: at, elapsed: 0, moving: 0, meters: 0, empty: true };
+    // a pool swim's lengths are known even where there are no samples
+    const moving = s.poolLengths
+      ? movingIn(s, span.fromSeconds, span.toSeconds)
+      : 0;
+    const meters = s.poolLengths
+      ? metersIn(s, span.fromSeconds, span.toSeconds)
+      : 0;
+    return { lo: at, hi: at, elapsed: 0, moving, meters, empty: true };
   }
-  const lo = indexAt(s.t, span.fromSeconds);
-  const hi = indexAt(s.t, span.toSeconds);
-  let moving = 0;
-  for (let i = lo + 1; i <= hi; i++)
-    if (movingBefore(s, i)) moving += s.t[i]! - s.t[i - 1]!;
-  const c0 = s.cum[lo];
-  const c1 = s.cum[hi];
+  const n = s.t.length;
+  const a = Math.max(span.fromSeconds, axisStart(s));
+  const b = Math.min(span.toSeconds, s.t[n - 1]!);
+  const lo = indexAt(s.t, a);
+  const hi = indexAt(s.t, b);
+  // a pool swim's swimming isn't held to the samples
+  const moving = s.movingSpans
+    ? movingIn(s, span.fromSeconds, span.toSeconds)
+    : movingIn(s, a, b);
+  const meters = s.poolLengths
+    ? metersIn(s, span.fromSeconds, span.toSeconds)
+    : metersIn(s, a, b);
   return {
     lo,
     hi,
     // with no timestamps the sample axis is a count, not seconds
-    elapsed: s.hasTime ? s.t[hi]! - s.t[lo]! : 0,
+    elapsed: s.hasTime ? b - a : 0,
     moving,
-    meters: fin(c0) && fin(c1) ? c1 - c0 : 0,
+    meters,
     empty: false,
   };
 }

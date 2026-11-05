@@ -15,6 +15,7 @@ import type {
   SwimLength,
 } from '../types.js';
 import {
+  hasDistance,
   prepareActivity,
   swimMoving,
   type PreparedActivity,
@@ -103,8 +104,9 @@ function metersAtSeconds(prep: PreparedActivity, sec: number): number {
   return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
 }
 
-/** One continuous stretch of an activity. Its stats come from the samples
- *  inside it (snapped to samples as {@link sectionStats} does). */
+/** One continuous stretch of an activity. Its time and distance run between
+ *  its own ends; its channel numbers come from the samples inside it (see
+ *  {@link sectionStats}). */
 export class Section implements Span {
   /** @internal */
   protected readonly prep: PreparedActivity;
@@ -207,10 +209,6 @@ export class Section implements Span {
 
 function isSwim(prep: PreparedActivity): boolean {
   return sportOf(prep.imported.activity.sportType) === 'swim';
-}
-
-function hasDistance(prep: PreparedActivity): boolean {
-  return prep.hasTrack || !!prep.imported.streams.distanceMeters?.length;
 }
 
 /** A recorded lap: a {@link Section} plus what the device kept for it. */

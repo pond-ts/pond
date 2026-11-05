@@ -9,7 +9,7 @@
  * `null`: no FTP means no intensity factor, no training load and no power
  * zones, while average and normalized power still come back.
  */
-import type { PreparedActivity } from '../summary/index.js';
+import { hasDistance, type PreparedActivity } from '../summary/index.js';
 import { sectionWindow, type Span } from '../stats/index.js';
 import {
   powerCurve,
@@ -107,10 +107,6 @@ const ON_FOOT = new Set(['run', 'walk', 'hike']);
 
 function sport(prep: PreparedActivity) {
   return sportOf(prep.imported.activity.sportType);
-}
-
-function hasDistance(prep: PreparedActivity): boolean {
-  return prep.hasTrack || !!prep.imported.streams.distanceMeters?.length;
 }
 
 /** A section read for one athlete. Made by `section.analyze({ athlete })`. */
