@@ -2036,6 +2036,46 @@ timeRange key was caught (90 mismatches). 1M rows, median of 7:
 the same objects the events carry, so they wait for #873's source-event
 lookup (a selected row's event is its source's).
 
+**[PND-SPANFILTER] + [PND-ROWSOUT] part 2 shipped — key-span selectors,
+`rows` / `toObjects`.** The six selectors test `keys.begin[i]` /
+`keys.end[i]` with the same comparison their `filter` predicate made
+(`overlapping` on the range `toTimeRange` gives, which is what
+`event.overlaps` calls for every key kind) and keep the rows through
+`_selectRowsModulePrivate` (#873), so `result.at(j) === source.at(i)` as
+with `filter`. Error behaviour is kept: `overlapping` on an empty series
+never reads the range, so a bad range only throws on a non-empty one, as
+before. `rows` / `toObjects` take #877's `#rowsFromColumns` with the key
+from new `SeriesStore._eventKeyAtModulePrivate(i)`: the key the row's event
+has or will have (a dense or cached event's own key, a delegated row's
+source key, else `keyAt(i)`, which `eventAt` builds with), so
+`rows[i][0] === at(i).key()` holds whichever is asked first. Old-vs-new
+oracle (main's build vs this one): 3,000 random series × 27 calls (time /
+timeRange / interval keys, an array column in some; filter / concat / map /
+dedupe / slice / chained-selector sources; partial and full event caches;
+bad and `NaN` ranges, `Date` and key boundaries), comparing output, thrown
+errors, which source event each result row is, key and cell identity, and
+frozen-ness: 81,000/81,000 equal. A planted `>=` for `>` in `after` gave
+2,707 mismatches, `keyAt` for the event key 2,154. 1M rows, median of 5
+(`scripts/perf-span-select.mjs`; `slice` 1.7 ms for scale):
+
+| call                               | before (ms) | after (ms) |
+| ---------------------------------- | ----------: | ---------: |
+| `after(mid)`                       |         952 |         16 |
+| `before(mid)`                      |         943 |         26 |
+| `within(1 s, end − 1 s)`           |         990 |         27 |
+| `tail('1h')`                       |       1,118 |          7 |
+| `overlapping([0, mid])`            |       1,449 |         15 |
+| `containedBy([0, mid])`            |       1,074 |         15 |
+| `after(mid)`, events already built |          72 |         17 |
+| `rows`                             |       1,542 |        487 |
+| `toObjects()`                      |       1,356 |        416 |
+| `rows`, events already built       |         649 |        635 |
+| `after(mid).rows`                  |       1,205 |        291 |
+
+`rows` still makes one key object per row (they are part of the output) and
+caches it so the row's later event shares it; that cache is most of what is
+left.
+
 **[PND-GROUPEVENTS] shipped.** `groupBy` groups row numbers by
 `String(column.read(i))` (`'undefined'` for a gap, so a gap and the text
 `'undefined'` still share a group, as before) in first-seen order and
@@ -2066,6 +2106,34 @@ median of 5:
 
 `pivotByGroup`'s remaining time is its per-timestamp `Map` of `Map`s and
 the output build, not events.
+
+### [PND-TRIMCOL] / [PND-LIVEREPLAY] — found in the 2026-11-05 audit
+
+Peter asked (2026-11-05) which core calls still build an `Event` per row
+when they need not. An audit of main (3a242488; Node 22, 1M rows, median of
+3, `slice` 2 ms for scale) found two not yet logged; Peter agreed to log
+both and take them after [PND-SPANFILTER] / [PND-ROWSOUT].
+
+- **`trim`** — 1.7 s. `this.events.map(e => e.trim(range))`, then a
+  re-sort when clipping brings two keys to the same start out of order.
+  Column version: clip begin/end buffers per row, drop rows outside the
+  range, gather value columns by row number, keep the stable re-sort.
+  Output must stay identical. Today every kept row is a new `Event`
+  (`Event.trim` always builds one), so no identity rule to keep.
+- **Live set-up replay** — `LiveView`, `LiveRollingAggregation`,
+  `LiveAggregation`, `LiveReduce`, fused rolling and `LivePartitionedSeries`
+  (`#replayChunked`, `collect`, `apply`) read every existing source row with
+  `source.at(i)`. On a 200k-row `LiveSeries` (batches of 1,000):
+
+  | operator                             | attach to existing rows | same rows pushed after attach\* |
+  | ------------------------------------ | ----------------------: | ------------------------------: |
+  | `rolling('1m', { cpu: 'avg' })`      |                  214 ms |                           99 ms |
+  | `aggregate(Sequence.every('1m'), …)` |                  135 ms |                           47 ms |
+  | `partitionBy('host').collect()`      |                  352 ms |                          127 ms |
+
+  \* extra time over a plain push of the same rows. `filter(fn)` views
+  stay on events (the predicate takes an `Event`). Each `at(i)` also fills
+  the event cache, which is what sets off [PND-LATCACHE].
 
 ## Moved from PLAN.md — 2026-09-23 cleanup
 

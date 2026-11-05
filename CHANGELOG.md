@@ -574,6 +574,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`before`, `after`, `within`, `tail`, `overlapping` and `containedBy`
+  read the key columns** ([PND-SPANFILTER]) instead of building an `Event`
+  per row to test its key, and **`rows` / `toRows` / `toObjects` write rows
+  from the columns** ([PND-ROWSOUT]). Output is identical, including object
+  identity: a selected row's `Event` is still the source row's own, and a
+  row's key is the same object as `at(i).key()`. 1M rows: `after` 0.95 s →
+  16 ms, `overlapping` 1.45 s → 15 ms, `tail` 1.12 s → 7 ms, `rows`
+  1.54 s → 0.49 s, `toObjects` 1.36 s → 0.42 s.
+
 - **`groupBy` and `pivotByGroup` read the columns** ([PND-GROUPEVENTS])
   instead of building an `Event` per row. `groupBy` now gathers each
   group's rows straight off the columns rather than rebuilding it from

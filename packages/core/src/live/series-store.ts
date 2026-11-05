@@ -410,6 +410,29 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * Module-internal ([PND-ROWSOUT]): the key object row `i`'s `Event` has
+   * or will have, without building the event. `eventAt(i)` builds with
+   * `keyAt(i)`, a delegated row takes its source row's, and a dense or
+   * cached event carries its own. A row export that hands out key objects
+   * uses this so they stay `===` to `eventAt(i).key()`.
+   */
+  _eventKeyAtModulePrivate(i: number): EventKey {
+    const dense = this.#dense;
+    if (dense !== undefined) return dense[i]!.key() as EventKey;
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from._eventKeyAtModulePrivate(delegate.row[i]!);
+    }
+    const cached = this.#eventCache.get(i);
+    if (cached !== undefined) return cached.key() as EventKey;
+    return this.keyAt(i);
+  }
+
+  /**
    * Materializes the row at index `i` as an `Event` instance.
    * Lazily built and cached — `eventAt(i) === eventAt(i)` holds
    * for the store's lifetime.
