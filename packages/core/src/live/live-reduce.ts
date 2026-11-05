@@ -1,4 +1,5 @@
 import { onSourceSettle } from './settle.js';
+import { replaySource } from './replay.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -175,9 +176,11 @@ export class LiveReduce<
    *    to assign; `#nextEvictIdx` the next to remove on a miss.
    *
    * The frontier is kept monotonically ahead of every resolved index
-   * (`Math.max` on each hit), so the chunked replay→forward transition
-   * — where initially-buffered events are cached (identity hits) but
-   * later forward events miss — lands forward misses on the right index.
+   * (`Math.max` on each hit), so a mix of hits and misses on the chunked
+   * backing (an event the source had already built and cached before this
+   * reduce replayed it hits; every other one misses, since the replay
+   * builds fresh events as pushes do, [PND-LIVEREPLAY]) lands misses on
+   * the right index.
    * For `reorder` the frontier is never read (identity always resolves),
    * so the `Math.max` bookkeeping is inert there.
    *
@@ -273,9 +276,7 @@ export class LiveReduce<
     // Replay existing buffer events through the same ingest path
     // so `LiveReduce` over a non-empty source matches the
     // streaming-from-construction shape.
-    for (let i = 0; i < source.length; i++) {
-      this.#ingest(source.at(i)!);
-    }
+    replaySource(source, (event) => this.#ingest(event));
 
     // Subscribe to source for forward events. The 'event' callback
     // fires per source event (post-insert, pre-retention); 'evict'

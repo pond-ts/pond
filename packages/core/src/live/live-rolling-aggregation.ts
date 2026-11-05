@@ -1,3 +1,4 @@
+import { replaySource } from './replay.js';
 import { Expr } from '../core/expression.js';
 import { livePredicate } from './expression-predicate.js';
 import { onSourceSettle } from './settle.js';
@@ -294,9 +295,7 @@ export class LiveRollingAggregation<
     this.#onUpdate = new Set();
     this.#onEvent = new Set();
 
-    for (let i = 0; i < source.length; i++) {
-      this.#ingest(source.at(i)!);
-    }
+    replaySource(source, (event) => this.#ingest(event));
 
     this.#settleSource = source;
     this.#unsubscribe = source.on('event', (event) => {

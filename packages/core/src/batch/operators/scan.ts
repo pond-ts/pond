@@ -2,6 +2,7 @@ import {
   type Column,
   type ColumnarStore,
   type ColumnSchema,
+  Float64Column,
   float64ColumnFromArray,
   withColumnAppended,
   withColumnReplaced,
@@ -72,19 +73,44 @@ export function scanOp<
   }
 
   const n = store.length;
-  const out: (number | undefined)[] = new Array(n);
-  let acc = init;
-  let last: number | undefined;
-  for (let i = 0; i < n; i += 1) {
-    const raw = col.read(i) as number | undefined;
-    if (typeof raw === 'number') {
-      const r = step(acc, raw, i);
-      acc = r[0];
-      last = r[1];
+  let column: Column;
+  if (col.kind === 'number' && col.storage === 'packed') {
+    // A packed number column: read its buffer and write the result into a
+    // typed one, with no boxed array and no second pass to pack it. A
+    // missing cell is NaN (or ±Infinity) in both ([PND-NANREP]), so the
+    // finite test is the defined test.
+    const values = (col as Float64Column)._values;
+    const out = new Float64Array(n);
+    let acc = init;
+    let last = NaN;
+    let allFinite = true;
+    for (let i = 0; i < n; i += 1) {
+      const raw = values[i]!;
+      if (raw - raw === 0) {
+        const r = step(acc, raw, i);
+        acc = r[0];
+        const o = r[1];
+        last = typeof o === 'number' && o - o === 0 ? o : NaN;
+      }
+      if (last !== last) allFinite = false;
+      out[i] = last;
     }
-    out[i] = last;
+    column = new Float64Column(out, n, allFinite);
+  } else {
+    const out: (number | undefined)[] = new Array(n);
+    let acc = init;
+    let last: number | undefined;
+    for (let i = 0; i < n; i += 1) {
+      const raw = col.read(i) as number | undefined;
+      if (typeof raw === 'number') {
+        const r = step(acc, raw, i);
+        acc = r[0];
+        last = r[1];
+      }
+      out[i] = last;
+    }
+    column = float64ColumnFromArray(out);
   }
-  const column = float64ColumnFromArray(out);
   const base = store as unknown as ColumnarStore<ColumnSchema>;
 
   // Output omitted ⇒ replace the source column in place (cumulative's

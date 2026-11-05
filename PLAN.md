@@ -694,6 +694,10 @@ the study oracle) is done.
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
   snippets also pass against the published 0.1.0. Open: run the script in
   CI.
+- **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
+  `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose
+  output holds each push's added rows as columns instead of `LiveEvent`s.
+  Not scheduled; the live parity fixture doesn't cover `'columns'`.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
@@ -830,15 +834,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `aggregate`; the fast path already drives the same window states, so
   answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
   Found 2026-10-20 (pond-rs R1b step 8g).
-- **[PND-SMOOTHSLOW]** — pond-ts `smooth` (`movingAverage`, `loess`) and
-  `baseline` build one `Event` per row and rebuild the series from rows. On
-  1M rows `movingAverage` over 5 minutes takes ~2 s and `baseline` ~3.9 s,
-  where `rolling` with the same `avg` and `stdev` takes ~0.3 s; making the
-  `Event`s alone takes ~1.2 s. `outliers` ~2 s, `scan` 80 ms, `sample({
-stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
-  the column and write the result column directly, as `ema`'s fast path
-  already does. Repro: `crates/pond-rs/bench/smooth_pond_ts.mjs`. Found
-  2026-10-21 (pond-rs R1b step 8h).
+- **[PND-ROLLTIME]** — pond-ts duration `rolling` (`rolling('5m', …)`)
+  takes ~330 ms per number reducer on 1M rows (`avg` 330 ms, `avg` + `stdev`
+  ~550 ms). After [PND-SMOOTHSLOW] it is the whole cost of `baseline` and
+  `outliers` (~0.8 s). Not profiled yet. Repro:
+  `packages/core/scripts/perf-smooth.mjs` (`baseline-5m-1M`). Found
+  2026-10-22.
 - **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
   unknown name gives the series back unchanged, and a text column gives a
   gap in every row (`baseline` on a text column also gives gaps). pond-rs
@@ -864,27 +865,6 @@ undefined`, or required only when it has no gaps) changes a public
   ties) and copy each column by those row numbers, as pond-rs does.
   Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
   (pond-rs R1b step 4a).
-- **[PND-ALIGNHOLD]** — pond-ts `align` with `method: 'hold'` (the
-  default) is ~4× slower than `'linear'` on the same grid: 4.6 s vs 1.2 s
-  for 1M rows onto a 1 s grid (pond-rs: 64 ms). Hold does, per bucket, a
-  `new Time`, a binary search through `atOrBefore` (each probe goes through
-  the store's key cache), builds the whole `Event` and its data object, then
-  `resultSchema.slice(1).map(...)` and an array spread. Linear walks a
-  cursor and reuses the column list. CPU profile: ~20% in the hold closure
-  itself, ~10% `bisect`, a third garbage collection. Proposed fix: walk a
-  cursor as linear does (the sample points rise) and read values straight
-  from the columns. Repro: `crates/pond-rs/bench/grid_pond_ts.mjs`. Found
-  2026-10-19 (pond-rs R1b step 5).
-- **[PND-DEDUPEMAP]** — pond-ts `dedupe` takes ~2.3 s on 1M rows with 10%
-  repeated times (pond-rs: 30–40 ms). CPU profile: a third in `dedupe`
-  itself, which builds a string key per row (`${event.begin()}`) and an
-  array per key in a `Map`; a third garbage collection; ~10% rebuilding the
-  column store from `Event` objects (as in [PND-FILTERTAKE]). Proposed fix:
-  rows are sorted by key, so equal keys are next to each other (except
-  interval labels on equal spans): compare neighbours, keep row numbers,
-  and take columns by row number. `materialize` (~1 s on the same size)
-  also goes through `Event` objects. Repro: as above. Found 2026-10-19
-  (pond-rs R1b step 5).
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
@@ -967,8 +947,8 @@ Robustness debt plus the queued composition workstreams. Plan:
   spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
   column read out, vs 16 ms to copy the stored chunks' columns. Still a
   whole-window copy, so it suits throttled snapshots; per-frame reads go
-  through [PND-COLOUT]'s appended-columns event (the spike used internal
-  `_onChunk`). Data side of [PND-LIVELYR].
+  through `live.on('columns')` ([PND-COLOUT], built 2026-11-05). Data side
+  of [PND-LIVELYR].
 - **[PND-LVCHAIN]** — A view chained after a window view
   (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
   window eviction doesn't emit `'evict'`, so the child's mirror never fires,
@@ -1027,11 +1007,12 @@ Robustness debt plus the queued composition workstreams. Plan:
   suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
   message.
 - **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
-  it builds, and each retention eviction rebuilds that whole cache. Building a
-  view over a big series reads every row through `at()`, so the pushes after
-  it slow down until retention has dropped those rows: after reading 200k
-  rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
-  0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
+  it builds, and each retention eviction rebuilds that whole cache. Reading
+  every row through `at()` (hover lookups, user loops) slows the pushes after
+  it until retention has dropped those rows: after reading 200k rows, the
+  next 50 pushes of 1,600 took 47 ms each (median) instead of 0.2 ms.
+  Building an operator no longer sets it off ([PND-LIVEREPLAY]). Measured on
+  main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
 - **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
   `Event` for every row it holds, even with no `'evict'` listener, and finds
   each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
@@ -1073,10 +1054,16 @@ retention-boundary waypoint. Everything left is friction-gated with a named
 consumer signal. Plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
-- **[PND-COLOUT]** — Column-native output (§A): removes the dominant
-  emit-side allocation slice; spike plan exists. Second consumer: the
-  offscreen-stream spike's live chart, which needed each appended batch as
-  columns and used the internal `_onChunk` in its place.
+- **[PND-SCANDATA]** — callback-free forms for the common `scan` folds.
+  A JS step function costs a tuple per row in pond-ts, and in pond-rs a
+  call back into JavaScript per row (about 6× slower than pond-ts on
+  36,000 rows). `@pond-ts/fit` wants to run its maths on either core, so
+  the folds it needs (first: a dead-band running sum, the 3 m climb rule)
+  should be named operators or expressions. Found with [PND-ROLLTIME].
+  `cumulative` 'increase' / 'decrease' (the climb rule) in #906; maths in
+  expressions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) for haversine
+  and 4th-power averages built 2026-11-05. Detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but
@@ -1099,21 +1086,6 @@ consumer signal. Plan:
   `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
   payload-free change signal the hooks use when the source offers it.
   `useEventRate` gains nothing (its window view stores `Event`s anyway).
-- **[PND-SPANFILTER]** — `before`, `after`, `tail`, `within`,
-  `overlapping` and `containedBy` run `filter(fn)` with a test on the key
-  alone, so the first call on a series builds an `Event` for every row:
-  ~1.1–1.5 s on 1M rows, against ~1 ms for `slice` over the same rows.
-  Fix: read the stored begin/end times (binary search where the rows are
-  sorted by the tested time) and select rows, keeping the result's events
-  identical (`===`) to the source's as `filter` does.
-- **[PND-ROWSOUT]** — `toRows` and `toObjects` build an `Event` per row:
-  1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
-  row from the columns, keeping the key objects identical to the events'
-  (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
-- **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
-  groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
-  1M rows with 8 groups. Fix: group row numbers from the column and gather
-  each group's columns, as `partitionBy` does.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.

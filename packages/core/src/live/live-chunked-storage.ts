@@ -325,6 +325,31 @@ export class ChunkedColumnarLiveStorage<
     return event;
   }
 
+  /**
+   * Calls `fn` with every row's `Event` in order, without filling the
+   * per-row cache: a cached event is reused, any other is built fresh and
+   * dropped, as the `'event'` fan-out does.
+   */
+  forEachEvent(fn: (event: EventForSchema<S>) => void): void {
+    let index = 0;
+    for (let c = 0; c < this.#chunks.length; c += 1) {
+      const store = this.#chunks[c]!;
+      const n = store.length;
+      if (this.#cache.size === 0) {
+        const events = materializeEventsFromStore(store, store.schema);
+        for (let i = 0; i < n; i += 1) fn(events[i]!);
+      } else {
+        for (let i = 0; i < n; i += 1) {
+          fn(this.#cache.get(index + i) ?? this.#materializeAt(c, i));
+        }
+      }
+      index += n;
+    }
+    for (let p = 0; p < this.#pending.length; p += 1) {
+      fn(this.#cache.get(index + p) ?? this.#materializePending(p));
+    }
+  }
+
   keyAt(index: number): EventKey | undefined {
     if (index < 0 || index >= this.length) return undefined;
     const cached = this.#cache.get(index);

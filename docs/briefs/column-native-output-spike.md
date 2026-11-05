@@ -1,6 +1,11 @@
 # Brief: column-native output spike (§A of the columnar-live-protocol RFC)
 
-**Status:** spike plan — the **earned first increment** of
+**Status (2026-11-05):** built as `live.on('columns')`, payload a plain
+`TimeSeries`; outcome and numbers in
+[PND_COLUMNAR_PLAN.md](../plans/PND_COLUMNAR_PLAN.md) under [PND-COLOUT].
+The text below is the original plan.
+
+**Original status:** spike plan — the **earned first increment** of
 [`docs/rfcs/columnar-live-protocol.md`](../rfcs/columnar-live-protocol.md) §A.
 A brief is more concrete than the RFC: this scopes a real spike to run. The
 spike itself does **not** merge to `main` without a human API sign-off (it adds
