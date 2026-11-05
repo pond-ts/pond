@@ -224,8 +224,9 @@ function tally(
   vals: ArrayLike<number>,
   lo: number,
   hi: number,
-  /** Samples already counted (sections that touch share their end sample). */
-  seen?: Uint8Array,
+  /** The window's real first sample, for judging moving (speed starts its
+   *  tally one sample in, but the window still starts at `lo`). */
+  windowLo = lo,
 ): Tally {
   const out: Tally = {
     sum: 0,
@@ -240,15 +241,11 @@ function tally(
   for (let i = lo; i <= hi; i++) {
     const v = vals[i];
     if (!fin(v)) continue;
-    if (seen) {
-      if (seen[i]) continue;
-      seen[i] = 1;
-    }
     out.sum += v;
     out.n++;
     if (v < out.min) out.min = v;
     if (v > out.max) out.max = v;
-    if (movingSample(s, lo, hi, i)) {
+    if (movingSample(s, windowLo, hi, i)) {
       out.movingSum += v;
       out.movingN++;
       if (v < out.movingMin) out.movingMin = v;
@@ -409,7 +406,7 @@ function statsOf(s: Samples, w: Window): SectionStats {
     const sp = steadySpeed(s);
     // the first sample has no speed of its own: start from the next one
     const from = hi > lo ? lo + 1 : lo;
-    const t = tally(s, sp, from, hi);
+    const t = tally(s, sp, from, hi, lo);
     const e = ends(sp, from, hi);
     const speed = defined<ChannelStats>({
       first: e.first,
@@ -559,15 +556,27 @@ export function sectionGroupStats(
       let n = 0;
       let mSum = 0;
       let mN = 0;
-      // each sample once, though touching sections share their end one
-      const seen = new Uint8Array(vals.length);
+      // each sample once, though touching sections share their end one;
+      // a shared sample is moving if it is moving in either section, so
+      // the order of the sections doesn't matter
+      const inAny = new Uint8Array(vals.length);
+      const movingInAny = new Uint8Array(vals.length);
       for (const w of windows) {
         if (w.empty) continue;
-        const t = tally(s, vals, w.lo, w.hi, seen);
-        sum += t.sum;
-        n += t.n;
-        mSum += t.movingSum;
-        mN += t.movingN;
+        for (let i = w.lo; i <= w.hi; i++) {
+          if (!fin(vals[i])) continue;
+          inAny[i] = 1;
+          if (movingSample(s, w.lo, w.hi, i)) movingInAny[i] = 1;
+        }
+      }
+      for (let i = 0; i < vals.length; i++) {
+        if (!inAny[i]) continue;
+        sum += vals[i]!;
+        n++;
+        if (movingInAny[i]) {
+          mSum += vals[i]!;
+          mN++;
+        }
       }
       if (n) out.avg = sum / n;
       if (mN) out.avgMoving = mSum / mN;

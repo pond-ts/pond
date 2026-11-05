@@ -35,8 +35,9 @@ export function activityFormat(
     0,
     4096,
   );
-  if (/<gpx[\s>]/.test(head)) return 'gpx';
-  if (/<TrainingCenterDatabase[\s>]/.test(head)) return 'tcx';
+  // the root may carry a namespace prefix (<g:gpx xmlns:g="…">)
+  if (/<(?:[\w.-]+:)?gpx[\s>]/.test(head)) return 'gpx';
+  if (/<(?:[\w.-]+:)?TrainingCenterDatabase[\s>]/.test(head)) return 'tcx';
   return null;
 }
 

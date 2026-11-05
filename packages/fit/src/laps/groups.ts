@@ -40,6 +40,8 @@ export interface LapGroup {
   laps: number[];
 }
 
+const nonNegative = (v: number | undefined | null): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const pos = (v: number | undefined | null): v is number =>
   v != null && Number.isFinite(v) && v > 0;
 
@@ -169,18 +171,24 @@ export function summarizeLaps(laps: readonly LapAverages[]): LapsSummary {
   const out: LapsSummary = {};
   let m = 0;
   let s = 0;
+  // a lap that stood still (0 m over a known time) still counts its time
   for (const l of laps)
-    if (pos(l.meters) && pos(l.seconds)) {
+    if (nonNegative(l.meters) && pos(l.seconds)) {
       m += l.meters;
       s += l.seconds;
     }
+  // all zero: likely no distance recorded (indoors), so no speed
   if (m > 0 && s > 0) out.speedMps = m / s;
-  const weighted = (f: (l: LapAverages) => number | undefined, power = 1) => {
+  const weighted = (
+    f: (l: LapAverages) => number | undefined,
+    power = 1,
+    keep: (v: number | undefined) => v is number = pos,
+  ) => {
     let sum = 0;
     let w = 0;
     for (const l of laps) {
       const v = f(l);
-      if (!pos(v)) continue;
+      if (!keep(v)) continue;
       const t = pos(l.seconds) ? l.seconds : 1;
       sum += v ** power * t;
       w += t;
@@ -208,12 +216,13 @@ export function summarizeLaps(laps: readonly LapAverages[]): LapsSummary {
   put('highestLapHr', range((l) => l.avgHr)?.hi);
   put(
     'avgWatts',
-    weighted((l) => l.avgWatts),
+    // 0 W is a real reading (coasting), unlike 0 bpm
+    weighted((l) => l.avgWatts, 1, nonNegative),
   );
   put('highestLapWatts', range((l) => l.avgWatts)?.hi);
   put(
     'npWatts',
-    weighted((l) => l.npWatts, 4),
+    weighted((l) => l.npWatts, 4, nonNegative),
   );
   return out;
 }

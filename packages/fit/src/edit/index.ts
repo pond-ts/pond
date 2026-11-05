@@ -320,7 +320,14 @@ export function editRecording<T extends ImportedActivity>(
 
   if (!cropping) return { ...imported, laps };
   // the file's session timer covers the whole recording, not the kept part
-  const { timerSeconds: _timer, ...uncropped } = imported;
+  const { timerSeconds: _timer, recovery, ...rest } = imported;
+  // heart rate recovery is measured from the finish: it only still applies
+  // when the crop keeps the finish
+  const uncropped = (to < total ? rest : { ...rest, recovery }) as Omit<
+    T,
+    'timerSeconds'
+  >;
+  if (uncropped.recovery === undefined) delete uncropped.recovery;
   if (options.keepClock) return { ...uncropped, laps } as T;
 
   // Crop the streams to [from, to], their clock and distance from zero.

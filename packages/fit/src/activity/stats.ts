@@ -154,8 +154,9 @@ export function toStats(
     moving: q(movingSeconds, Duration.seconds),
     timer: q(timerSeconds, Duration.seconds),
     swimming: q(swimmingSeconds, Duration.seconds),
+    // rest is elapsed − swimming, so it needs both clocks
     rest:
-      swimmingSeconds !== undefined
+      swimmingSeconds !== undefined && hasTime
         ? Duration.seconds(Math.max(0, raw.elapsedSeconds - swimmingSeconds))
         : null,
   };
@@ -167,7 +168,7 @@ export function toStats(
   }[basis];
   const meters = raw.distanceMeters;
   const avgMps =
-    hasDistance && basisSeconds !== undefined && basisSeconds > 0 && meters > 0
+    hasDistance && basisSeconds !== undefined && basisSeconds > 0 && meters >= 0
       ? meters / basisSeconds
       : undefined;
   const ch = swimTimeOnly && moving ? {} : raw.channels;
@@ -188,7 +189,13 @@ export function toStats(
     basis,
     distance: hasDistance ? Distance.meters(meters) : null,
     time,
-    pace: { average: q(avgMps, (v) => Speed.metersPerSecond(v).pace()) },
+    // a known standstill has a speed of 0 but no pace
+    pace: {
+      average:
+        avgMps !== undefined && avgMps > 0
+          ? Speed.metersPerSecond(avgMps).pace()
+          : null,
+    },
     speed: {
       average: q(avgMps, Speed.metersPerSecond),
       max: q(speed.max, Speed.metersPerSecond),
