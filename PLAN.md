@@ -694,6 +694,10 @@ the study oracle) is done.
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
   snippets also pass against the published 0.1.0. Open: run the script in
   CI.
+- **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
+  `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose
+  output holds each push's added rows as columns instead of `LiveEvent`s.
+  Not scheduled; the live parity fixture doesn't cover `'columns'`.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
@@ -943,8 +947,8 @@ Robustness debt plus the queued composition workstreams. Plan:
   spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
   column read out, vs 16 ms to copy the stored chunks' columns. Still a
   whole-window copy, so it suits throttled snapshots; per-frame reads go
-  through [PND-COLOUT]'s appended-columns event (the spike used internal
-  `_onChunk`). Data side of [PND-LIVELYR].
+  through `live.on('columns')` ([PND-COLOUT], built 2026-11-05). Data side
+  of [PND-LIVELYR].
 - **[PND-LVCHAIN]** — A view chained after a window view
   (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
   window eviction doesn't emit `'evict'`, so the child's mirror never fires,
@@ -1060,10 +1064,6 @@ consumer signal. Plan:
   expressions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) for haversine
   and 4th-power averages built 2026-11-05. Detail in
   [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
-- **[PND-COLOUT]** — Column-native output (§A): removes the dominant
-  emit-side allocation slice; spike plan exists. Second consumer: the
-  offscreen-stream spike's live chart, which needed each appended batch as
-  columns and used the internal `_onChunk` in its place.
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but
