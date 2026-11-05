@@ -1003,11 +1003,12 @@ Robustness debt plus the queued composition workstreams. Plan:
   suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
   message.
 - **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
-  it builds, and each retention eviction rebuilds that whole cache. Building a
-  view over a big series reads every row through `at()`, so the pushes after
-  it slow down until retention has dropped those rows: after reading 200k
-  rows, the next 50 pushes of 1,600 took 47 ms each (median) instead of
-  0.2 ms. Measured on main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
+  it builds, and each retention eviction rebuilds that whole cache. Reading
+  every row through `at()` (hover lookups, user loops) slows the pushes after
+  it until retention has dropped those rows: after reading 200k rows, the
+  next 50 pushes of 1,600 took 47 ms each (median) instead of 0.2 ms.
+  Building an operator no longer sets it off ([PND-LIVEREPLAY]). Measured on
+  main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
 - **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
   `Event` for every row it holds, even with no `'evict'` listener, and finds
   each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
@@ -1085,12 +1086,6 @@ consumer signal. Plan:
   `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
   payload-free change signal the hooks use when the source offers it.
   `useEventRate` gains nothing (its window view stores `Event`s anyway).
-- **[PND-LIVEREPLAY]** — A live operator attached to a `LiveSeries` that
-  already holds rows replays them through `at(i)`, one `Event` each. On
-  200k rows set-up costs 2–3× handling the same rows as they arrive:
-  `rolling` 214 vs 99 ms, `aggregate` 135 vs 47 ms, `partitionBy().collect()`
-  352 vs 127 ms. Fix: replay from the columns. Also removes the
-  [PND-LATCACHE] trigger for these operators. Found 2026-11-05.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.

@@ -1,4 +1,5 @@
 import { LiveSeries, type LiveSeriesOptions } from './live-series.js';
+import { replaySource } from './replay.js';
 import { LiveRollingAggregation } from './live-rolling-aggregation.js';
 import { LivePartitionedSyncRolling } from './live-partitioned-sync-rolling.js';
 import { LivePartitionedFusedRolling } from './live-partitioned-fused-rolling.js';
@@ -351,9 +352,7 @@ export class LivePartitionedSeries<
       )._onChunk((store) => this.#routeChunk(store));
     } else {
       // Replay source's existing events into the right partitions.
-      for (let i = 0; i < source.length; i++) {
-        this.#routeEvent(source.at(i)!);
-      }
+      replaySource(source, (event) => this.#routeEvent(event));
       // Subscribe to new events from the source (per-event path).
       this.#unsubscribeSource = source.on('event', (event) => {
         this.#routeEvent(event);
@@ -451,10 +450,9 @@ export class LivePartitionedSeries<
     type Existing = { time: number; event: EventForSchema<S> };
     const existing: Existing[] = [];
     for (const partition of this.#partitions.values()) {
-      for (let i = 0; i < partition.length; i++) {
-        const e = partition.at(i)!;
+      replaySource(partition, (e) => {
         existing.push({ time: e.begin(), event: e });
-      }
+      });
     }
     existing.sort((a, b) => a.time - b.time);
     if (existing.length > 0) {
@@ -570,10 +568,9 @@ export class LivePartitionedSeries<
     type ExistingR = { time: number; event: EventForSchema<R>; outSchema: R };
     const existing: ExistingR[] = [];
     for (const { out } of outputs) {
-      for (let i = 0; i < out.length; i++) {
-        const e = out.at(i)!;
+      replaySource(out, (e) => {
         existing.push({ time: e.begin(), event: e, outSchema: out.schema });
-      }
+      });
     }
     existing.sort((a, b) => a.time - b.time);
     if (existing.length > 0) {
@@ -1016,10 +1013,9 @@ export class LivePartitionedSeries<
     type Existing = { ts: number; key: K; event: EventForSchema<R> };
     const existing: Existing[] = [];
     for (const [key, out] of factoryOutputs) {
-      for (let i = 0; i < out.length; i++) {
-        const ev = out.at(i)!;
+      replaySource(out, (ev) => {
         existing.push({ ts: ev.begin(), key, event: ev });
-      }
+      });
     }
     existing.sort((a, b) => a.ts - b.ts);
     for (const { key, event } of existing) {
@@ -1327,8 +1323,7 @@ export class LivePartitionedSeries<
     const len = source.length;
     if (len === 0) return;
     const buckets = new Map<K, EventForSchema<S>[]>();
-    for (let i = 0; i < len; i += 1) {
-      const event = source.at(i)!;
+    replaySource(source, (event) => {
       const key = partitionKey(event, this.by) as K;
       let evs = buckets.get(key);
       if (evs === undefined) {
@@ -1336,7 +1331,7 @@ export class LivePartitionedSeries<
         buckets.set(key, evs);
       }
       evs.push(event);
-    }
+    });
     for (const [key, evs] of buckets) {
       const part = this.#ensurePartition(key);
       this.#statsEventsRouted += evs.length;

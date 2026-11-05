@@ -315,10 +315,6 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
-   * The rows `rows` (ascending, in range) as a new store whose events are
-   * this store's events for those rows (see `#delegate`). Module-private.
-   */
-  /**
    * The rows `rows` (ascending, in range) as a new store that builds its own
    * events, but whose key objects are this store's event keys for those rows
    * (see `#keySource`). Module-private.
@@ -348,6 +344,10 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     });
   }
 
+  /**
+   * The rows `rows` (ascending, in range) as a new store whose events are
+   * this store's events for those rows (see `#delegate`). Module-private.
+   */
   _selectRowsModulePrivate(rows: Int32Array): SeriesStore<S> {
     const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
     const delegate = this.#delegate;
