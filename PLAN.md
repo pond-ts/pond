@@ -1110,10 +1110,6 @@ consumer signal. Plan:
   1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
   row from the columns, keeping the key objects identical to the events'
   (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
-- **[PND-GROUPEVENTS]** — `groupBy` and `pivotByGroup` sort `Event`s into
-  groups (`groupBy` then rebuilds each group from rows): 2.4 s and 3.3 s on
-  1M rows with 8 groups. Fix: group row numbers from the column and gather
-  each group's columns, as `partitionBy` does.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.

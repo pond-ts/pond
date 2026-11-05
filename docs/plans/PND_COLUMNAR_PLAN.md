@@ -1940,6 +1940,37 @@ timeRange key was caught (90 mismatches). 1M rows, median of 7:
 the same objects the events carry, so they wait for #873's source-event
 lookup (a selected row's event is its source's).
 
+**[PND-GROUPEVENTS] shipped.** `groupBy` groups row numbers by
+`String(column.read(i))` (`'undefined'` for a gap, so a gap and the text
+`'undefined'` still share a group, as before) in first-seen order and
+gathers each group with `withRowSelection`. `pivotByGroup` reads the key,
+group and value cells off the columns; its grouping and output build are
+unchanged. Both fall back to the event path when the store holds a dense
+event array (`_eventsMayDifferFromColumnsModulePrivate`: a `map` /
+`fromEvents` result may carry, say, `NaN` where the column has a gap;
+cached events came from the columns or were checked against them).
+`groupBy` also falls back for an array column (the old path re-validated
+array cells) and for a required column holding a gap (the old path threw
+`ValidationError … is required`; it still does). Group events are fresh objects, as they were (the old path rebuilt
+each group from rows).
+Old-vs-new oracle: 3,000 random series × 11 calls (groupBy on string /
+number / boolean / key / unknown columns, with a transform; pivot plain,
+aggregated, typed, key column as group) over time / timeRange / interval
+keys, partial and full caches, filter / concat / map (incl. `NaN`) /
+fromColumns (incl. required gaps) inputs: 33,000/33,000 equal, thrown
+errors included; a planted wrong gap key gave 13,857 mismatches. 1M rows,
+median of 5:
+
+| call                            | before (s) | after (s) |
+| ------------------------------- | ---------: | --------: |
+| `groupBy('host')`, 8 groups     |       4.60 |      0.11 |
+| `groupBy('host')`, 1,000 groups |       5.42 |      0.19 |
+| `pivotByGroup('host', 'cpu')`   |       2.71 |      0.86 |
+| `groupBy`, events already built |       2.55 |      0.15 |
+
+`pivotByGroup`'s remaining time is its per-timestamp `Map` of `Map`s and
+the output build, not events.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly
