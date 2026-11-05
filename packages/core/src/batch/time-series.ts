@@ -126,7 +126,7 @@ import {
 } from '../core/calendar.js';
 import { Interval } from '../core/interval.js';
 import { Time } from '../core/time.js';
-import { TimeRange } from '../core/time-range.js';
+import { TimeRange, toTimeRange } from '../core/time-range.js';
 import type {
   EventKey,
   IntervalInput,
@@ -285,39 +285,35 @@ function jsonKeyFromColumn(
     : [label, keys.beginAt(i), keys.endAt(i)];
 }
 
+function toRow<S extends SeriesSchema>(
+  schema: S,
+  event: EventForSchema<S>,
+): TimeSeriesInput<S>['rows'][number] {
+  const data = event.data();
+  return Object.freeze([
+    event.key(),
+    ...schema.slice(1).map((column) => data[column.name as keyof typeof data]),
+  ]) as TimeSeriesInput<S>['rows'][number];
+}
+
 function toRows<S extends SeriesSchema>(
   schema: S,
   events: ReadonlyArray<EventForSchema<S>>,
 ): TimeSeriesInput<S>['rows'] {
-  return events.map((event) => {
-    const data = event.data();
-    return Object.freeze([
-      event.key(),
-      ...schema
-        .slice(1)
-        .map((column) => data[column.name as keyof typeof data]),
-    ]) as TimeSeriesInput<S>['rows'][number];
-  }) as TimeSeriesInput<S>['rows'];
+  return events.map((event) =>
+    toRow(schema, event),
+  ) as TimeSeriesInput<S>['rows'];
 }
 
-function toObjects<S extends SeriesSchema>(
-  schema: S,
-  events: ReadonlyArray<EventForSchema<S>>,
-): ReadonlyArray<NormalizedObjectRow> {
-  const keyColumn = schema[0]!;
-  const dataColumns = schema.slice(1);
-  return events.map((event) => {
-    const row: Record<string, unknown> = {
-      [keyColumn.name]: event.key(),
-    };
-    const data = event.data();
-
-    for (const column of dataColumns) {
-      row[column.name] = data[column.name as keyof typeof data];
-    }
-
-    return Object.freeze(row) as NormalizedObjectRowForSchema<S>;
-  }) as ReadonlyArray<NormalizedObjectRow>;
+function toObject<S extends SeriesSchema>(
+  keyName: string,
+  names: ReadonlyArray<string>,
+  event: EventForSchema<S>,
+): NormalizedObjectRow {
+  const row: Record<string, unknown> = { [keyName]: event.key() };
+  const data = event.data() as Record<string, unknown>;
+  for (const name of names) row[name] = data[name];
+  return Object.freeze(row) as NormalizedObjectRow;
 }
 
 function isEventKey(value: unknown): value is EventKey {
@@ -2026,9 +2022,20 @@ export class TimeSeries<S extends SeriesSchema> {
     // for missing cells); the double cast is the existing trust point — the
     // `RowForSchema`→`NormalizedRowForSchema` conditional types no longer overlap
     // structurally for a direct cast now that both honor `required: false`.
-    return toRows(this.schema, this.events) as unknown as ReadonlyArray<
-      NormalizedRowForSchema<S>
-    >;
+    // [PND-ROWSOUT]: rows come from the columns when no event exists yet.
+    // Keys are the ones the events have or will have, so `rows[i][0]` stays
+    // `===` to `at(i).key()`.
+    const seriesStore = this.#store;
+    const width = this.schema.length;
+    const fromEvent = (event: EventForSchema<S>) => toRow(this.schema, event);
+    const rows =
+      this.#rowsFromColumns((_keys, cells, i) => {
+        const row = new Array<unknown>(width);
+        row[0] = seriesStore._eventKeyAtModulePrivate(i);
+        for (let c = 1; c < width; c += 1) row[c] = cells[c - 1]!.read(i);
+        return Object.freeze(row) as TimeSeriesInput<S>['rows'][number];
+      }, fromEvent) ?? this.events.map(fromEvent);
+    return rows as unknown as ReadonlyArray<NormalizedRowForSchema<S>>;
   }
 
   /** Example: `series.toRows()`. Returns normalized row arrays using `Time`/`TimeRange`/`Interval` keys and `undefined` for missing payload values. */
@@ -2202,7 +2209,24 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */
   toObjects(): ReadonlyArray<NormalizedObjectRow> {
-    return toObjects(this.schema, this.events);
+    // [PND-ROWSOUT]: as `rows`, objects come from the columns when no event
+    // exists yet, with the events' key objects.
+    const seriesStore = this.#store;
+    const keyName = this.schema[0]!.name;
+    const names = this.schema.slice(1).map((column) => column.name);
+    const fromEvent = (event: EventForSchema<S>) =>
+      toObject(keyName, names, event);
+    return (
+      this.#rowsFromColumns((_keys, cells, i) => {
+        const row: Record<string, unknown> = {
+          [keyName]: seriesStore._eventKeyAtModulePrivate(i),
+        };
+        for (let c = 0; c < names.length; c += 1) {
+          row[names[c]!] = cells[c]!.read(i);
+        }
+        return Object.freeze(row) as NormalizedObjectRow;
+      }, fromEvent) ?? this.events.map(fromEvent)
+    );
   }
 
   /**
@@ -5679,7 +5703,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * Use `trim(...)` when you want those overlapping keys clipped to the supplied range.
    */
   overlapping(range: RangeLike): TimeSeries<S> {
-    return this.filter((event) => event.overlaps(range));
+    // An empty series never reads `range`, so a bad one does not throw.
+    if (this.#store.length === 0) return this.#selectByKey(() => false);
+    // `event.overlaps(range)` for every key kind is this test on the
+    // range `toTimeRange` gives (it throws the same error on a bad range).
+    const r = toTimeRange(range);
+    const rb = r.begin();
+    const re = r.end();
+    return this.#selectByKey((b, e) => b <= re && rb <= e);
   }
 
   /**
@@ -5692,7 +5723,9 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   containedBy(range: RangeLike): TimeSeries<S> {
     const selectionRange = toSelectionRange(range);
-    return this.filter((event) => selectionRange.contains(event));
+    const sb = selectionRange.begin();
+    const se = selectionRange.end();
+    return this.#selectByKey((b, e) => b >= sb && e <= se);
   }
 
   /**
@@ -5730,13 +5763,13 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `series.before(Date.now())`. Returns the events ending strictly before the supplied temporal boundary. */
   before(boundary: BoundaryLike): TimeSeries<S> {
     const limit = toBoundaryTimestamp(boundary);
-    return this.filter((event) => event.end() < limit);
+    return this.#selectByKey((_b, e) => e < limit);
   }
 
   /** Example: `series.after(Date.now())`. Returns the events beginning strictly after the supplied temporal boundary. */
   after(boundary: BoundaryLike): TimeSeries<S> {
     const limit = toBoundaryTimestamp(boundary);
-    return this.filter((event) => event.begin() > limit);
+    return this.#selectByKey((b) => b > limit);
   }
 
   /**
@@ -5757,11 +5790,38 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   tail(duration?: DurationInput): TimeSeries<S> {
     if (duration === undefined) return this;
-    if (this.events.length === 0) return this;
+    const n = this.#store.length;
+    if (n === 0) return this;
     const durationMs = parseDuration(duration);
-    const lastBegin = this.events[this.events.length - 1]!.begin();
+    const lastBegin = this.#store.store.keys.begin[n - 1]!;
     const cutoff = lastBegin - durationMs;
-    return this.filter((event) => event.begin() > cutoff);
+    return this.#selectByKey((b) => b > cutoff);
+  }
+
+  /**
+   * [PND-SPANFILTER] The rows whose key passes `test(begin, end)`, read off
+   * the key buffers instead of building an `Event` per row. As with
+   * `filter`, a kept row's `Event` is the source row's own (the result
+   * store asks this store for it), so `result.at(j) === this.at(i)`.
+   */
+  #selectByKey(test: (begin: number, end: number) => boolean): TimeSeries<S> {
+    const keys = this.#store.store.keys;
+    const begins = keys.begin;
+    const ends = keys.end;
+    const n = this.#store.length;
+    const rows = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      if (test(begins[i]!, ends[i]!)) rows[k++] = i;
+    }
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: Object.freeze(this.schema.slice()) as S,
+      [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+        k === n ? rows : rows.slice(0, k),
+      ),
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**
@@ -5787,9 +5847,9 @@ export class TimeSeries<S extends SeriesSchema> {
       end === undefined
         ? toSelectionRange(beginOrRange as RangeLike)
         : new TimeRange({ start: beginOrRange as TimestampInput, end });
-    return this.filter(
-      (event) => event.begin() >= range.begin() && event.end() <= range.end(),
-    );
+    const rb = range.begin();
+    const re = range.end();
+    return this.#selectByKey((b, e) => b >= rb && e <= re);
   }
 
   /**
