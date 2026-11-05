@@ -5,7 +5,7 @@
  * target column, whose results are [PND-SMOOTHCHECK]).
  */
 import { describe, expect, it } from 'vitest';
-import { TimeSeries } from '../src/index.js';
+import { Event, Time, TimeSeries } from '../src/index.js';
 
 const schema = [
   { name: 'timeRange', kind: 'timeRange' },
@@ -118,5 +118,67 @@ describe('baseline and outliers on columns', () => {
     const out = flat.outliers('v', { window: 3, sigma: 0.5 });
     expect(out.length).toBeGreaterThan(0);
     out.events.forEach((e) => expect(all).toContain(e));
+  });
+});
+
+describe('smooth / baseline keep the row path where columns and events can differ', () => {
+  // `fromEvents` keeps the given events, which may hold a value the column
+  // stores as a gap (NaN) or a value row intake would refuse (a string in a
+  // number column). Output and errors must stay what the row path gave.
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'x', kind: 'number', required: false },
+  ] as const;
+  const fromEvents = (values: unknown[]) =>
+    TimeSeries.fromEvents(
+      values.map((x, i) => new Event(new Time(i * 1000), { x })) as never,
+      { name: 'c', schema },
+    );
+
+  it('loess over an event holding NaN gives all gaps, as before', () => {
+    const out = fromEvents([1, NaN, 3, 4]).smooth('x', 'loess', { span: 1 });
+    expect(out.toJSON().rows).toEqual([
+      [0, null],
+      [1000, null],
+      [2000, null],
+      [3000, null],
+    ]);
+  });
+
+  it('movingAverage skip reads the event value, as before', () => {
+    const out = fromEvents([1, NaN, 3, 4]).smooth('x', 'movingAverage', {
+      window: '2s',
+      missing: 'skip',
+    });
+    expect(out.toJSON().rows).toEqual([
+      [0, 1],
+      [1000, 1],
+      [2000, 3],
+      [3000, 3.5],
+    ]);
+  });
+
+  it('a string in a number column still fails validation', () => {
+    const s = fromEvents([1, 'a', 3, 4]);
+    expect(() =>
+      s.smooth('x', 'movingAverage', { window: '2s', output: 'y' }),
+    ).toThrow('row 1 col 1: expected finite number');
+    expect(() => s.baseline('x', { window: '2s', sigma: 2 })).toThrow(
+      'row 1 col 1: expected finite number',
+    );
+  });
+
+  it('an output named like the key column keeps the intake error', () => {
+    const s = new TimeSeries({
+      name: 'c',
+      schema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.smooth('x', 'movingAverage', { window: '2s', output: 'time' as never }),
+    ).toThrow("ColumnarStore: duplicate schema column name 'time'");
   });
 });

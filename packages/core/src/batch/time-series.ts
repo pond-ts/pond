@@ -5007,7 +5007,14 @@ export class TimeSeries<S extends SeriesSchema> {
     // [PND-SMOOTHCHECK]).
     const smoothStore = this.#store.store;
     const targetCol = smoothStore.columns.get(column as string);
-    const columnar = targetCol !== undefined && targetCol.kind === 'number';
+    // The event path also stays when the events may hold values the columns
+    // don't (a dense event array, e.g. from `fromEvents`), and when `output`
+    // names the key column, so that error keeps row intake's text.
+    const columnar =
+      targetCol !== undefined &&
+      targetCol.kind === 'number' &&
+      !this.#store._eventsMayDifferFromColumnsModulePrivate() &&
+      output !== this.schema[0].name;
     const rowCount = smoothStore.length;
     let anchors: number[];
     let sourceValues: ReadonlyArray<number | undefined>;
@@ -6617,6 +6624,45 @@ export class TimeSeries<S extends SeriesSchema> {
       { name: upperName, kind: 'number' as const, required: false as const },
       { name: lowerName, kind: 'number' as const, required: false as const },
     ]) as unknown as BaselineSchema<S, AvgName, SdName, UpperName, LowerName>;
+
+    // Events that may hold values their columns don't (a dense event array,
+    // e.g. from `fromEvents`) keep the row path, which rebuilds rows from
+    // `event.data()` through validation, so output and errors stay as before.
+    if (this.#store._eventsMayDifferFromColumnsModulePrivate()) {
+      const resultRows = this.events.map((event, index) => {
+        const data = event.data() as Record<string, unknown>;
+        const rollEvent = rolling.at(index);
+        const rollData = (rollEvent?.data() ?? {}) as Record<string, unknown>;
+        const avg = rollData[avgName];
+        const sd = rollData[sdName];
+        const avgNum = typeof avg === 'number' ? avg : undefined;
+        const sdNum = typeof sd === 'number' ? sd : undefined;
+        // sd === 0 means a flat rolling window — there is no meaningful
+        // deviation against it. Matching outliers(), we emit undefined
+        // bands so `value > upper || value < lower` doesn't flag every
+        // non-equal point as anomalous.
+        const bandValid =
+          avgNum !== undefined && sdNum !== undefined && sdNum > 0;
+        const upperNum = bandValid ? avgNum + sigma * sdNum : undefined;
+        const lowerNum = bandValid ? avgNum - sigma * sdNum : undefined;
+        return Object.freeze([
+          event.key(),
+          ...this.schema.slice(1).map((c) => data[c.name]),
+          avgNum,
+          sdNum,
+          upperNum,
+          lowerNum,
+        ]);
+      });
+
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as unknown as TimeSeries<
+        BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
+      >;
+    }
 
     // Column-native ([PND-SMOOTHSLOW]): the rolling result has one row per
     // source row, so its `avg` / `sd` columns are appended as they are and
