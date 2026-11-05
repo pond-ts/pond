@@ -4539,12 +4539,13 @@ export class TimeSeries<S extends SeriesSchema> {
         (name) => store.columns.get(name),
         rowCount,
         columnSpecs,
-        rollingWindowBoundsByTime(
-          store.keys.begin,
-          rowCount,
-          windowMs,
-          alignment,
-        ),
+        () =>
+          rollingWindowBoundsByTime(
+            store.keys.begin,
+            rowCount,
+            windowMs,
+            alignment,
+          ),
         alignment,
         minSamples,
       );

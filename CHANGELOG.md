@@ -86,7 +86,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   `rolling({ count })` already had: each row's window is found once from
   the keys, and the result columns are written as typed arrays. A 30 s
   `avg` over 36,000 rows went from 10.3 to 1.4 ms, and 1M rows of `avg` +
-  `sum` from 224 to 67 ms (`packages/core/scripts/perf-rolling-time.mjs`).
+  `sum` from 224 to 72 ms (`packages/core/scripts/perf-rolling-time.mjs`).
   Output is identical, cell for cell: rows sharing a key still share one
   read, a column with values past the overflow-lane split (2^480) runs the
   laned reducer states from the start, and leading / centered windows

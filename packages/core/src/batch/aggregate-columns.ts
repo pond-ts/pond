@@ -743,7 +743,7 @@ export function tryRollingTimeColumnarNumeric(
   getColumn: (name: string) => Column | undefined,
   rowCount: number,
   columns: ReadonlyArray<AggregateColumnSpec>,
-  bounds: RollingWindowBounds,
+  findBounds: () => RollingWindowBounds,
   alignment: RollingAlignment,
   minSamples: number,
 ): Float64Column[] | null {
@@ -756,37 +756,52 @@ export function tryRollingTimeColumnarNumeric(
     if (source.kind !== 'number' || source.storage !== 'packed') return null;
     sources.push(source);
   }
-  return columns.map((spec, c) =>
-    sweepRollingColumn(
+  // Only now, with the fast path known to apply, find the windows.
+  const bounds = findBounds();
+  // A column with values big enough for the reducers' overflow lanes runs
+  // the laned states from the start, as the generic sweep does: the plain
+  // accumulators would round such a window differently. Checked once per
+  // source column, however many outputs read it.
+  const laned = new Map<Float64Column, boolean>();
+  return columns.map((spec, c) => {
+    const source = sources[c]!;
+    let isLaned = laned.get(source);
+    if (isLaned === undefined) {
+      isLaned = hasLaneSizedValue(source, rowCount);
+      laned.set(source, isLaned);
+    }
+    return sweepRollingColumn(
       spec,
-      sources[c]!,
+      source,
       rowCount,
       0,
       alignment,
       minSamples,
-      // A column with values big enough for the reducers' overflow lanes
-      // runs the laned states from the start, as the generic sweep does:
-      // the plain accumulators would round such a window differently.
-      hasLaneSizedValue(sources[c]!, rowCount),
+      isLaned,
       bounds,
-    ),
-  );
+    );
+  });
 }
 
-/** Whether a column holds a value at or past the smallest overflow-lane
- *  split (`STDEV_SPLIT`, 2^480; `sum`'s is 2^960). Ordinary data never
- *  does, and this one pass is cheap next to the sweep. */
+/** Whether a column holds a finite value at or past the smallest
+ *  overflow-lane split (`STDEV_SPLIT`, 2^480; `sum`'s is 2^960). Ordinary
+ *  data never does, and this one pass is cheap next to the sweep. ±Infinity
+ *  is a missing cell, so it does not count. */
 function hasLaneSizedValue(source: Float64Column, rowCount: number): boolean {
   const values = source._values;
   for (let i = 0; i < rowCount; i++) {
     const v = values[i]!;
-    if (v >= STDEV_SPLIT || v <= -STDEV_SPLIT) return true;
+    if ((v >= STDEV_SPLIT || v <= -STDEV_SPLIT) && Number.isFinite(v))
+      return true;
   }
   return false;
 }
 
 /**
- * One column's trailing / leading / centred count-window sweep.
+ * One column's trailing / leading / centred rolling sweep. With `bounds`
+ * unset it is a count window of `count` rows; with `bounds` set (a duration
+ * window, from `rollingWindowBoundsByTime`) the windows come from there and
+ * `count` is unused.
  *
  * `avg` and `stdev` drive their accumulators directly; everything else
  * drives its reducer state, which is now monomorphic at this call site.

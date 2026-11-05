@@ -136,7 +136,9 @@ describe('rolling: duration-window fast path matches the generic sweep', () => {
   it('on a one-row window and an empty series', () => {
     const rows: Row[] = Array.from({ length: 10 }, (_, i) => [i * 1000, i]);
     expectSameAsGeneric(series(rows), '1ms');
-    expect(series([]).rolling('5s', { v: 'avg' }).length).toBe(0);
+    const empty = series([]).rolling('5s', { v: 'avg' });
+    expect(empty.length).toBe(0);
+    expect(empty.schema.map((c) => c.name)).toEqual(['time', 'v']);
   });
 
   it('gives the expected trailing average', () => {
@@ -148,6 +150,119 @@ describe('rolling: duration-window fast path matches the generic sweep', () => {
     ]);
     // trailing (t - 2s, t]
     expect(cells(s.rolling('2s', { v: 'avg' }), 'v')).toEqual([1, 1.5, 2, 4]);
+  });
+});
+
+describe('rolling: seeded random cases match the generic sweep', () => {
+  // A fixed-seed generator, so a failure names a case that can be re-run.
+  let seed = 20261105;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+
+  const value = (): number | undefined => {
+    const r = rnd();
+    if (r < 0.1) return undefined;
+    if (r < 0.13) return -0;
+    if (r < 0.14) return rnd() < 0.5 ? 1e300 : -1e300;
+    return (rnd() - 0.5) * 100;
+  };
+
+  /** Keys on a grid, with jitter, repeats and long gaps mixed in. */
+  function times(n: number): number[] {
+    const out: number[] = [];
+    let t = Math.floor(rnd() * 1000);
+    const style = pick(['grid', 'jitter', 'dupes', 'gaps'] as const);
+    for (let i = 0; i < n; i++) {
+      if (style === 'grid') t += 1000;
+      else if (style === 'jitter') t += Math.floor(rnd() * 2000);
+      else if (style === 'dupes') t += rnd() < 0.4 ? 0 : 700;
+      else t += rnd() < 0.05 ? 60_000 : 1000;
+      out.push(t);
+    }
+    return out;
+  }
+
+  const WINDOWS = ['0ms', '1ms', '500ms', '1401ms', '5s', '1h', 999.9];
+
+  function expectSame(
+    fast: TimeSeries<any>,
+    generic: TimeSeries<any>,
+    tag: string,
+  ) {
+    for (const r of REDUCERS) {
+      const a = cells(fast, `o_${r}`);
+      const b = cells(generic, `o_${r}`);
+      expect(a.length).toBe(b.length);
+      a.forEach((v, i) => {
+        if (!Object.is(v, b[i]))
+          throw new Error(`${tag} ${r} row ${i}: fast ${v}, generic ${b[i]}`);
+      });
+    }
+  }
+
+  it('on time keys', () => {
+    for (let k = 0; k < 150; k++) {
+      const n = 1 + Math.floor(rnd() * 300);
+      const s = series(times(n).map((t): Row => [t, value()]));
+      const window = pick(WINDOWS);
+      const options = {
+        alignment: pick(ALIGNMENTS),
+        ...(rnd() < 0.3 ? { minSamples: Math.floor(rnd() * 5) } : {}),
+      };
+      expectSame(
+        s.rolling(window, allBuiltIns, options),
+        s.rolling(window, { ...allBuiltIns, z: customCount }, options),
+        `case ${k} (${n} rows, ${window}, ${JSON.stringify(options)})`,
+      );
+    }
+  });
+
+  it('on interval keys, partitioned, and with append', () => {
+    const ivSchema = [
+      { name: 'interval', kind: 'interval' },
+      { name: 'v', kind: 'number', required: false },
+      { name: 'g', kind: 'string' },
+    ] as const;
+    for (let k = 0; k < 40; k++) {
+      const n = 1 + Math.floor(rnd() * 200);
+      const rows = times(n).map(
+        (t, i) =>
+          [[`k${i}`, t, t + 500], value(), pick(['a', 'b'])] as [
+            [string, number, number],
+            number | undefined,
+            string,
+          ],
+      );
+      const s = new TimeSeries({ name: 's', schema: ivSchema, rows });
+      const window = pick(WINDOWS);
+      const alignment = pick(ALIGNMENTS);
+      const tag = `case ${k} (${n} rows, ${window}, ${alignment})`;
+      expectSame(
+        s.rolling(window, allBuiltIns, { alignment }),
+        s.rolling(window, { ...allBuiltIns, z: customCount }, { alignment }),
+        `${tag} interval`,
+      );
+      expectSame(
+        s
+          .partitionBy('g')
+          .rolling(window, allBuiltIns, { alignment })
+          .collect(),
+        s
+          .partitionBy('g')
+          .rolling(window, { ...allBuiltIns, z: customCount }, { alignment })
+          .collect(),
+        `${tag} partitioned`,
+      );
+      expectSame(
+        s.rolling(window, allBuiltIns, { alignment, append: true }),
+        s.rolling(
+          window,
+          { ...allBuiltIns, z: customCount },
+          { alignment, append: true },
+        ),
+        `${tag} append`,
+      );
+    }
   });
 });
 
