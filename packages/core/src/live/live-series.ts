@@ -552,6 +552,16 @@ export class LiveSeries<S extends SeriesSchema> {
     return this.#storage.at(index);
   }
 
+  /** @internal Every row's `Event` in order, without caching them. */
+  _forEachEventModulePrivate(fn: (event: EventForSchema<S>) => void): void {
+    const chunked = this.#chunked;
+    if (chunked !== null) {
+      chunked.forEachEvent(fn);
+      return;
+    }
+    for (let i = 0; i < this.#storage.length; i += 1) fn(this.#storage.at(i)!);
+  }
+
   first(): EventForSchema<S> | undefined {
     return this.#storage.at(0);
   }

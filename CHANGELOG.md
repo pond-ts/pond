@@ -592,6 +592,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **Live operators set up faster on a series that already holds rows**
+  ([PND-LIVEREPLAY]). `filter` / `map` / `window` views, `rolling`,
+  `aggregate`, `reduce` and `partitionBy` read the rows already in a
+  `LiveSeries` the way they read new pushes: fresh `Event`s, without
+  filling the series' per-row cache. Results are unchanged. 200k rows:
+  `rolling` 423–480 → 216–251 ms, `reduce` 558–642 → 193–274 ms,
+  `partitionBy().collect()` 1,057–1,079 → 358–436 ms; and the pushes right
+  after building a view on a full, retention-capped series no longer slow
+  down (45–56 → 2.2 ms per push of 1,600 rows, [PND-LATCACHE]). One
+  behaviour change: a replayed row's `Event` is no longer the same object
+  as the series' `at(i)` (unless the series had already built it), which
+  is how rows pushed after the operator was attached already behaved.
+
 - **`trim` clips on the key columns** ([PND-TRIMCOL]) instead of trimming
   an `Event` per row. Output is identical: same rows, clipped keys, re-sort
   when clipping breaks the key order, and errors; `time` keys still come
