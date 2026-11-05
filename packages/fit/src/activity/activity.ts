@@ -32,7 +32,6 @@ import { seriesOf, type ActivitySeries } from './series.js';
 import { routeOf, type Route } from './route.js';
 import { explainOf, type Explainable, type Explanation } from './explain.js';
 import {
-  changesOf,
   editParts,
   isNoEdit,
   type ActivityEdit,
@@ -290,6 +289,7 @@ export class Activity extends Section {
     from: number;
     to: number;
     parts: Activity[];
+    changes: EditChange[];
   };
   readonly #splits = new Map<number, Sections<Section>>();
 
@@ -342,6 +342,7 @@ export class Activity extends Section {
         from: p.from,
         to: p.to,
         parts,
+        changes: p.changes,
       };
     });
     return parts[0]!;
@@ -364,9 +365,12 @@ export class Activity extends Section {
     return this.#edited?.edit ?? null;
   }
 
-  /** What the edit changed, in order along the original recording. */
+  /** What the edit changed in this activity, in order along the original
+   *  recording: only what took effect (a crop that cut something, a join
+   *  where a lap started), and for one of several parts only what falls in
+   *  it, with the part splits at its ends. */
   get changes(): EditChange[] {
-    return this.#edited ? changesOf(this.#edited.edit) : [];
+    return this.#edited ? [...this.#edited.changes] : [];
   }
 
   /** Every activity the edit made, in order; this one is among them. Just
@@ -376,12 +380,16 @@ export class Activity extends Section {
   }
 
   /** A stretch of this activity, as the same stretch of the original
-   *  recording. */
+   *  recording (held to this activity's ends first). */
   toOriginal(span: Span): Section {
     const off = this.#edited?.offset ?? 0;
+    const a = Math.max(span.fromSeconds, this.fromSeconds);
+    const b = Math.min(span.toSeconds, this.toSeconds);
+    if (!(b >= a))
+      throw new RangeError('toOriginal: the stretch is outside this activity');
     return new Section(this.original.prep, 'section', 'Section', {
-      fromSeconds: span.fromSeconds + off,
-      toSeconds: span.toSeconds + off,
+      fromSeconds: a + off,
+      toSeconds: b + off,
     });
   }
 
@@ -399,7 +407,8 @@ export class Activity extends Section {
     const hi = e ? Math.min(b, e.to) : b;
     const from = Math.max(lo - off, this.fromSeconds);
     const to = Math.min(hi - off, this.toSeconds);
-    if (!(to >= from) || (e && hi < lo)) return null;
+    // a stretch with length that only touches what was kept was not kept
+    if (!(to >= from) || hi < lo || (b > a && !(to > from))) return null;
     return new Section(this.prep, 'section', 'Section', {
       fromSeconds: from,
       toSeconds: to,

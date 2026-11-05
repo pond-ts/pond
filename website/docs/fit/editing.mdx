@@ -43,7 +43,9 @@ true
 
 `parts` splits one recording into several activities, a run and then the
 walk home. Each part is an activity of its own, with its clock starting at
-its own start.
+its own start. Its `changes` are only the ones that fall in it, with the
+part splits at its ends. A recording with no timestamps can have its laps
+edited, but can't be cropped or split into parts.
 
 ```ts
 const split = run.edit({ parts: { splitAt: [minutes(30)] } });

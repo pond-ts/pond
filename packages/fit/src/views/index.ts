@@ -18,12 +18,13 @@ export type ChartMetric =
   | 'pace'
   | 'elevation';
 
-/** The columns of a chart series: time, distance (metres from the start)
+/** The columns of a chart series: time, distance (metres from the start;
+ *  empty with no distance)
  *  and one column per metric, each with gaps where nothing was recorded.
  *  Units: bpm, W, rpm, m/s, s/km, m. */
 export const CHART_SCHEMA = [
   { name: 'time', kind: 'time' },
-  { name: 'distance', kind: 'number' },
+  { name: 'distance', kind: 'number', required: false },
   { name: 'heartRate', kind: 'number', required: false },
   { name: 'power', kind: 'number', required: false },
   { name: 'cadence', kind: 'number', required: false },
@@ -95,7 +96,7 @@ export function chartData(
   const asked = options.metrics ?? all;
   const metrics = asked.filter((m) => cols[m]?.some(Number.isFinite));
   const times = t.times();
-  const dist = s.distance?.values() ?? new Float64Array(times.length);
+  const dist = s.distance?.values();
   // each sample's instant, as the series keys it
   const ts = t.toTimeSeries();
   const cell = (m: ChartMetric, i: number) => {
@@ -103,12 +104,12 @@ export function chartData(
     const v = cols[m]![i]!;
     return Number.isFinite(v) ? v : undefined;
   };
-  const rows: [number, number, ...(number | undefined)[]][] = [];
+  const rows: [number, ...(number | undefined)[]][] = [];
   for (let i = 0; i < times.length; i++) {
     const at = ts.at(i)!.key().begin();
     rows.push([
       at,
-      dist[i]!,
+      dist && Number.isFinite(dist[i]!) ? dist[i]! : undefined,
       cell('heartRate', i),
       cell('power', i),
       cell('cadence', i),

@@ -6,6 +6,7 @@
  */
 import {
   editRecording,
+  lapStartSeconds,
   recordingSeconds,
   type RecordingEdit,
 } from '../edit/index.js';
@@ -42,6 +43,8 @@ export interface EditedPart {
   offset: number;
   from: number;
   to: number;
+  /** What the edit changed in this part, in order. */
+  changes: EditChange[];
 }
 
 const secs = (d: Duration, what: string): number => {
@@ -64,28 +67,26 @@ export function isNoEdit(edit: ActivityEdit): boolean {
   );
 }
 
-/** The changes an edit makes, in order along the recording. */
-export function changesOf(edit: ActivityEdit): EditChange[] {
-  const out: EditChange[] = [];
-  const add = (kind: EditChange['kind'], s: number) =>
-    out.push({ kind, at: Duration.seconds(s) });
-  if (edit.crop?.from !== undefined)
-    add('crop-start', secs(edit.crop.from, 'crop.from'));
-  if (edit.crop?.to !== undefined)
-    add('crop-end', secs(edit.crop.to, 'crop.to'));
-  for (const s of list(edit.laps?.splitAt, 'laps.splitAt')) add('lap-split', s);
-  for (const s of list(edit.laps?.removeBoundaryAt, 'laps.removeBoundaryAt'))
-    add('lap-join', s);
-  for (const s of list(edit.parts?.splitAt, 'parts.splitAt'))
-    add('part-split', s);
-  return out.sort((a, b) => a.at.seconds - b.at.seconds);
-}
+/** Two positions this close count as the same (as `editRecording` takes
+ *  them). */
+const SAME_SECOND = 1;
+
+const byTime = (a: EditChange, b: EditChange) => a.at.seconds - b.at.seconds;
+const change = (kind: EditChange['kind'], s: number): EditChange => ({
+  kind,
+  at: Duration.seconds(s),
+});
 
 /**
  * The record of each part. With no crop and one part, the clock is the
  * original's; otherwise each part's clock starts again at its own start.
+ * Each part's changes are the ones that took effect in it: a crop of an
+ * end that was really cut, the part splits at its ends, and the lap splits
+ * and joins inside it (a join only where a recorded lap starts).
+ *
  * Throws a `RangeError` on a non-finite position, a crop that keeps
- * nothing, or a part split outside the kept stretch.
+ * nothing, a part split outside the kept stretch, or a crop or part split
+ * of a recording with no timestamps (its laps can still be edited).
  */
 export function editParts(
   record: ImportedActivity,
@@ -98,13 +99,23 @@ export function editParts(
       : undefined;
   const cropTo =
     edit.crop?.to !== undefined ? secs(edit.crop.to, 'crop.to') : undefined;
-  const from = Math.max(0, cropFrom ?? 0);
-  const to = Math.min(total, cropTo ?? total);
-  if (!(to > from))
+  const cuts = list(edit.parts?.splitAt, 'parts.splitAt');
+  if (
+    (cropFrom !== undefined || cropTo !== undefined || cuts.length) &&
+    !record.streams.timeSeconds?.length
+  )
+    throw new RangeError(
+      'edit: a recording with no timestamps can have its laps edited, but not be cropped or split into parts',
+    );
+  const cropping =
+    cropFrom !== undefined || cropTo !== undefined || cuts.length > 0;
+  // with nothing cropped the laps are edited over the whole recording
+  const from = cropping ? Math.max(0, cropFrom ?? 0) : -Infinity;
+  const to = cropping ? Math.min(total, cropTo ?? total) : Infinity;
+  if (cropping && !(to > from))
     throw new RangeError(
       `edit: the crop keeps nothing (from ${from} s, to ${to} s)`,
     );
-  const cuts = list(edit.parts?.splitAt, 'parts.splitAt');
   for (const c of cuts)
     if (!(c > from && c < to))
       throw new RangeError(
@@ -112,9 +123,10 @@ export function editParts(
       );
   const splits = list(edit.laps?.splitAt, 'laps.splitAt');
   const joins = list(edit.laps?.removeBoundaryAt, 'laps.removeBoundaryAt');
+  const lapStarts = lapStartSeconds(record);
+  const isLapStart = (s: number) =>
+    lapStarts.some((l) => Math.abs(l - s) < SAME_SECOND);
   const edges = [from, ...cuts, to];
-  const cropping =
-    cropFrom !== undefined || cropTo !== undefined || cuts.length > 0;
   const out: EditedPart[] = [];
   for (let k = 0; k + 1 < edges.length; k++) {
     const a = edges[k]!;
@@ -129,11 +141,23 @@ export function editParts(
       if (cuts.length || cropTo !== undefined) e.to = b;
     }
     const cropped = e.from !== undefined || e.to !== undefined;
+    const well = (s: number) => s > a + SAME_SECOND && s < b - SAME_SECOND;
+    const changes: EditChange[] = [];
+    if (k === 0 && cropFrom !== undefined && from > 0)
+      changes.push(change('crop-start', from));
+    if (k === edges.length - 2 && cropTo !== undefined && to < total)
+      changes.push(change('crop-end', to));
+    if (k > 0) changes.push(change('part-split', a));
+    if (k < edges.length - 2) changes.push(change('part-split', b));
+    for (const s of splits) if (well(s)) changes.push(change('lap-split', s));
+    for (const s of joins)
+      if (well(s) && isLapStart(s)) changes.push(change('lap-join', s));
     out.push({
       record: editRecording(record, e),
       offset: cropped ? Math.max(0, e.from ?? 0) : 0,
       from: a,
       to: b,
+      changes: changes.sort(byTime),
     });
   }
   return out;

@@ -162,6 +162,73 @@ describe('edit()', () => {
     ).toBe(10);
   });
 
+  it('lists only the changes that took effect, per part', () => {
+    const kinds = (x: Activity) =>
+      x.changes.map((c) => `${c.kind}@${c.at.seconds}`);
+    // a crop past the end cuts nothing; a split outside the crop does nothing;
+    // a join where no lap starts does nothing
+    const e = a.edit({
+      crop: { from: seconds(20), to: seconds(9999) },
+      laps: {
+        splitAt: [seconds(5), seconds(45)],
+        removeBoundaryAt: [seconds(50)],
+      },
+    });
+    expect(kinds(e)).toEqual(['crop-start@20', 'lap-split@45']);
+    const p = a.edit({
+      laps: { splitAt: [seconds(70)], removeBoundaryAt: [seconds(30)] },
+      parts: { splitAt: [seconds(50)] },
+    });
+    expect(kinds(p.parts[0]!)).toEqual(['lap-join@30', 'part-split@50']);
+    expect(kinds(p.parts[1]!)).toEqual(['part-split@50', 'lap-split@70']);
+  });
+
+  it('a stretch that only touches a part boundary is not in that part', () => {
+    const p = a.edit({ parts: { splitAt: [seconds(50)] } });
+    expect(
+      p.parts[1]!.fromOriginal({ from: seconds(40), to: seconds(50) }),
+    ).toBeNull();
+    expect(
+      p.parts[0]!.fromOriginal({ from: seconds(50), to: seconds(60) }),
+    ).toBeNull();
+    // a point on the boundary is still a point
+    expect(
+      p.parts[1]!.fromOriginal({ from: seconds(50), to: seconds(50) })
+        ?.fromSeconds,
+    ).toBe(0);
+  });
+
+  it('toOriginal holds the stretch to the edited activity', () => {
+    const e = a.edit({ crop: { from: seconds(20), to: seconds(60) } });
+    const s = e.toOriginal({ fromSeconds: 30, toSeconds: 500 });
+    expect([s.fromSeconds, s.toSeconds]).toEqual([50, 60]);
+    expect(() => e.toOriginal({ fromSeconds: 100, toSeconds: 200 })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('an untimed recording can have its laps edited, not be cropped', () => {
+    const start = Date.parse(START);
+    const swim = Activity.from({
+      activity: { ...META, sportType: 'Swim', elapsedTimeSeconds: 90 },
+      streams: { latlng: [] },
+      laps,
+      swim: {
+        movingSeconds: 60,
+        pool: { lengthMeters: 25, unit: 'm' },
+        lengths: [0, 30].map((s) => ({
+          startTimeUtc: new Date(start + s * 1000).toISOString(),
+          seconds: 30,
+          active: true,
+        })),
+      },
+    });
+    expect(() => swim.edit({ parts: { splitAt: [seconds(30)] } })).toThrow(
+      /laps edited, but not be cropped/,
+    );
+    expect(swim.edit({ laps: { splitAt: [seconds(45)] } }).laps.length).toBe(4);
+  });
+
   it('refuses a crop that keeps nothing and a part outside it', () => {
     expect(() => a.edit({ crop: { from: minutes(5) } })).toThrow(RangeError);
     expect(() =>
@@ -233,6 +300,22 @@ describe('views', () => {
   it('chartData over distance keys by metres', () => {
     const { series } = chartData(a, { x: 'distance', metrics: ['heartRate'] });
     expect(series.length).toBe(n);
+  });
+
+  it('chartData leaves distance empty when there is none, never 0', () => {
+    const b = Activity.from(rec({ timeSeconds: [0, 10], heartrate: [1, 2] }));
+    const { series } = chartData(b);
+    expect(series.at(0)!.get('distance')).toBeUndefined();
+    expect(series.at(1)!.get('heartRate')).toBe(2);
+  });
+
+  it('chartData over distance is keyed by metres from the start', () => {
+    const { series } = chartData(a, { x: 'distance', metrics: ['heartRate'] });
+    expect(series.axisAt(0)).toBe(0);
+    expect(series.axisAt(n - 1)).toBeCloseTo(
+      a.series.distance!.values()[n - 1]!,
+      9,
+    );
   });
 
   it('chartData refuses distance with none', () => {
