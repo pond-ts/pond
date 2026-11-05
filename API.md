@@ -209,7 +209,7 @@ runtime (`packages/core/src/schema/public.ts`).
   `atOrBefore`/`atOrAfter`/…); operators: `window()`, `aggregate()`,
   `rolling()`, `reduce()`, `diff()`, `rate()`, `pctChange()`, `fill()`,
   `cumulative()`, `partitionBy()`; snapshots: `toTimeSeries()`, `toRows()`;
-  subscription: `on()` (event/batch/evict) → unsubscribe fn; utilities:
+  subscription: `on()` (event/batch/columns/evict; `'columns'` hands each push's rows as a `TimeSeries`) → unsubscribe fn; utilities:
   `stats()`, `clear()`, `timeRange()`, `eventRate()`, `length`.
 - **`LiveView`** — transform: `filter()`, `map()`, `select()`, `sample()`;
   plus the same operator/query/snapshot/subscription surface as `LiveSeries`

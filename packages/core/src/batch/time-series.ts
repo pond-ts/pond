@@ -1019,13 +1019,22 @@ type TrustedStoreInput<S extends SeriesSchema> = {
  * Callers must have produced the store from data that already satisfies
  * the intake invariants: keys non-decreasing, column kinds matching the
  * schema, non-finite numerics rejected.
+ *
+ * @internal Exported for `LiveSeries`' `'columns'` listener, not from the
+ * package index. `schemaIsFrozenCopy` says `schema` is already a frozen
+ * array nobody else can change, so it is used as is.
  */
-function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+export function timeSeriesFromTrustedStore<S extends SeriesSchema>(
   name: string,
   schema: S,
   columnarStore: ColumnarStore<ColumnSchema>,
+  schemaIsFrozenCopy = false,
 ): TimeSeries<S> {
-  const frozenSchema = Object.freeze(schema.slice()) as S;
+  // A caller that already holds a frozen copy (a `LiveSeries` wrapping each
+  // push) can skip the copy: freezing a fresh array costs ~0.5 µs.
+  const frozenSchema = schemaIsFrozenCopy
+    ? schema
+    : (Object.freeze(schema.slice()) as S);
   const store = SeriesStore.fromTrustedStore(
     columnarStore as unknown as ColumnarStore<S>,
   ) as SeriesStore<S>;

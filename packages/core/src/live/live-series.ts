@@ -28,9 +28,12 @@ import {
 import {
   TimeSeries,
   assertSelectKeys,
+  timeSeriesFromTrustedStore,
   toKey,
   type KeyLike,
 } from '../batch/time-series.js';
+import { withRowSelection } from '../columnar/view.js';
+import type { ColumnSchema } from '../columnar/types.js';
 import { ValidationError } from '../core/errors.js';
 import { parseJsonRows } from '../batch/json.js';
 import type { TimeZoneOptions } from '../core/calendar.js';
@@ -229,6 +232,7 @@ type BatchListener<S extends SeriesSchema> = (
 type EvictListener<S extends SeriesSchema> = (
   events: ReadonlyArray<EventForSchema<S>>,
 ) => void;
+type ColumnsListener<S extends SeriesSchema> = (batch: TimeSeries<S>) => void;
 
 /**
  * @internal `pushSeries` copies a batch of this many rows or fewer on the
@@ -391,19 +395,20 @@ export function copyBatch(
 
 // ── LiveSeries ──────────────────────────────────────────────────
 
-/**
- * A mutable, append-optimized event buffer for live ingestion — the entry
- * point to the live layer. `push` validates rows against the same schema
- * as `TimeSeries`, retention (`maxEvents` / `maxAge`) bounds the buffer,
- * and subscribers react on the `'event'`, `'batch'`, and `'evict'`
- * channels; snapshot to the batch layer at any time with `toTimeSeries()`.
- * Example: `new LiveSeries({ name, schema, retention: { maxEvents: 10_000 } })`.
- */
 /** [PND-LIVFIX] Surface the first listener error once the push has completed. */
 function rethrowFirst(errors: ReadonlyArray<unknown>): void {
   if (errors.length > 0) throw errors[0];
 }
 
+/**
+ * A mutable, append-optimized event buffer for live ingestion — the entry
+ * point to the live layer. `push` validates rows against the same schema
+ * as `TimeSeries`, retention (`maxEvents` / `maxAge`) bounds the buffer,
+ * and subscribers react on the `'event'`, `'batch'`, `'columns'` and
+ * `'evict'` channels; snapshot to the batch layer at any time with
+ * `toTimeSeries()`.
+ * Example: `new LiveSeries({ name, schema, retention: { maxEvents: 10_000 } })`.
+ */
 export class LiveSeries<S extends SeriesSchema> {
   /** @internal */
   readonly [EMITS_EVICT] = true as const;
@@ -426,6 +431,8 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onBatch: ListenerSet<BatchListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
+  /** [PND-COLOUT] `'columns'` listeners: each push's rows as a `TimeSeries`. */
+  readonly #onColumns: ListenerSet<ColumnsListener<S>> = new ListenerSet();
   /** [PND-REDUCETICK] End-of-push listeners; see `settle.ts`. */
   readonly #onSettle: ListenerSet<() => void> = new ListenerSet();
   /**
@@ -439,6 +446,11 @@ export class LiveSeries<S extends SeriesSchema> {
   #lastEvictCount = 0;
   /** Rows staged by the open `_stageRowsOpen`, read by `_stageRowsClose`. */
   #stagedCount = 0;
+  /**
+   * The open `_stageRowsOpen` slice gathered into its own store, for
+   * `'columns'` listeners; `null` when none is attached.
+   */
+  #stagedStore: ColumnarStore<S> | null = null;
   /**
    * [PND-LIVFIX] Re-entrancy guard. `> 0` while a push is fanning out to
    * listeners. A push that arrives from inside a listener (`#dispatchDepth
@@ -551,6 +563,16 @@ export class LiveSeries<S extends SeriesSchema> {
   at(index: number): EventForSchema<S> | undefined {
     if (index < 0) index = this.#storage.length + index;
     return this.#storage.at(index);
+  }
+
+  /** @internal Every row's `Event` in order, without caching them. */
+  _forEachEventModulePrivate(fn: (event: EventForSchema<S>) => void): void {
+    const chunked = this.#chunked;
+    if (chunked !== null) {
+      chunked.forEachEvent(fn);
+      return;
+    }
+    for (let i = 0; i < this.#storage.length; i += 1) fn(this.#storage.at(i)!);
   }
 
   first(): EventForSchema<S> | undefined {
@@ -992,6 +1014,7 @@ export class LiveSeries<S extends SeriesSchema> {
     const evicted = this.#applyRetention();
 
     this.#dispatch(this.#onBatch, added, errors);
+    this.#emitColumnsFromEvents(added, errors);
     if (evicted.length > 0) {
       this.#dispatch(this.#onEvict, evicted, errors);
     }
@@ -1160,6 +1183,10 @@ export class LiveSeries<S extends SeriesSchema> {
     chunked.stageRows(source, indices);
     this.#statsIngested += k;
     this.#stagedCount = k;
+    this.#stagedStore =
+      k > 0 && this.#onColumns.size > 0
+        ? withRowSelection(source, Int32Array.from(indices))
+        : null;
     const added =
       k > 0 && (this.#onEvent.size > 0 || this.#onBatch.size > 0)
         ? materializeEventsFromStoreAt(source, indices, this.schema)
@@ -1193,6 +1220,9 @@ export class LiveSeries<S extends SeriesSchema> {
       }
       const evicted = this.#applyRetention();
       if (added) this.#dispatch(this.#onBatch, added, errors);
+      const staged = this.#stagedStore;
+      this.#stagedStore = null;
+      if (staged) this.#emitColumns(staged, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
       if (this.#lastEvictCount > 0) {
         this.#dispatch(this.#onEvictSignal, undefined, errors);
@@ -1264,11 +1294,54 @@ export class LiveSeries<S extends SeriesSchema> {
     const evicted = this.#applyRetention();
 
     if (added) this.#dispatch(this.#onBatch, added, errors);
+    if (n > 0) this.#emitColumns(store, errors);
     if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
     if (this.#lastEvictCount > 0) {
       this.#dispatch(this.#onEvictSignal, undefined, errors);
     }
     rethrowFirst(errors);
+  }
+
+  /**
+   * [PND-COLOUT] Hand `'columns'` listeners the rows a push added, as a
+   * `TimeSeries` over `store` (no row is read or copied). The store is
+   * the one the series keeps, which nothing changes afterwards: eviction
+   * drops or re-slices chunks, it never writes into one.
+   */
+  #emitColumns(store: ColumnarStore<S>, errors: unknown[]): void {
+    if (this.#onColumns.size === 0) return;
+    const batch = timeSeriesFromTrustedStore(
+      this.name,
+      this.schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+      true,
+    );
+    this.#dispatch(this.#onColumns, batch, errors);
+  }
+
+  /**
+   * [PND-COLOUT] The per-row backing's `'columns'`: the added events,
+   * sorted by key (a `reorder` push can add a late row after a newer
+   * one), as a `TimeSeries` that shares those `Event` objects.
+   */
+  #emitColumnsFromEvents(
+    added: ReadonlyArray<EventForSchema<S>>,
+    errors: unknown[],
+  ): void {
+    if (this.#onColumns.size === 0 || added.length === 0) return;
+    let batch: TimeSeries<S>;
+    try {
+      batch = TimeSeries.fromEvents(added, {
+        name: this.name,
+        schema: this.schema,
+      });
+    } catch (error) {
+      // Keep the rest of the push (`'evict'`, signals) running, as a
+      // throwing listener would.
+      errors.push(error);
+      return;
+    }
+    this.#dispatch(this.#onColumns, batch, errors);
   }
 
   /**
@@ -1345,6 +1418,7 @@ export class LiveSeries<S extends SeriesSchema> {
       const evicted = this.#applyRetention();
 
       this.#dispatch(this.#onBatch, added, errors);
+      this.#emitColumnsFromEvents(added, errors);
       if (evicted.length > 0) this.#dispatch(this.#onEvict, evicted, errors);
       if (this.#lastEvictCount > 0) {
         this.#dispatch(this.#onEvictSignal, undefined, errors);
@@ -1990,16 +2064,44 @@ export class LiveSeries<S extends SeriesSchema> {
   on(type: 'event', fn: EventListener<S>): () => void;
   on(type: 'batch', fn: BatchListener<S>): () => void;
   on(type: 'evict', fn: EvictListener<S>): () => void;
+  /**
+   * Example: `live.on('columns', (batch) => draw(batch.column('cpu')))`.
+   * Fires once per push that adds rows, with just those rows as a
+   * `TimeSeries`, so a consumer can read whole columns (`column(name)`,
+   * `keyColumn()`, `toColumns()`, …) instead of one `Event` per row.
+   *
+   * On the default (`strict`, time-keyed) series no `Event` is built and
+   * no row is copied: the batch shares the arrays the series stores, and
+   * wrapping them costs well under a microsecond a push. (A partition
+   * sub-series gathers its rows into fresh arrays; a `pushSeries` batch of
+   * 8 rows or fewer is copied on the way in.) Holding on to a batch keeps
+   * those arrays in memory after retention drops the rows from the series.
+   * After `pushSeries`, the batch shares the pushed series' arrays, so it
+   * changes only if the caller writes into them (see `pushSeries`). Other
+   * series (`reorder` / `drop`, non-time keys) build
+   * the batch from the added events, sorted by key.
+   *
+   * Fires right after `'batch'` and before `'evict'`. A batch is
+   * immutable: later pushes and retention never change it. Partition
+   * sub-series fire it too, once per routed batch.
+   */
+  on(type: 'columns', fn: ColumnsListener<S>): () => void;
   on(
-    type: 'event' | 'batch' | 'evict',
-    fn: EventListener<S> | BatchListener<S> | EvictListener<S>,
+    type: 'event' | 'batch' | 'evict' | 'columns',
+    fn:
+      | EventListener<S>
+      | BatchListener<S>
+      | EvictListener<S>
+      | ColumnsListener<S>,
   ): () => void {
     const set =
       type === 'event'
         ? this.#onEvent
         : type === 'batch'
           ? this.#onBatch
-          : this.#onEvict;
+          : type === 'columns'
+            ? this.#onColumns
+            : this.#onEvict;
     set.add(fn as any);
     return () => {
       set.delete(fn as any);

@@ -93,6 +93,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
   step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
   `CumulativeAccumulator` and `CumulativeChange`.
+- **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
+  with just the rows that push added, as a `TimeSeries`, so a listener can
+  read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
+  instead of one `Event` per row. On a default (`strict`, time-keyed) series
+  no `Event` is built and no row is copied (handing the batch over costs
+  well under a microsecond a push). 1M rows in pushes of 1,000: a
+  listener summing a column 320 → 141 ms, copying a column into a buffer
+  356 → 142 ms, writing JSON rows 446 → 251 ms, against the same work on
+  `'batch'`. `reorder` / `drop` series build the batch from the added
+  events, sorted by key. Fires after `'batch'` and before `'evict'`;
+  partition sub-series fire it too. `'event'` / `'batch'` / `'evict'` are
+  unchanged.
+
 - **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
   ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
   over whole columns like the other expression steps, in pond-ts, pond-rs
@@ -632,6 +645,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   update 1338 vs 2647.
 
 ### Changed
+
+- **Live operators set up faster on a series that already holds rows**
+  ([PND-LIVEREPLAY]). `filter` / `map` / `window` views, `rolling`,
+  `aggregate`, `reduce` and `partitionBy` read the rows already in a
+  `LiveSeries` the way they read new pushes: fresh `Event`s, without
+  filling the series' per-row cache. Results are unchanged. 200k rows:
+  `rolling` 423–480 → 216–251 ms, `reduce` 558–642 → 193–274 ms,
+  `partitionBy().collect()` 1,057–1,079 → 358–436 ms; and the pushes right
+  after building a view on a full, retention-capped series no longer slow
+  down (45–56 → 2.2 ms per push of 1,600 rows, [PND-LATCACHE]). One
+  behaviour change: a replayed row's `Event` is no longer the same object
+  as the series' `at(i)` (unless the series had already built it), which
+  is how rows pushed after the operator was attached already behaved.
 
 - **`trim` clips on the key columns** ([PND-TRIMCOL]) instead of trimming
   an `Event` per row. Output is identical: same rows, clipped keys, re-sort

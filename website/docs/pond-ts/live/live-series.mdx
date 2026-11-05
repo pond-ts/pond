@@ -711,6 +711,46 @@ const unsub = live.on('event', handler);
 unsub();
 ```
 
+### Columns: each push as a TimeSeries
+
+`'columns'` fires once per push with just the rows that push added, as a
+normal `TimeSeries`. Read whole columns from it instead of one `Event` per
+row: it suits code that copies values into a chart buffer or writes them to
+the wire.
+
+```ts
+live.on('columns', (batch) => {
+  const time = batch.keyColumn();
+  const cpu = batch.column('cpu');
+  for (let i = 0; i < batch.length; i += 1) {
+    send(time.beginAt(i), cpu.read(i));
+  }
+});
+```
+
+On a default (`strict`, time-keyed) series this builds no `Event` and copies
+no row: the batch shares the arrays the series stores, and handing it over
+costs well under a microsecond a push. (Partition sub-series gather their
+rows into fresh arrays, and a `pushSeries` batch of 8 rows or fewer is copied
+on the way in.) With
+`ordering: 'reorder'` or `'drop'` the batch is built from the added events,
+sorted by key. A batch never changes once handed out, even after retention
+drops its rows from the series (holding one keeps those rows in memory),
+unless you write into arrays you handed to `pushSeries`.
+Partition sub-series fire it too.
+
+1M rows pushed 1,000 at a time into a 10,000-row buffer (median of 5,
+`packages/core/scripts/perf-live-columns.mjs`):
+
+| the listener                    | `'batch'` | `'columns'` |
+| ------------------------------- | --------: | ----------: |
+| (none attached)                 |    130 ms |      130 ms |
+| sums one column                 |    320 ms |      141 ms |
+| copies one column into a buffer |    356 ms |      142 ms |
+| writes every row as JSON        |    446 ms |      251 ms |
+
+pond-rs has no `'columns'` output yet.
+
 ### Callback ordering
 
 Within a single `push()` call:
@@ -718,7 +758,8 @@ Within a single `push()` call:
 1. **event** — fires per event, inline with insertion
 2. Retention runs (may evict old events)
 3. **batch** — fires once with all events that were added
-4. **evict** — fires if retention removed events
+4. **columns** — fires once with the added rows as a `TimeSeries`
+5. **evict** — fires if retention removed events
 
 `clear()` fires only the **evict** subscription.
 

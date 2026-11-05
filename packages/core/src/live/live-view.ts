@@ -4,6 +4,7 @@ import {
   resolveCumulative,
   type CumulativeAccumulator,
 } from '../batch/operators/cumulative.js';
+import { replaySource } from './replay.js';
 import { livePredicate } from './expression-predicate.js';
 import { ListenerSet } from './listener-set.js';
 import { onSourceSettle } from './settle.js';
@@ -207,10 +208,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#onEvict = new ListenerSet();
     this.#onTrim = new ListenerSet();
 
-    for (let i = 0; i < source.length; i++) {
-      const result = this.#process(source.at(i)!);
+    replaySource(source, (event) => {
+      const result = this.#process(event);
       if (result !== undefined) this.#appendChecked(result);
-    }
+    });
     this.#applyEviction();
 
     const eventUnsub = source.on('event', (event) => {

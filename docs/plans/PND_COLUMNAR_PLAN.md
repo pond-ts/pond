@@ -107,6 +107,44 @@ data for a frame cost 0.00–0.01 ms (cloud) against 4–362 ms through
 chart case alongside the gRPC fan-out case above;
 [PND-STREAMDRAW](PND_CHARTS_PLAN.md) would consume it.
 
+**Outcome (built 2026-11-05, Peter chose the shape by card):**
+`live.on('columns', (batch) => …)`. The brief's open choices, settled:
+
+- **Payload: a plain `TimeSeries`** (the brief's option (a)), not a new
+  window type. On the chunked backing it wraps the very `ColumnarStore` the
+  push appended (`timeSeriesFromTrustedStore`, now exported `@internal`),
+  so nothing is copied. That store never changes afterwards: retention
+  drops whole chunks or replaces the boundary chunk with a `sliceStore`
+  copy, never writes into one. Wrapping costs ~0.4 µs a push once the
+  schema copy is skipped (`schemaIsFrozenCopy`; freezing a fresh schema
+  array was ~0.5 µs of the first ~1 µs).
+- **Name: `'columns'`** (says what you get), over the brief's lean `'run'`.
+- **Every backing.** Per-row backing (`reorder` / `drop`, non-time keys):
+  `TimeSeries.fromEvents(added)`, sorted by key, sharing the pushed
+  `Event`s. Partition sub-series on the column-native route gather their
+  slice with `withRowSelection` in `_stageRowsOpen` (only when a
+  `'columns'` listener is attached) and fire in `_stageRowsClose`.
+- **When:** right after `'batch'`, before `'evict'`, once per push that
+  added rows.
+- Not built: columnar `'evict'`, `'columns'` on views / aggregations /
+  partitioned series as a whole, a pond-rs counterpart ([PND-RUSTCOLS]).
+
+Numbers (`packages/core/scripts/perf-live-columns.mjs`, 10k-row buffer,
+median of 5, same consumer work on `'batch'` vs `'columns'`):
+
+| pushes          | listener      | `'batch'` | `'columns'` |
+| --------------- | ------------- | --------: | ----------: |
+| 1M rows × 1,000 | none attached |    130 ms |      130 ms |
+| 1M rows × 1,000 | sum a column  |    320 ms |      141 ms |
+| 1M rows × 1,000 | copy a column |    356 ms |      142 ms |
+| 1M rows × 1,000 | JSON rows     |    446 ms |      251 ms |
+| 1M rows × 100   | sum a column  |    453 ms |      281 ms |
+| 200k rows × 10  | sum a column  |    176 ms |      136 ms |
+| 100k rows × 1   | sum a column  |    300 ms |      265 ms |
+
+Garbage collections at 1,000-row pushes: 21–30 with `'batch'`, 5–11 with
+`'columns'`. The gRPC experiment's A/B (brief increment 2) has not been run.
+
 ### [PND-REORD] — Columnar reorder (§B)
 
 Append-only main store + sorted "late corral" overlay + grace-flush
@@ -2178,6 +2216,42 @@ Lookups stay one step deep. Not changed, and worth knowing: a small
 selection (`tail('10s')` of 1M rows) keeps the whole source store alive,
 because its events are the source's; the old `filter` path held only the
 kept events.
+
+**[PND-LIVEREPLAY] shipped — operators replay existing rows like pushes.**
+Peter's call (2026-11-05, decision card): replayed rows may be fresh `Event`
+objects rather than the series' cached ones, which is how rows pushed after
+an operator is attached already behaved. New `ChunkedColumnarLiveStorage.forEachEvent`
+builds each chunk's events with `materializeEventsFromStore` (the
+`'event'` fan-out's builder) and never fills the per-row cache; an event
+the series already built and cached is reused. `LiveSeries._forEachEventModulePrivate`
+calls it on the chunked backing and reads `at(i)` on the per-row backing
+(unchanged there, so `ordering: 'reorder'`, which the reduce identity map
+needs, behaves as before). `live/replay.ts` `replaySource` duck-types it,
+and every construction replay uses it: `LiveView`, `LiveRollingAggregation`,
+`LiveAggregation`, `LiveReduce`, fused rolling, and `LivePartitionedSeries`
+(`#replayChunked`, per-event routing, `collect`, `apply`, sync rolling).
+`LiveReduce` on the chunked backing now resolves replayed evictions through
+its FIFO frontier, as it already did for pushed events. Old-vs-new oracle
+(main 3bc21452 vs this build): 4,000 random cases (11 operators, rows
+before and after attaching, one-at-a-time and batched pushes, `maxEvents` /
+`maxAge` retention, no / some / all events pre-read), comparing operator
+contents before and after the later pushes, `value()`, every emitted event,
+and the source: 4,000/4,000 equal; a planted replay that skipped each
+chunk's first row gave 1,356 mismatches. 200k rows, batches of 1,000,
+median of 5, two runs (`scripts/perf-live-replay.mjs`):
+
+| call                                                   | before (ms) | after (ms) |
+| ------------------------------------------------------ | ----------: | ---------: |
+| attach `filter` view                                   |     241–252 |     93–109 |
+| attach `rolling('1m', avg)`                            |     423–480 |    216–251 |
+| attach `aggregate(every('1m'), avg)`                   |     273–281 |     71–111 |
+| attach `reduce(avg)`                                   |     558–642 |    193–274 |
+| attach `partitionBy('host').collect()`                 | 1,057–1,079 |    358–436 |
+| attach `partitionBy('host').rolling('1m', avg)`        |     348–392 |    196–240 |
+| next 50 pushes after a view (maxEvents 200k), per push |       45–56 |        2.2 |
+
+What is left in setup time is each operator's own per-row work (window
+states, buckets, partition routing), not `Event` building.
 
 **[PND-GROUPEVENTS] shipped.** `groupBy` groups row numbers by
 `String(column.read(i))` (`'undefined'` for a gap, so a gap and the text
