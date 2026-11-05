@@ -1328,10 +1328,18 @@ export class LiveSeries<S extends SeriesSchema> {
     errors: unknown[],
   ): void {
     if (this.#onColumns.size === 0 || added.length === 0) return;
-    const batch = TimeSeries.fromEvents(added, {
-      name: this.name,
-      schema: this.schema,
-    });
+    let batch: TimeSeries<S>;
+    try {
+      batch = TimeSeries.fromEvents(added, {
+        name: this.name,
+        schema: this.schema,
+      });
+    } catch (error) {
+      // Keep the rest of the push (`'evict'`, signals) running, as a
+      // throwing listener would.
+      errors.push(error);
+      return;
+    }
     this.#dispatch(this.#onColumns, batch, errors);
   }
 
@@ -2068,9 +2076,13 @@ export class LiveSeries<S extends SeriesSchema> {
    *
    * On the default (`strict`, time-keyed) series no `Event` is built and
    * no row is copied: the batch shares the arrays the series stores, and
-   * wrapping them costs well under a microsecond a push. Holding on to a
-   * batch keeps those arrays in memory after retention drops the rows from
-   * the series. Other series (`reorder` / `drop`, non-time keys) build
+   * wrapping them costs well under a microsecond a push. (A partition
+   * sub-series gathers its rows into fresh arrays; a `pushSeries` batch of
+   * 8 rows or fewer is copied on the way in.) Holding on to a batch keeps
+   * those arrays in memory after retention drops the rows from the series.
+   * After `pushSeries`, the batch shares the pushed series' arrays, so it
+   * changes only if the caller writes into them (see `pushSeries`). Other
+   * series (`reorder` / `drop`, non-time keys) build
    * the batch from the added events, sorted by key.
    *
    * Fires right after `'batch'` and before `'evict'`. A batch is

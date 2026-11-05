@@ -95,6 +95,34 @@ describe("LiveSeries on('columns') [PND-COLOUT]", () => {
     expect(before).toEqual(expected(rowsFrom(0, 8)));
   });
 
+  it('partition and time-range batches never change either', () => {
+    const live = make({ retention: { maxEvents: 12 } });
+    const parts = live.partitionBy('host', { groups: ['h0', 'h1', 'h2'] });
+    const held: Array<[TimeSeries<any>, unknown]> = [];
+    for (const p of parts.toMap().values()) {
+      (p as LiveSeries<any>).on('columns', (b) => held.push([b, asRows(b)]));
+    }
+    const ranges = new LiveSeries({
+      name: 'r',
+      schema: [
+        { name: 'span', kind: 'timeRange' },
+        { name: 'v', kind: 'number' },
+      ],
+      retention: { maxEvents: 3 },
+    } as never) as LiveSeries<any>;
+    ranges.on('columns', (b) => held.push([b, asRows(b)]));
+    for (let k = 0; k < 8; k += 1) {
+      live.pushMany(rowsFrom(k * 9, 9) as never);
+      ranges.pushMany([
+        [[k * 10, k * 10 + 5], k],
+        [[k * 10 + 1, k * 10 + 9], -k],
+      ] as never);
+    }
+    expect(held.length).toBe(8 * 3 + 8);
+    for (const [batch, rowsThen] of held)
+      expect(asRows(batch)).toEqual(rowsThen);
+  });
+
   it('reorder: the batch holds the accepted rows sorted by key, sharing their events', () => {
     const live = make({ ordering: 'reorder' });
     const seen: TimeSeries<any>[] = [];
