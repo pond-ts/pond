@@ -81,8 +81,12 @@ export function parseTcx(
   input: string,
   options: ReadOptions = {},
 ): ImportedActivity {
-  // read elements by their local name: <t:Trackpoint> as <Trackpoint>
-  const xml = input.replace(/<(\/?)[\w.-]+:(?=[\w.-])/g, '<$1');
+  // read elements by their local name: <t:Trackpoint> as <Trackpoint>;
+  // text inside CDATA is left exactly as written
+  const xml = input.replace(
+    /<!\[CDATA\[[\s\S]*?\]\]>|<(\/?)[\w.-]+:(?=[\w.-])/g,
+    (m, slash: string | undefined) => (slash === undefined ? m : `<${slash}`),
+  );
   const pts: TcxPoint[] = [];
   let m: RegExpExecArray | null;
   TRACKPOINT.lastIndex = 0;

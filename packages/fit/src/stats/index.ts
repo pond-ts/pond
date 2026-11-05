@@ -28,7 +28,13 @@
  */
 import * as geo from '../geo/index.js';
 import { normalizedPower } from '../power/index.js';
-import { distanceAtSeconds, type PreparedActivity } from '../summary/index.js';
+import {
+  distanceAtSeconds,
+  movingBeforeSample,
+  movingSecondsIn,
+  overlapSeconds,
+  type PreparedActivity,
+} from '../summary/index.js';
 
 /** The channels the stats cover. `speed` is metres per second (a pace is the
  *  same number read the other way up); `elevation` is metres. */
@@ -207,21 +213,31 @@ function indexAt(t: Float64Array, sec: number): number {
 
 /** Whether the time just before sample i (i ≥ 1) was moving. */
 function movingBefore(s: Samples, i: number): boolean {
-  if (s.moving)
-    return s.hasTime && s.moving[i] === 1 && s.t[i]! - s.t[i - 1]! > 0;
-  const v = s.speed[i];
-  return (
-    s.hasTime &&
-    fin(v) &&
-    v >= geo.MOVING_SPEED_MPS &&
-    s.t[i]! - s.t[i - 1]! > 0
-  );
+  return movingBeforeSample(s.prep, i);
 }
 
-/** Whether sample i counts as moving inside the window [lo, hi]. */
-function movingSample(s: Samples, lo: number, hi: number, i: number): boolean {
-  if (i > lo) return movingBefore(s, i);
-  return hi > lo ? movingBefore(s, lo + 1) : false;
+/** The part of a window that judges its samples moving: its samples, and
+ *  where the window itself starts. */
+interface Judge {
+  lo: number;
+  hi: number;
+  from: number;
+}
+
+/**
+ * Whether sample i counts as moving inside a window. A reading stands for
+ * the time leading up to it, so it is judged by the gap before it. The
+ * window's first sample is judged by the gap before it too when the window
+ * starts inside that gap; when the window starts on the sample (or it is the
+ * recording's first), by the gap after it, the one the window covers.
+ */
+function movingSample(s: Samples, w: Judge, i: number): boolean {
+  if (i > w.lo) return movingBefore(s, i);
+  const n = s.t.length;
+  const startsInGap = i >= 1 && w.from < s.t[i]! - EPS;
+  if (startsInGap) return movingBefore(s, i);
+  if (i + 1 < n) return movingBefore(s, i + 1);
+  return i >= 1 ? movingBefore(s, i) : false;
 }
 
 interface Tally {
@@ -240,9 +256,9 @@ function tally(
   vals: ArrayLike<number>,
   lo: number,
   hi: number,
-  /** The window's real first sample, for judging moving (speed starts its
-   *  tally one sample in, but the window still starts at `lo`). */
-  windowLo = lo,
+  /** The window, for judging moving (speed may start its tally one sample
+   *  in, but the window still starts where it starts). */
+  judge: Judge,
 ): Tally {
   const out: Tally = {
     sum: 0,
@@ -261,7 +277,7 @@ function tally(
     out.n++;
     if (v < out.min) out.min = v;
     if (v > out.max) out.max = v;
-    if (movingSample(s, windowLo, hi, i)) {
+    if (movingSample(s, judge, i)) {
       out.movingSum += v;
       out.movingN++;
       if (v < out.movingMin) out.movingMin = v;
@@ -276,15 +292,15 @@ function tally(
 function windowNp(
   s: Samples,
   watts: Float64Array,
-  lo: number,
-  hi: number,
+  judge: Judge,
   movingOnly: boolean,
 ): number | undefined {
+  const { lo, hi } = judge;
   const clock: number[] = [];
   const w: number[] = [];
   let tm = 0;
   for (let i = lo; i <= hi; i++) {
-    const moving = !movingOnly || movingSample(s, lo, hi, i);
+    const moving = !movingOnly || movingSample(s, judge, i);
     if (i > lo && moving) tm += s.t[i]! - s.t[i - 1]!;
     const v = watts[i];
     if (moving && fin(v)) {
@@ -346,10 +362,13 @@ function checkSpan(span: Span): void {
   if (a > b) throw new RangeError(`span starts after it ends: [${a}, ${b}]`);
 }
 
-/** Whether a span lies wholly outside the recording. */
+/** Whether a span lies wholly outside the recording: before or after its
+ *  extent, or a recording with nothing in it (no samples and no pool
+ *  lengths). */
 function outside(s: Samples, span: Span): boolean {
   const { from, to } = s.prep.extent;
-  return s.t.length === 0 || span.toSeconds < from || span.fromSeconds > to;
+  if (s.t.length === 0 && !s.poolLengths) return true;
+  return span.toSeconds < from || span.fromSeconds > to;
 }
 
 /** Times within this of a sample count as on it (float noise from
@@ -378,34 +397,6 @@ function lastAtOrBefore(t: Float64Array, sec: number): number {
     else hi = mid;
   }
   return lo - 1;
-}
-
-/** Seconds of [a, b] inside the given stretches. */
-function overlap(
-  spans: ReadonlyArray<readonly [number, number]>,
-  a: number,
-  b: number,
-): number {
-  let sum = 0;
-  for (const [x, y] of spans) {
-    const ov = Math.min(b, y) - Math.max(a, x);
-    if (ov > 0) sum += ov;
-  }
-  return sum;
-}
-
-/** Moving seconds in [a, b]. By the sport's stretches when it has them;
- *  else each sample gap judged moving counts for its part inside [a, b]. */
-function movingIn(s: Samples, a: number, b: number): number {
-  if (!s.hasTime) return 0;
-  if (s.movingSpans) return overlap(s.movingSpans, a, b);
-  let moving = 0;
-  for (let i = Math.max(1, indexAt(s.t, a)); i < s.t.length; i++) {
-    if (s.t[i - 1]! >= b) break;
-    const ov = Math.min(s.t[i]!, b) - Math.max(s.t[i - 1]!, a);
-    if (ov > 0 && movingBefore(s, i)) moving += ov;
-  }
-  return moving;
 }
 
 /** Metres in [a, b], on the activity's one distance axis. */
@@ -448,7 +439,7 @@ function measure(s: Samples, span: Span): Window {
     to: b,
     // with no timestamps the sample axis is a count, not seconds
     elapsed: s.hasTime ? b - a : 0,
-    moving: movingIn(s, a, b),
+    moving: movingSecondsIn(s.prep, a, b),
     meters: metersIn(s, a, b),
     empty: false,
     samples: lo <= hi,
@@ -505,9 +496,10 @@ function statsOf(s: Samples, w: Window): SectionStats {
   }
   if (s.hasTime && s.t.length > 1 && w.elapsed > 0) {
     const sp = steadySpeed(s);
-    // the first sample has no speed of its own: start from the next one
-    const from = lo + 1;
-    const t = tally(s, sp, from, hi, lo);
+    // A sample's speed is over the gap before it: count it when the window
+    // starts inside that gap, else start from the next sample.
+    const from = lo >= 1 && w.from < s.t[lo]! - EPS ? lo : lo + 1;
+    const t = tally(s, sp, from, hi, w);
     const e = ends(sp, from, hi);
     const speed = defined<ChannelStats>({
       first: e.first,
@@ -524,7 +516,7 @@ function statsOf(s: Samples, w: Window): SectionStats {
   for (const ch of ['hr', 'power', 'cadence', 'elevation'] as const) {
     const vals = s[ch];
     if (!vals) continue;
-    const t = tally(s, vals, lo, hi);
+    const t = tally(s, vals, lo, hi, w);
     if (!t.n) continue;
     const e = ends(vals, lo, hi);
     const c: Loose<ChannelStats> = {
@@ -538,8 +530,8 @@ function statsOf(s: Samples, w: Window): SectionStats {
       maxMoving: t.movingN ? t.movingMax : undefined,
     };
     if (ch === 'power') {
-      c.np = windowNp(s, vals, lo, hi, false);
-      c.movingNp = windowNp(s, vals, lo, hi, true);
+      c.np = windowNp(s, vals, w, false);
+      c.movingNp = windowNp(s, vals, w, true);
     }
     if (ch === 'elevation') {
       const { gainMeters, lossMeters } = geo.elevationGainLoss(
@@ -569,7 +561,7 @@ export function spanNormalizedPower(
   const s = samplesOf(prep);
   if (!s.power) return undefined;
   const w = measure(s, span);
-  return !w.samples ? undefined : windowNp(s, s.power, w.lo, w.hi, false);
+  return !w.samples ? undefined : windowNp(s, s.power, w, false);
 }
 
 /** The sample indexes a section covers, both ends included (snapped as
@@ -581,6 +573,16 @@ export function sectionWindow(
 ): { lo: number; hi: number } | null {
   const w = measure(samplesOf(prep), span);
   return !w.samples ? null : { lo: w.lo, hi: w.hi };
+}
+
+/** A section's ends held to the recording, seconds from the start; null
+ *  when the span misses it. @internal */
+export function sectionBounds(
+  prep: PreparedActivity,
+  span: Span,
+): { from: number; to: number } | null {
+  const w = measure(samplesOf(prep), span);
+  return w.empty ? null : { from: w.from, to: w.to };
 }
 
 /** The stats for one section of a prepared activity. Throws `RangeError` on
@@ -667,7 +669,7 @@ export function sectionGroupStats(
         for (let i = w.lo; i <= w.hi; i++) {
           if (!fin(vals[i])) continue;
           inAny[i] = 1;
-          if (movingSample(s, w.lo, w.hi, i)) movingInAny[i] = 1;
+          if (movingSample(s, w, i)) movingInAny[i] = 1;
         }
       }
       for (let i = 0; i < vals.length; i++) {
@@ -771,7 +773,7 @@ export function movingClock(prep: PreparedActivity): MovingClock {
   const spans = s.movingSpans;
   if (spans) {
     // a pool swim: the clock runs inside its swum stretches, exactly
-    const before = (sec: number) => overlap(spans, -Infinity, sec);
+    const before = (sec: number) => overlapSeconds(spans, -Infinity, sec);
     return {
       at(sec) {
         const inside = spans.some(([a, b]) => sec >= a && sec <= b);

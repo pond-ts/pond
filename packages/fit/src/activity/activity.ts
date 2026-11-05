@@ -19,7 +19,6 @@ import {
   hasDistance,
   prepareActivity,
   secondsAtDistance,
-  totalDistance,
   swimMoving,
   type PreparedActivity,
 } from '../summary/index.js';
@@ -388,8 +387,10 @@ export class Activity extends Section {
     if (!(step > 0)) throw new RangeError('splits: the interval must be > 0');
     let cached = this.#splits.get(step);
     if (!cached) {
-      const base = this.prep.cum.length ? this.prep.cum[0]! : 0;
-      const total = totalDistance(this.prep) - base;
+      // from the activity's distance where it starts (a pool swim's first
+      // length can come before its first sample), so the splits cover it all
+      const base = distanceAtSeconds(this.prep, this.fromSeconds);
+      const total = distanceAtSeconds(this.prep, this.toSeconds) - base;
       const items: Section[] = [];
       // a sliver under a millimetre left by rounding is not a split
       for (let k = 0; k * step < total - 1e-3; k++) {

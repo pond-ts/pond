@@ -9,8 +9,12 @@
  * `null`: no FTP means no intensity factor, no training load and no power
  * zones, while average and normalized power still come back.
  */
-import { hasDistance, type PreparedActivity } from '../summary/index.js';
-import { sectionWindow, type Span } from '../stats/index.js';
+import {
+  distanceAtSeconds,
+  hasDistance,
+  type PreparedActivity,
+} from '../summary/index.js';
+import { sectionBounds, sectionWindow, type Span } from '../stats/index.js';
 import {
   powerCurve,
   zoneDistribution,
@@ -94,6 +98,34 @@ function windowOf(src: AnalysisSource) {
     speed: prep.speed.subarray(w.lo, w.hi + 1),
     cum: prep.cum.subarray(w.lo, w.hi + 1),
   };
+}
+
+/**
+ * Time and distance to search for best efforts over. A pool swim of a known
+ * pool length searches its lengths: each length's start and end, inside the
+ * section (its ends included), whether or not a sample was taken there.
+ * Anything else searches its samples.
+ */
+function effortTimeline(
+  src: AnalysisSource,
+): { t: Float64Array; cum: Float64Array } | null {
+  const { prep } = src;
+  const lengths = prep.poolLengths;
+  if (!lengths) {
+    const w = windowOf(src);
+    return w ? { t: w.t, cum: w.cum } : null;
+  }
+  const b = prep.hasTime ? sectionBounds(prep, src.span) : null;
+  if (!b || !(b.to > b.from)) return null;
+  const times = [b.from];
+  for (const l of lengths)
+    for (const x of [l.from, l.to])
+      if (x > b.from && x < b.to && x !== times[times.length - 1])
+        times.push(x);
+  times.push(b.to);
+  const t = Float64Array.from(times);
+  const cum = t.map((sec) => distanceAtSeconds(prep, sec));
+  return { t, cum };
 }
 
 function hasFinite(a: Float64Array | undefined): Float64Array | undefined {
@@ -296,9 +328,10 @@ export class PaceEfforts<S> {
 
   /** The fastest time over each distance (by default 400 m up to the
    *  marathon), shortest first. Distances longer than the section are left
-   *  out. */
+   *  out. A pool swim searches its lengths, so an effort starts and ends at
+   *  a length's start or end (or the section's own ends). */
   bestEfforts(distances?: readonly Distance[]): PaceBestEffort<S>[] {
-    const w = windowOf(this.#src);
+    const w = effortTimeline(this.#src);
     if (!w || !hasDistance(this.#src.prep)) return [];
     const meters = distances
       ? distances.map((d) => d.meters)

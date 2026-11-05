@@ -64,12 +64,15 @@ export interface ChannelProfile {
 export interface ActivitySummary {
   startTimeUtc: string;
   pointCount: number;
+  /** The same totals `activity.stats()` gives: distance on the activity's
+   *  one distance axis (a pool swim's lengths, else the samples). */
   distanceMeters: number;
-  /** Time the clock ran (last sample − first sample). */
+  /** From the activity's start (or an earlier sample) to its last sample,
+   *  or to a pool swim's last length. */
   elapsedTimeSeconds: number;
-  /** Time actually moving: the time between samples at or above
-   *  `MOVING_SPEED_MPS`, or a swim watch's swim time when the import carries
-   *  one (`ImportedActivity.swim`). */
+  /** By the activity's moving rule: a pool swim's lengths, the time between
+   *  samples at or above `MOVING_SPEED_MPS`, or, for a swim with no GPS and
+   *  nothing else to go by, the watch's swim time. */
   movingTimeSeconds: number;
   elevationGainMeters: number;
   elevationLossMeters: number;
@@ -637,6 +640,78 @@ export function hasDistance(prep: PreparedActivity): boolean {
   );
 }
 
+/** Whether the time just before sample i (i ≥ 1) was moving, by the
+ *  activity's rule: a pool swim's swum stretches, else the speed rule.
+ *  @internal */
+export function movingBeforeSample(prep: PreparedActivity, i: number): boolean {
+  const { timeRel: t } = prep;
+  if (!prep.hasTime || !(t[i]! - t[i - 1]! > 0)) return false;
+  if (prep.movingMask) return prep.movingMask[i] === 1;
+  const v = prep.speed[i]!;
+  return Number.isFinite(v) && v >= geo.MOVING_SPEED_MPS;
+}
+
+/** Seconds of [a, b] inside the given stretches. @internal */
+export function overlapSeconds(
+  spans: ReadonlyArray<readonly [number, number]>,
+  a: number,
+  b: number,
+): number {
+  let sum = 0;
+  for (const [x, y] of spans) {
+    const ov = Math.min(b, y) - Math.max(a, x);
+    if (ov > 0) sum += ov;
+  }
+  return sum;
+}
+
+/** Moving seconds in [a, b] (seconds from the start). By the sport's
+ *  stretches when it has them; else each sample gap judged moving counts
+ *  for its part inside [a, b]. @internal */
+export function movingSecondsIn(
+  prep: PreparedActivity,
+  a: number,
+  b: number,
+): number {
+  if (!prep.hasTime) return 0;
+  if (prep.movingSpans) return overlapSeconds(prep.movingSpans, a, b);
+  const t = prep.timeRel;
+  // start at the first sample after a
+  let lo = 1;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t[mid]! <= a) lo = mid + 1;
+    else hi = mid;
+  }
+  let moving = 0;
+  for (let i = lo; i < t.length; i++) {
+    if (t[i - 1]! >= b) break;
+    const ov = Math.min(t[i]!, b) - Math.max(t[i - 1]!, a);
+    if (ov > 0 && movingBeforeSample(prep, i)) moving += ov;
+  }
+  return moving;
+}
+
+/** The whole activity's elapsed seconds, moving seconds and distance, as
+ *  `activity.stats()` measures them: over the activity's extent (its start,
+ *  or an earlier sample, to its last sample or pool length), on its one
+ *  distance axis. @internal */
+export function wholeTotals(prep: PreparedActivity): {
+  elapsed: number;
+  moving: number;
+  meters: number;
+} {
+  const { from, to } = prep.extent;
+  const elapsed = prep.hasTime ? to - from : 0;
+  const meters = distanceAtSeconds(prep, to) - distanceAtSeconds(prep, from);
+  const moving =
+    prep.movingRule === 'swim-time'
+      ? (swimMoving(prep.imported, elapsed) ?? 0)
+      : movingSecondsIn(prep, from, to);
+  return { elapsed, moving, meters: Number.isFinite(meters) ? meters : 0 };
+}
+
 /** The swum lengths of a pool swim whose pool length is known. */
 function poolLengthsOf(
   imported: ImportedActivity,
@@ -796,6 +871,9 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   }
 
   const moving = movingRuleOf(imported);
+  // A pool swim imported with its lengths but no samples still has a clock:
+  // the lengths' own times.
+  const hasTime = !!streams.timeSeconds || (n === 0 && !!pool.poolLengths);
   return {
     imported,
     track,
@@ -805,7 +883,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     speed,
     timeRel,
     n,
-    hasTime: !!streams.timeSeconds,
+    hasTime,
     hasTrack,
     positionGaps,
     movingRule: moving.rule,
@@ -816,7 +894,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
         }
       : {}),
     ...pool,
-    extent: extentOf(timeRel, !!streams.timeSeconds, pool.poolLengths),
+    extent: extentOf(timeRel, hasTime, pool.poolLengths),
     coastMasks,
   };
 }
@@ -963,16 +1041,14 @@ export function summaryFromPrepared(
     speed: prep.hasTime ? prep.speed : undefined,
   };
 
-  const elapsed = n > 1 ? cols.timeSec[n - 1]! - cols.timeSec[0]! : 0;
+  // the same totals as activity.stats(), so the two never disagree
+  const totals = wholeTotals(prep);
   return {
     startTimeUtc: activity.startTimeUtc,
     pointCount: n,
-    distanceMeters: cum[n - 1] ?? 0,
-    elapsedTimeSeconds: elapsed,
-    // A swim watch's own swim time beats the estimate from samples (SwimData).
-    movingTimeSeconds:
-      swimMoving(imported, elapsed) ??
-      geo.movingTimeSeconds(step, cols.timeSec),
+    distanceMeters: totals.meters,
+    elapsedTimeSeconds: totals.elapsed,
+    movingTimeSeconds: totals.moving,
     elevationGainMeters: gainMeters,
     elevationLossMeters: lossMeters,
     bounds: prep.hasTrack && track ? geo.boundsViaPond(track) : null,
@@ -1007,7 +1083,9 @@ export function computeActivitySummary(
     !(s.distanceMeters?.length ?? 0) &&
     !(s.timeSeconds?.length ?? 0) &&
     !(s.heartrate?.length ?? 0) &&
-    !(s.watts?.length ?? 0);
+    !(s.watts?.length ?? 0) &&
+    // a pool swim's lengths are a record of their own
+    !imported.swim?.lengths?.some((l) => l.active);
   if (empty) {
     return {
       startTimeUtc: imported.activity.startTimeUtc,

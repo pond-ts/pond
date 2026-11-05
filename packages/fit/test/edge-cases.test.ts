@@ -7,7 +7,10 @@ import { Activity } from '../src/activity/index.js';
 import { activityFormat, parseGpx, readActivity } from '../src/files/index.js';
 import { editRecording } from '../src/edit/index.js';
 import { summarizeLaps } from '../src/laps/groups.js';
-import { prepareActivity } from '../src/summary/index.js';
+import {
+  computeActivitySummary,
+  prepareActivity,
+} from '../src/summary/index.js';
 import type { ActivityStreams, ImportedActivity } from '../src/types.js';
 import { km, meters, seconds } from '../src/quantities.js';
 import { movingClock, sectionGroupStats } from '../src/stats/index.js';
@@ -413,5 +416,159 @@ describe('prefixed TCX', () => {
     expect(prefixed.stats().time.elapsed?.seconds).toBe(10);
     expect(prefixed.laps.length).toBe(1);
     expect(prefixed.record.streams).toEqual(plain.record.streams);
+  });
+});
+
+describe('a section holding one sample', () => {
+  const run = Activity.from(
+    rec({
+      timeSeconds: [0, 10, 20],
+      distanceMeters: [0, 30, 60],
+      heartrate: [150, 150, 150],
+      watts: [200, 200, 200],
+    }),
+  );
+
+  it('keeps its moving readings when it starts inside the gap before it', () => {
+    const s = run.section({ elapsed: { from: seconds(5), to: seconds(15) } });
+    const moving = s.stats({ time: 'moving' });
+    expect(moving.time.moving?.seconds).toBe(10);
+    expect(moving.heartRate.average?.bpm).toBe(150);
+    expect(moving.power.average?.watts).toBe(200);
+    expect(moving.power.normalized?.watts).toBe(200);
+    expect(moving.speed.max?.metersPerSecond).toBe(3);
+    expect(s.stats().speed.max?.metersPerSecond).toBe(3);
+  });
+
+  it('short splits keep what the whole activity has', () => {
+    const splits = run.splits(meters(15)).stats({ time: 'moving' });
+    const whole = run.stats({ time: 'moving' });
+    expect(splits.distance?.meters).toBeCloseTo(60, 9);
+    expect(splits.time.moving?.seconds).toBeCloseTo(20, 9);
+    expect(splits.heartRate.average?.bpm).toBe(whole.heartRate.average?.bpm);
+    expect(splits.power.average?.watts).toBe(200);
+    expect(splits.speed.max?.metersPerSecond).toBe(3);
+  });
+});
+
+describe('pool lengths outside the samples', () => {
+  const start = Date.parse(META.startTimeUtc);
+  const at = (sec: number) => new Date(start + sec * 1000).toISOString();
+  const pool = (
+    streams: Partial<ActivityStreams>,
+    lengths: [number, number][],
+  ): ImportedActivity => ({
+    activity: { ...META, sportType: 'Swim' },
+    streams: { latlng: [], ...streams },
+    swim: {
+      movingSeconds: lengths.reduce((s, [, secs]) => s + secs, 0),
+      pool: { lengthMeters: 25, unit: 'm' },
+      lengths: lengths.map(([from, secs]) => ({
+        startTimeUtc: at(from),
+        seconds: secs,
+        active: true,
+      })),
+    },
+  });
+
+  it('splits start at the first length, not the first sample', () => {
+    // the first sample comes at the end of the first length
+    const a = Activity.from(
+      pool({ timeSeconds: [30, 60, 90] }, [
+        [0, 30],
+        [30, 30],
+        [60, 30],
+      ]),
+    );
+    expect(a.stats().distance?.meters).toBe(75);
+    const splits = a.splits(meters(25));
+    expect(splits.length).toBe(3);
+    expect(splits.at(0)!.fromSeconds).toBe(0);
+    expect(splits.stats().distance?.meters).toBe(75);
+  });
+
+  it('best efforts search the lengths', () => {
+    const a = Activity.from(
+      pool({ timeSeconds: [0, 30] }, [
+        [0, 30],
+        [30, 20],
+      ]),
+    );
+    expect(a.stats().distance?.meters).toBe(50);
+    expect(a.pace.bestEffort(meters(25))?.time.seconds).toBe(20);
+    expect(a.pace.bestEffort(meters(50))?.time.seconds).toBe(50);
+    // inside a section, only its own lengths
+    const first = a.section({ elapsed: { from: seconds(0), to: seconds(30) } });
+    expect(first.pace.bestEffort(meters(25))?.time.seconds).toBe(30);
+    expect(first.pace.bestEffort(meters(50))).toBeNull();
+  });
+
+  it('the summary gives the same totals as stats()', () => {
+    const r = pool({ timeSeconds: [0, 30] }, [
+      [0, 30],
+      [30, 20],
+    ]);
+    const st = Activity.from(r).stats();
+    const sum = computeActivitySummary(r);
+    expect(sum.distanceMeters).toBe(st.distance?.meters);
+    expect(sum.elapsedTimeSeconds).toBe(st.time.elapsed?.seconds);
+    expect(sum.movingTimeSeconds).toBe(st.time.swimming?.seconds);
+    expect(sum.distanceMeters).toBe(50);
+    expect(sum.elapsedTimeSeconds).toBe(50);
+  });
+
+  it('a swim with lengths and no samples keeps its distance and time', () => {
+    const r = pool({}, [
+      [0, 30],
+      [30, 30],
+    ]);
+    const a = Activity.from(r);
+    expect(a.bounds.distance.to.meters).toBe(50);
+    const st = a.stats();
+    expect(st.distance?.meters).toBe(50);
+    expect(st.time.elapsed?.seconds).toBe(60);
+    expect(st.time.swimming?.seconds).toBe(60);
+    expect(st.heartRate.average).toBeNull();
+    expect(a.splits(meters(25)).map((s) => s.stats().distance?.meters)).toEqual(
+      [25, 25],
+    );
+    const sum = computeActivitySummary(r);
+    expect(sum.distanceMeters).toBe(50);
+    expect(sum.elapsedTimeSeconds).toBe(60);
+  });
+});
+
+describe('the summary and stats() agree', () => {
+  it('when the first sample comes after the start', () => {
+    const r: ImportedActivity = rec({
+      timeSeconds: [30, 40, 50],
+      distanceMeters: [0, 30, 60],
+    });
+    const st = Activity.from(r).stats();
+    const sum = computeActivitySummary(r);
+    expect(sum.elapsedTimeSeconds).toBe(50);
+    expect(sum.elapsedTimeSeconds).toBe(st.time.elapsed?.seconds);
+    expect(sum.movingTimeSeconds).toBe(st.time.moving?.seconds);
+    expect(sum.distanceMeters).toBe(st.distance?.meters);
+  });
+});
+
+describe('TCX text in CDATA', () => {
+  it('is kept as written', () => {
+    const a = readActivity(`<?xml version="1.0"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+ <Activities><Activity Sport="Running"><Id>2024-05-01T09:00:00Z</Id>
+  <Lap StartTime="2024-05-01T09:00:00Z"><TotalTimeSeconds>10</TotalTimeSeconds><DistanceMeters>100</DistanceMeters>
+   <Track>
+    <Trackpoint><Time>2024-05-01T09:00:00Z</Time><DistanceMeters>0</DistanceMeters></Trackpoint>
+    <Trackpoint><Time>2024-05-01T09:00:10Z</Time><DistanceMeters>100</DistanceMeters></Trackpoint>
+   </Track>
+  </Lap>
+  <Notes><![CDATA[Use <hr:zone> for this interval]]></Notes>
+  <Creator><Name><![CDATA[Tool <v:2>]]></Name></Creator>
+ </Activity></Activities>
+</TrainingCenterDatabase>`);
+    expect(a.record.activity.name).toBe('Use <hr:zone> for this interval');
+    expect(a.record.creator?.name).toBe('Tool <v:2>');
   });
 });

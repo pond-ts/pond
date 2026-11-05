@@ -153,7 +153,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   summaries; unknowns stay null: rest needs an elapsed clock. Group moving
   averages no longer depend on member order; a two-sample section keeps its
   moving max speed; namespaced GPX/TCX roots are recognised; cropping the
-  finish drops the heart rate recovery.
+  finish drops the heart rate recovery. `computeActivitySummary` now gives
+  the same distance, elapsed and moving time as `activity.stats()` (elapsed
+  from the activity's start, a pool swim's lengths, and the activity's
+  moving rule, so an open water swim's moving time is now the speed rule,
+  not the watch's swim time). A section holding one sample keeps its
+  moving readings; splits and swim best efforts cover pool lengths that
+  fall outside the samples; a pool swim imported with lengths and no
+  samples keeps its distance and time; TCX text inside CDATA is kept as
+  written.
 
 - **`@pond-ts/fit`: analysis for an athlete, best efforts by metric**
   ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`
