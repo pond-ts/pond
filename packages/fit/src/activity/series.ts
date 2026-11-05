@@ -89,6 +89,11 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
     return this.#t.slice();
   }
 
+  /** Each sample's instant, in milliseconds since the epoch (a copy). */
+  instants(): Float64Array {
+    return this.#t.map((sec) => this.#startMs + sec * 1000);
+  }
+
   /** The values in {@link unit}, one per sample, `NaN` in a gap (a copy). */
   values(): Float64Array {
     return this.#v.slice();
@@ -97,18 +102,10 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
   /** As a pond `TimeSeries` with one `value` column (in {@link unit}), keyed
    *  by each sample's instant. A gap is a missing cell. */
   toTimeSeries(): TimeSeries<typeof SERIES_SCHEMA> {
-    const rows: [number, number | undefined][] = [];
-    for (let i = 0; i < this.#t.length; i++) {
-      const v = this.#v[i]!;
-      rows.push([
-        this.#startMs + this.#t[i]! * 1000,
-        Number.isFinite(v) ? v : undefined,
-      ]);
-    }
-    return new TimeSeries({
+    return TimeSeries.fromColumns({
       name: this.channel,
       schema: SERIES_SCHEMA,
-      rows,
+      columns: { time: this.instants(), value: this.values() },
     });
   }
 }

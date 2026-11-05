@@ -95,33 +95,23 @@ export function chartData(
   ];
   const asked = options.metrics ?? all;
   const metrics = asked.filter((m) => cols[m]?.some(Number.isFinite));
-  const times = t.times();
-  const dist = s.distance?.values();
-  // each sample's instant, as the series keys it
-  const ts = t.toTimeSeries();
-  const cell = (m: ChartMetric, i: number) => {
-    if (!metrics.includes(m)) return undefined;
-    const v = cols[m]![i]!;
-    return Number.isFinite(v) ? v : undefined;
-  };
-  const rows: [number, ...(number | undefined)[]][] = [];
-  for (let i = 0; i < times.length; i++) {
-    const at = ts.at(i)!.key().begin();
-    rows.push([
-      at,
-      dist && Number.isFinite(dist[i]!) ? dist[i]! : undefined,
-      cell('heartRate', i),
-      cell('power', i),
-      cell('cadence', i),
-      cell('speed', i),
-      cell('pace', i),
-      cell('elevation', i),
-    ]);
-  }
-  const series = new TimeSeries({
+  const n = t.length;
+  const empty = () => new Float64Array(n).fill(NaN);
+  // one column per field, handed to pond as is: a NaN is a missing cell
+  const series = TimeSeries.fromColumns({
     name: 'chart',
     schema: CHART_SCHEMA,
-    rows: rows as never,
+    columns: {
+      time: t.instants(),
+      distance: s.distance?.values() ?? empty(),
+      heartRate: empty(),
+      power: empty(),
+      cadence: empty(),
+      speed: empty(),
+      pace: empty(),
+      elevation: empty(),
+      ...Object.fromEntries(metrics.map((m) => [m, cols[m]!])),
+    },
   });
   return {
     series: x === 'distance' ? series.byValue('distance') : series,
