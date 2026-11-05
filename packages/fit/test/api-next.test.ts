@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Activity } from '../src/activity/index.js';
+import { preparedOf } from '../src/activity/activity.js';
 import { chartData, mapData } from '../src/views/index.js';
 import { meters, minutes, seconds } from '../src/quantities.js';
 import type { ActivityStreams, ImportedActivity, Lap } from '../src/types.js';
@@ -295,6 +296,21 @@ describe('views', () => {
     expect(series.at(4)!.get('heartRate')).toBeUndefined();
     expect(series.at(0)!.get('power')).toBeUndefined();
     expect(series.at(1)!.get('pace')).toBeCloseTo(1000 / 3, 0);
+  });
+
+  it("chartData shares the activity's own storage, copying nothing", () => {
+    const track = preparedOf(a).track;
+    const own = track.column('hr').toFloat64Array().buffer;
+    const { series } = chartData(a);
+    expect(series.column('heartRate').toFloat64Array().buffer).toBe(own);
+    const s = a.section({ elapsed: { from: seconds(15), to: seconds(45) } });
+    const part = chartData(s).series;
+    expect(part.length).toBe(3);
+    expect(part.column('heartRate').toFloat64Array().buffer).toBe(own);
+    expect(
+      a.series.heartRate!.toTimeSeries().column('value').toFloat64Array()
+        .buffer,
+    ).toBe(own);
   });
 
   it('chartData over distance keys by metres', () => {

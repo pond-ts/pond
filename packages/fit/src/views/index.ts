@@ -4,8 +4,9 @@
  * `@pond-ts/charts` draws directly, over time or over distance; `mapData`
  * gives a route's line at the detail a map needs.
  */
-import { TimeSeries, type ValueSeries } from 'pond-ts';
-import type { Section } from '../activity/activity.js';
+import type { TimeSeries, ValueSeries } from 'pond-ts';
+import { preparedOf, type Section } from '../activity/activity.js';
+import { sampleRange } from '../activity/series.js';
 import type { LatLng, Route } from '../activity/route.js';
 import { simplify, haversineMeters } from '../geo/index.js';
 
@@ -18,19 +19,19 @@ export type ChartMetric =
   | 'pace'
   | 'elevation';
 
-/** The columns of a chart series: time, distance (metres from the start;
- *  empty with no distance)
- *  and one column per metric, each with gaps where nothing was recorded.
- *  Units: bpm, W, rpm, m/s, s/km, m. */
+/** The columns of a chart series: time, one column per metric, and
+ *  distance (metres from the start; empty with no distance). A column has
+ *  gaps where nothing was recorded, and is all gaps for a channel the
+ *  activity didn't record. Units: bpm, W, rpm, m, m, m/s, s/km. */
 export const CHART_SCHEMA = [
   { name: 'time', kind: 'time' },
-  { name: 'distance', kind: 'number', required: false },
   { name: 'heartRate', kind: 'number', required: false },
   { name: 'power', kind: 'number', required: false },
   { name: 'cadence', kind: 'number', required: false },
+  { name: 'elevation', kind: 'number', required: false },
+  { name: 'distance', kind: 'number', required: false },
   { name: 'speed', kind: 'number', required: false },
   { name: 'pace', kind: 'number', required: false },
-  { name: 'elevation', kind: 'number', required: false },
 ] as const;
 
 export type ChartSeries = TimeSeries<typeof CHART_SCHEMA>;
@@ -39,8 +40,9 @@ export interface ChartDataOptions {
   /** `'time'` (the default) keys by the sample's instant; `'distance'` by
    *  metres from the start. */
   x?: 'time' | 'distance';
-  /** The metrics to fill; the rest stay empty. Default: every one the
-   *  activity recorded. */
+  /** The metrics to draw, as listed in the result's `metrics`. The series
+   *  carries every channel either way. Default: every one the activity
+   *  recorded. */
   metrics?: readonly ChartMetric[];
 }
 
@@ -76,14 +78,19 @@ export function chartData(
   const x = options.x ?? 'time';
   if (x === 'distance' && !s.distance)
     throw new RangeError('chartData: the recording has no distance');
-  const speed = s.speed?.values();
-  const cols: Record<ChartMetric, Float64Array | undefined> = {
-    heartRate: s.heartRate?.values(),
-    power: s.power?.values(),
-    cadence: s.cadence?.values(),
-    speed,
-    pace: speed?.map((v) => (v >= MIN_PACE_SPEED ? 1000 / v : NaN)),
-    elevation: s.elevation?.values(),
+  const prep = preparedOf(section);
+  const [lo, hi] = sampleRange(prep, section);
+  const n = hi - lo;
+  const empty = () => new Float64Array(n).fill(NaN);
+  const speed = s.speed ? prep.speed.subarray(lo, hi) : empty();
+  const pace = speed.map((v) => (v >= MIN_PACE_SPEED ? 1000 / v : NaN));
+  const has: Record<ChartMetric, boolean> = {
+    heartRate: !!s.heartRate,
+    power: !!s.power,
+    cadence: !!s.cadence,
+    speed: !!s.speed,
+    pace: pace.some(Number.isFinite),
+    elevation: !!s.elevation,
   };
   const all: ChartMetric[] = [
     'heartRate',
@@ -93,26 +100,18 @@ export function chartData(
     'pace',
     'elevation',
   ];
-  const asked = options.metrics ?? all;
-  const metrics = asked.filter((m) => cols[m]?.some(Number.isFinite));
-  const n = t.length;
-  const empty = () => new Float64Array(n).fill(NaN);
-  // one column per field, handed to pond as is: a NaN is a missing cell
-  const series = TimeSeries.fromColumns({
-    name: 'chart',
-    schema: CHART_SCHEMA,
-    columns: {
-      time: t.instants(),
-      distance: s.distance?.values() ?? empty(),
-      heartRate: empty(),
-      power: empty(),
-      cadence: empty(),
-      speed: empty(),
-      pace: empty(),
-      elevation: empty(),
-      ...Object.fromEntries(metrics.map((m) => [m, cols[m]!])),
-    },
-  });
+  const metrics = (options.metrics ?? all).filter((m) => has[m]);
+  // The recorded channels are the activity's own pond columns, sliced to
+  // the section: a view, nothing copied. Distance, speed and pace are
+  // worked out from the samples, so they are attached as columns (NaN is a
+  // gap); distance and speed share the activity's arrays too.
+  const series = prep.track
+    .slice(lo, hi)
+    .select('hr', 'power', 'cadence', 'ele')
+    .rename({ hr: 'heartRate', ele: 'elevation' })
+    .withColumn('distance', s.distance ? prep.cum.subarray(lo, hi) : empty())
+    .withColumn('speed', speed)
+    .withColumn('pace', pace) as unknown as ChartSeries;
   return {
     series: x === 'distance' ? series.byValue('distance') : series,
     metrics,

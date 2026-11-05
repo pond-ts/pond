@@ -47,6 +47,7 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
   readonly #v: Float64Array;
   readonly #make: (v: number) => Q;
   readonly #startMs: number;
+  readonly #pond: () => TimeSeries<typeof SERIES_SCHEMA>;
 
   /** @internal */
   constructor(
@@ -56,6 +57,7 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
     v: Float64Array,
     make: (v: number) => Q,
     startMs: number,
+    pond: () => TimeSeries<typeof SERIES_SCHEMA>,
   ) {
     this.channel = channel;
     this.unit = unit;
@@ -63,6 +65,7 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
     this.#v = v;
     this.#make = make;
     this.#startMs = startMs;
+    this.#pond = pond;
   }
 
   get length(): number {
@@ -100,13 +103,10 @@ export class Measured<Q> implements Iterable<SeriesPoint<Q>> {
   }
 
   /** As a pond `TimeSeries` with one `value` column (in {@link unit}), keyed
-   *  by each sample's instant. A gap is a missing cell. */
+   *  by each sample's instant. A gap is a missing cell. Shares the
+   *  activity's own storage: nothing is copied. */
   toTimeSeries(): TimeSeries<typeof SERIES_SCHEMA> {
-    return TimeSeries.fromColumns({
-      name: this.channel,
-      schema: SERIES_SCHEMA,
-      columns: { time: this.instants(), value: this.values() },
-    });
+    return this.#pond();
   }
 }
 
@@ -130,6 +130,20 @@ function recorded(a: Float64Array | undefined): a is Float64Array {
   return false;
 }
 
+/** The samples inside `span` (both ends included), as the index range
+ *  `[from, to)` on the activity's samples. @internal */
+export function sampleRange(
+  prep: PreparedActivity,
+  span: Span,
+): [number, number] {
+  const t = prep.timeRel;
+  let lo = 0;
+  while (lo < t.length && t[lo]! < span.fromSeconds - 1e-9) lo++;
+  let hi = t.length;
+  while (hi > lo && t[hi - 1]! > span.toSeconds + 1e-9) hi--;
+  return [lo, hi];
+}
+
 /** The samples of `prep` inside `span` (both ends included), by channel.
  *  @internal */
 export function seriesOf(prep: PreparedActivity, span: Span): ActivitySeries {
@@ -142,39 +156,44 @@ export function seriesOf(prep: PreparedActivity, span: Span): ActivitySeries {
     distance: null,
   };
   if (!prep.hasTime) return none;
-  const t = prep.timeRel;
-  let lo = 0;
-  while (lo < t.length && t[lo]! < span.fromSeconds - 1e-9) lo++;
-  let hi = t.length - 1;
-  while (hi >= lo && t[hi]! > span.toSeconds + 1e-9) hi--;
-  const times = t.subarray(lo, hi + 1);
+  const [lo, end] = sampleRange(prep, span);
+  const hi = end - 1;
+  const times = prep.timeRel.subarray(lo, end);
   const startMs = Date.parse(prep.imported.activity.startTimeUtc);
+  // The stretch of the activity's own pond series: a view, not a copy.
+  const stretch = prep.track.slice(lo, hi + 1);
+  type TrackChannel = 'hr' | 'power' | 'cadence' | 'ele';
   const make = <Q>(
     channel: SeriesChannel,
     unit: string,
     vals: Float64Array | undefined,
     q: (v: number) => Q,
-  ): Measured<Q> | null =>
-    recorded(vals) && times.length
-      ? new Measured(
-          channel,
-          unit,
-          times,
-          vals.subarray(lo, hi + 1),
-          q,
-          startMs,
-        )
-      : null;
+    column?: TrackChannel,
+  ): Measured<Q> | null => {
+    if (!recorded(vals) || !times.length) return null;
+    const values = vals.subarray(lo, hi + 1);
+    // A recorded channel is one of the track's columns; a worked-out one
+    // (speed, distance on the activity's axis) is attached to the stretch.
+    const pond = () =>
+      (column
+        ? stretch.select(column).rename({ [column]: 'value' })
+        : stretch
+            .select()
+            .withColumn('value', values)) as unknown as TimeSeries<
+        typeof SERIES_SCHEMA
+      >;
+    return new Measured(channel, unit, times, values, q, startMs, pond);
+  };
   const { cols } = prep;
   const hasDist = hasDistance(prep);
   return {
-    heartRate: make('heartRate', 'bpm', cols.hr, HeartRate.bpm),
-    power: make('power', 'W', cols.power, Power.watts),
-    cadence: make('cadence', 'rpm', cols.cadence, Cadence.rpm),
+    heartRate: make('heartRate', 'bpm', cols.hr, HeartRate.bpm, 'hr'),
+    power: make('power', 'W', cols.power, Power.watts, 'power'),
+    cadence: make('cadence', 'rpm', cols.cadence, Cadence.rpm, 'cadence'),
     speed: hasDist
       ? make('speed', 'm/s', prep.speed, Speed.metersPerSecond)
       : null,
-    elevation: make('elevation', 'm', cols.ele, Elevation.meters),
+    elevation: make('elevation', 'm', cols.ele, Elevation.meters, 'ele'),
     distance: hasDist ? make('distance', 'm', prep.cum, Distance.meters) : null,
   };
 }

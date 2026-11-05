@@ -71,6 +71,14 @@ export type SectionKind =
   | 'recovery'
   | 'effort';
 
+const PREPARED = new WeakMap<Section, PreparedActivity>();
+
+/** The prepared activity a section reads, for `@pond-ts/fit/views`.
+ *  @internal */
+export function preparedOf(section: Section): PreparedActivity {
+  return PREPARED.get(section)!;
+}
+
 /** One continuous stretch of an activity. Its time and distance run between
  *  its own ends; its channel numbers come from the samples inside it (see
  *  {@link sectionStats}). */
@@ -99,6 +107,7 @@ export class Section implements Span {
     timerSeconds?: number,
   ) {
     this.prep = prep;
+    PREPARED.set(this, prep);
     this.kind = kind;
     this.label = label;
     this.fromSeconds = span.fromSeconds;
