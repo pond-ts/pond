@@ -80,6 +80,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A
+  duration window (`rolling('30s', …)`, any alignment) with built-in
+  reducers over number columns now takes the same per-column sweep that
+  `rolling({ count })` already had: each row's window is found once from
+  the keys, and the result columns are written as typed arrays. A 30 s
+  `avg` over 36,000 rows went from 10.3 to 1.4 ms, and 1M rows of `avg` +
+  `sum` from 224 to 67 ms (`packages/core/scripts/perf-rolling-time.mjs`).
+  Output is identical, cell for cell: rows sharing a key still share one
+  read, a column with values past the overflow-lane split (2^480) runs the
+  laned reducer states from the start, and leading / centered windows
+  still drop rows before adding them. A custom reducer or a text output
+  still takes the general sweep.
+- **`scan` over a number column reads and writes typed buffers**
+  ([PND-ROLLTIME]): no boxed array and no second packing pass. The 3 m
+  climb example from the `scan` docs over 36,000 rows went from 1.03 to
+  0.64 ms; output is identical. Most of what is left is the step function's
+  own allocation (a `[next, output]` tuple per row).
+
 - **`@pond-ts/fit`: a new `Activity` model** ([PND-FITAPI],
   docs/rfcs/fit-api.md). Breaking: replaces the old façade outright.
   `readActivity(bytes)` (in `@pond-ts/fit/files`) tells FIT, GPX or TCX from

@@ -5,6 +5,7 @@ import {
   rollingStateFor,
 } from '../reducers/index.js';
 import { plainRollingSum } from '../reducers/sum.js';
+import { STDEV_SPLIT } from '../reducers/overflow-lanes.js';
 import { WindowStdev, WindowSum } from '../reducers/window-accumulators.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
@@ -656,6 +657,135 @@ export function tryRollingCountColumnarNumeric(
 }
 
 /**
+ * Each row's window as row indices, `lo`…`hi` inclusive (`hi < lo` when
+ * the window holds no row). @internal
+ */
+export interface RollingWindowBounds {
+  lo: Int32Array;
+  hi: Int32Array;
+  /** 1 for a row whose key equals the row before's: it shares that row's
+   *  window, and its answer is read once for the group. */
+  sameKey: Uint8Array;
+}
+
+/**
+ * The rows in each row's duration window, from the key's begin times.
+ * Exactly the windows the event-driven `rolling` sweep in `TimeSeries`
+ * builds: rows sharing a begin time share a window; trailing is
+ * `(t - window, t]`, leading `[t, t + window)`, centered
+ * `[t - window/2, t + window/2)`; and a leading or centered window left
+ * empty steps past the rows before its lower bound ([PND-ROLLEMPTY]).
+ * Both ends only move forward, so this is O(n). @internal
+ */
+export function rollingWindowBoundsByTime(
+  begin: Float64Array,
+  rowCount: number,
+  windowMs: number,
+  alignment: RollingAlignment,
+): RollingWindowBounds {
+  const lo = new Int32Array(rowCount);
+  const hi = new Int32Array(rowCount);
+  const sameKey = new Uint8Array(rowCount);
+  let windowStart = 0;
+  let windowEnd = 0;
+  // One loop per alignment, so the hot loop carries no alignment test.
+  if (alignment === 'trailing') {
+    for (let i = 0; i < rowCount; i++) {
+      const anchor = begin[i]!;
+      if (i > 0 && begin[i - 1] === anchor) {
+        lo[i] = lo[i - 1]!;
+        hi[i] = hi[i - 1]!;
+        sameKey[i] = 1;
+        continue;
+      }
+      while (windowEnd < rowCount && begin[windowEnd]! <= anchor) windowEnd++;
+      const lowerBound = anchor - windowMs;
+      while (windowStart < windowEnd && begin[windowStart]! <= lowerBound)
+        windowStart++;
+      lo[i] = windowStart;
+      hi[i] = windowEnd - 1;
+    }
+    return { lo, hi, sameKey };
+  }
+  const below = alignment === 'leading' ? 0 : windowMs / 2;
+  const above = alignment === 'leading' ? windowMs : windowMs / 2;
+  for (let i = 0; i < rowCount; i++) {
+    const anchor = begin[i]!;
+    if (i > 0 && begin[i - 1] === anchor) {
+      lo[i] = lo[i - 1]!;
+      hi[i] = hi[i - 1]!;
+      sameKey[i] = 1;
+      continue;
+    }
+    const lowerBound = anchor - below;
+    while (windowStart < windowEnd && begin[windowStart]! < lowerBound)
+      windowStart++;
+    if (windowStart === windowEnd) {
+      while (windowEnd < rowCount && begin[windowEnd]! < lowerBound)
+        windowEnd++;
+      windowStart = windowEnd;
+    }
+    const upperBound = anchor + above;
+    while (windowEnd < rowCount && begin[windowEnd]! < upperBound) windowEnd++;
+    lo[i] = windowStart;
+    hi[i] = windowEnd - 1;
+  }
+  return { lo, hi, sameKey };
+}
+
+/**
+ * The duration-window sibling of {@link tryRollingCountColumnarNumeric}: the
+ * same per-column sweep over windows found from the keys. `null` when the
+ * mapping can't take the fast path (a custom reducer, a non-number output,
+ * a chunked or non-numeric source). @internal
+ */
+export function tryRollingTimeColumnarNumeric(
+  getColumn: (name: string) => Column | undefined,
+  rowCount: number,
+  columns: ReadonlyArray<AggregateColumnSpec>,
+  bounds: RollingWindowBounds,
+  alignment: RollingAlignment,
+  minSamples: number,
+): Float64Column[] | null {
+  const sources: Float64Column[] = [];
+  for (const spec of columns) {
+    if (typeof spec.reducer !== 'string') return null;
+    if (spec.kind !== 'number') return null;
+    const source = getColumn(spec.source);
+    if (source === undefined) return null;
+    if (source.kind !== 'number' || source.storage !== 'packed') return null;
+    sources.push(source);
+  }
+  return columns.map((spec, c) =>
+    sweepRollingColumn(
+      spec,
+      sources[c]!,
+      rowCount,
+      0,
+      alignment,
+      minSamples,
+      // A column with values big enough for the reducers' overflow lanes
+      // runs the laned states from the start, as the generic sweep does:
+      // the plain accumulators would round such a window differently.
+      hasLaneSizedValue(sources[c]!, rowCount),
+      bounds,
+    ),
+  );
+}
+
+/** Whether a column holds a value at or past the smallest overflow-lane
+ *  split (`STDEV_SPLIT`, 2^480; `sum`'s is 2^960). Ordinary data never
+ *  does, and this one pass is cheap next to the sweep. */
+function hasLaneSizedValue(source: Float64Column, rowCount: number): boolean {
+  const values = source._values;
+  for (let i = 0; i < rowCount; i++) {
+    const v = values[i]!;
+    if (v >= STDEV_SPLIT || v <= -STDEV_SPLIT) return true;
+  }
+  return false;
+}
+
+/**
  * One column's trailing / leading / centred count-window sweep.
  *
  * `avg` and `stdev` drive their accumulators directly; everything else
@@ -673,6 +803,7 @@ function sweepRollingColumn(
   alignment: RollingAlignment,
   minSamples: number,
   laned: boolean,
+  bounds: RollingWindowBounds | null = null,
 ): Float64Column {
   const values = source._values;
   const allFinite = source.allFinite;
@@ -744,7 +875,56 @@ function sweepRollingColumn(
   for (let index = 0; index < rowCount; index += 1) {
     let lo: number;
     let hi: number;
-    if (alignment === 'trailing') {
+    if (bounds !== null) {
+      // A duration window: its rows were found up front from the keys.
+      if (bounds.sameKey[index] === 1) {
+        // Same key, same window: reuse the group's answer rather than read
+        // the state again (a stdev read can move its shift, so a second read
+        // may differ in the last bits; the generic sweep reads once too).
+        const prev = outValues[index - 1]!;
+        if (prev - prev === 0) {
+          outValues[index] = prev;
+          outDefined += 1;
+        }
+        continue;
+      }
+      lo = bounds.lo[index]!;
+      hi = bounds.hi[index]!;
+      if (alignment !== 'trailing') {
+        // Leading and centered windows drop rows before adding, as the
+        // generic sweep does (the same order keeps sums bit-identical) …
+        const stop = lo < windowEnd ? lo : windowEnd;
+        if (kind === 'avg') {
+          while (windowStart < stop) {
+            if (allFinite || values[windowStart]! - values[windowStart]! === 0)
+              wSum.remove(values[windowStart]!);
+            windowStart += 1;
+          }
+        } else if (kind === 'stdev') {
+          while (windowStart < stop) {
+            if (allFinite || values[windowStart]! - values[windowStart]! === 0)
+              wStdev.remove(values[windowStart]!);
+            windowStart += 1;
+          }
+        } else {
+          while (windowStart < stop) {
+            state!.remove(
+              windowStart,
+              allFinite || values[windowStart]! - values[windowStart]! === 0
+                ? values[windowStart]!
+                : undefined,
+            );
+            windowStart += 1;
+          }
+        }
+        // … and an emptied window steps past rows that never entered it
+        // ([PND-ROLLEMPTY], see `rollingWindowBoundsByTime`).
+        if (windowStart === windowEnd && lo > windowEnd) {
+          windowStart = lo;
+          windowEnd = lo;
+        }
+      }
+    } else if (alignment === 'trailing') {
       lo = index - count + 1 < 0 ? 0 : index - count + 1;
       hi = index;
     } else if (alignment === 'leading') {
@@ -829,6 +1009,7 @@ function sweepRollingColumn(
           alignment,
           minSamples,
           true,
+          bounds,
         );
       }
       continue;

@@ -2183,3 +2183,67 @@ open; the text below is the entry as it read before the cleanup.
   Acceptance benchmarks already exist in
   `spikes/columnar-wasm/bench/controls.mjs`; each control is checked against
   pond-ts's answer before it is timed.
+
+### Duration-window `rolling` and typed `scan` — [PND-ROLLTIME] (shipped)
+
+Found 2026-11-05 while moving `@pond-ts/fit`'s maths onto pond operators:
+on a 36,000-sample ride, `rolling('30s', { power: 'avg' })` took 5–10 ms
+where fit's own loop took 0.3–0.6 ms and pond-rs (WebAssembly) 0.65 ms, and
+the `scan` climb example took 1.0 ms against a 0.1 ms loop. A profile put
+rolling's time in its generic sweep (`#rolling`, `snapshotWindow`): one
+boxed array per row, then the result columns checked and packed again.
+`rolling({ count })` already had a typed per-column sweep
+(`tryRollingCountColumnarNumeric`); duration windows did not.
+
+Shipped:
+
+- `rollingWindowBoundsByTime` finds each row's window (`lo`…`hi`) once from
+  the key begins, following the generic sweep's three alignment loops row
+  for row, including [PND-ROLLEMPTY]'s step past rows that never entered an
+  emptied window. `tryRollingTimeColumnarNumeric` then runs the count
+  path's `sweepRollingColumn` over those bounds.
+- Three things the sweep had to copy from the generic path to stay
+  identical, each found by the parity fixture or the old-vs-new oracle:
+  leading and centered windows remove before they add (the add/remove
+  order changes the last bits of a stdev); a row whose key equals the row
+  before reuses that row's answer (the generic path reads once per key
+  group, and a stdev read can move its shift); and a column holding a
+  value at or past `STDEV_SPLIT` (2^480) runs the laned states from the
+  start (the plain accumulators would round such a window differently).
+  The count path has the last difference too (it re-runs laned only on a
+  non-finite answer); left as is here, since changing it changes the
+  count path's output.
+- `scanOp` reads a packed number column's buffer and writes a typed one.
+
+Checked with an old-vs-new oracle against main's build: 20,000 random
+series × mappings (every built-in reducer, the three alignments, window
+lengths from 1 ms to 1 h, gaps, `-0`, duplicate keys, long time gaps,
+`minSamples`, values of ±1e300), every cell compared with `Object.is`:
+20,000/20,000 equal. Planted bugs (`<=` → `<` on the trailing bound)
+gave 279 mismatches in 3,000 cases. `scan`: 5,000/5,000 equal across step functions that
+return NaN, ±Infinity, `undefined` and `-0`.
+
+Timings (`packages/core/scripts/perf-rolling-time.mjs`, median of 7, ms):
+
+| case                                | before | after |
+| ----------------------------------- | -----: | ----: |
+| 36k · 30s avg                       |  10.26 |  1.43 |
+| 100k · 60s avg + sum                |  27.46 |  6.48 |
+| 1M · 60s avg + sum                  | 223.71 | 71.76 |
+| 100k · 1ms avg (one row per window) |  15.27 |  2.91 |
+| 100k · 60s avg, leading             |  15.21 |  3.03 |
+| 100k · 60s avg, centered            |  19.20 |  3.02 |
+| 100k · 60s avg + sum, gaps          |  35.15 |  5.96 |
+| 100k · 60s avg, duplicate keys      |  20.59 |  3.39 |
+| 100k · 60s stdev                    |  25.16 |  5.37 |
+| 100k · 60s min + max                |  44.97 | 13.67 |
+| 100k · 60s median                   |  29.42 | 11.93 |
+
+[PND-ROLLGAP]'s slowdown with empty windows did not reproduce on main in
+this container (1M rows `rolling('5m', avg)`: 158 ms without outages, 145
+ms with three), so this PR does not claim it.
+
+Left: `scan`'s remaining cost is the caller's step function allocating a
+tuple per row, which pond cannot remove; and pond-rs calls back into
+JavaScript for every row, so a `scan` there is about 6× slower than in
+pond-ts. See [PND-SCANDATA].

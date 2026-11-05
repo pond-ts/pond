@@ -1052,6 +1052,12 @@ retention-boundary waypoint. Everything left is friction-gated with a named
 consumer signal. Plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
+- **[PND-SCANDATA]** — callback-free forms for the common `scan` folds.
+  A JS step function costs a tuple per row in pond-ts, and in pond-rs a
+  call back into JavaScript per row (about 6× slower than pond-ts on
+  36,000 rows). `@pond-ts/fit` wants to run its maths on either core, so
+  the folds it needs (first: a dead-band running sum, the 3 m climb rule)
+  should be named operators or expressions. Found with [PND-ROLLTIME].
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
   emit-side allocation slice; spike plan exists. Second consumer: the
   offscreen-stream spike's live chart, which needed each appended batch as
