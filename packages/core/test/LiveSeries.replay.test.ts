@@ -68,6 +68,83 @@ describe('live operators replay existing rows like new pushes [PND-LIVEREPLAY]',
     expect(late.value()).toEqual(early.value());
   });
 
+  // Attach `reduce` early and late on the same pushes, with `setup` run
+  // on the late series just before attaching and `post` on both after.
+  const reduceBoth = (
+    retention: unknown,
+    setup: (s: LiveSeries<any>) => void = () => {},
+    post: (s: LiveSeries<any>) => void = () => {},
+  ) => {
+    const spec = {
+      v: 'sum',
+      n: { from: 'v', using: 'count' },
+      lo: { from: 'v', using: 'min' },
+      f: { from: 'v', using: 'first' },
+    } as const;
+    const before = make(retention as never);
+    const early = before.reduce(spec as never);
+    for (const b of batches) before.pushMany(b as never);
+    post(before);
+    const after = make(retention as never);
+    for (const b of batches.slice(0, 6)) after.pushMany(b as never);
+    setup(after);
+    const late = after.reduce(spec as never);
+    for (const b of batches.slice(6)) after.pushMany(b as never);
+    post(after);
+    return [late.value(), early.value()];
+  };
+
+  it('reduce with retention on a partly cached series evicts the right rows', () => {
+    const [late, early] = reduceBoth({ maxEvents: 60 }, (s) => {
+      for (const i of [0, 3, 40, 59]) s.at(s.length - 60 + i);
+    });
+    expect(late).toEqual(early);
+  });
+
+  it('reduce with maxAge retention matches', () => {
+    const [late, early] = reduceBoth({ maxAge: '45s' });
+    expect(late).toEqual(early);
+  });
+
+  it('reduce after clear() matches', () => {
+    const [late, early] = reduceBoth(undefined, undefined, (s) => {
+      s.clear();
+      s.pushMany(
+        batches[0]!.map((r) => [(r[0] as number) + 1e6, r[1], r[2]]) as never,
+      );
+    });
+    expect(late).toEqual(early);
+  });
+
+  it('reduce on a partition replays rows still waiting to be packed', () => {
+    // 900 rows over 3 partitions: 300 each, so 256 packed and 44 waiting.
+    const spec = { v: 'sum', n: { from: 'v', using: 'count' } } as const;
+    const rows = batches.flat().concat(
+      batches.flat().map((r) => [(r[0] as number) + 300_000, r[1], r[2]]),
+      batches.flat().map((r) => [(r[0] as number) + 600_000, r[1], r[2]]),
+    );
+    const early = make();
+    const ep = early.partitionBy('h');
+    early.pushMany(rows.slice(0, 3) as never);
+    const earlyReduce = [...ep.toMap().values()].map((p: any) =>
+      p.reduce(spec as never),
+    );
+    early.pushMany(rows.slice(3) as never);
+
+    const late = make();
+    const lp = late.partitionBy('h');
+    late.pushMany(rows as never);
+    const parts = [...lp.toMap().values()] as any[];
+    expect(parts.every((p) => p._isChunked && p.length === 300)).toBe(true);
+    const lateReduce = parts.map((p) => p.reduce(spec as never));
+    const tail = rows.map((r) => [(r[0] as number) + 900_000, r[1], r[2]]);
+    early.pushMany(tail as never);
+    late.pushMany(tail as never);
+    expect(lateReduce.map((r) => r.value())).toEqual(
+      earlyReduce.map((r) => r.value()),
+    );
+  });
+
   it('replayed events are fresh objects, as pushed events are', () => {
     const s = make();
     for (const b of batches) s.pushMany(b as never);
