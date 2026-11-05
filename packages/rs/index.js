@@ -109,6 +109,25 @@ export class Expr {
   abs() {
     return this.#op('abs');
   }
+  // Rust's own maths: can differ from JavaScript's Math in the last digit.
+  sqrt() {
+    return this.#op('sqrt');
+  }
+  sin() {
+    return this.#op('sin');
+  }
+  cos() {
+    return this.#op('cos');
+  }
+  asin() {
+    return this.#op('asin');
+  }
+  atan2(x) {
+    return this.#op('atan2', x);
+  }
+  pow(exponent) {
+    return this.#op('pow', exponent);
+  }
   isMissing() {
     return this.#op('isMissing');
   }

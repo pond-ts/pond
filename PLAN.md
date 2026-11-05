@@ -1055,6 +1055,10 @@ consumer signal. Plan:
   36,000 rows). `@pond-ts/fit` wants to run its maths on either core, so
   the folds it needs (first: a dead-band running sum, the 3 m climb rule)
   should be named operators or expressions. Found with [PND-ROLLTIME].
+  `cumulative` 'increase' / 'decrease' (the climb rule) in #906; maths in
+  expressions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) for haversine
+  and 4th-power averages built 2026-11-05. Detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
   emit-side allocation slice; spike plan exists. Second consumer: the
   offscreen-stream spike's live chart, which needed each appended batch as
