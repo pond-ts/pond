@@ -335,7 +335,9 @@ impl TimeSeries {
     }
 
     /// Running totals down each named column (pond-ts `cumulative`):
-    /// `Reducer::Sum`, `Max`, `Min` or `Count` (of rows with a value). A gap
+    /// `Reducer::Sum`, `Max`, `Min` or `Count` (of rows with a value), or
+    /// [`Cumulative::increase`] / [`Cumulative::decrease`] (the running
+    /// rises or falls, with an optional threshold; number columns only). A gap
     /// keeps the running value; rows before the first value are gaps.
     /// `sum` adds left to right from `+0.0`; once it overflows, the rest of
     /// the column is gaps. Number columns give numbers; decimal columns give
@@ -351,13 +353,34 @@ impl TimeSeries {
     /// assert_eq!(got, [Some(1.0), Some(1.0), Some(3.0)]);
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
-    pub fn cumulative(&self, spec: &[(&str, Reducer)]) -> Result<TimeSeries> {
+    pub fn cumulative<C: Into<Cumulative> + Copy>(&self, spec: &[(&str, C)]) -> Result<TimeSeries> {
         const CALL: &str = "cumulative";
         let names: Vec<&str> = spec.iter().map(|&(name, _)| name).collect();
         let targets = self.targets(CALL, &names)?;
         let mut out = self.columns().to_vec();
-        for (i, (&c, &(name, reducer))) in targets.iter().zip(spec).enumerate() {
+        for (i, (&c, &(name, entry))) in targets.iter().zip(spec).enumerate() {
             named_once(CALL, names[..i].iter().copied(), name)?;
+            let reducer = match entry.into() {
+                Cumulative::Reducer(r) => r,
+                change => {
+                    let (increase, threshold) = change.checked(CALL, name)?;
+                    let column = &self.columns()[c];
+                    let values = match column.data() {
+                        ColumnData::Number(f) => f.values(),
+                        other => {
+                            return Err(wrong_kind(
+                                CALL,
+                                column,
+                                other,
+                                "needs a number column for increase / decrease",
+                            ));
+                        }
+                    };
+                    let data: ColumnData = running_change(values, increase, threshold).into();
+                    out[c] = Column::from_data(column.name().to_string(), data, false);
+                    continue;
+                }
+            };
             if !matches!(
                 reducer,
                 Reducer::Sum | Reducer::Max | Reducer::Min | Reducer::Count
@@ -365,7 +388,8 @@ impl TimeSeries {
                 return Err(PondError::InvalidData {
                     call: CALL,
                     message: format!(
-                        "column '{name}': cumulative takes sum, max, min or count, not {reducer:?}"
+                        "column '{name}': cumulative takes sum, max, min, count, increase or \
+                         decrease, not {reducer:?}"
                     ),
                 });
             }
@@ -688,6 +712,148 @@ fn decimal_fit(call: &'static str, column: &str, row: usize, value: Option<i128>
 }
 
 /// pond-ts's running sum / max / min / count over `f64` values.
+/// One column's entry in [`TimeSeries::cumulative`]: a [`Reducer`] (`Sum`,
+/// `Max`, `Min`, `Count`; a `Reducer` converts with `.into()`, and a spec of
+/// plain reducers needs no conversion), or the running rises / falls of
+/// the column (pond-ts `'increase'` / `'decrease'`, and
+/// `{ using, threshold }`).
+///
+/// The first value sets a reference point and the total starts at 0. After
+/// that, with `d = value - reference`: `d >= threshold` adds `d` to the
+/// rises and moves the reference to the value; `d <= -threshold` adds `-d`
+/// to the falls and moves it. A smaller change leaves both alone, so a
+/// slow drift still counts once it adds up to the threshold. Both
+/// directions share the reference point.
+///
+/// ```
+/// # use pond_rs::{Column, Cumulative, TimeSeries};
+/// // Elevation gain, ignoring changes under 3 m.
+/// let s = TimeSeries::new("track", vec![0, 1, 2, 3, 4],
+///     vec![Column::required("ele", vec![100.0, 102.0, 103.5, 101.0, 100.0])])?;
+/// let gain = s.cumulative(&[("ele", Cumulative::increase().threshold(3.0))])?;
+/// let got: Vec<_> = gain.column("ele")?.numbers()?.iter().collect();
+/// assert_eq!(got, [Some(0.0), Some(0.0), Some(3.5), Some(3.5), Some(3.5)]);
+/// # Ok::<(), pond_rs::PondError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Cumulative {
+    /// A running sum, max, min or count.
+    Reducer(Reducer),
+    /// The running total of rises of at least `threshold`.
+    Increase {
+        /// Changes smaller than this are ignored (0 counts every rise).
+        threshold: f64,
+    },
+    /// The running total of falls of at least `threshold` (a positive number).
+    Decrease {
+        /// Changes smaller than this are ignored (0 counts every fall).
+        threshold: f64,
+    },
+}
+
+impl Cumulative {
+    /// Every rise counts (pond-ts `'increase'`).
+    pub fn increase() -> Self {
+        Cumulative::Increase { threshold: 0.0 }
+    }
+
+    /// Every fall counts (pond-ts `'decrease'`).
+    pub fn decrease() -> Self {
+        Cumulative::Decrease { threshold: 0.0 }
+    }
+
+    /// Ignore changes smaller than `threshold` (pond-ts `{ using, threshold }`).
+    /// It must be finite and at least 0, which `cumulative` checks. No
+    /// effect on a [`Cumulative::Reducer`].
+    pub fn threshold(self, threshold: f64) -> Self {
+        match self {
+            Cumulative::Increase { .. } => Cumulative::Increase { threshold },
+            Cumulative::Decrease { .. } => Cumulative::Decrease { threshold },
+            reducer => reducer,
+        }
+    }
+
+    /// `(is increase, threshold)` for a rise / fall entry, or an error for
+    /// a threshold that is not finite and at least 0.
+    pub(crate) fn checked(self, call: &'static str, column: &str) -> Result<(bool, f64)> {
+        let (increase, threshold) = match self {
+            Cumulative::Increase { threshold } => (true, threshold),
+            Cumulative::Decrease { threshold } => (false, threshold),
+            Cumulative::Reducer(_) => unreachable!("only called for increase / decrease"),
+        };
+        if !(threshold.is_finite() && threshold >= 0.0) {
+            return Err(PondError::InvalidData {
+                call,
+                message: format!(
+                    "column '{column}': threshold must be a finite number >= 0, got {threshold}"
+                ),
+            });
+        }
+        Ok((increase, threshold))
+    }
+}
+
+impl From<Reducer> for Cumulative {
+    fn from(reducer: Reducer) -> Self {
+        Cumulative::Reducer(reducer)
+    }
+}
+
+/// The running rises / falls of one column, as pond-ts `cumulative`'s
+/// `increase` / `decrease` loop does it (the same operations in the same
+/// order, so the same bits). Gaps carry the total; rows before the first
+/// value are gaps.
+pub(crate) struct ChangeFold {
+    reference: f64,
+    up: f64,
+    down: f64,
+    increase: bool,
+    threshold: f64,
+}
+
+impl ChangeFold {
+    pub(crate) fn new(increase: bool, threshold: f64) -> Self {
+        ChangeFold {
+            reference: f64::NAN,
+            up: 0.0,
+            down: 0.0,
+            increase,
+            threshold,
+        }
+    }
+
+    /// Feed one finite value; the running total.
+    pub(crate) fn step(&mut self, v: f64) -> f64 {
+        if self.reference.is_nan() {
+            self.reference = v;
+        } else {
+            let d = v - self.reference;
+            if d >= self.threshold {
+                self.up += d;
+                self.reference = v;
+            } else if d <= -self.threshold {
+                self.down -= d;
+                self.reference = v;
+            }
+        }
+        if self.increase { self.up } else { self.down }
+    }
+}
+
+fn running_change(values: &[f64], increase: bool, threshold: f64) -> Vec<f64> {
+    let mut fold = ChangeFold::new(increase, threshold);
+    let mut total = f64::NAN;
+    values
+        .iter()
+        .map(|&v| {
+            if v.is_finite() {
+                total = fold.step(v);
+            }
+            finite_or_gap(total)
+        })
+        .collect()
+}
+
 fn running(values: &[f64], reducer: Reducer) -> Vec<f64> {
     let mut acc = 0.0f64;
     let mut seen = false;
@@ -1186,7 +1352,17 @@ mod tests {
             .cumulative(&[("d", Reducer::Avg)])
             .unwrap_err()
             .to_string();
-        assert!(e.contains("sum, max, min or count"), "{e}");
+        assert!(e.contains("sum, max, min, count, increase or"), "{e}");
+        let e = s
+            .cumulative(&[("d", Cumulative::increase().threshold(-1.0))])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("threshold must be a finite number >= 0"), "{e}");
+        let e = s
+            .cumulative(&[("d", Cumulative::decrease().threshold(f64::NAN))])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("threshold"), "{e}");
         let e = s
             .cumulative(&[("d", Reducer::Sum), ("d", Reducer::Max)])
             .unwrap_err()

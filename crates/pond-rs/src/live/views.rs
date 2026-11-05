@@ -582,16 +582,30 @@ impl LiveSeries {
 
     /// Running totals down number columns (pond-ts live `cumulative`):
     /// [`Reducer::Sum`] (from `+0`), [`Reducer::Max`], [`Reducer::Min`] or
-    /// [`Reducer::Count`] (values seen). A gap keeps the running value;
+    /// [`Reducer::Count`] (values seen), or [`crate::Cumulative::increase`] /
+    /// [`crate::Cumulative::decrease`]. A gap keeps the running value;
     /// events before the first value, and a running value that is not
     /// finite, give a gap.
-    pub fn cumulative(
+    #[allow(clippy::type_complexity)]
+    pub fn cumulative<C: Into<crate::Cumulative> + Copy>(
         &mut self,
         from: impl Into<super::NodeId>,
-        spec: &[(&str, Reducer)],
+        spec: &[(&str, C)],
     ) -> Result<Node<LiveView>> {
         const CALL: &str = "LiveSeries::cumulative";
-        for (name, reducer) in spec {
+        let mut folds: Vec<Box<dyn FnMut(Option<f64>, f64) -> f64 + Send>> =
+            Vec::with_capacity(spec.len());
+        for &(name, entry) in spec {
+            let reducer = match entry.into() {
+                crate::Cumulative::Reducer(r) => r,
+                change => {
+                    // `increase` / `decrease`: the batch fold, value by value.
+                    let (increase, threshold) = change.checked(CALL, name)?;
+                    let mut fold = crate::rowwise::ChangeFold::new(increase, threshold);
+                    folds.push(Box::new(move |_, v| fold.step(v)));
+                    continue;
+                }
+            };
             if !matches!(
                 reducer,
                 Reducer::Sum | Reducer::Max | Reducer::Min | Reducer::Count
@@ -599,33 +613,27 @@ impl LiveSeries {
                 return Err(PondError::InvalidData {
                     call: CALL,
                     message: format!(
-                        "column '{name}': cumulative takes sum, max, min or count, not {reducer:?}"
+                        "column '{name}': cumulative takes sum, max, min, count, increase or \
+                         decrease, not {reducer:?}"
                     ),
                 });
             }
+            folds.push(match reducer {
+                Reducer::Sum => Box::new(|acc, v| acc.unwrap_or(0.0) + v),
+                Reducer::Count => Box::new(|acc, _| acc.unwrap_or(0.0) + 1.0),
+                // pond-ts: `acc === undefined || v > acc ? v : acc`.
+                Reducer::Max => Box::new(|acc, v| match acc {
+                    Some(a) if v > a => v,
+                    Some(a) => a,
+                    None => v,
+                }),
+                _ => Box::new(|acc, v| match acc {
+                    Some(a) if v < a => v,
+                    Some(a) => a,
+                    None => v,
+                }),
+            });
         }
-        let folds = spec
-            .iter()
-            .map(
-                |&(_, reducer)| -> Box<dyn FnMut(Option<f64>, f64) -> f64 + Send> {
-                    match reducer {
-                        Reducer::Sum => Box::new(|acc, v| acc.unwrap_or(0.0) + v),
-                        Reducer::Count => Box::new(|acc, _| acc.unwrap_or(0.0) + 1.0),
-                        // pond-ts: `acc === undefined || v > acc ? v : acc`.
-                        Reducer::Max => Box::new(|acc, v| match acc {
-                            Some(a) if v > a => v,
-                            Some(a) => a,
-                            None => v,
-                        }),
-                        _ => Box::new(|acc, v| match acc {
-                            Some(a) if v < a => v,
-                            Some(a) => a,
-                            None => v,
-                        }),
-                    }
-                },
-            )
-            .collect();
         let names: Vec<&str> = spec.iter().map(|(n, _)| *n).collect();
         self.running(CALL, from.into(), &names, folds)
     }

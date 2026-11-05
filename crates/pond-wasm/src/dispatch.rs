@@ -12,8 +12,9 @@
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, Alignment, ArrayOptions, At, Bins, Change, Column, ColumnData,
-    ColumnKind, Fill, FillLimits, FirstRow, Join, JoinType, Keep, Materialize, OnConflict,
-    PartitionedSeries, Pick, Reducer, Rolling, RollingOver, Scalar, Sequence, TimeSeries,
+    ColumnKind, Cumulative, Fill, FillLimits, FirstRow, Join, JoinType, Keep, Materialize,
+    OnConflict, PartitionedSeries, Pick, Reducer, Rolling, RollingOver, Scalar, Sequence,
+    TimeSeries,
 };
 use serde_json::Value;
 
@@ -43,6 +44,47 @@ pub enum Outcome {
 
 /// An error message for JavaScript.
 pub type Res<T> = Result<T, String>;
+
+/// One `cumulative` spec value: a reducer name, `'increase'` /
+/// `'decrease'`, or `{ using: 'increase' | 'decrease', threshold? }`.
+pub(crate) fn cumulative_entry(column: &str, r: &Value) -> Res<Cumulative> {
+    let change = |using: &str| match using {
+        "increase" => Some(Cumulative::increase()),
+        "decrease" => Some(Cumulative::decrease()),
+        _ => None,
+    };
+    match r {
+        Value::String(name) => match change(name) {
+            Some(c) => Ok(c),
+            None => Ok(pond(Reducer::parse(name))?.into()),
+        },
+        Value::Object(o) => {
+            let using = o
+                .get("using")
+                .and_then(Value::as_str)
+                .and_then(change)
+                .ok_or_else(|| {
+                    format!(
+                        "cumulative: column '{column}': {{ using }} takes 'increase' or 'decrease'"
+                    )
+                })?;
+            match o.get("threshold") {
+                None | Some(Value::Null) => Ok(using),
+                Some(t) => {
+                    let t = t.as_f64().ok_or_else(|| {
+                        format!(
+                            "cumulative: column '{column}': threshold must be a number, got {t}"
+                        )
+                    })?;
+                    Ok(using.threshold(t))
+                }
+            }
+        }
+        other => Err(format!(
+            "cumulative: column '{column}': expected a reducer name or {{ using, threshold }}, got {other}"
+        )),
+    }
+}
 
 pub(crate) fn pond<T>(r: pond_rs::Result<T>) -> Res<T> {
     r.map_err(|e| e.to_string())
@@ -562,10 +604,7 @@ macro_rules! shared_op {
                 };
                 let spec = map
                     .iter()
-                    .map(|(c, r)| {
-                        let r = r.as_str().ok_or_else(|| a.bad(0, "reducer names"))?;
-                        Ok((c.as_str(), pond(Reducer::parse(r))?))
-                    })
+                    .map(|(c, r)| Ok((c.as_str(), cumulative_entry(c, r)?)))
                     .collect::<Res<Vec<_>>>()?;
                 Some(pond($target.cumulative(&spec)))
             }

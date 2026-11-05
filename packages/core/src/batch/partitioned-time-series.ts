@@ -1,3 +1,4 @@
+import type { CumulativeAccumulator } from './operators/cumulative.js';
 import { TimeSeries } from './time-series.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import { Sequence } from '../sequence/sequence.js';
@@ -830,12 +831,7 @@ export class PartitionedTimeSeries<
 
   /** Per-partition `cumulative`. See {@link TimeSeries.cumulative}. */
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [K in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [K in Targets]: CumulativeAccumulator;
   }): PartitionedTimeSeries<DiffSchema<S, Targets>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>

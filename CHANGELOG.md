@@ -78,6 +78,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`cumulative` takes `'increase'` and `'decrease'`** ([PND-SCANDATA]):
+  the running total of rises (or falls) between values. With
+  `{ using: 'increase', threshold: 3 }` a change counts only once the value
+  has moved at least 3 from the last value that counted, in either
+  direction, so small wiggles are ignored but slow drift still adds up.
+  Elevation gain with a 3 m dead band is
+  `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`, with no
+  step function. On `TimeSeries`, `partitionBy`, `LiveSeries` and live
+  views, and in pond-rs (`Cumulative::increase().threshold(3.0)`; the
+  `@pond-ts/rs` and Python bridges take the same spec as pond-ts). Through
+  `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
+  step (0.15 against 10 ms on 36,000 rows).
+
 ### Changed
 
 - **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A

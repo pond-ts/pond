@@ -1,3 +1,4 @@
+import type { CumulativeAccumulator } from '../batch/operators/cumulative.js';
 import { LiveSeries, type LiveSeriesOptions } from './live-series.js';
 import { LiveRollingAggregation } from './live-rolling-aggregation.js';
 import { LivePartitionedSyncRolling } from './live-partitioned-sync-rolling.js';
@@ -701,12 +702,7 @@ export class LivePartitionedSeries<
 
   /** Per-partition `cumulative`. See {@link LiveSeries.cumulative}. */
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [P in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [P in Targets]: CumulativeAccumulator;
   }): LivePartitionedView<S, DiffSchema<S, Targets>, K, ByCol> {
     return new LivePartitionedView<S, DiffSchema<S, Targets>, K, ByCol>(
       this,
@@ -1580,12 +1576,7 @@ export class LivePartitionedView<
   }
 
   cumulative<const Targets extends NumericColumnNameForSchema<R>>(spec: {
-    [P in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [P in Targets]: CumulativeAccumulator;
   }): LivePartitionedView<SBase, DiffSchema<R, Targets>, K, ByCol> {
     const prev = this.#factory;
     return new LivePartitionedView<SBase, DiffSchema<R, Targets>, K, ByCol>(
