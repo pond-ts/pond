@@ -139,7 +139,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   moving time and distance now run between its own ends rather than the
   samples around them, so `splits(km(1))` measures 1 km each and the last
   split is never empty (this changes `sectionStats` numbers for spans whose
-  ends fall between samples). Pool swims: swimming time is the overlap with
+  ends fall between samples); its channel numbers and best efforts use only
+  the samples inside it. A pool swim with a known pool length has one
+  distance axis from its lengths, used by stats, bounds, splits, efforts and
+  speed, and lengths recorded past the last sample keep their time and
+  distance; the moving clock follows the same swum stretches. `parseFit`
+  starts the activity at the session's or first lap's start when the first
+  record comes later (the id still names the first record's time).
+  `parseTcx` reads namespace-prefixed elements. Pool swims: swimming time is the overlap with
   the lengths, a length's distance (from the pool length) reaches `stats()`,
   and lengths, laps and samples share one clock from the activity's start.
   Real zeros stay zero: a standstill has speed 0, 0 W laps count in lap

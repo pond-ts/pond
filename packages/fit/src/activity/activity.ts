@@ -15,8 +15,11 @@ import type {
   SwimLength,
 } from '../types.js';
 import {
+  distanceAtSeconds,
   hasDistance,
   prepareActivity,
+  secondsAtDistance,
+  totalDistance,
   swimMoving,
   type PreparedActivity,
 } from '../summary/index.js';
@@ -59,50 +62,6 @@ export type SectionKind =
   | 'repeat'
   | 'recovery'
   | 'effort';
-
-/** Elapsed seconds at `meters` along the activity: the first sample that far,
- *  with the time drawn straight from the sample before. */
-function secondsAtMeters(prep: PreparedActivity, meters: number): number {
-  const { cum, timeRel } = prep;
-  const n = cum.length;
-  if (n === 0) return 0;
-  if (meters <= cum[0]!) return timeRel[0]!;
-  if (meters >= cum[n - 1]!) return timeRel[n - 1]!;
-  let lo = 0;
-  let hi = n - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (cum[mid]! < meters) lo = mid + 1;
-    else hi = mid;
-  }
-  const c0 = cum[lo - 1]!;
-  const c1 = cum[lo]!;
-  const t0 = timeRel[lo - 1]!;
-  const t1 = timeRel[lo]!;
-  return c1 > c0 ? t0 + ((meters - c0) / (c1 - c0)) * (t1 - t0) : t1;
-}
-
-/** Metres along the activity at elapsed `sec` (drawn straight between
- *  samples). */
-function metersAtSeconds(prep: PreparedActivity, sec: number): number {
-  const { cum, timeRel } = prep;
-  const n = timeRel.length;
-  if (n === 0) return 0;
-  if (sec <= timeRel[0]!) return cum[0]!;
-  if (sec >= timeRel[n - 1]!) return cum[n - 1]!;
-  let lo = 0;
-  let hi = n - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (timeRel[mid]! < sec) lo = mid + 1;
-    else hi = mid;
-  }
-  const t0 = timeRel[lo - 1]!;
-  const t1 = timeRel[lo]!;
-  const c0 = cum[lo - 1]!;
-  const c1 = cum[lo]!;
-  return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
-}
 
 /** One continuous stretch of an activity. Its time and distance run between
  *  its own ends; its channel numbers come from the samples inside it (see
@@ -148,8 +107,8 @@ export class Section implements Span {
           }
         : null,
       distance: {
-        from: Distance.meters(metersAtSeconds(this.prep, this.fromSeconds)),
-        to: Distance.meters(metersAtSeconds(this.prep, this.toSeconds)),
+        from: Distance.meters(distanceAtSeconds(this.prep, this.fromSeconds)),
+        to: Distance.meters(distanceAtSeconds(this.prep, this.toSeconds)),
       },
     });
   }
@@ -307,9 +266,6 @@ export class Activity extends Section {
   readonly #splits = new Map<number, Sections<Section>>();
 
   protected constructor(prep: PreparedActivity) {
-    const last = prep.timeRel.length
-      ? prep.timeRel[prep.timeRel.length - 1]!
-      : 0;
     const laps = prep.imported.laps ?? [];
     const timers = laps.map((l) => l.timerSeconds);
     // the file's own total first, else the laps' when every lap has one
@@ -322,7 +278,9 @@ export class Activity extends Section {
       prep,
       'activity',
       prep.imported.activity.name,
-      { fromSeconds: 0, toSeconds: last },
+      // the start (or an earlier first sample) to the last sample, or to
+      // a pool swim's last recorded length
+      { fromSeconds: prep.extent.from, toSeconds: prep.extent.to },
       timer,
     );
     this.#record = prep.imported;
@@ -410,8 +368,8 @@ export class Activity extends Section {
       'elapsed' in range
         ? [range.elapsed.from.seconds, range.elapsed.to.seconds]
         : [
-            secondsAtMeters(this.prep, range.distance.from.meters),
-            secondsAtMeters(this.prep, range.distance.to.meters),
+            secondsAtDistance(this.prep, range.distance.from.meters),
+            secondsAtDistance(this.prep, range.distance.to.meters),
           ];
     if (!(to >= from))
       throw new RangeError('section: the end comes before the start');
@@ -430,9 +388,8 @@ export class Activity extends Section {
     if (!(step > 0)) throw new RangeError('splits: the interval must be > 0');
     let cached = this.#splits.get(step);
     if (!cached) {
-      const cum = this.prep.cum;
-      const total = cum.length ? cum[cum.length - 1]! - cum[0]! : 0;
-      const base = cum.length ? cum[0]! : 0;
+      const base = this.prep.cum.length ? this.prep.cum[0]! : 0;
+      const total = totalDistance(this.prep) - base;
       const items: Section[] = [];
       // a sliver under a millimetre left by rounding is not a split
       for (let k = 0; k * step < total - 1e-3; k++) {
@@ -440,8 +397,8 @@ export class Activity extends Section {
         const b = base + Math.min((k + 1) * step, total);
         items.push(
           new Section(this.prep, 'split', `Split ${k + 1}`, {
-            fromSeconds: secondsAtMeters(this.prep, a),
-            toSeconds: secondsAtMeters(this.prep, b),
+            fromSeconds: secondsAtDistance(this.prep, a),
+            toSeconds: secondsAtDistance(this.prep, b),
           }),
         );
       }

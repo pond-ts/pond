@@ -10,6 +10,7 @@ import {
   fitLocalStart,
   fitRecoveryFromBytes,
   recoveryFromFitReadings,
+  readActivity,
 } from '../src/files/index.js';
 import { Activity } from '../src/activity/index.js';
 import type { FitData } from '../src/files/index.js';
@@ -415,6 +416,8 @@ function syntheticFit(
     /** No developer field (fit-file-parser needs a field description for
      *  one, which this file doesn't carry). */
     noDeveloperField?: boolean;
+    /** Add a lap that starts this many seconds before the first record. */
+    lapStartsEarlier?: number;
   } = {},
 ): Uint8Array {
   const T = 1_000_000_000; // FIT seconds
@@ -460,6 +463,33 @@ function syntheticFit(
     body.push(0x41, 0, 0, ...u16le(20), 1, 3, 1, 0x02);
     // Compressed header for local 1, 3 s on: 0x80 | (1 << 5) | ((T + 3) & 0x1f).
     body.push(0x80 | (1 << 5) | ((T + 3) & 0x1f), 148);
+  }
+  if (opts.lapStartsEarlier) {
+    // Definition, local 3: lap (19): timestamp, start_time (2), total
+    // elapsed time (7, ms).
+    body.push(
+      0x43,
+      0,
+      0,
+      ...u16le(19),
+      3,
+      253,
+      4,
+      0x86,
+      2,
+      4,
+      0x86,
+      7,
+      4,
+      0x86,
+    );
+    const from = T - opts.lapStartsEarlier;
+    body.push(
+      0x03,
+      ...u32le(T + 3),
+      ...u32le(from),
+      ...u32le((T + 3 - from) * 1000),
+    );
   }
   // Definition, local 2: event (21), big-endian: timestamp, event (0), data (3).
   body.push(0x42, 0, 1, 0, 21, 3, 253, 4, 0x86, 0, 1, 0x00, 3, 4, 0x86);
@@ -569,6 +599,26 @@ describe('parseFit: compressed timestamps', () => {
       });
       expect(() => Activity.from(r)).not.toThrow();
     });
+});
+
+describe('parseFit: a first record after the start', () => {
+  it('starts at the lap start and keeps the records on that clock', () => {
+    const r = parseFit(
+      syntheticFit({ crc: true, noDeveloperField: true, lapStartsEarlier: 30 }),
+    );
+    const first = parseFit(syntheticFit({ crc: true, noDeveloperField: true }));
+    expect(Date.parse(r.activity.startTimeUtc)).toBe(
+      Date.parse(first.activity.startTimeUtc) - 30_000,
+    );
+    expect(r.streams.timeSeconds).toEqual([30, 33]);
+    // the id still names the first record's time, so re-imports match
+    expect(r.activity.id).toBe(first.activity.id);
+    const a = readActivity(
+      syntheticFit({ crc: true, noDeveloperField: true, lapStartsEarlier: 30 }),
+    );
+    expect(a.stats().time.elapsed?.seconds).toBe(33);
+    expect(a.laps.at(0)!.fromSeconds).toBe(0);
+  });
 });
 
 describe('recoveryFromFitReadings', () => {

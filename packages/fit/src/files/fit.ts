@@ -24,15 +24,31 @@ type FileId = {
   product_name?: string;
 };
 
+/** Start times the file gives for its sessions and laps, Unix ms. */
+function sessionStarts(data: FitData): number[] {
+  const out: number[] = [];
+  for (const key of ['sessions', 'laps'] as const) {
+    const list = data[key] as Array<{ start_time?: unknown }> | undefined;
+    const t = list?.[0]?.start_time;
+    if (t instanceof Date || typeof t === 'string') {
+      const ms = new Date(t).getTime();
+      if (Number.isFinite(ms)) out.push(ms);
+    }
+  }
+  return out;
+}
+
 /**
  * Parse a FIT file (binary, the rich device format) into an
  * {@link ImportedActivity}. FIT routinely carries real power, cadence and
  * temperature, laps, the swim watch's lengths, and the device. Decoded with
  * `fit-file-parser`, then projected to parallel stream arrays. `timeSeconds`
- * are offsets from the first sample; absent optional channels are omitted.
+ * are offsets from the activity's start (the first record, or the
+ * session's start when that is earlier); absent optional channels are
+ * omitted.
  * Name: `options.name`, else "Untitled"; sport: `options.sportType`, else the
  * file's sport as a Strava-style label (see {@link fitSport}); id:
- * `options.id`, else `fit:<start time>`.
+ * `options.id`, else `fit:<first record's time>`.
  */
 export function parseFit(
   buffer: ArrayBuffer | Uint8Array,
@@ -105,7 +121,11 @@ export function parseFit(
     if (d != null) hasDist = true;
   }
 
-  const startMs = epochMs[0]!;
+  // The activity starts at its session's (or first lap's) start when that
+  // comes before the first record: a watch can write its first record late,
+  // and laps and lengths keep the session's clock.
+  const firstRecordMs = epochMs[0]!;
+  const startMs = Math.min(firstRecordMs, ...sessionStarts(data));
   const timeSeconds = epochMs.map((t) => (t - startMs) / 1000);
 
   // Recorded laps (device-marked), if present. Units already follow the parser
@@ -138,7 +158,8 @@ export function parseFit(
   if ((openWater || !gps || gaps) && hasDist)
     streams.distanceMeters = distanceMeters;
   const startTimeLocal = fitLocalStart(data, startMs);
-  const id = options.id ?? `fit:${new Date(startMs).toISOString()}`;
+  // the id keeps the first record's time, as before, so a re-import matches
+  const id = options.id ?? `fit:${new Date(firstRecordMs).toISOString()}`;
   const activity: ActivityMeta = {
     id,
     source: options.source ?? 'file',

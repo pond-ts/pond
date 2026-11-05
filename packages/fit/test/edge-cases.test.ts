@@ -8,9 +8,9 @@ import { activityFormat, parseGpx, readActivity } from '../src/files/index.js';
 import { editRecording } from '../src/edit/index.js';
 import { summarizeLaps } from '../src/laps/groups.js';
 import { prepareActivity } from '../src/summary/index.js';
-import { sectionGroupStats } from '../src/stats/index.js';
 import type { ActivityStreams, ImportedActivity } from '../src/types.js';
-import { km, seconds } from '../src/quantities.js';
+import { km, meters, seconds } from '../src/quantities.js';
+import { movingClock, sectionGroupStats } from '../src/stats/index.js';
 
 const META = {
   id: 'test:1',
@@ -95,6 +95,7 @@ describe('lap summaries', () => {
       { seconds: 60, avgWatts: 200, npWatts: 200 },
     ]);
     expect(s.avgWatts).toBe(100);
+    expect(s.highestLapWatts).toBe(200);
     expect(s.npWatts).toBeCloseTo((200 ** 4 / 2) ** 0.25, 6); // ≈ 168.18
   });
 
@@ -268,5 +269,149 @@ describe('splits', () => {
     // the whole is the sum of its parts
     expect(run.splits(km(1)).stats().distance?.meters).toBe(2400);
     expect(run.splits(km(1)).stats().time.elapsed?.seconds).toBe(240);
+  });
+});
+
+describe('one distance axis for a pool swim', () => {
+  const start = Date.parse(META.startTimeUtc);
+  const at = (sec: number) => new Date(start + sec * 1000).toISOString();
+  const swim = (timeSeconds: number[], lengths: [number, number][]) =>
+    Activity.from({
+      activity: { ...META, sportType: 'Swim' },
+      streams: { latlng: [], timeSeconds },
+      swim: {
+        movingSeconds: 60,
+        pool: { lengthMeters: 25, unit: 'm' },
+        lengths: lengths.map(([from, secs]) => ({
+          startTimeUtc: at(from),
+          seconds: secs,
+          active: true,
+        })),
+      },
+    });
+
+  it('every distance query reads the lengths', () => {
+    const a = swim(
+      [0, 30, 60],
+      [
+        [0, 30],
+        [30, 30],
+      ],
+    );
+    expect(a.stats().distance?.meters).toBe(50);
+    expect(a.bounds.distance.to.meters).toBe(50);
+    expect(a.splits(meters(25)).map((s) => s.stats().distance?.meters)).toEqual(
+      [25, 25],
+    );
+    const first = a.section({
+      distance: { from: meters(0), to: meters(25) },
+    });
+    expect(first.stats().distance?.meters).toBe(25);
+    expect(a.pace.bestEffort(meters(25))?.time.seconds).toBe(30);
+    expect(a.stats().speed.average?.metersPerSecond).toBeCloseTo(50 / 60, 9);
+    expect(a.stats().speed.max?.metersPerSecond).toBeCloseTo(25 / 30, 9);
+  });
+
+  it('keeps a length recorded after the last sample', () => {
+    const a = swim(
+      [0, 30],
+      [
+        [0, 30],
+        [90, 30],
+      ],
+    );
+    if (!a.isPoolSwim()) throw new Error('not a pool swim');
+    const second = a.lengths.at(1)!.stats({ time: 'swimming' });
+    expect(second.distance?.meters).toBe(25);
+    expect(second.time.elapsed?.seconds).toBe(30);
+    expect(second.time.swimming?.seconds).toBe(30);
+    const both = a.lengths.stats();
+    expect(both.distance?.meters).toBe(50);
+    expect(both.time.elapsed?.seconds).toBe(60);
+    expect(both.time.swimming?.seconds).toBe(60);
+    expect(a.stats().time.elapsed?.seconds).toBe(120);
+  });
+
+  it('runs the moving clock on the same stretches', () => {
+    const a = swim(
+      [0, 60, 120],
+      [
+        [0, 30],
+        [90, 30],
+      ],
+    );
+    const clock = movingClock(a.prepared());
+    expect(clock.upTo(120)).toBe(60);
+    expect(clock.at(60)).toBeNull();
+    expect(clock.at(100)).toBe(40);
+  });
+});
+
+describe('a section reads only the samples inside it', () => {
+  const ride = () =>
+    Activity.from(
+      rec(
+        {
+          timeSeconds: [0, 10, 20],
+          distanceMeters: [0, 30, 60],
+          watts: [100, 100, 1000],
+        },
+        {},
+      ),
+    );
+
+  it('leaves out the sample after its end', () => {
+    const s = ride().section({
+      elapsed: { from: seconds(0), to: seconds(15) },
+    });
+    const st = s.stats();
+    expect(st.time.elapsed?.seconds).toBe(15);
+    expect(st.distance?.meters).toBe(45);
+    expect(st.power.max?.watts).toBe(100);
+    expect(st.power.average?.watts).toBe(100);
+  });
+
+  it('keeps best efforts inside it', () => {
+    const s = ride().section({
+      elapsed: { from: seconds(0), to: seconds(15) },
+    });
+    expect(s.power.bestEffort(seconds(20))).toBeNull();
+    expect(s.pace.bestEffort(meters(60))).toBeNull();
+    const e = s.power.bestEffort(seconds(10))!;
+    expect(e.section.toSeconds).toBeLessThanOrEqual(15);
+  });
+
+  it('has no channel numbers between two samples, but keeps its time', () => {
+    const st = ride()
+      .section({ elapsed: { from: seconds(1), to: seconds(2) } })
+      .stats();
+    expect(st.power.average).toBeNull();
+    expect(st.power.max).toBeNull();
+    expect(st.time.elapsed?.seconds).toBe(1);
+    expect(st.distance?.meters).toBeCloseTo(3, 9);
+  });
+});
+
+describe('prefixed TCX', () => {
+  const tcx = (p: string) => `<?xml version="1.0"?>
+<${p}TrainingCenterDatabase xmlns${p ? ':' + p.slice(0, -1) : ''}="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+ <${p}Activities><${p}Activity Sport="Running"><${p}Id>2024-05-01T09:00:00Z</${p}Id>
+  <${p}Lap StartTime="2024-05-01T09:00:00Z"><${p}TotalTimeSeconds>10</${p}TotalTimeSeconds><${p}DistanceMeters>100</${p}DistanceMeters>
+   <${p}Track>
+    <${p}Trackpoint><${p}Time>2024-05-01T09:00:00Z</${p}Time><${p}DistanceMeters>0</${p}DistanceMeters></${p}Trackpoint>
+    <${p}Trackpoint><${p}Time>2024-05-01T09:00:10Z</${p}Time><${p}DistanceMeters>100</${p}DistanceMeters></${p}Trackpoint>
+   </${p}Track>
+  </${p}Lap>
+ </${p}Activity></${p}Activities>
+</${p}TrainingCenterDatabase>`;
+
+  it('reads the same as the plain one', () => {
+    const plain = readActivity(tcx(''));
+    const prefixed = readActivity(tcx('t:'));
+    expect(prefixed.startedAt.toISOString()).toBe('2024-05-01T09:00:00.000Z');
+    expect(prefixed.stats().distance?.meters).toBe(100);
+    expect(prefixed.stats().time.elapsed?.seconds).toBe(10);
+    expect(prefixed.laps.length).toBe(1);
+    expect(prefixed.record.streams).toEqual(plain.record.streams);
   });
 });

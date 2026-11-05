@@ -28,7 +28,7 @@
  */
 import * as geo from '../geo/index.js';
 import { normalizedPower } from '../power/index.js';
-import type { PreparedActivity } from '../summary/index.js';
+import { distanceAtSeconds, type PreparedActivity } from '../summary/index.js';
 
 /** The channels the stats cover. `speed` is metres per second (a pace is the
  *  same number read the other way up); `elevation` is metres. */
@@ -154,6 +154,7 @@ interface Samples {
   movingSpans: ReadonlyArray<readonly [number, number]> | undefined;
   /** A pool swim's swum lengths, when the pool length is known. */
   poolLengths: PreparedActivity['poolLengths'];
+  prep: PreparedActivity;
 }
 
 const samplesCache = new WeakMap<PreparedActivity, Samples>();
@@ -180,6 +181,7 @@ function samplesOf(prep: PreparedActivity): Samples {
       moving: prep.movingMask,
       movingSpans: prep.movingSpans,
       poolLengths: prep.poolLengths,
+      prep,
     };
     samplesCache.set(prep, s);
   }
@@ -321,13 +323,19 @@ function defined<T extends object>(o: Loose<T>): T {
 }
 
 interface Window {
+  /** The samples inside (both ends included); meaningful when `samples`. */
   lo: number;
   hi: number;
+  /** The span held to the recording, seconds. */
+  from: number;
+  to: number;
   elapsed: number;
   moving: number;
   meters: number;
   /** The span misses the recording: no samples, no numbers. */
   empty: boolean;
+  /** At least one sample lies inside. */
+  samples: boolean;
 }
 
 /** Throws on a span that isn't one: a non-finite end, or ends reversed. */
@@ -338,32 +346,38 @@ function checkSpan(span: Span): void {
   if (a > b) throw new RangeError(`span starts after it ends: [${a}, ${b}]`);
 }
 
-/** Where the recording's time axis starts: the activity's start (0), or
- *  the first sample if that is earlier. */
-function axisStart(s: Samples): number {
-  return s.hasTime ? Math.min(0, s.t[0]!) : s.t[0]!;
-}
-
 /** Whether a span lies wholly outside the recording. */
 function outside(s: Samples, span: Span): boolean {
-  const n = s.t.length;
-  return (
-    n === 0 || span.toSeconds < axisStart(s) || span.fromSeconds > s.t[n - 1]!
-  );
+  const { from, to } = s.prep.extent;
+  return s.t.length === 0 || span.toSeconds < from || span.fromSeconds > to;
 }
 
-/** Cumulative metres at `sec`, drawn straight between samples. */
-function cumAt(s: Samples, sec: number): number {
-  const { t, cum } = s;
-  const n = t.length;
-  if (sec <= t[0]!) return cum[0]!;
-  if (sec >= t[n - 1]!) return cum[n - 1]!;
-  const i = indexAt(t, sec); // first sample at or after sec
-  const t0 = t[i - 1]!;
-  const t1 = t[i]!;
-  const c0 = cum[i - 1]!;
-  const c1 = cum[i]!;
-  return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
+/** Times within this of a sample count as on it (float noise from
+ *  distance-to-time lookups). */
+const EPS = 1e-9;
+
+/** The first sample at or after `sec`, or `n` when none. */
+function firstAtOrAfter(t: Float64Array, sec: number): number {
+  let lo = 0;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t[mid]! < sec - EPS) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** The last sample at or before `sec`, or -1 when none. */
+function lastAtOrBefore(t: Float64Array, sec: number): number {
+  let lo = 0;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t[mid]! <= sec + EPS) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
 }
 
 /** Seconds of [a, b] inside the given stretches. */
@@ -394,60 +408,50 @@ function movingIn(s: Samples, a: number, b: number): number {
   return moving;
 }
 
-/** Metres in [a, b]: a pool swim's lengths (each counting its share), else
- *  the distance drawn straight between samples. */
+/** Metres in [a, b], on the activity's one distance axis. */
 function metersIn(s: Samples, a: number, b: number): number {
-  if (s.poolLengths) {
-    let m = 0;
-    for (const l of s.poolLengths) {
-      const ov = Math.min(b, l.to) - Math.max(a, l.from);
-      if (ov > 0) m += (l.meters * ov) / (l.to - l.from);
-    }
-    return m;
-  }
-  const d = cumAt(s, b) - cumAt(s, a);
+  const d = distanceAtSeconds(s.prep, b) - distanceAtSeconds(s.prep, a);
   return fin(d) ? d : 0;
 }
 
 /**
- * The span measured on the recording. Its time and distance run between
- * its own ends (held to the recording), drawn straight between samples, so
- * a split from 1 km to 2 km measures 1 km. Its channel numbers come from
- * the samples inside it (`lo`…`hi`: the first sample at or after each end).
+ * The span measured on the recording. Its time, moving time and distance
+ * run between its own ends (held to the recording), drawn straight between
+ * samples, so a split from 1 km to 2 km measures 1 km. Its channel numbers
+ * come only from the samples inside it (`lo`…`hi`); a span between two
+ * samples has none.
  */
 function measure(s: Samples, span: Span): Window {
   checkSpan(span);
   if (outside(s, span)) {
     const at = s.t.length ? indexAt(s.t, span.fromSeconds) : 0;
-    // a pool swim's lengths are known even where there are no samples
-    const moving = s.poolLengths
-      ? movingIn(s, span.fromSeconds, span.toSeconds)
-      : 0;
-    const meters = s.poolLengths
-      ? metersIn(s, span.fromSeconds, span.toSeconds)
-      : 0;
-    return { lo: at, hi: at, elapsed: 0, moving, meters, empty: true };
+    return {
+      lo: at,
+      hi: at,
+      from: span.fromSeconds,
+      to: span.fromSeconds,
+      elapsed: 0,
+      moving: 0,
+      meters: 0,
+      empty: true,
+      samples: false,
+    };
   }
-  const n = s.t.length;
-  const a = Math.max(span.fromSeconds, axisStart(s));
-  const b = Math.min(span.toSeconds, s.t[n - 1]!);
-  const lo = indexAt(s.t, a);
-  const hi = indexAt(s.t, b);
-  // a pool swim's swimming isn't held to the samples
-  const moving = s.movingSpans
-    ? movingIn(s, span.fromSeconds, span.toSeconds)
-    : movingIn(s, a, b);
-  const meters = s.poolLengths
-    ? metersIn(s, span.fromSeconds, span.toSeconds)
-    : metersIn(s, a, b);
+  const a = Math.max(span.fromSeconds, s.prep.extent.from);
+  const b = Math.min(span.toSeconds, s.prep.extent.to);
+  const lo = firstAtOrAfter(s.t, a);
+  const hi = lastAtOrBefore(s.t, b);
   return {
     lo,
     hi,
+    from: a,
+    to: b,
     // with no timestamps the sample axis is a count, not seconds
     elapsed: s.hasTime ? b - a : 0,
-    moving,
-    meters,
+    moving: movingIn(s, a, b),
+    meters: metersIn(s, a, b),
     empty: false,
+    samples: lo <= hi,
   };
 }
 
@@ -488,21 +492,21 @@ function steadySpeed(s: Samples): Float64Array {
 function statsOf(s: Samples, w: Window): SectionStats {
   const { lo, hi } = w;
   const channels: Partial<Record<StatChannel, ChannelStats>> = {};
-  if (w.empty) {
-    const at = s.t.length ? s.t[lo]! : 0;
+  if (!w.samples) {
+    // no sample inside: the time and distance still hold, no channel does
     return {
-      fromSeconds: at,
-      toSeconds: at,
-      elapsedSeconds: 0,
-      movingSeconds: 0,
-      distanceMeters: 0,
+      fromSeconds: w.from,
+      toSeconds: w.to,
+      elapsedSeconds: w.elapsed,
+      movingSeconds: w.moving,
+      distanceMeters: w.meters,
       channels,
     };
   }
   if (s.hasTime && s.t.length > 1 && w.elapsed > 0) {
     const sp = steadySpeed(s);
     // the first sample has no speed of its own: start from the next one
-    const from = hi > lo ? lo + 1 : lo;
+    const from = lo + 1;
     const t = tally(s, sp, from, hi, lo);
     const e = ends(sp, from, hi);
     const speed = defined<ChannelStats>({
@@ -565,7 +569,7 @@ export function spanNormalizedPower(
   const s = samplesOf(prep);
   if (!s.power) return undefined;
   const w = measure(s, span);
-  return w.empty ? undefined : windowNp(s, s.power, w.lo, w.hi, false);
+  return !w.samples ? undefined : windowNp(s, s.power, w.lo, w.hi, false);
 }
 
 /** The sample indexes a section covers, both ends included (snapped as
@@ -576,7 +580,7 @@ export function sectionWindow(
   span: Span,
 ): { lo: number; hi: number } | null {
   const w = measure(samplesOf(prep), span);
-  return w.empty ? null : { lo: w.lo, hi: w.hi };
+  return !w.samples ? null : { lo: w.lo, hi: w.hi };
 }
 
 /** The stats for one section of a prepared activity. Throws `RangeError` on
@@ -659,7 +663,7 @@ export function sectionGroupStats(
       const inAny = new Uint8Array(vals.length);
       const movingInAny = new Uint8Array(vals.length);
       for (const w of windows) {
-        if (w.empty) continue;
+        if (!w.samples) continue;
         for (let i = w.lo; i <= w.hi; i++) {
           if (!fin(vals[i])) continue;
           inAny[i] = 1;
@@ -760,9 +764,22 @@ export function bestAveragePower(
 }
 
 /** A clock that only runs while moving (see {@link MovingClock}), by the same
- *  rule as the moving time. */
+ *  rule as the moving time: a pool swim's swum stretches, else the moving
+ *  sample gaps. */
 export function movingClock(prep: PreparedActivity): MovingClock {
   const s = samplesOf(prep);
+  const spans = s.movingSpans;
+  if (spans) {
+    // a pool swim: the clock runs inside its swum stretches, exactly
+    const before = (sec: number) => overlap(spans, -Infinity, sec);
+    return {
+      at(sec) {
+        const inside = spans.some(([a, b]) => sec >= a && sec <= b);
+        return inside ? before(sec) : null;
+      },
+      upTo: before,
+    };
+  }
   const n = s.t.length;
   // moving seconds up to each sample, and whether the time before it moved
   const upTo = new Float64Array(n);

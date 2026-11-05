@@ -78,9 +78,11 @@ interface TcxPoint {
  * distances/times stay 0 — `computeActivitySummary` derives them.
  */
 export function parseTcx(
-  xml: string,
+  input: string,
   options: ReadOptions = {},
 ): ImportedActivity {
+  // read elements by their local name: <t:Trackpoint> as <Trackpoint>
+  const xml = input.replace(/<(\/?)[\w.-]+:(?=[\w.-])/g, '<$1');
   const pts: TcxPoint[] = [];
   let m: RegExpExecArray | null;
   TRACKPOINT.lastIndex = 0;

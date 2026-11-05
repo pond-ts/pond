@@ -522,10 +522,109 @@ export interface PreparedActivity {
    *  from the start, and its distance. A section's distance is then the
    *  lengths inside it (a length cut in two counts its share). */
   poolLengths?: ReadonlyArray<{ from: number; to: number; meters: number }>;
+  /** Where the recording starts and ends on the time axis: the activity's
+   *  start (or an earlier first sample) to the last sample, widened to a
+   *  pool swim's recorded lengths. With no timestamps, the sample count. */
+  extent: { from: number; to: number };
   /** Per-sample sustained-coast mask per output channel (speed/power/cadence),
    *  computed ONCE here (it's window-independent and the pond-fill pass is the
    *  expensive part) and reused by every channel build / zoom. */
   coastMasks: Partial<Record<ChannelKey, boolean[]>>;
+}
+
+type PoolLengths = NonNullable<PreparedActivity['poolLengths']>;
+
+function extentOf(
+  timeRel: Float64Array,
+  hasTime: boolean,
+  lengths: PoolLengths | undefined,
+): { from: number; to: number } {
+  const n = timeRel.length;
+  let from = n ? timeRel[0]! : 0;
+  let to = n ? timeRel[n - 1]! : 0;
+  if (hasTime) from = Math.min(0, from);
+  if (lengths?.length) {
+    from = Math.min(from, lengths[0]!.from);
+    to = Math.max(to, lengths[lengths.length - 1]!.to);
+  }
+  return { from, to };
+}
+
+/** Metres swum by `sec`: whole lengths before it, and the share of one it
+ *  falls inside. */
+function lengthsDistanceAt(lengths: PoolLengths, sec: number): number {
+  let m = 0;
+  for (const l of lengths) {
+    if (sec >= l.to) m += l.meters;
+    else if (sec > l.from) m += (l.meters * (sec - l.from)) / (l.to - l.from);
+  }
+  return m;
+}
+
+/** Metres from the start at `sec` (seconds from the start), on the
+ *  activity's one distance axis: a pool swim's lengths, else the samples'
+ *  distance drawn straight between them. @internal */
+export function distanceAtSeconds(prep: PreparedActivity, sec: number): number {
+  if (prep.poolLengths) return lengthsDistanceAt(prep.poolLengths, sec);
+  const { cum, timeRel } = prep;
+  const n = timeRel.length;
+  if (n === 0) return 0;
+  if (sec <= timeRel[0]!) return cum[0]!;
+  if (sec >= timeRel[n - 1]!) return cum[n - 1]!;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timeRel[mid]! < sec) lo = mid + 1;
+    else hi = mid;
+  }
+  const t0 = timeRel[lo - 1]!;
+  const t1 = timeRel[lo]!;
+  const c0 = cum[lo - 1]!;
+  const c1 = cum[lo]!;
+  return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
+}
+
+/** Seconds from the start when the activity first reaches `meters`, on the
+ *  same axis as {@link distanceAtSeconds}. @internal */
+export function secondsAtDistance(
+  prep: PreparedActivity,
+  meters: number,
+): number {
+  const lengths = prep.poolLengths;
+  if (lengths) {
+    let m = 0;
+    for (const l of lengths) {
+      if (meters <= m + l.meters)
+        return l.from + (Math.max(0, meters - m) / l.meters) * (l.to - l.from);
+      m += l.meters;
+    }
+    return lengths[lengths.length - 1]!.to;
+  }
+  const { cum, timeRel } = prep;
+  const n = cum.length;
+  if (n === 0) return 0;
+  if (meters <= cum[0]!) return timeRel[0]!;
+  if (meters >= cum[n - 1]!) return timeRel[n - 1]!;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid]! < meters) lo = mid + 1;
+    else hi = mid;
+  }
+  const c0 = cum[lo - 1]!;
+  const c1 = cum[lo]!;
+  const t0 = timeRel[lo - 1]!;
+  const t1 = timeRel[lo]!;
+  return c1 > c0 ? t0 + ((meters - c0) / (c1 - c0)) * (t1 - t0) : t1;
+}
+
+/** The activity's whole distance on its one axis. @internal */
+export function totalDistance(prep: PreparedActivity): number {
+  if (prep.poolLengths)
+    return prep.poolLengths.reduce((m, l) => m + l.meters, 0);
+  return prep.cum.length ? prep.cum[prep.cum.length - 1]! : 0;
 }
 
 /** Whether an activity has a distance: GPS, a distance channel, or a pool
@@ -628,6 +727,23 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   const n = cols.timeSec.length;
   const hasTrack = cols.lat.length > 0;
 
+  // Seconds from the activity's start, the axis laps, lengths and sections
+  // are given on. Usually the first sample is at the start; when it comes
+  // later, the axis still starts at the start (and a sample before the
+  // start sits below 0). With no timestamps the first sample is 0.
+  const startSec = startMs / 1000;
+  const origin =
+    streams.timeSeconds && n && Number.isFinite(startSec)
+      ? startSec
+      : (cols.timeSec[0] ?? 0);
+  const timeRel = new Float64Array(n);
+  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - origin;
+
+  // A pool swim of a known pool length measures by its lengths: every
+  // distance query (stats, bounds, splits, efforts, speed) reads this one
+  // axis. See `distanceAtSeconds`.
+  const pool = poolLengthsOf(imported);
+
   let step: Float64Array;
   let cum: Float64Array;
   // An open water swim measures by the watch's own distance when it has one:
@@ -642,7 +758,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     (positionGaps &&
       usableDistance(cols.distance) &&
       neverDecreases(cols.distance));
-  if (hasTrack && !deviceDistance) {
+  if (pool.poolLengths) {
+    cum = new Float64Array(n);
+    for (let i = 0; i < n; i++)
+      cum[i] = lengthsDistanceAt(pool.poolLengths, timeRel[i]!);
+    step = new Float64Array(n);
+    for (let i = 1; i < n; i++) step[i] = cum[i]! - cum[i - 1]!;
+  } else if (hasTrack && !deviceDistance) {
     step = geo.stepDistances(cols.lat, cols.lng);
     cum = geo.cumulative(step);
   } else {
@@ -659,18 +781,6 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     const dt = cols.timeSec[i]! - cols.timeSec[i - 1]!;
     speed[i] = dt > 0 ? step[i]! / dt : NaN;
   }
-
-  // Seconds from the activity's start, the axis laps, lengths and sections
-  // are given on. Usually the first sample is at the start; when it comes
-  // later, the axis still starts at the start. With no timestamps (or a
-  // start after the first sample) the first sample is 0.
-  const startSec = Date.parse(imported.activity.startTimeUtc) / 1000;
-  const origin =
-    streams.timeSeconds && n && Number.isFinite(startSec)
-      ? Math.min(startSec, cols.timeSec[0]!)
-      : (cols.timeSec[0] ?? 0);
-  const timeRel = new Float64Array(n);
-  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - origin;
 
   // sustained-coast masks for the output channels — once, not per zoom. Power /
   // cadence from the canonical `cols`; speed is the derived track speed.
@@ -705,7 +815,8 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
           movingSpans: moving.spans,
         }
       : {}),
-    ...poolLengthsOf(imported),
+    ...pool,
+    extent: extentOf(timeRel, !!streams.timeSeconds, pool.poolLengths),
     coastMasks,
   };
 }

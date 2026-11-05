@@ -195,8 +195,11 @@ export function summarizeLaps(laps: readonly LapAverages[]): LapsSummary {
     }
     return w > 0 ? (sum / w) ** (1 / power) : undefined;
   };
-  const range = (f: (l: LapAverages) => number | undefined) => {
-    const vs = laps.map(f).filter(pos);
+  const range = (
+    f: (l: LapAverages) => number | undefined,
+    keep: (v: number | undefined) => v is number = pos,
+  ) => {
+    const vs = laps.map(f).filter(keep);
     return vs.length > 1
       ? { lo: Math.min(...vs), hi: Math.max(...vs) }
       : undefined;
@@ -219,7 +222,7 @@ export function summarizeLaps(laps: readonly LapAverages[]): LapsSummary {
     // 0 W is a real reading (coasting), unlike 0 bpm
     weighted((l) => l.avgWatts, 1, nonNegative),
   );
-  put('highestLapWatts', range((l) => l.avgWatts)?.hi);
+  put('highestLapWatts', range((l) => l.avgWatts, nonNegative)?.hi);
   put(
     'npWatts',
     weighted((l) => l.npWatts, 4, nonNegative),
