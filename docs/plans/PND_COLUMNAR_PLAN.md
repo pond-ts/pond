@@ -2067,6 +2067,34 @@ median of 5:
 `pivotByGroup`'s remaining time is its per-timestamp `Map` of `Map`s and
 the output build, not events.
 
+### [PND-TRIMCOL] / [PND-LIVEREPLAY] — found in the 2026-11-05 audit
+
+Peter asked (2026-11-05) which core calls still build an `Event` per row
+when they need not. An audit of main (3a242488; Node 22, 1M rows, median of
+3, `slice` 2 ms for scale) found two not yet logged; Peter agreed to log
+both and take them after [PND-SPANFILTER] / [PND-ROWSOUT].
+
+- **`trim`** — 1.7 s. `this.events.map(e => e.trim(range))`, then a
+  re-sort when clipping brings two keys to the same start out of order.
+  Column version: clip begin/end buffers per row, drop rows outside the
+  range, gather value columns by row number, keep the stable re-sort.
+  Output must stay identical. Today every kept row is a new `Event`
+  (`Event.trim` always builds one), so no identity rule to keep.
+- **Live set-up replay** — `LiveView`, `LiveRollingAggregation`,
+  `LiveAggregation`, `LiveReduce`, fused rolling and `LivePartitionedSeries`
+  (`#replayChunked`, `collect`, `apply`) read every existing source row with
+  `source.at(i)`. On a 200k-row `LiveSeries` (batches of 1,000):
+
+  | operator                             | attach to existing rows | same rows pushed after attach\* |
+  | ------------------------------------ | ----------------------: | ------------------------------: |
+  | `rolling('1m', { cpu: 'avg' })`      |                  214 ms |                           99 ms |
+  | `aggregate(Sequence.every('1m'), …)` |                  135 ms |                           47 ms |
+  | `partitionBy('host').collect()`      |                  352 ms |                          127 ms |
+
+  \* extra time over a plain push of the same rows. `filter(fn)` views
+  stay on events (the predicate takes an `Event`). Each `at(i)` also fills
+  the event cache, which is what sets off [PND-LATCACHE].
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly

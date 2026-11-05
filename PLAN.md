@@ -1089,6 +1089,16 @@ consumer signal. Plan:
   1.4–2.2 s on 1M rows, where `toColumns` takes 0.19 s. Fix: write each
   row from the columns, keeping the key objects identical to the events'
   (needs the source-event lookup #873 adds). `toJSON` / `toPoints` done.
+- **[PND-TRIMCOL]** — `trim` builds and trims an `Event` for every row:
+  1.7 s on 1M rows, against 2 ms for `slice`. Fix: clip the key columns
+  directly and gather the value columns, keeping the re-sort when
+  clipping reorders keys ([PND-TRIMORDER]). Found 2026-11-05.
+- **[PND-LIVEREPLAY]** — A live operator attached to a `LiveSeries` that
+  already holds rows replays them through `at(i)`, one `Event` each. On
+  200k rows set-up costs 2–3× handling the same rows as they arrive:
+  `rolling` 214 vs 99 ms, `aggregate` 135 vs 47 ms, `partitionBy().collect()`
+  352 vs 127 ms. Fix: replay from the columns. Also removes the
+  [PND-LATCACHE] trigger for these operators. Found 2026-11-05.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
