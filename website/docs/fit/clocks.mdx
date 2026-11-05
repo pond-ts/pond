@@ -1,0 +1,150 @@
+---
+title: Clocks
+sidebar_position: 5
+description: Elapsed, timer, moving and swimming time, kept apart, and how to work on each.
+---
+
+# Clocks
+
+A recording holds several kinds of time, and mixing them up gives wrong
+answers: an average pace on the wrong clock, a training load that counts a
+café stop. fit keeps them apart.
+
+| Clock      | Meaning                                                    |
+| ---------- | ---------------------------------------------------------- |
+| `elapsed`  | Wall-clock time from the start to the end                  |
+| `timer`    | Time the device's timer was running, as the file states it |
+| `moving`   | Time judged to be moving                                   |
+| `swimming` | A swim's time spent swimming, rests at the wall left out   |
+| `rest`     | A swim's time not swimming (elapsed − swimming)            |
+
+The ride shows the first three apart. It stopped at a traffic light for 45
+seconds with the timer running, then paused the timer for six minutes at a
+café:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const { time } = ride.stats();
+console.log('elapsed', time.elapsed?.format());
+console.log('timer  ', time.timer?.format());
+console.log('moving ', time.moving?.format());
+```
+
+```text output
+elapsed 1:39:54
+timer   1:33:54
+moving  1:33:11
+```
+
+Elapsed counts everything. The timer leaves out the café, because the rider
+stopped it. Moving time leaves out the café and the traffic light, because
+neither was moving.
+
+## Picking a clock
+
+`stats()` works on elapsed time unless you pass another. The answer says
+which it used, in `basis`, and pace, speed and the channel averages follow it:
+
+```ts
+for (const time of ['elapsed', 'timer', 'moving'] as const) {
+  const s = ride.stats({ time });
+  console.log(
+    s.basis.padEnd(8),
+    s.speed.average?.format('metric'),
+    s.heartRate.average?.format(),
+  );
+}
+```
+
+```text output
+elapsed  27.0 km/h 133 bpm
+timer    28.7 km/h 133 bpm
+moving   29.0 km/h 133 bpm
+```
+
+On the timer basis the channel averages are the same as on elapsed: a device
+writes samples only while its timer runs. On the moving basis they are taken
+over the moving samples only.
+
+## How moving is decided
+
+Moving is decided by sport, because "stopped" means different things:
+
+- **Runs, rides, walks, hikes and open water swims:** the time between two
+  samples is moving when the speed over it is at least 0.5 m/s (1.8 km/h).
+  A bike coasting downhill is moving; a runner standing at a crossing is not.
+- **Pool swims:** only the time spent swimming a length is moving. The rests
+  at the wall are the stopped time. See [Pool swims](./pool-swims).
+
+The [Moving time](./guides/moving-time) guide builds the speed rule from
+scratch.
+
+## A clock that isn't known is null
+
+When a file doesn't record its timer, the timer time is `null`, and so is
+everything worked out on it. It is never filled in with the elapsed time.
+An activity built from bare streams has no timer:
+
+```ts
+import { Activity } from '@pond-ts/fit';
+
+const seconds = Array.from({ length: 601 }, (_, i) => i);
+const noTimer = Activity.from({
+  activity: {
+    id: 'manual:1',
+    source: 'manual',
+    externalId: '1',
+    name: 'Ten minutes',
+    startTimeUtc: '2026-06-20T07:00:00Z',
+    distanceMeters: 0,
+    movingTimeSeconds: 0,
+    elapsedTimeSeconds: 0,
+    elevationGainMeters: 0,
+    sportType: 'Run',
+  },
+  streams: {
+    latlng: [],
+    timeSeconds: seconds,
+    distanceMeters: seconds.map((s) => s * 3),
+  },
+});
+const onTimer = noTimer.stats({ time: 'timer' });
+console.log(
+  onTimer.time.timer,
+  onTimer.pace.average,
+  onTimer.time.elapsed?.format(),
+);
+```
+
+```text output
+null null 10:00
+```
+
+## Swimming and rest
+
+A swim has two more: the time spent swimming, and the rest between. Any
+other sport has neither, so both are `null` there.
+
+```ts
+const swim = readActivity(readFileSync('pool-swim.fit'));
+const sw = swim.stats();
+console.log('elapsed ', sw.time.elapsed?.format());
+console.log('swimming', sw.time.swimming?.format());
+console.log('rest    ', sw.time.rest?.format());
+console.log(
+  'pace    ',
+  sw.pace.average?.format(),
+  '→',
+  swim.stats({ time: 'swimming' }).pace.average?.format(),
+);
+```
+
+```text output
+elapsed  27:01
+swimming 23:21
+rest     3:40
+pace     20:47/km → 17:58/km
+```

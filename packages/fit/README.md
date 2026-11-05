@@ -6,10 +6,10 @@
 
 **Fitness & activity analytics on [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
-Turn raw activity streams (GPS, power, heart rate, cadence, …) into a typed,
-immutable activity model with unit-safe quantities and the analytics you'd
-expect — splits, power (NP / IF / TSS / curve), zones, elevation, best efforts —
-behind a small `Activity` / `Section` façade.
+Read an activity file (FIT, GPX, TCX) into a typed, immutable `Activity` with
+unit-safe quantities. Ask the same questions of the whole activity, a lap, or
+any stretch of it. See [docs/rfcs/fit-api.md](../../docs/rfcs/fit-api.md) for
+where the API is going.
 
 ```sh
 npm install @pond-ts/fit pond-ts
@@ -20,48 +20,83 @@ npm install @pond-ts/fit pond-ts
 ## Quick start
 
 ```ts
-import { Activity, Distance } from '@pond-ts/fit';
+import { km, minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
 
-// `imported` is an ImportedActivity — your raw streams (time, lat/lon, power, hr, …)
-const activity = Activity.fromStreams(imported);
+const run = readActivity(bytes); // FIT, GPX or TCX, told from the bytes
 
-activity.summary(); // { distance, duration, elevation, avg/max metrics, … }
-activity.splits(Distance.km(1)); // per-kilometre Section[]
-activity.power(260); // PowerSummary at FTP 260 W — NP, IF, TSS, curve, zones
+run.name; // "Morning Run"
+run.sport; // "run"
+run.startedAt; // Date
+
+const stats = run.stats(); // elapsed time basis by default
+stats.distance?.format('mi'); // "6.21 mi"
+stats.time.elapsed?.format(); // "55:40"
+stats.time.moving?.format(); // "52:14"
+stats.heartRate.average?.format(); // "152 bpm"
+run.stats({ time: 'moving' }).pace.average?.format('metric');
+
+run.laps.at(2)?.stats();
+run.section({ elapsed: { from: minutes(10), to: minutes(20) } }).stats();
+for (const split of run.splits(km(1)))
+  console.log(split.label, split.stats().pace.average?.format('metric'));
+
+// your own labels for laps, kept by your app
+for (const [label, laps] of run.laps.groupBy((lap) => labels.get(lap.id)))
+  console.log(label, laps.stats()); // the chosen laps only, never the recovery between
 ```
 
-Attach an athlete `Profile` for zone-aware, type-safe analytics — the
-`ProfiledActivity` knows the athlete, so power/zone calls need no thresholds
-passed in:
+A swim also has `stats.time.swimming` and `stats.time.rest`, and
+`swim.stats({ time: 'swimming' })` leaves the rests at the wall out of every
+number; a pool swim counts as moving only during its lengths.
 
 ```ts
-import { Profile } from '@pond-ts/fit';
-
-const profiled = activity.usingProfile(
-  Profile.of({ ftpWatts: 260, weightKg: 72 }),
-);
-profiled.power(); // zone-aware — FTP comes from the profile
-profiled.splits(Distance.km(1)); // ProfiledSection[] — slices carry the profile through
+if (swim.isPoolSwim()) {
+  swim.pool?.course; // "25m"
+  for (const segment of swim.segments)
+    if (segment.kind === 'length')
+      console.log(segment.stroke, segment.strokeCount, segment.stats());
+    else console.log('rest', segment.duration.format());
+  for (const rep of swim.repeats)
+    console.log(rep.stats().pace.average, rep.recoveryAfter?.duration.format());
+}
 ```
 
-Quantities are unit-safe and format themselves:
+The athlete goes on an analysis, not on the activity. Pass a `Profile`, or
+the stored profile with its dated history (resolved to the activity's date):
 
 ```ts
-import { Speed } from '@pond-ts/fit';
+const a = ride.analyze({ athlete: profile });
+a.power.intensityFactor; // null without FTP
+a.power.variabilityIndex;
+a.load; // { model: 'cycling-tss', value: 112 }, or null without FTP
+a.zones.heartRate; // time in each zone; null without HR zones
 
-Speed.mps(5.5).format('imperial'); // "12.3 mph"
+ride.power.bestEffort(minutes(20))?.power.format(); // "291 W"
+ride.power.curve(); // shortest first, never rising
+run.pace.bestEffort(km(5))?.time.format(); // with .section: where it was
 ```
+
+`null` means unavailable (no power meter, no timer data in the file); a real
+zero stays zero. Timer time comes only from the file: GPX has none, so its
+`time.timer` is `null`.
 
 ## What's in the box
 
-- **Façade** — `Activity` / `Section`: load once, then ask for summary / splits /
-  laps / ranges.
-- **Quantities** — `Distance` / `Speed` / `Pace` / `Power` / `HeartRate` /
-  `Cadence` / … with unit conversions and `.format()`.
-- **Analytics** — geo (distance, elevation, best efforts), power (NP / IF / TSS /
-  curve), and zone distributions.
-- **Profiles** — `Profile` + `usingProfile()` → type-safe `ProfiledActivity` /
-  `ProfiledSection`.
+- **Model** — `Activity`, `Section`, `Sections`: one `stats()` contract on a
+  stated time basis (`'elapsed'`, `'moving'`, `'timer'`).
+- **Readers** — `@pond-ts/fit/files`: `readActivity`, plus `parseFit` /
+  `parseGpx` / `parseTcx` to the plain `ImportedActivity` record.
+- **Quantities** — `Distance` / `Duration` / `Speed` / `Pace` / `Power` /
+  `HeartRate` / `Cadence` / `Elevation`, with `.format()`, and the shorthands
+  `km`, `miles`, `meters`, `seconds`, `minutes`, `hours`.
+- **Functional layer** — power (NP / IF / TSS / curve), zones, best efforts,
+  breaks and heart-rate recovery, lap groups, outlines, recording edits; each a
+  plain function over the prepared activity (`activity.prepared()`).
+- **Analysis** — `section.analyze({ athlete })`: intensity, load and zones
+  from the athlete's settings; best efforts under `section.power` and
+  `section.pace`. `Profile` resolves dated athlete settings (FTP, weight,
+  zones).
 
 ## Documentation
 

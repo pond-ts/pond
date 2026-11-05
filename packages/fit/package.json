@@ -2,7 +2,7 @@
   "name": "@pond-ts/fit",
   "version": "0.75.0",
   "private": false,
-  "description": "Fitness & activity domain library on pond-ts: typed quantities, canonical activity series, and analytics (geo distance/elevation, power NP/IF/TSS, zones, splits)",
+  "description": "Fitness & activity domain library on pond-ts: typed quantities, canonical activity series, and analytics and file readers (FIT/GPX/TCX; geo distance/elevation, power NP/IF/TSS, zones, splits)",
   "keywords": [
     "time-series",
     "timeseries",
@@ -37,6 +37,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/cjs-fallback.cjs"
+    },
+    "./files": {
+      "types": "./dist/files/index.d.ts",
+      "import": "./dist/files/index.js",
+      "require": "./dist/cjs-fallback.cjs"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "files": [
+        "dist/files/index.d.ts"
+      ]
     }
   },
   "engines": {
@@ -64,5 +76,8 @@
   "devDependencies": {
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
+  },
+  "dependencies": {
+    "fit-file-parser": "^3.1.3"
   }
 }

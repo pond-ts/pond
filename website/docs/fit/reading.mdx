@@ -1,0 +1,121 @@
+---
+title: Reading activities
+sidebar_position: 2
+description: readActivity for FIT, GPX and TCX files, what the reader cleans up, and building an activity from your own data.
+---
+
+# Reading activities
+
+`readActivity` takes the bytes of a FIT, GPX or TCX file and gives back an
+`Activity`. It tells the format from the bytes, so you don't say which it is.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity, activityFormat } from '@pond-ts/fit/files';
+
+const bytes = readFileSync('interval-run.fit');
+console.log(activityFormat(bytes));
+
+const run = readActivity(bytes, { name: 'Six by 800 m' });
+console.log(run.name, run.sport, run.sportType);
+console.log(run.startedAt.toISOString(), run.hasRoute, run.laps.length);
+console.log(run.device);
+```
+
+```text output
+fit
+Six by 800 m run Run
+2026-06-16T18:00:00.000Z true 13
+{ manufacturer: 'development', product: 0, name: 'pond fixture' }
+```
+
+The readers live in `@pond-ts/fit/files`, apart from the rest of the package,
+so an app that never reads files doesn't carry the FIT decoder.
+
+In a browser, read a dropped or picked file the same way:
+
+```ts norun
+const file = input.files[0];
+const activity = readActivity(new Uint8Array(await file.arrayBuffer()));
+```
+
+A gzipped file (`.fit.gz`, as Strava's bulk export ships them) has to be
+unpacked first; `readActivity` throws on anything that isn't FIT, GPX or TCX.
+
+## What you get
+
+| Property      | What it holds                                                          |
+| ------------- | ---------------------------------------------------------------------- |
+| `name`        | The name you pass (FIT files don't carry one; `'Untitled'` otherwise)  |
+| `sport`       | The family: `'run'`, `'ride'`, `'swim'`, `'walk'`, `'hike'`, `'other'` |
+| `sportType`   | The file's own label, such as `'Run'`, `'TrailRun'`, `'VirtualRide'`   |
+| `startedAt`   | A `Date`, the start of the recording                                   |
+| `device`      | Maker and product as the file states them, or `null`                   |
+| `hasRoute`    | Whether there are GPS positions                                        |
+| `laps`        | The laps the device recorded (see [Sections](./sections))              |
+| `environment` | For a swim: `'pool'` or `'open-water'`; otherwise `null`               |
+
+## What the reader cleans up
+
+Files are messy, so the reader does the tidying once, at the door, and
+everything after it can trust the activity:
+
+- **Dropouts stay missing.** A heart-rate strap that loses contact, or a power
+  meter that drops out, leaves a gap. The gap is kept as missing data, never
+  filled with zeros or joined across.
+- **Junk values go.** Devices write sentinel values (`255` bpm, `65535` W) for
+  "no reading"; those become missing too.
+- **Samples before GPS lock count.** A watch that starts before it finds
+  satellites keeps counting distance from its motion sensor; those minutes and
+  metres are kept, measured by the watch, and the map line starts at the first
+  fix.
+- **The timer is kept as the file states it.** A FIT session records how long
+  its timer ran; when a file doesn't say, the timer time is `null`, not a
+  guess. See [Clocks](./clocks).
+
+## Your own data
+
+The readers produce a plain record (`ImportedActivity`): the activity's
+details, its streams as parallel arrays, its laps. `Activity.from` takes one
+of those, so data from anywhere else (an API, a database, a CSV) becomes an
+activity the same way. A treadmill run with no GPS needs only time, distance
+and whatever else was measured:
+
+```ts
+import { Activity } from '@pond-ts/fit';
+
+const seconds = Array.from({ length: 1201 }, (_, i) => i);
+const treadmill = Activity.from({
+  activity: {
+    id: 'treadmill:1',
+    source: 'manual',
+    externalId: '1',
+    name: 'Treadmill 20 min',
+    startTimeUtc: '2026-06-20T07:00:00Z',
+    distanceMeters: 0,
+    movingTimeSeconds: 0,
+    elapsedTimeSeconds: 0,
+    elevationGainMeters: 0,
+    sportType: 'Run',
+  },
+  streams: {
+    latlng: [],
+    timeSeconds: seconds,
+    distanceMeters: seconds.map((s) => s * 3.2),
+    heartrate: seconds.map((s) => Math.round(120 + s / 30)),
+  },
+});
+
+const tread = treadmill.stats();
+console.log(tread.distance?.format('km'), tread.pace.average?.format());
+console.log(treadmill.hasRoute, tread.heartRate.max?.format());
+```
+
+```text output
+3.84 km 5:13/km
+false 160 bpm
+```
+
+The `distanceMeters`, `movingTimeSeconds` and other totals in `activity` are
+what a source claims; the stats are worked out from the streams, so zeros
+there are fine.

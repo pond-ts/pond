@@ -3080,6 +3080,78 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
+   * [PND-GROUPEVENTS] `groupBy`'s groups gathered straight off the columns.
+   * Same keys (`String(value)`, `'undefined'` for a gap), same first-seen
+   * order, same rows as the event path, which rebuilds each group from its
+   * events' rows through full validation. Returns `undefined`, so the
+   * caller takes that path, wherever the two could differ:
+   * - the events may hold values the columns don't (a dense event array);
+   * - an array column (validation checks array cells; the column does not);
+   * - a required column holding a gap (validation throws on it);
+   * - `column` is not a value column (read off `event.data()` as before).
+   */
+  #groupByColumns(column: string): Map<string, TimeSeries<S>> | undefined {
+    const seriesStore = this.#store;
+    if (seriesStore._eventsMayDifferFromColumnsModulePrivate())
+      return undefined;
+    const store = seriesStore.store;
+    const n = store.length;
+    for (let c = 1; c < this.schema.length; c += 1) {
+      const def = this.schema[c]!;
+      if (def.kind === 'array') return undefined;
+      if (def.required !== false) {
+        const col = store.columns.get(def.name)!;
+        for (let i = 0; i < n; i += 1) {
+          if (col.read(i) === undefined) return undefined;
+        }
+      }
+    }
+    // A name that is not a value column (the key column, an unknown name,
+    // or one `Object.prototype` answers, like 'constructor') goes to the
+    // event path, which reads it off `event.data()` as it always did.
+    const col = store.columns.get(column);
+    if (col === undefined) return undefined;
+    const index = new Map<string, number>();
+    const keys: string[] = [];
+    const counts: number[] = [];
+    const slotOf = new Int32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const raw = col.read(i);
+      const key = raw === undefined ? 'undefined' : String(raw);
+      let at = index.get(key);
+      if (at === undefined) {
+        at = keys.length;
+        index.set(key, at);
+        keys.push(key);
+        counts.push(0);
+      }
+      slotOf[i] = at;
+      counts[at]! += 1;
+    }
+    const members = counts.map((count) => new Int32Array(count));
+    const fill = new Int32Array(keys.length);
+    for (let i = 0; i < n; i += 1) {
+      const at = slotOf[i]!;
+      members[at]![fill[at]!++] = i;
+    }
+    const result = new Map<string, TimeSeries<S>>();
+    for (let g = 0; g < keys.length; g += 1) {
+      result.set(
+        keys[g]!,
+        TimeSeries.#fromTrustedStore(
+          this.name,
+          this.schema,
+          withRowSelection(
+            store,
+            members[g]!,
+          ) as unknown as ColumnarStore<ColumnSchema>,
+        ),
+      );
+    }
+    return result;
+  }
+
+  /**
    * Example: `series.groupBy("host")`.
    * Partitions the series into groups keyed by the distinct values of a payload column.
    * Each group is a `TimeSeries` with the same schema, preserving event order.
@@ -3099,6 +3171,19 @@ export class TimeSeries<S extends SeriesSchema> {
     column: keyof EventDataForSchema<S> & string,
     transform?: (group: TimeSeries<S>, key: string) => R,
   ): Map<string, TimeSeries<S>> | Map<string, R> {
+    // [PND-GROUPEVENTS] Group row numbers off the column and gather each
+    // group's columns, no per-row `Event`.
+    const gathered = this.#groupByColumns(column);
+    if (gathered !== undefined) {
+      if (transform) {
+        const out = new Map<string, R>();
+        for (const [key, group] of gathered)
+          out.set(key, transform(group, key));
+        return out;
+      }
+      return gathered;
+    }
+
     const buckets = new Map<string, EventForSchema<S>[]>();
 
     for (const event of this.events) {
@@ -3329,12 +3414,32 @@ export class TimeSeries<S extends SeriesSchema> {
     const groupSeen = new Set<string>();
     const byTs = new Map<number, Map<string, Cell[]>>();
 
-    for (const event of this.events) {
-      const ts = event.begin();
-      const data = event.data() as Record<string, ColumnValue | undefined>;
-      const rawGroup = data[groupCol];
+    // [PND-GROUPEVENTS] Read the key, group and value off the columns
+    // unless the events may hold values the columns don't. (The key
+    // column's own name reads as a gap either way: it is not in
+    // `event.data()` and not in `store.columns`.)
+    const seriesStore = this.#store;
+    const store = seriesStore.store;
+    const fromColumns = !seriesStore._eventsMayDifferFromColumnsModulePrivate();
+    const groupColumn = store.columns.get(groupCol);
+    const valueColumn = store.columns.get(valueCol);
+    const n = store.length;
+    for (let i = 0; i < n; i += 1) {
+      let ts: number;
+      let rawGroup: ColumnValue | undefined;
+      let value: ColumnValue | undefined;
+      if (fromColumns) {
+        ts = store.keys.beginAt(i);
+        rawGroup = groupColumn?.read(i) as ColumnValue | undefined;
+        value = valueColumn?.read(i) as ColumnValue | undefined;
+      } else {
+        const event = seriesStore.eventAt(i);
+        const data = event.data() as Record<string, ColumnValue | undefined>;
+        ts = event.begin();
+        rawGroup = data[groupCol];
+        value = data[valueCol];
+      }
       const groupKey = rawGroup === undefined ? 'undefined' : String(rawGroup);
-      const value = data[valueCol];
 
       if (declaredSet !== undefined && !declaredSet.has(groupKey)) {
         throw new TypeError(

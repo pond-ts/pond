@@ -33,3 +33,4 @@ yarn-error.log*
 # generated API models (build:api-model)
 .api-json/
 src/api-model/
+/scripts/.fit-guides-tmp

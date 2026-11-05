@@ -1,0 +1,165 @@
+---
+title: Analysis and the athlete
+sidebar_position: 7
+description: The athlete's dated settings, analyze(), and which answers go null when a setting is missing.
+---
+
+# Analysis and the athlete
+
+Some answers depend on who did the activity: intensity needs their FTP,
+zones need their heart rate or pace bands. Those answers come from
+`analyze({ athlete })`, never from the activity alone, so the same recording
+can be read for anyone.
+
+## The athlete's settings
+
+Settings are dated, because they change: an FTP test in March, another in
+June. Each setting is a list of values with the date each took effect, and an
+activity uses the one in force on its own date.
+
+```ts norun
+interface AthleteProfileJson {
+  ftpWatts?: { at: string; value: number }[];
+  weightKg?: { at: string; value: number }[];
+  hrZone?: (
+    | { at: string; maxHr: number }
+    | { at: string; bounds: [number, number, number, number] }
+  )[];
+  paceThreshold?: { at: string; fiveKSeconds: number }[];
+}
+```
+
+- `ftpWatts`: functional threshold power. Power zones are worked out from it
+  (seven bands, from 55 % to 150 % of FTP).
+- `weightKg`: body weight, for watts per kilogram.
+- `hrZone`: heart-rate zones from a maximum heart rate (five bands at 65, 81,
+  89 and 97 % of it) or from four boundaries you set.
+- `paceThreshold`: a recent 5 km time, which sets six pace zones for running,
+  walking and hiking.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const athlete = {
+  ftpWatts: [
+    { at: '2026-01-01', value: 240 },
+    { at: '2026-05-01', value: 250 },
+    { at: '2026-09-01', value: 262 },
+  ],
+  weightKg: [{ at: '2026-01-01', value: 72 }],
+  hrZone: [{ at: '2026-01-01', maxHr: 186 }],
+  paceThreshold: [{ at: '2026-01-01', fiveKSeconds: 1260 }],
+};
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const analysis = ride.analyze({ athlete });
+console.log(analysis.athlete.ftpWatts, analysis.athlete.weightKg);
+```
+
+```text output
+250 72
+```
+
+The ride was on 14 June 2026, so it is read with the 250 W FTP set in May.
+`analysis.athlete` says which settings were used.
+
+## What an analysis holds
+
+```ts
+const { power, load, zones } = analysis;
+console.log('average   ', power.average?.format());
+console.log('normalized', power.normalized?.format());
+console.log('IF        ', power.intensityFactor?.toFixed(3));
+console.log('VI        ', power.variabilityIndex?.toFixed(3));
+console.log('load      ', load?.model, load?.value.toFixed(1));
+console.log(
+  'zones     ',
+  zones.power?.length,
+  zones.heartRate?.length,
+  zones.pace,
+);
+```
+
+```text output
+average    190 W
+normalized 228 W
+IF         0.913
+VI         1.200
+load       cycling-tss 138.7
+zones      7 5 null
+```
+
+- `power.intensityFactor`: normalized power over FTP.
+- `power.variabilityIndex`: normalized power over average power; how uneven
+  the effort was. It needs no settings.
+- `load`: training stress, with the model that made it (`'cycling-tss'`).
+  [Normalized power and training stress](./guides/normalized-power) builds it.
+- `zones`: time in each power, heart-rate and pace zone. See
+  [Time in zones](./guides/time-in-zones).
+
+Pace zones are for running, walking and hiking, so on a ride `zones.pace` is
+`null` even with a 5 km time set.
+
+## A missing setting blocks only what needs it
+
+With no FTP, the results that need FTP are `null`, and nothing else is:
+
+```ts
+const noFtp = ride.analyze({
+  athlete: { hrZone: [{ at: '2026-01-01', maxHr: 186 }] },
+});
+console.log(
+  noFtp.power.normalized?.format(),
+  noFtp.power.variabilityIndex?.toFixed(3),
+);
+console.log(noFtp.power.intensityFactor, noFtp.load, noFtp.zones.power);
+console.log(noFtp.zones.heartRate?.map((z) => z.label).join(', '));
+```
+
+```text output
+228 W 1.200
+null null null
+Recovery, Endurance, Tempo, Threshold, Anaerobic
+```
+
+## Any stretch
+
+`analyze` works on any section, the same way:
+
+```ts
+const run = readActivity(readFileSync('interval-run.fit'));
+const repeat = run.laps.at(1)!;
+const zonesInRepeat = repeat.analyze({ athlete }).zones.heartRate!;
+for (const z of zonesInRepeat)
+  if (z.seconds > 0) console.log(z.label, z.seconds, 's');
+```
+
+```text output
+Endurance 19 s
+Tempo 143 s
+Threshold 21 s
+```
+
+## Without history
+
+When you just have the numbers, `Profile.of` makes settings with no dates:
+
+```ts
+import { Profile } from '@pond-ts/fit';
+
+const simple = ride.analyze({
+  athlete: Profile.of({ ftpWatts: 250, weightKg: 72 }),
+});
+console.log(
+  simple.power.intensityFactor?.toFixed(3),
+  simple.load?.value.toFixed(1),
+);
+```
+
+```text output
+0.913 138.7
+```
+
+`Profile.of` carries FTP and weight only; heart-rate and pace zones need their
+basis, so use the dated form for those.

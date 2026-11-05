@@ -1,0 +1,205 @@
+---
+title: Moving time
+sidebar_position: 2
+description: Distance from GPS, speed, and the time spent moving, built from the samples in pond and Python, then with fit.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import ChartExample from '@site/src/components/ChartExample';
+import FitMovingTime from '@site/src/examples/fit-moving-time';
+
+# Moving time
+
+**Moving time is the time you were actually going somewhere.** A run's
+elapsed time counts the minutes stood at a crossing or between repeats;
+moving time leaves them out, and is what most apps use for average pace.
+
+## The idea
+
+Between each pair of samples, work out how far you went and how long it took.
+If the speed over that gap was at least a threshold, the gap was moving.
+Moving time is the sum of the moving gaps.
+
+- **Distance between two GPS fixes** comes from the haversine formula: the
+  distance along the Earth's surface between two latitude and longitude
+  points, with the Earth's mean radius of 6,371,008.8 m.
+- **The threshold** fit uses is 0.5 m/s (1.8 km/h), slower than any walk.
+  Below it you are stood still, or the GPS is wandering while you are.
+
+This guide uses the interval run: its recoveries start with 30 seconds stood
+still.
+
+## From scratch
+
+Three steps: distance between samples, time between samples, then the sum of
+the gaps that were fast enough.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+The samples, as a pond `TimeSeries`, come from `toSeries()`. Distance between
+samples is per-row maths on the latitude and longitude columns:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { col, when } from 'pond-ts';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+const track = run.toSeries();
+
+const lat = track.column('lat')!.toFloat64Array();
+const lng = track.column('lng')!.toFloat64Array();
+const R = 6_371_008.8; // metres
+const rad = Math.PI / 180;
+
+// metres from the sample before; 0 for the first
+const step = lat.map((_, i) => {
+  if (i === 0) return 0;
+  const dLat = (lat[i]! - lat[i - 1]!) * rad;
+  const dLng = (lng[i]! - lng[i - 1]!) * rad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat[i - 1]! * rad) *
+      Math.cos(lat[i]! * rad) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+});
+
+// seconds since the first sample
+const times = track.keyColumn().begin;
+const sec = Float64Array.from(times, (ms) => (ms - times[0]!) / 1000);
+```
+
+Then pond does the rest. `diff` gives the seconds since the sample before;
+expressions (`col`, `when`) work out each gap's speed and keep its time only
+if it was moving; `reduce` adds them up.
+
+```ts
+const gaps = track
+  .withColumn('step', step)
+  .withColumn('sec', sec)
+  .diff('sec', { output: 'dt' })
+  .withColumn('speed', col('step').div(col('dt')))
+  .withColumn('movingDt', when(col('speed').ge(0.5), col('dt'), 0));
+
+const totals = gaps.reduce({
+  elapsed: { from: 'dt', using: 'sum' },
+  moving: { from: 'movingDt', using: 'sum' },
+  meters: { from: 'step', using: 'sum' },
+});
+console.log(totals.elapsed, totals.moving, Number(totals.meters).toFixed(2));
+```
+
+```text output
+3083 2947 9702.21
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+Per-row maths (the haversine distance, seconds since the start) is ordinary
+polars work. Read the CSV and add both columns:
+
+```python
+import polars as pl
+import pond_rs
+from pond_rs import col, when
+
+run = pl.read_csv("interval-run.csv", try_parse_dates=True)
+
+R = 6_371_008.8  # metres
+lat, lng = pl.col("lat").radians(), pl.col("lng").radians()
+a = ((lat - lat.shift(1)) / 2).sin() ** 2 + lat.shift(1).cos() * lat.cos() * (
+    (lng - lng.shift(1)) / 2
+).sin() ** 2
+run = run.with_columns(
+    step=(2 * R * a.sqrt().arcsin()).fill_null(0.0),
+    sec=(pl.col("time") - pl.col("time").first()).dt.total_milliseconds() / 1000,
+)
+```
+
+Then hand the frame to pond. The steps are the TypeScript ones with Python
+spelling: `diff` with `output=`, expressions built from `col` and `when`
+(which run inside pond, with no Python call per row), and `reduce` with
+`(column, reducer)` pairs.
+
+```python
+gaps = (
+    pond_rs.TimeSeries(run, key="time")
+    .diff("sec", output="dt")
+    .with_column("speed", col("step") / col("dt"))
+    .with_column("moving_dt", when(col("speed") >= 0.5, col("dt"), 0))
+)
+totals = gaps.reduce(
+    {"elapsed": ("dt", "sum"), "moving": ("moving_dt", "sum"), "meters": ("step", "sum")}
+)
+print(int(totals["elapsed"]), int(totals["moving"]), f'{totals["meters"]:.2f}')
+```
+
+```text output
+3083 2947 9702.21
+```
+
+</TabItem>
+</Tabs>
+
+So the run took 3,083 seconds and moved for 2,947 of them, over 9.7 km: the five
+recoveries' standing starts, and the slowing down and speeding up around
+them, are the difference.
+
+## With fit
+
+```ts
+const s = run.stats();
+console.log(
+  s.time.elapsed?.format(),
+  s.time.moving?.format(),
+  s.time.moving?.seconds,
+);
+console.log(s.distance?.meters.toFixed(2));
+console.log(
+  s.pace.average?.format(),
+  '→',
+  run.stats({ time: 'moving' }).pace.average?.format(),
+);
+```
+
+```text output
+51:23 49:07 2947
+9702.21
+5:18/km → 5:04/km
+```
+
+The same seconds and the same metres as by hand. (The Python version reads the CSV, whose positions are rounded to nine decimal places, so its distance can differ from the FIT file's in the fourth decimal place of a metre.) The last line is why moving
+time matters: on elapsed time the run's average pace includes the standing
+recoveries; on moving time it doesn't.
+
+fit decides moving the same way for runs, rides, walks, hikes and open water
+swims. A pool swim is different: its moving time is the time spent swimming
+lengths, from the watch's length records (see [Pool swims](../pool-swims)).
+A swim with neither GPS nor length records uses the moving time the watch
+itself saved in the file, when there is one.
+
+## Chart it
+
+Speed over the run, with each stretch below 0.5 m/s shaded. The stops are the
+standing starts of the five recoveries.
+
+<ChartExample name="fit-moving-time" height={200}>
+  {(width) => <FitMovingTime width={width} />}
+</ChartExample>
+
+## Traps
+
+- **GPS wanders when you stand still.** Fixes drift by a metre or so, which
+  can read as slow movement. A threshold of 0.5 m/s ignores drift slower than
+  that; a lower threshold counts more drift as moving.
+- **A paused timer leaves no samples.** The ride's six-minute café pause is
+  one long gap between two samples, a few metres apart: far below 0.5 m/s, so
+  it isn't moving. A gap with no samples is still a gap to judge.
+- **Coasting is moving.** On a bike, freewheeling downhill at 50 km/h is
+  moving even though the power is zero. The rule looks at speed only.
+- **The first sample has no gap before it.** Its `dt` is missing, and the sums
+  leave it out.

@@ -1,0 +1,89 @@
+---
+title: Quantities and units
+sidebar_position: 3
+description: Distance, Duration, Pace, Speed, Power, HeartRate and friends, and how to make and format them.
+---
+
+# Quantities and units
+
+Every number fit hands back carries its unit: a `Distance`, a `Duration`, a
+`Pace`. You read it in the unit you want, or format it for display, and you
+can't mistake metres for miles on the way.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+const { distance, time, pace, speed } = run.stats();
+
+console.log(
+  distance?.meters.toFixed(0),
+  distance?.km.toFixed(2),
+  distance?.miles.toFixed(2),
+);
+console.log(distance?.format('km'), distance?.format('mi', 1));
+console.log(
+  time.elapsed?.seconds,
+  time.elapsed?.minutes.toFixed(1),
+  time.elapsed?.format(),
+);
+console.log(pace.average?.format('metric'), pace.average?.format('imperial'));
+console.log(speed.average?.kmh.toFixed(1), speed.average?.format('imperial'));
+```
+
+```text output
+9702 9.70 6.03
+9.70 km 6.0 mi
+3083 51.4 51:23
+5:18/km 8:31/mi
+11.3 7.0 mph
+```
+
+## Making them
+
+Short helpers make the values you pass in: to pick a stretch, ask for splits
+or name a best effort.
+
+```ts
+import {
+  km,
+  miles,
+  yards,
+  seconds,
+  minutes,
+  hours,
+  Pace,
+  Power,
+} from '@pond-ts/fit';
+
+console.log(km(5).meters, miles(1).meters.toFixed(1), yards(25).meters);
+console.log(minutes(20).seconds, hours(1.5).format(), seconds(95).format());
+console.log(
+  Pace.secondsPerKm(240).format('imperial'),
+  Power.watts(300).perKg(72).toFixed(2),
+);
+```
+
+```text output
+5000 1609.3 22.86
+1200 1:30:00 1:35
+6:26/mi 4.17
+```
+
+## The types
+
+| Type        | Holds                 | Read it as                        | Format                           |
+| ----------- | --------------------- | --------------------------------- | -------------------------------- |
+| `Distance`  | metres                | `.meters` `.km` `.miles` `.yards` | `format('km' \| 'mi', decimals)` |
+| `Duration`  | seconds               | `.seconds` `.minutes` `.hours`    | `format()` → `h:mm:ss`           |
+| `Speed`     | metres per second     | `.metersPerSecond` `.kmh` `.mph`  | `format('metric' \| 'imperial')` |
+| `Pace`      | seconds per kilometre | `.secondsPerKm` `.secondsPerMile` | `format('metric' \| 'imperial')` |
+| `Elevation` | metres                | `.meters` `.feet`                 | `format('m' \| 'ft')`            |
+| `Power`     | watts                 | `.watts`, `.perKg(weight)`        | `format()` → `"212 W"`           |
+| `HeartRate` | beats per minute      | `.bpm`                            | `format()` → `"152 bpm"`         |
+| `Cadence`   | per minute            | `.rpm`                            | `format()`                       |
+
+`Speed` and `Pace` turn into each other (`speed.pace()`, `pace.speed()`). A
+standstill has a speed of zero and no pace: `stats().pace.average` is `null`
+for a stretch with no distance, rather than an infinite pace.

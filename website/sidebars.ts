@@ -92,6 +92,28 @@ const sidebars: SidebarsConfig = {
       label: '@pond-ts/fit',
       link: { type: 'doc', id: 'fit/fit-index' },
       items: [
+        'fit/reading',
+        'fit/quantities',
+        'fit/stats',
+        'fit/clocks',
+        'fit/sections',
+        'fit/analysis',
+        'fit/best-efforts',
+        'fit/pool-swims',
+        'fit/under-the-hood',
+        'fit/charting',
+        {
+          type: 'category',
+          label: 'Analysis guides',
+          link: { type: 'doc', id: 'fit/guides/guides-index' },
+          items: [
+            'fit/guides/moving-time',
+            'fit/guides/splits-and-pace',
+            'fit/guides/normalized-power',
+            'fit/guides/power-curve',
+            'fit/guides/time-in-zones',
+          ],
+        },
         {
           type: 'link',
           label: 'API reference (fit)',

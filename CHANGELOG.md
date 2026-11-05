@@ -78,7 +78,247 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`@pond-ts/fit`: a new `Activity` model** ([PND-FITAPI],
+  docs/rfcs/fit-api.md). Breaking: replaces the old façade outright.
+  `readActivity(bytes)` (in `@pond-ts/fit/files`) tells FIT, GPX or TCX from
+  the bytes and returns an `Activity`. Properties hold what the recording
+  contains (`name`, `sport`, `sportType`, `startedAt`, `device`, `laps`);
+  methods select or calculate. Every `Section` (the activity, a lap, a split,
+  `section({ elapsed | distance })`) and every `Sections` collection
+  (`laps`, `splits(km(1))`, `laps.groupBy(fn)`) answers one `stats()`
+  contract: grouped, unit-carrying answers (`stats.heartRate.average`,
+  `stats.time.moving`), `null` when unavailable, on a stated time basis
+  (`'elapsed'` default, `'moving'`, `'timer'`). Timer time comes only from
+  the file (`Lap.timerSeconds`, new, set by the FIT reader from
+  `total_timer_time`); without it `time.timer` is `null`. Group stats cover
+  the chosen sections only, pace as total distance over total time.
+  Removed: `Activity.fromStreams`, the per-number methods (`distance()`,
+  `movingTime()`, …), `range`, `summary`, `windowChannels`, `power`,
+  `powerCurve`, `distanceBestEfforts`, `hrZones`, `paceZones`, `at`,
+  `usingProfile`, `ProfiledActivity`, `ProfiledSection`, `Sample`,
+  `SectionMetrics`. The functional layer they wrapped (`computePower`,
+  `powerBestEfforts`, `hrZoneDistribution`, `windowChannels`, …) stays;
+  a planned `analyze({ athlete })` brings the athlete-dependent answers back
+  as methods. With no timestamps, `time.elapsed` is `null` and a section by
+  elapsed time throws; a section is held to the recording. Added shorthands `km`, `miles`, `meters`, `seconds`, `minutes`,
+  `hours`, and `sportOf`.
+
+- **`@pond-ts/fit`: explicit clocks** ([PND-FITAPI]). `stats().time` adds
+  `swimming` and `rest` (null for any sport but swimming), and `stats({ time:
+'swimming' })` puts every number on the swimming time. Moving is decided
+  by sport (`PreparedActivity.movingRule`, type `MovingRule`): a pool swim
+  moves only during its lengths (from the length records, else the laps that
+  covered distance), so its rests are its stopped time, for the whole swim
+  and for any lap or section of it; everything else keeps the 0.5 m/s speed
+  rule. The engine (`sectionStats`, `movingClock`, `bestAveragePower`)
+  follows the same rule. Timer time takes the file's session total first
+  (`ImportedActivity.timerSeconds`, new, from a single-session FIT's
+  `total_timer_time`; a crop drops it), else the laps'. A swim with no GPS,
+  no pool details and no laps but the watch's swim time uses that total for
+  the whole swim (`'swim-time'`); a part's swimming time is then unknown.
+  The summary pipeline's moving time is unchanged.
+
+- **`@pond-ts/fit`: typed pool swims** ([PND-FITAPI], RFC §6, §16).
+  `Activity.from` returns a `PoolSwim` for a pool swim; narrow with
+  `activity.isPoolSwim()`. `activity.environment` is `'pool'`,
+  `'open-water'` or null. A `PoolSwim` has `pool` (`length` as a `Distance`,
+  `course` such as `'25m'` / `'25yd'`), `segments` (`LengthSection` with
+  `number`, `stroke`, `strokeCount`, `drill`; `RestSection` with `duration`:
+  a rest is not an inactive length), `lengths`, and `repeats`
+  (`RepeatSection`: a recorded lap that covered distance, with its
+  `lengths`, the `recoveryAfter` it, and `source: 'laps'`). Every one is a
+  `Section`, so `stats()` works on all of them. Added `Distance.yards`,
+  `.yards` and the `yards` shorthand. `ImportedActivity.swim` is unchanged.
+
+- **`@pond-ts/fit`: fixes from the integration review** ([PND-FITAPI]).
+  FIT files with compressed timestamps now read correctly (the decoder,
+  `fit-file-parser`, doesn't support them, so they are written out first;
+  the heart rate recovery reader handles them too). A section's time,
+  moving time and distance now run between its own ends rather than the
+  samples around them, so `splits(km(1))` measures 1 km each and the last
+  split is never empty (this changes `sectionStats` numbers for spans whose
+  ends fall between samples); its channel numbers and best efforts use only
+  the samples inside it. A pool swim with a known pool length has one
+  distance axis from its lengths, used by stats, bounds, splits, efforts and
+  speed, and lengths recorded past the last sample keep their time and
+  distance; the moving clock follows the same swum stretches. `parseFit`
+  starts the activity at the session's or first lap's start when the first
+  record comes later (the id still names the first record's time).
+  `parseTcx` reads namespace-prefixed elements. Pool swims: swimming time is the overlap with
+  the lengths, a length's distance (from the pool length) reaches `stats()`,
+  and lengths, laps and samples share one clock from the activity's start.
+  Real zeros stay zero: a standstill has speed 0, 0 W laps count in lap
+  summaries; unknowns stay null: rest needs an elapsed clock. Group moving
+  averages no longer depend on member order; a two-sample section keeps its
+  moving max speed; namespaced GPX/TCX roots are recognised; cropping the
+  finish drops the heart rate recovery. `computeActivitySummary` now gives
+  the same distance, elapsed and moving time as `activity.stats()` (elapsed
+  from the activity's start, a pool swim's lengths, and the activity's
+  moving rule, so an open water swim's moving time is now the speed rule,
+  not the watch's swim time). A section holding one sample keeps its
+  moving readings; splits and swim best efforts cover pool lengths that
+  fall outside the samples; a pool swim imported with lengths and no
+  samples keeps its distance and time; TCX text inside CDATA is kept as
+  written. A pool swim's clock comes from its timed lengths and rests,
+  whatever the pool size and whatever untimed sensor readings it carries:
+  a rest after the last length counts in elapsed and rest time, and an
+  unknown pool size leaves only the distance unknown.
+
+- **`@pond-ts/fit`: analysis for an athlete, best efforts by metric**
+  ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`
+  or the stored profile JSON (resolved to the activity's start) and returns
+  an `Analysis`: `power` (`average`, `normalized`, `intensityFactor`,
+  `variabilityIndex`), `load` (`{ model: 'cycling-tss', value }`, rides
+  only) and `zones` (`power`, `heartRate`, `pace`; pace zones for runs,
+  walks and hikes), with `athlete` the settings used.
+  A missing setting makes only what needs it `null`: no FTP means no
+  intensity factor, load or power zones (the functional `intensityFactor` /
+  `trainingLoad` still return 0 there). Best efforts sit under the metric:
+  `section.power.bestEffort(minutes(20))`, `section.power.curve()`,
+  `section.pace.bestEffort(km(5))`, `section.pace.bestEfforts()`; each
+  effort carries its stretch as a `Section` (kind `'effort'`). Works on any
+  section, so a lap or a picked stretch has its own analysis and efforts.
+
+### Added
+
+- **`@pond-ts/fit`: stops, walk breaks and heart rate recovery**
+  ([PND-FITBREAKS]). `findBreaks(streams)` finds the stops and walk breaks
+  inside a run (30 s or longer, after a minute mostly running, not the
+  finish) and reads heart rate at 15–120 s into each (`RunBreak`);
+  `slowCutOff` places "slow" between a run/walk run's walking and running
+  speeds. Across runs, `pastBreaks` + `breakTrend` give the typical fall
+  over the 30 days up to each run, adjusted to one starting heart rate.
+  After the stop: `recoveryFromReadings` (heart rate around the end →
+  `HeartRateRecovery`), `recoveryAt`, `recoverySummary`, `twoMinuteDrop`.
+  Ported from Estela; identical output on Estela's real runs (checked
+  there, not committed here). Accepts `null` samples and fixes.
+
+- **`@pond-ts/fit/files`: FIT, GPX and TCX readers** ([PND-FITFILES]).
+  `parseFit(bytes)`, `parseGpx(xml)`, `parseTcx(xml)` turn an activity file
+  into an `ImportedActivity` ready for `Activity.fromStreams`: streams, laps,
+  sport (FIT sports as Strava-style labels: `fitSport`), local start time
+  (`fitLocalStart`), the swim watch's pool and lengths (`swim`), what made
+  the file (`creator`: FIT maker and product number, or the TCX / GPX creator
+  name), and a Garmin watch's heart rate two minutes after the stop
+  (`recovery`; `fitRecoveryFromBytes` reads just that from the bytes, fast).
+  A FIT file keeps the records before the watch found GPS (null positions;
+  distance from the watch, as the summary already handles); GPX and TCX drop
+  points with no position. GPX points may be self-closing, single-quoted or
+  namespaced; names and creators decode CDATA and entities; a sample with no
+  time takes the time before it. The default id is `<format>:<start time>`
+  (`options.id` overrides). A separate entry
+  point, so the FIT decoder (`fit-file-parser`, MIT, now a dependency of
+  `@pond-ts/fit`) only loads for consumers that read files. From Estela's
+  `packages/ingest`, where these were tested on real files: on Estela's nine
+  real fixtures the output is identical apart from the kept no-fix records.
+- **`ImportedActivity.creator` / `.recovery`**, types `FileCreator` and
+  `HeartRateRecovery`, and `'file'` as an `ActivitySource` (the readers'
+  default; `options.source` overrides). **Breaking (types only):** a `switch`
+  over `ActivitySource` that checks every case, or a
+  `Record<ActivitySource, …>`, now needs a `'file'` entry.
+
+- **`@pond-ts/fit`: cutting a recording** ([PND-FITCUT]).
+  `editRecording(imported, edit, { keepClock })` crops an `ImportedActivity`
+  to the part you keep (`from` / `to`, seconds on the recording's clock),
+  splits laps (`splitLapsAt`) and joins a lap to the one before
+  (`joinLapsAt`). The cropped streams start again at 0 s and 0 m, the start
+  time (UTC and local) moves on, and the totals are the recording's own shared
+  out by how much the kept part holds. A lap the edit doesn't touch stays as
+  recorded; a split, joined or cropped lap shares out its distance, time,
+  work, calories and climb, with heart rate and power from the samples. A
+  swim keeps the lengths in the kept part and its swim time is worked out
+  again from the new laps. `keepClock` changes only the laps, for an editor
+  drawing them over the whole recording. Also `isEmptyEdit`,
+  `recordingSeconds`, `lapStartSeconds`, `editedLapStarts` and the
+  `RecordingEdit` type. An edit that keeps nothing, a non-finite `from` /
+  `to`, or a crop of a recording with no time stream throws a `RangeError`.
+  From Estela's timeline editor
+  (`packages/core/src/version`), whose tests it passes.
+- **`@pond-ts/fit`: swims** ([PND-FITSWIM]). `ImportedActivity.swim`
+  (`SwimData`: the swim time, the pool length and unit, and every length as a
+  `SwimLength` with its strokes and stroke) and `activity.swim`. When an import
+  carries the swim watch's swim time (finite and above 0), it is the activity's
+  moving time, held to the elapsed time: worked out from the samples, a pool
+  swim (one sample per length, each timed with its rest at the wall) reads as
+  almost standing still. `swimMovingSeconds(laps)` gives that time from the
+  laps that covered distance, which matched Strava's moving time to within a
+  second on 20 real FIT swims. Only the whole-activity moving time uses it: a
+  lap, split or `range()` inside a swim still reads moving time from the
+  samples. From Estela, which overrode fit's moving time in three places
+  (`packages/core/src/asset/index.ts`, and twice in
+  `packages/ui/src/ActivityAnalysis.tsx`).
+- **`@pond-ts/fit`: section stats** ([PND-FITSTATS]). `activity.stats(span)`
+  gives the full numbers for one stretch (a lap, a split, a range, or any
+  `{ fromSeconds, toSeconds }`): first / last / min / max / average per
+  channel (speed, heart rate, power, cadence, elevation), the same for the
+  moving time only, normalized power over all of it and over the moving time,
+  and climb and descent. `activity.groupStats(spans)` does a group of them
+  (all the 800 m reps): totals, min / max / averages over the samples inside
+  them, and the lowest and highest of their own averages with which one had
+  it. `activity.bestAveragePower(spans, seconds, { moving })` is the best
+  average power held inside any one span, and `activity.movingClock()` a
+  clock that stops while you stop (for drawing an activity with its stops
+  taken out). Functional forms `sectionStats`, `sectionGroupStats`,
+  `bestAveragePower`, `movingClock` take a `PreparedActivity`. Extracted from
+  Estela, which had written these beside `Section` and read the prepared
+  activity's private columns to do it; the numbers are identical to Estela's
+  on its fixtures. A span with a non-finite end or its ends reversed throws
+  `RangeError`; a span that misses the recording gives zeros and no
+  channels. `bestAveragePower` carries power over at most 5 s of a gap,
+  stricter than the power curve's 10 s clamp, so a dropout then a spike
+  doesn't pass for a minute's effort.
+- **`@pond-ts/fit`: the activity rules are public** ([PND-FITSTATS]):
+  `MOVING_SPEED_MPS` (0.5 m/s) and `movingTimeSeconds`, `CLIMB_THRESHOLD_METERS`
+  (3 m) and `elevationGainLoss`, `normalizedPower`, `haversineMeters`. A
+  consumer that needs "is this moving?" or "how much did this climb?" no
+  longer has to copy the rule and hope it stays in step.
+
+### Changed
+
+- **`@pond-ts/fit`: recorded laps carry normalized power.** `activity.laps()`
+  works each lap's NP out from the power samples over the lap's time (a FIT
+  lap doesn't record it), so `lap.normalizedPower()` is no longer always
+  `undefined` on a ride with power. `laps()` is memoized (the first call on a
+  4 h, 50-lap ride takes about 25–30 ms) and returns a fresh array each call.
+- **`@pond-ts/fit`: `activity.trackLine()` / `trackLine(prepared)`**
+  ([PND-FITCLEAN]). The line to draw at full resolution: the fixes in order,
+  or an open water swim's cleaned line (the one the summary's map line is
+  drawn from). Consumers had been reading the prepared columns to get it.
+- **`@pond-ts/fit`: track outlines** ([PND-FITOUTLINE]). Small copies of a
+  track for lists, thumbnails and maps: `trackShape(latlng, maxPoints = 100)`
+  (whether it has GPS, where it starts, an encoded outline of at most N
+  points), `simplifyToPoints`, detail levels by distance error
+  (`trackLevels(latlng, [40, 10, 2.5])`, each keeping every recorded point
+  within that many metres) with `levelFor(levels, metresPerPixel)` to pick
+  one, and the encoded polyline format (`encodePolyline` /
+  `decodePolyline`, Google's, 5 decimal places). `isUsableFix` leaves out
+  samples with no fix and the 0,0 some devices write before they find one.
+  Also `trackStart`, `OUTLINE_POINTS`, `LEVEL_METRES` and the `TrackShape` /
+  `TrackLevel` types. From Estela's `packages/core/src/shape`, whose tests
+  it passes.
+- **`@pond-ts/fit`: lap groups by type and name** ([PND-FITLAPGROUPS]).
+  `groupLaps(laps)` groups laps that carry types or names (warm-up, "400m"
+  reps, "200m" jogs): types in the order the session reaches them, untyped
+  laps last, and a type with several names split under a heading, shortest
+  first. `summarizeLaps` combines laps' own averages (total distance over
+  total time, time-weighted heart rate and power, NP from each lap's NP⁴,
+  slowest / fastest lap); `lapExtremes` picks a group's highest and lowest
+  lap. Ported from Estela's lap summary.
+
 ### Fixed
+
+- **`@pond-ts/fit`: channel times are never `NaN`** ([PND-FITCLEAN]). A
+  distance bucket with no sample (before the first sample, as in a pool swim
+  whose first record is at the end of the first length) had a `NaN`
+  `timeSeconds`, which left a hole at the start of the time axis. It now
+  takes the time before it, or the first time, so the axis never runs
+  backwards. Applies to `summary().channels` and `windowChannels`.
+- **`@pond-ts/fit`: a missing sample written as `null` is documented and
+  tested as a gap**, the same as `NaN` (an activity read back from JSON has
+  `null`, since JSON has no `NaN`). It already read that way; nothing
+  changes but the guarantee.
 
 - **`live.window()` no longer slows down as the window grows.** A window view
   (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
@@ -333,6 +573,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   update 1338 vs 2647.
 
 ### Changed
+
+- **`groupBy` and `pivotByGroup` read the columns** ([PND-GROUPEVENTS])
+  instead of building an `Event` per row. `groupBy` now gathers each
+  group's rows straight off the columns rather than rebuilding it from
+  rows. Output is identical (same groups, order, rows and errors). 1M rows,
+  8 groups: `groupBy` 4.6 s → 0.11 s (1,000 groups: 5.4 s → 0.19 s),
+  `pivotByGroup` 2.7 s → 0.86 s. A series made by `map` (whose events may
+  hold values its columns don't), one with an array column, and a `groupBy`
+  whose required column holds a gap (it throws, as before) or whose column
+  is not a value column take the old path.
 
 - **`@pond-ts/rs`: `toJSON()` is several times faster, and takes
   `{ rowFormat: 'object' }`.** It used to build each row cell by cell

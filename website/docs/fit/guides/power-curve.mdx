@@ -1,0 +1,214 @@
+---
+title: Power curve and best efforts
+sidebar_position: 5
+description: The best average power for every duration, built from rolling windows in pond and Python, then with fit.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import ChartExample from '@site/src/components/ChartExample';
+import FitPowerCurve from '@site/src/examples/fit-power-curve';
+
+# Power curve and best efforts
+
+**A power curve answers "what's the most I held for this long?" for every
+length of effort at once**: a five-second sprint, a five-minute climb, an
+hour. One ride gives one curve; the best of many rides is the rider's
+profile.
+
+## The idea
+
+For a duration _d_, slide a window _d_ long along the ride and take the
+average power in each position. The best effort for _d_ is the highest of
+those averages. Do that for many durations and plot best power against
+duration: the curve always falls as the duration grows, because a longer
+effort can't be held as hard.
+
+A rolling average is exactly "the average in a window that slides", so in
+pond it is `rolling` and then the maximum. One detail: near the start of the
+ride a window can't be full yet, and an average over the first 30 seconds is
+not a 20-minute effort. Count the samples in each window and keep only full
+ones.
+
+This guide uses the ride. It records once a second, so a full 20-minute
+window holds 1,200 samples.
+
+## From scratch
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+Power with its two dropouts counted as 0 W (why, below), then for each
+duration a rolling average and count, and the best full window:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { minutes, seconds } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const power = ride.toSeries().select('power').fill('zero');
+
+const durations = [
+  ['5s', 5],
+  ['1m', 60],
+  ['5m', 300],
+  ['20m', 1200],
+  ['60m', 3600],
+] as const;
+
+for (const [window, secs] of durations) {
+  const rolled = power.rolling(window, {
+    avg: { from: 'power', using: 'avg' },
+    n: { from: 'power', using: 'count' },
+  });
+  const avg = rolled.column('avg')!.toFloat64Array();
+  const n = rolled.column('n')!.toFloat64Array();
+  let best = -Infinity;
+  for (let i = 0; i < avg.length; i++)
+    if (n[i]! >= secs && avg[i]! > best) best = avg[i]!;
+  console.log(
+    window.padStart(3),
+    best > -Infinity ? `${best.toFixed(1)} W` : 'no full window',
+  );
+}
+```
+
+```text output
+ 5s 354.8 W
+ 1m 323.3 W
+ 5m 309.5 W
+20m 268.8 W
+60m no full window
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+The same, with the window's samples counted alongside its average and the
+full windows kept with a polars filter:
+
+```python
+import polars as pl
+import pond_rs
+
+ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
+power = pond_rs.TimeSeries(ride.select("time", "power"), key="time").fill("zero")
+
+for window, secs in [("5s", 5), ("1m", 60), ("5m", 300), ("20m", 1200), ("60m", 3600)]:
+    rolled = power.rolling(window, {"avg": ("power", "avg"), "n": ("power", "count")})
+    best = rolled.to_polars().filter(pl.col("n") >= secs)["avg"].max()
+    print(f"{window:>3}", f"{best:.1f} W" if best is not None else "no full window")
+```
+
+```text output
+ 5s 354.8 W
+ 1m 323.3 W
+ 5m 309.5 W
+20m 268.8 W
+60m no full window
+```
+
+</TabItem>
+</Tabs>
+
+## With fit
+
+`power.curve()` gives every duration at once, and `power.bestEffort()` one;
+each hands back the stretch it came from:
+
+```ts
+for (const e of ride.power.curve([
+  seconds(5),
+  minutes(1),
+  minutes(5),
+  minutes(20),
+  minutes(60),
+]))
+  console.log(e.duration.format().padStart(7), e.power.watts.toFixed(1), 'W');
+
+const best20 = ride.power.bestEffort(minutes(20))!;
+const at = best20.section.bounds;
+console.log(
+  at.elapsed?.from.format(),
+  '→',
+  at.elapsed?.to.format(),
+  at.distance.from.format('km', 1),
+  '→',
+  at.distance.to.format('km', 1),
+);
+```
+
+```text output
+   0:05 354.8 W
+   1:00 323.3 W
+   5:00 309.5 W
+  20:00 268.8 W
+1:00:00 221.1 W
+58:49 → 1:18:49 24.9 km → 32.0 km
+```
+
+The same powers, up to 20 minutes. The best 20 minutes starts on the flat
+before the second climb and ends at its top.
+
+The hour is different. By hand there is no full hour at all: every 60 minutes
+of clock time on this ride crosses the six-minute café pause, so no window
+holds 3,600 samples. fit counts a pause as at most 10 seconds of the
+duration, so it finds an hour of riding (221.1 W) made of the riding either
+side of the café. Which one you want is a choice; see the traps.
+
+fit doesn't use a rolling window for this: it keeps a running total of work
+(watts × seconds) and, for each duration, slides a pair of pointers along it.
+Wherever the rolling windows are full, that gives the same answer, faster,
+and without needing one sample a second.
+
+## Chart it
+
+The ride's whole curve, from one second to the length of the ride, on a
+logarithmic duration axis (each step along it multiplies the duration), the
+usual way to draw it: on an even axis everything under a few minutes would be
+squashed against the left edge.
+
+<ChartExample name="fit-power-curve" height={250}>
+  {(width) => <FitPowerCurve width={width} />}
+</ChartExample>
+
+## Traps
+
+- **What a dropout counts as changes the answer.** The best 20 minutes
+  contains the 15-second dropout. Counted as 0 W (as above, and as fit does)
+  it's 268.8 W. Skipped, the window averages only the seconds it has, and
+  comes out higher:
+
+  ```ts
+  import { col } from 'pond-ts';
+
+  const skipped = ride
+    .toSeries()
+    .select('power')
+    .filter(col('power').isMissing().not());
+  const rolled20 = skipped.rolling('20m', {
+    avg: { from: 'power', using: 'avg' },
+  });
+  const firstFull = Number(ride.startedAt) + 1_200_000;
+  const fullOnly = rolled20.filter((e) => Number(e.begin()) >= firstFull);
+  console.log(Number(fullOnly.reduce({ avg: 'max' }).avg).toFixed(1), 'W');
+  ```
+
+  ```text output
+  272.2 W
+  ```
+
+  fit counts a dropout as no work, so a gap in the data can't make an effort
+  look harder than it was. Normalized power does the opposite and leaves
+  dropouts out, because zeros there would drag the 30-second averages down;
+  see [its traps](./normalized-power#traps).
+
+- **Pauses.** A window of clock time across the café pause holds six minutes
+  less riding than its length, so counting samples leaves it out, and here
+  that leaves no full hour. fit counts a pause as at most 10 seconds (at the
+  power of the first sample after it), so an effort can run across a stop.
+  Its section is then longer than its duration.
+- **Recording rate.** Counting samples to find full windows works because the
+  ride records once a second. For a file that records less often, or only
+  when something changes, count seconds instead of samples, or use fit.
