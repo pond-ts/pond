@@ -111,3 +111,28 @@ describe('concat merge', () => {
     expect(TimeSeries.concat([empty, empty]).length).toBe(0);
   });
 });
+
+describe('concat of concat results stays one step from the source events', () => {
+  it('10,000 chained concats still hand back the first series’ events', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const base = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    const empty = new TimeSeries({ name: 's', schema, rows: [] });
+    let s = base;
+    for (let i = 0; i < 10_000; i += 1) s = TimeSeries.concat([s, empty]);
+    // Without flattening each concat adds a link, and eventAt recurses
+    // through all of them.
+    expect(s.at(0)).toBe(base.at(0));
+    expect(s.at(1)).toBe(base.at(1));
+    expect(s.toJSON().rows).toEqual(base.toJSON().rows);
+  });
+});
