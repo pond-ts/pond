@@ -99,7 +99,7 @@ export class Section implements Span {
   /** Where it starts and ends, in elapsed time and in distance. */
   get bounds(): SectionBounds {
     return (this.#bounds ??= {
-      elapsed: this.prep.hasTime
+      elapsed: this.prep.hasClock
         ? {
             from: Duration.seconds(this.fromSeconds),
             to: Duration.seconds(this.toSeconds),
@@ -119,7 +119,7 @@ export class Section implements Span {
     if (!s) {
       s = toStats(sectionStats(this.prep, this), basis, {
         timerSeconds: this.timerSeconds,
-        hasTime: this.prep.hasTime,
+        hasTime: this.prep.hasClock,
         hasDistance: hasDistance(this.prep),
         swim: isSwim(this.prep),
         movingRule: this.prep.movingRule,
@@ -246,7 +246,7 @@ export class Sections<T extends Section = Section> implements Iterable<T> {
           : undefined;
       s = toStats(sectionGroupStats(this.#prep, this.#items), basis, {
         timerSeconds,
-        hasTime: this.#prep.hasTime,
+        hasTime: this.#prep.hasClock,
         hasDistance: hasDistance(this.#prep),
         swim: isSwim(this.#prep),
         movingRule: this.#prep.movingRule,
@@ -361,7 +361,7 @@ export class Activity extends Section {
    *  when it lies wholly outside the recording, or when it asks for elapsed
    *  time from a recording with no timestamps. */
   section(range: SectionRange, label = 'Section'): Section {
-    if ('elapsed' in range && !this.prep.hasTime)
+    if ('elapsed' in range && !this.prep.hasClock)
       throw new RangeError('section: the recording has no timestamps');
     const [from, to] =
       'elapsed' in range

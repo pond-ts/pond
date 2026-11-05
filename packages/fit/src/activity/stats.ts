@@ -105,7 +105,7 @@ function pick(c: Channel, moving: boolean) {
 export interface StatsContext {
   /** The file's timer time for this stretch, when it records one. */
   timerSeconds: number | undefined;
-  /** Samples carry timestamps (so moving can be judged). */
+  /** The activity has a clock (sample timestamps or timed swim lengths). */
   hasTime: boolean;
   /** The recording has a distance (GPS or a distance channel). */
   hasDistance: boolean;

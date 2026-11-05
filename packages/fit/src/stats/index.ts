@@ -154,6 +154,8 @@ interface Samples {
   cadence: Float64Array | undefined;
   elevation: Float64Array | undefined;
   hasTime: boolean;
+  /** The activity has a time axis (see `PreparedActivity.hasClock`). */
+  hasClock: boolean;
   /** The sport's own moving rule, when it isn't the speed rule. */
   moving: Uint8Array | undefined;
   /** …and the stretches it counts as moving (moving time by overlap). */
@@ -184,6 +186,7 @@ function samplesOf(prep: PreparedActivity): Samples {
       cadence: present(prep.cols.cadence),
       elevation: present(prep.cols.ele),
       hasTime: prep.hasTime,
+      hasClock: prep.hasClock,
       moving: prep.movingMask,
       movingSpans: prep.movingSpans,
       poolLengths: prep.poolLengths,
@@ -367,7 +370,7 @@ function checkSpan(span: Span): void {
  *  lengths). */
 function outside(s: Samples, span: Span): boolean {
   const { from, to } = s.prep.extent;
-  if (s.t.length === 0 && !s.poolLengths) return true;
+  if (s.t.length === 0 && !s.hasClock) return true;
   return span.toSeconds < from || span.fromSeconds > to;
 }
 
@@ -430,15 +433,26 @@ function measure(s: Samples, span: Span): Window {
   }
   const a = Math.max(span.fromSeconds, s.prep.extent.from);
   const b = Math.min(span.toSeconds, s.prep.extent.to);
-  const lo = firstAtOrAfter(s.t, a);
-  const hi = lastAtOrBefore(s.t, b);
+  let lo: number;
+  let hi: number;
+  if (!s.hasTime && s.hasClock) {
+    // samples with no timestamps have no place on the swim's clock: the
+    // whole activity holds them all, any narrower section none
+    const { from, to } = s.prep.extent;
+    const whole = a <= from + EPS && b >= to - EPS;
+    lo = 0;
+    hi = whole ? s.t.length - 1 : -1;
+  } else {
+    lo = firstAtOrAfter(s.t, a);
+    hi = lastAtOrBefore(s.t, b);
+  }
   return {
     lo,
     hi,
     from: a,
     to: b,
-    // with no timestamps the sample axis is a count, not seconds
-    elapsed: s.hasTime ? b - a : 0,
+    // with no clock the sample axis is a count, not seconds
+    elapsed: s.hasClock ? b - a : 0,
     moving: movingSecondsIn(s.prep, a, b),
     meters: metersIn(s, a, b),
     empty: false,

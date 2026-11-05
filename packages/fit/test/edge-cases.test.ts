@@ -572,3 +572,88 @@ describe('TCX text in CDATA', () => {
     expect(a.record.creator?.name).toBe('Tool <v:2>');
   });
 });
+
+describe('a pool swim keeps its clock from its timed lengths and rests', () => {
+  const start = Date.parse(META.startTimeUtc);
+  const at = (sec: number) => new Date(start + sec * 1000).toISOString();
+  const swim = (
+    streams: Partial<ActivityStreams>,
+    lengths: [number, number, boolean][],
+    poolMeters: number | null = 25,
+  ): ImportedActivity => ({
+    activity: { ...META, sportType: 'Swim' },
+    streams: { latlng: [], ...streams },
+    swim: {
+      movingSeconds: lengths.reduce(
+        (s, [, secs, on]) => s + (on ? secs : 0),
+        0,
+      ),
+      ...(poolMeters
+        ? { pool: { lengthMeters: poolMeters, unit: 'm' as const } }
+        : {}),
+      lengths: lengths.map(([from, seconds, active]) => ({
+        startTimeUtc: at(from),
+        seconds,
+        active,
+      })),
+    },
+  });
+
+  it.each([
+    ['no samples', {}],
+    ['samples at 0 and 30 s', { timeSeconds: [0, 30] }],
+  ])('a rest after the last length counts (%s)', (_, streams) => {
+    const r = swim(streams, [
+      [0, 30, true],
+      [30, 90, false],
+    ]);
+    const a = Activity.from(r);
+    const t = a.stats().time;
+    expect(t.elapsed?.seconds).toBe(120);
+    expect(t.swimming?.seconds).toBe(30);
+    expect(t.rest?.seconds).toBe(90);
+    expect(a.isPoolSwim()).toBe(true);
+    if (!a.isPoolSwim()) return;
+    const rest = a.segments.at(1)!;
+    expect(rest.kind).toBe('rest');
+    expect(rest.stats().time.elapsed?.seconds).toBe(90);
+    expect(computeActivitySummary(r).elapsedTimeSeconds).toBe(120);
+  });
+
+  const two: [number, number, boolean][] = [
+    [0, 30, true],
+    [30, 30, true],
+  ];
+
+  it('an untimed sensor reading leaves the clock alone', () => {
+    const r = swim({ heartrate: [150] }, two);
+    const st = Activity.from(r).stats();
+    expect(st.time.elapsed?.seconds).toBe(60);
+    expect(st.time.swimming?.seconds).toBe(60);
+    expect(st.distance?.meters).toBe(50);
+    const sum = computeActivitySummary(r);
+    expect(sum.elapsedTimeSeconds).toBe(60);
+    expect(sum.movingTimeSeconds).toBe(60);
+  });
+
+  it('…and has no place inside a part of the swim', () => {
+    const a = Activity.from(swim({ heartrate: [150] }, two));
+    expect(a.stats().heartRate.average?.bpm).toBe(150);
+    const first = a.section({ elapsed: { from: seconds(0), to: seconds(30) } });
+    expect(first.stats().heartRate.average).toBeNull();
+    expect(first.stats().time.elapsed?.seconds).toBe(30);
+  });
+
+  it('an unknown pool size leaves the time and takes only the distance', () => {
+    const r = swim({}, two, null);
+    const a = Activity.from(r);
+    expect(a.isPoolSwim()).toBe(true);
+    const st = a.stats();
+    expect(st.time.elapsed?.seconds).toBe(60);
+    expect(st.time.swimming?.seconds).toBe(60);
+    expect(st.distance).toBeNull();
+    const sum = computeActivitySummary(r);
+    expect(sum.elapsedTimeSeconds).toBe(60);
+    expect(sum.movingTimeSeconds).toBe(60);
+  });
+});

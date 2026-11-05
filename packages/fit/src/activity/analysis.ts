@@ -115,7 +115,7 @@ function effortTimeline(
     const w = windowOf(src);
     return w ? { t: w.t, cum: w.cum } : null;
   }
-  const b = prep.hasTime ? sectionBounds(prep, src.span) : null;
+  const b = prep.hasClock ? sectionBounds(prep, src.span) : null;
   if (!b || !(b.to > b.from)) return null;
   const times = [b.from];
   for (const l of lengths)

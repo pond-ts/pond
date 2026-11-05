@@ -161,7 +161,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   moving readings; splits and swim best efforts cover pool lengths that
   fall outside the samples; a pool swim imported with lengths and no
   samples keeps its distance and time; TCX text inside CDATA is kept as
-  written.
+  written. A pool swim's clock comes from its timed lengths and rests,
+  whatever the pool size and whatever untimed sensor readings it carries:
+  a rest after the last length counts in elapsed and rest time, and an
+  unknown pool size leaves only the distance unknown.
 
 - **`@pond-ts/fit`: analysis for an athlete, best efforts by metric**
   ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`

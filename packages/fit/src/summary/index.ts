@@ -505,8 +505,13 @@ export interface PreparedActivity {
   /** Elapsed seconds since the first sample. */
   timeRel: Float64Array;
   n: number;
-  /** Whether the source carried timestamps (so speed is meaningful). */
+  /** Whether the samples carry timestamps (so speed is meaningful and a
+   *  sample has a place on the time axis). */
   hasTime: boolean;
+  /** Whether the activity has a time axis at all: its samples' timestamps,
+   *  or a pool swim's timed lengths and rests (which need no pool size and
+   *  no samples). Elapsed, moving and swimming time need it. */
+  hasClock: boolean;
   /** Whether the activity has a GPS track. False for GPS-less sources (indoor /
    *  GPS-off head units): no map, distance comes from the device stream. */
   hasTrack: boolean;
@@ -540,17 +545,37 @@ type PoolLengths = NonNullable<PreparedActivity['poolLengths']>;
 function extentOf(
   timeRel: Float64Array,
   hasTime: boolean,
-  lengths: PoolLengths | undefined,
+  segments: { from: number; to: number } | undefined,
 ): { from: number; to: number } {
+  // samples with no timestamps sit on a count, not on the swim's clock
+  if (!hasTime && segments) return { ...segments };
   const n = timeRel.length;
   let from = n ? timeRel[0]! : 0;
   let to = n ? timeRel[n - 1]! : 0;
   if (hasTime) from = Math.min(0, from);
-  if (lengths?.length) {
-    from = Math.min(from, lengths[0]!.from);
-    to = Math.max(to, lengths[lengths.length - 1]!.to);
+  if (segments) {
+    from = Math.min(from, segments.from);
+    to = Math.max(to, segments.to);
   }
   return { from, to };
+}
+
+/** Where a pool swim's timed lengths and rests start and end, in seconds
+ *  from the start: clock evidence of their own, whatever the pool size. */
+function swimSegmentsSpan(
+  imported: ImportedActivity,
+): { from: number; to: number } | undefined {
+  if (!isPoolRecord(imported)) return undefined;
+  const start = Date.parse(imported.activity.startTimeUtc);
+  let from = Infinity;
+  let to = -Infinity;
+  for (const l of imported.swim?.lengths ?? []) {
+    const a = (Date.parse(l.startTimeUtc) - start) / 1000;
+    if (!Number.isFinite(a) || !(l.seconds > 0)) continue;
+    from = Math.min(from, a);
+    to = Math.max(to, a + l.seconds);
+  }
+  return to > from ? { from, to } : undefined;
 }
 
 /** Metres swum by `sec`: whole lengths before it, and the share of one it
@@ -673,8 +698,9 @@ export function movingSecondsIn(
   a: number,
   b: number,
 ): number {
-  if (!prep.hasTime) return 0;
+  if (!prep.hasClock) return 0;
   if (prep.movingSpans) return overlapSeconds(prep.movingSpans, a, b);
+  if (!prep.hasTime) return 0;
   const t = prep.timeRel;
   // start at the first sample after a
   let lo = 1;
@@ -703,7 +729,7 @@ export function wholeTotals(prep: PreparedActivity): {
   meters: number;
 } {
   const { from, to } = prep.extent;
-  const elapsed = prep.hasTime ? to - from : 0;
+  const elapsed = prep.hasClock ? to - from : 0;
   const meters = distanceAtSeconds(prep, to) - distanceAtSeconds(prep, from);
   const moving =
     prep.movingRule === 'swim-time'
@@ -871,9 +897,9 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   }
 
   const moving = movingRuleOf(imported);
-  // A pool swim imported with its lengths but no samples still has a clock:
-  // the lengths' own times.
-  const hasTime = !!streams.timeSeconds || (n === 0 && !!pool.poolLengths);
+  const hasTime = !!streams.timeSeconds;
+  // a pool swim's timed lengths and rests are a clock of their own
+  const segments = swimSegmentsSpan(imported);
   return {
     imported,
     track,
@@ -884,6 +910,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     timeRel,
     n,
     hasTime,
+    hasClock: hasTime || !!segments,
     hasTrack,
     positionGaps,
     movingRule: moving.rule,
@@ -894,7 +921,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
         }
       : {}),
     ...pool,
-    extent: extentOf(timeRel, hasTime, pool.poolLengths),
+    extent: extentOf(timeRel, hasTime, segments),
     coastMasks,
   };
 }
@@ -1084,8 +1111,8 @@ export function computeActivitySummary(
     !(s.timeSeconds?.length ?? 0) &&
     !(s.heartrate?.length ?? 0) &&
     !(s.watts?.length ?? 0) &&
-    // a pool swim's lengths are a record of their own
-    !imported.swim?.lengths?.some((l) => l.active);
+    // a pool swim's timed lengths and rests are a record of their own
+    !swimSegmentsSpan(imported);
   if (empty) {
     return {
       startTimeUtc: imported.activity.startTimeUtc,
