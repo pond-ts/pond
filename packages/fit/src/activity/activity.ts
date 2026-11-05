@@ -298,7 +298,9 @@ export class Activity extends Section {
   }
 
   /** Where a swim was: `'pool'` or `'open-water'`; null for any other sport,
-   *  or a swim whose record doesn't say. */
+   *  or a swim whose record doesn't say. Informational: to reach a pool
+   *  swim's `pool`, `segments` and `repeats`, narrow with
+   *  {@link isPoolSwim}. */
   get environment(): 'pool' | 'open-water' | null {
     if (this.sport !== 'swim') return null;
     if (this.#record.streams.openWater) return 'open-water';
@@ -448,6 +450,8 @@ export class LengthSection extends Section {
   readonly strokeCount: number | null;
   /** What the file recorded. */
   readonly recorded: SwimLength;
+  /** One pool length, or null when the record doesn't give the pool. */
+  readonly distance: Distance | null;
 
   /** @internal */
   constructor(
@@ -455,9 +459,11 @@ export class LengthSection extends Section {
     length: SwimLength,
     number: number,
     span: Span,
+    distance: Distance | null,
   ) {
     super(prep, 'length', `Length ${number}`, span, length.seconds);
     this.number = number;
+    this.distance = distance;
     this.stroke = length.stroke ?? null;
     this.strokeCount = length.strokes ?? null;
     this.recorded = length;
@@ -483,6 +489,23 @@ export class RestSection extends Section {
   }
 }
 
+/** The rest after a repeat: a recorded lap that covered no distance. */
+export class RecoverySection extends Section {
+  override readonly kind = 'recovery' as const;
+  /** The recorded lap it comes from. */
+  readonly lap: LapSection;
+
+  /** @internal */
+  constructor(prep: PreparedActivity, lap: LapSection) {
+    super(prep, 'recovery', 'Recovery', lap, lap.recorded.timerSeconds);
+    this.lap = lap;
+  }
+
+  get duration(): Duration {
+    return Duration.seconds(this.toSeconds - this.fromSeconds);
+  }
+}
+
 /** What a pool swim is made of, in order. */
 export type SwimSegment = LengthSection | RestSection;
 
@@ -500,7 +523,7 @@ export class RepeatSection extends Section {
   /** The recorded lap it comes from. */
   readonly lap: LapSection;
   /** The rest right after it (a recorded lap with no distance), or null. */
-  readonly recoveryAfter: Section | null;
+  readonly recoveryAfter: RecoverySection | null;
   readonly #lengths: Sections<LengthSection>;
 
   /** @internal */
@@ -508,7 +531,7 @@ export class RepeatSection extends Section {
     prep: PreparedActivity,
     number: number,
     lap: LapSection,
-    recoveryAfter: Section | null,
+    recoveryAfter: RecoverySection | null,
     lengths: Sections<LengthSection>,
   ) {
     super(prep, 'repeat', `Repeat ${number}`, lap, lap.recorded.timerSeconds);
@@ -530,6 +553,7 @@ export class PoolSwim extends Activity {
   #segments?: readonly SwimSegment[];
   #lengths?: Sections<LengthSection>;
   #repeats?: Sections<RepeatSection>;
+  #pool?: Pool | null;
 
   /** @internal */
   constructor(prep: PreparedActivity) {
@@ -542,12 +566,16 @@ export class PoolSwim extends Activity {
 
   /** The pool, or null when the record doesn't give its length. */
   get pool(): Pool | null {
-    const p = this.record.swim?.pool;
-    if (!p || !(p.lengthMeters > 0)) return null;
-    const length = Distance.meters(p.lengthMeters);
-    const n = p.unit === 'yd' ? length.yards : p.lengthMeters;
-    const course = `${Math.round(n * 10) / 10}${p.unit}`;
-    return { length, course };
+    if (this.#pool === undefined) {
+      const p = this.record.swim?.pool;
+      if (!p || !(p.lengthMeters > 0)) this.#pool = null;
+      else {
+        const length = Distance.meters(p.lengthMeters);
+        const n = p.unit === 'yd' ? length.yards : p.lengthMeters;
+        this.#pool = { length, course: `${Math.round(n * 10) / 10}${p.unit}` };
+      }
+    }
+    return this.#pool;
   }
 
   /** The lengths and the rests between them, in order. Empty when the watch
@@ -555,6 +583,7 @@ export class PoolSwim extends Activity {
   get segments(): readonly SwimSegment[] {
     if (!this.#segments) {
       const start = this.startedAt.getTime();
+      const poolLength = this.pool?.length ?? null;
       let n = 0;
       this.#segments = (this.record.swim?.lengths ?? []).flatMap((l) => {
         const from = (Date.parse(l.startTimeUtc) - start) / 1000;
@@ -562,7 +591,7 @@ export class PoolSwim extends Activity {
         const span = { fromSeconds: from, toSeconds: from + l.seconds };
         return [
           l.active
-            ? new LengthSection(this.prep, l, ++n, span)
+            ? new LengthSection(this.prep, l, ++n, span, poolLength)
             : new RestSection(this.prep, span, l.seconds),
         ];
       });
@@ -590,17 +619,12 @@ export class PoolSwim extends Activity {
         const next = laps[i + 1];
         const recovery =
           next && !(next.recorded.distanceMeters > 0)
-            ? new Section(
-                this.prep,
-                'recovery',
-                'Recovery',
-                next,
-                next.recorded.timerSeconds,
-              )
+            ? new RecoverySection(this.prep, next)
             : null;
         const inside = this.lengths.filter((l) => {
           const mid = (l.fromSeconds + l.toSeconds) / 2;
-          return mid >= lap.fromSeconds && mid <= lap.toSeconds;
+          // half-open, so a length on a boundary belongs to one repeat
+          return mid >= lap.fromSeconds && mid < lap.toSeconds;
         });
         items.push(
           new RepeatSection(this.prep, items.length + 1, lap, recovery, inside),

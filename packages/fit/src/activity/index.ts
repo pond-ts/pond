@@ -7,6 +7,7 @@ export {
   LengthSection,
   RestSection,
   RepeatSection,
+  RecoverySection,
   type Pool,
   type SwimSegment,
   type RepeatSource,

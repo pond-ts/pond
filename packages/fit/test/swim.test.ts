@@ -238,6 +238,37 @@ describe('pool swim model', () => {
     expect(b.pool!.length.yards).toBeCloseTo(25, 9);
   });
 
+  it('courses: 50 m, an odd size, and no pool given', () => {
+    const course = (lengthMeters: number, unit: 'm' | 'yd') => {
+      const r = lengthsSwim();
+      r.swim!.pool = { lengthMeters, unit };
+      const b = Activity.from(r);
+      if (!b.isPoolSwim()) throw new Error('not a pool swim');
+      return b.pool!.course;
+    };
+    expect(course(50, 'm')).toBe('50m');
+    expect(course(33.33, 'm')).toBe('33.3m');
+    const r = lengthsSwim();
+    delete r.swim!.pool;
+    const b = Activity.from(r); // still a pool swim by its length records
+    if (!b.isPoolSwim()) throw new Error('not a pool swim');
+    expect(b.pool).toBeNull();
+    expect(b.lengths.at(0)!.distance).toBeNull();
+  });
+
+  it('open water, and a swim that doesn’t say', () => {
+    const ow = lengthsSwim();
+    ow.streams.openWater = true;
+    const o = Activity.from(ow);
+    expect(o.environment).toBe('open-water');
+    expect(o.isPoolSwim()).toBe(false);
+    const bare = lengthsSwim();
+    delete bare.swim;
+    const u = Activity.from(bare);
+    expect(u.environment).toBeNull();
+    expect(u.isPoolSwim()).toBe(false);
+  });
+
   it('segments: lengths and rests, a rest is not a length', () => {
     if (!a.isPoolSwim()) throw new Error('not a pool swim');
     expect(a.segments.map((s) => s.kind)).toEqual([
@@ -271,6 +302,8 @@ describe('pool swim model', () => {
     expect(r1!.lengths.length).toBe(4);
     expect(r1!.stats().distance!.meters).toBe(100);
     expect(r1!.recoveryAfter!.kind).toBe('recovery');
+    expect(r1!.recoveryAfter!.duration.seconds).toBe(30);
+    expect(r1!.lengths.at(0)!.distance!.meters).toBe(25);
     expect(r1!.recoveryAfter!.stats().time.elapsed!.seconds).toBe(30);
     expect(r2!.lengths.length).toBe(2);
     expect(r2!.recoveryAfter).toBeNull();

@@ -25,10 +25,10 @@ import {
   type SpeedPaceUnit,
 } from './units.js';
 
-/** A length — canonical metres. */
 /** One yard in metres (exact). */
 const METERS_PER_YARD = 0.9144;
 
+/** A length — canonical metres. */
 export class Distance {
   private constructor(readonly meters: number) {}
   static meters(m: number): Distance {

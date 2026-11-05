@@ -55,6 +55,7 @@ export {
   LengthSection,
   RestSection,
   RepeatSection,
+  RecoverySection,
   sportOf,
 } from './activity/index.js';
 export type {
