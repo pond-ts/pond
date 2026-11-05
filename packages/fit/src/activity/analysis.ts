@@ -22,6 +22,7 @@ import type { ZoneTime } from '../zones/index.js';
 import { Profile, type AthleteProfileJson } from '../profile/index.js';
 import { Distance, Duration, Pace, Power } from '../quantities.js';
 import type { Stats } from './stats.js';
+import { sportOf } from './sport.js';
 
 /** The athlete to analyse for: a {@link Profile} already resolved to a date,
  *  or the stored profile with its dated history, which is resolved to the
@@ -43,7 +44,8 @@ export interface PowerAnalysis {
   variabilityIndex: number | null;
 }
 
-/** A training-load number, with the model that produced it. */
+/** A training-load number, with the model that produced it. Rides only for
+ *  now: running and swimming load use other models (RFC §15, §16). */
 export interface Load {
   /** `'cycling-tss'`: elapsed seconds × NP × IF ÷ (FTP × 3600) × 100. */
   model: 'cycling-tss';
@@ -56,7 +58,8 @@ export interface ZoneAnalysis {
   /** Coggan zones from FTP. */
   power: PowerZone[] | null;
   heartRate: ZoneTime[] | null;
-  /** From the athlete's 5 km time; needs a distance. */
+  /** From the athlete's 5 km time, so runs, walks and hikes only; needs a
+   *  distance. */
   pace: ZoneTime[] | null;
 }
 
@@ -99,6 +102,13 @@ function hasFinite(a: Float64Array | undefined): Float64Array | undefined {
   return undefined;
 }
 
+/** Pace zones from a 5 km time are on-foot zones. */
+const ON_FOOT = new Set(['run', 'walk', 'hike']);
+
+function sport(prep: PreparedActivity) {
+  return sportOf(prep.imported.activity.sportType);
+}
+
 function hasDistance(prep: PreparedActivity): boolean {
   return prep.hasTrack || !!prep.imported.streams.distanceMeters?.length;
 }
@@ -134,14 +144,19 @@ export class Analysis {
     });
   }
 
-  /** Null without FTP, without power, or without timestamps. */
+  /** Null for any sport but cycling, and without FTP, power or
+   *  timestamps. */
   get load(): Load | null {
     if (this.#load !== undefined) return this.#load;
     const { intensityFactor, normalized } = this.power;
     const elapsed = this.#src.stats().time.elapsed;
     const ftp = this.athlete.ftpWatts;
     this.#load =
-      intensityFactor !== null && normalized && elapsed && ftp
+      sport(this.#src.prep) === 'ride' &&
+      intensityFactor !== null &&
+      normalized &&
+      elapsed &&
+      ftp
         ? {
             model: 'cycling-tss',
             value:
@@ -166,7 +181,10 @@ export class Analysis {
       heartRate:
         w?.hr && hrZones ? hrZoneDistribution(w.t, w.hr, hrZones) : null,
       pace:
-        w && paceZones && hasDistance(this.#src.prep)
+        w &&
+        paceZones &&
+        ON_FOOT.has(sport(this.#src.prep)) &&
+        hasDistance(this.#src.prep)
           ? paceZoneDistribution(w.t, w.speed, paceZones)
           : null,
     });
@@ -178,7 +196,9 @@ export interface PowerBestEffort<S> {
   duration: Duration;
   power: Power;
   /** Where it was. Its own `stats()` counts both end samples, so its
-   *  average can differ a little from `power`. */
+   *  average can differ a little from `power`. Pauses count as at most
+   *  10 s toward `duration`, so an effort across a pause has a section
+   *  longer than its duration. */
   section: S;
 }
 

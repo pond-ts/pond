@@ -136,8 +136,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   ([PND-FITAPI], RFC §7). `section.analyze({ athlete })` takes a `Profile`
   or the stored profile JSON (resolved to the activity's start) and returns
   an `Analysis`: `power` (`average`, `normalized`, `intensityFactor`,
-  `variabilityIndex`), `load` (`{ model: 'cycling-tss', value }`) and
-  `zones` (`power`, `heartRate`, `pace`), with `athlete` the settings used.
+  `variabilityIndex`), `load` (`{ model: 'cycling-tss', value }`, rides
+  only) and `zones` (`power`, `heartRate`, `pace`; pace zones for runs,
+  walks and hikes), with `athlete` the settings used.
   A missing setting makes only what needs it `null`: no FTP means no
   intensity factor, load or power zones (the functional `intensityFactor` /
   `trainingLoad` still return 0 there). Best efforts sit under the metric:

@@ -327,7 +327,9 @@ export function powerCurve(
       // (no sub-d slack — that would bias short windows upward at gaps)
       if (span >= d) {
         const avg = (cumWork[hi]! - cumWork[lo]!) / span;
-        if (avg > best) {
+        // the first full window counts even at 0 W, so an all-zero
+        // stretch still reports where its effort was
+        if (avg > best || bestLo < 0) {
           best = avg;
           bestLo = lo;
           bestHi = hi;

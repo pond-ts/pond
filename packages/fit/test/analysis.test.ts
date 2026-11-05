@@ -120,8 +120,27 @@ describe('analyze', () => {
     expect(power[4]!.seconds).toBeCloseTo(1200, -1);
     // 140 bpm with max 200: Endurance (Z2, 130–162)
     expect(zones.heartRate![1]!.seconds).toBeCloseTo(3600, -1);
-    const pace = zones.pace!;
-    expect(pace.reduce((t, z) => t + z.seconds, 0)).toBeCloseTo(3600, -1);
+    // pace zones from a 5 km time are for running, not riding
+    expect(zones.pace).toBeNull();
+    const run = Activity.from(fromSpeeds(Array(601).fill(4), {}, 'Run'));
+    const pace = run.analyze({ athlete: json }).zones.pace!;
+    // 4 m/s against a 20:00 5 km (4.17 m/s): Tempo (Z3, 3.62–4.05 m/s)
+    expect(pace[2]!.seconds).toBeCloseTo(600, -1);
+    expect(pace.reduce((t, z) => t + z.seconds, 0)).toBeCloseTo(600, -1);
+  });
+
+  it('gives cycling load to rides only', () => {
+    const n = 601;
+    const watts = Array(n).fill(250);
+    const run = Activity.from(fromSpeeds(Array(n).fill(4), { watts }, 'Run'));
+    const a = run.analyze({ athlete: FTP_250 });
+    expect(a.power.intensityFactor).toBeCloseTo(1, 9);
+    expect(a.load).toBeNull();
+    const swim = Activity.from(fromSpeeds(Array(n).fill(1), {}, 'Swim'));
+    const json: AthleteProfileJson = {
+      paceThreshold: [{ at: '2024-01-01', fiveKSeconds: 1200 }],
+    };
+    expect(swim.analyze({ athlete: json }).zones.pace).toBeNull();
   });
 
   it('has no zones the athlete has no settings for', () => {
@@ -205,6 +224,36 @@ describe('power best efforts', () => {
     expect(early.power.bestEffort(minutes(20))).toBeNull();
   });
 
+  it('reports where the effort was when every reading is 0 W', () => {
+    const n = 601;
+    const flat = Activity.from(
+      fromSpeeds(Array(n).fill(5), { watts: Array(n).fill(0) }),
+    );
+    const e = flat.power.bestEffort(minutes(1))!;
+    expect(e.power.watts).toBe(0);
+    expect(e.section.toSeconds - e.section.fromSeconds).toBe(60);
+  });
+
+  it('counts a pause as 10 s, so the stretch can outlast the duration', () => {
+    // 300 W for 30 s, a 60 s pause with no samples, 300 W for 30 s more
+    const t = [
+      ...Array.from({ length: 31 }, (_, i) => i),
+      ...Array.from({ length: 31 }, (_, i) => 90 + i),
+    ];
+    const rec: ImportedActivity = {
+      activity: META,
+      streams: {
+        latlng: [],
+        timeSeconds: t,
+        distanceMeters: t.map((s) => s * 10),
+        watts: t.map(() => 300),
+      },
+    };
+    const e = Activity.from(rec).power.bestEffort(seconds(70))!;
+    expect(e.power.watts).toBe(300);
+    expect(e.section.toSeconds - e.section.fromSeconds).toBeGreaterThan(70);
+  });
+
   it('is null with no power and rejects a bad duration', () => {
     const run = Activity.from(fromSpeeds(Array(600).fill(3), {}, 'Run'));
     expect(run.power.bestEffort(minutes(1))).toBeNull();
@@ -231,6 +280,7 @@ describe('pace best efforts', () => {
     expect(e.pace.secondsPerKm).toBe(250);
     expect(e.section.label).toBe('Best 5 km');
     expect(e.section.fromSeconds).toBeGreaterThanOrEqual(1500);
+    expect(e.section.toSeconds - e.section.fromSeconds).toBe(1250);
   });
 
   it('lists the standard distances that fit, shortest first', () => {
