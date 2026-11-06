@@ -61,6 +61,9 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`                           |
 | `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                                 |
 | `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                                               |
+| `series.filter(col('v').gt(0))` (an expression)                   | `series.filter_expr(&col("v").gt(0))?`; also `find_expr`, `some_expr`, `every_expr`                           |
+| `series.mapColumns({ v: col('v').mul(2) })`                       | `series.map_expr("v", &col("v").mul(2))?` (`map_exprs` for several); an unknown column is an error            |
+| `series.withColumn('load', col('cpu').div(col('cores')))`         | `series.with_column_expr("load", &col("cpu").div(col("cores")))?`                                             |
 | `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                                   |
 | `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                                |
 | `TimeSeries.joinMany([a, b, c])`                                  | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                                                       |

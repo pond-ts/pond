@@ -25,7 +25,9 @@ read as "the same thing, but incremental."
 ## LiveView: filter, map, select, window
 
 `LiveView` wraps any live source with a per-event transform. The built-in
-methods on `LiveSeries` return pre-configured views:
+methods on `LiveSeries` return pre-configured views. `filter` also takes an
+[expression](../transforms/expressions#live-filter) such as
+`col('cpu').gt(0.5)` in place of the function:
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>

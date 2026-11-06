@@ -692,7 +692,10 @@ the study oracle) is done.
   (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
   snippets in all, each checked against pond-ts output. Install lines now say
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
-  snippets also pass against the published 0.1.0. Open: run the script in
+  snippets also pass against the published 0.1.0. Expressions page
+  (`pond-ts/transforms/expressions`, 2026-10-31): `col` / `lit` / `when` with
+  TypeScript, Rust and Python tabs, all checked against pond-ts; `rust ignore`
+  fences are skipped by the script (excerpts from other repos). Open: run the script in
   CI.
 - **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
   `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose
