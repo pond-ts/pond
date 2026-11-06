@@ -19,15 +19,14 @@ use pond_rs::live::{
     SubSeries, Trigger,
 };
 use pond_rs::{
-    ColumnDef, ColumnKind, EventKey, FirstRow, PondError, Reducer, Sample, Scalar, TimeSeries,
-    Value as Cell,
+    ColumnDef, ColumnKind, EventKey, FirstRow, PondError, Sample, Scalar, TimeSeries, Value as Cell,
 };
 use serde_json::Value;
 
 use crate::callbacks::{expr_ref, fn_ref};
 use crate::dispatch::{
-    Res, column_names, decode_f64, duration, fill_strategy, mapping, opt_count, pond, sequence,
-    whole_number,
+    Res, column_names, cumulative_entry, decode_f64, duration, fill_strategy, mapping, opt_count,
+    pond, sequence, whole_number,
 };
 
 /// The functions a node was given, by position. A function that throws is
@@ -539,13 +538,15 @@ fn build_node(
             } else {
                 let spec = map
                     .iter()
-                    .map(|(c, r)| match r.as_str() {
-                        Some(r) => Ok((c.as_str(), pond(Reducer::parse(r))?)),
-                        None if fn_ref(r).is_some() => Err(format!(
+                    .map(|(c, r)| match r {
+                        Value::String(_) | Value::Object(_) if fn_ref(r).is_none() => {
+                            Ok((c.as_str(), cumulative_entry(c, r)?))
+                        }
+                        _ if fn_ref(r).is_some() => Err(format!(
                             "cumulative: a function for '{c}' must be the only column \
                              (@pond-ts/rs runs one function column per cumulative)"
                         )),
-                        None => Err(format!("cumulative: '{c}' needs a reducer name, got {r}")),
+                        _ => Err(format!("cumulative: '{c}' needs a reducer name, got {r}")),
                     })
                     .collect::<Res<Vec<_>>>()?;
                 pond(live.cumulative(from, &spec))?.id()

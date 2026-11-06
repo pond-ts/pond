@@ -3468,6 +3468,60 @@ const CASES = [
   ['cumulative-zeros', 'zeros', 'cumulative', [{ v: 'sum' }]],
   ['cumulative-zeros-max', 'zeros', 'cumulative', [{ v: 'max' }]],
   ['cumulative-zeros-min', 'zeros', 'cumulative', [{ v: 'min' }]],
+  // [PND-SCANDATA] increase / decrease, with and without a threshold
+  [
+    'cumulative-increase-decrease',
+    'gappy',
+    'cumulative',
+    [{ a: 'increase', b: 'decrease' }],
+  ],
+  [
+    'cumulative-threshold',
+    'noisy',
+    'cumulative',
+    [
+      {
+        x: { using: 'increase', threshold: 3 },
+        y: { using: 'decrease', threshold: 0.5 },
+      },
+    ],
+  ],
+  [
+    // changes exactly at the threshold count (1 → 2 in a, 16 → 15 in b)
+    'cumulative-threshold-exact',
+    'gappy',
+    'cumulative',
+    [
+      {
+        a: { using: 'increase', threshold: 1 },
+        b: { using: 'decrease', threshold: 1 },
+      },
+    ],
+  ],
+  ['cumulative-increase-signed', 'signed', 'cumulative', [{ v: 'increase' }]],
+  ['cumulative-decrease-zeros', 'zeros', 'cumulative', [{ v: 'decrease' }]],
+  [
+    'cumulative-increase-overflow',
+    'overflow',
+    'cumulative',
+    [{ v: 'increase' }],
+  ],
+  [
+    'cumulative-increase-partitioned',
+    'mixed',
+    'partitionBy',
+    [
+      'site',
+      [['cumulative', { v: { using: 'increase', threshold: 1 } }]],
+      'collect',
+    ],
+  ],
+  [
+    'cumulative-decrease-extreme',
+    'extreme',
+    'cumulative',
+    [{ v: { using: 'decrease', threshold: 1e300 } }],
+  ],
   ['diff-zeros', 'zeros', 'diff', ['v']],
   ['fill-edges-hold-1s', 'edges', 'fill', ['hold', { maxGap: '1s' }]],
   ['fill-edges-hold-3s', 'edges', 'fill', ['hold', { maxGap: '3s' }]],
@@ -3479,6 +3533,24 @@ const CASES = [
   ['error-diff-no-columns', 'gappy', 'diff', [[]]],
   ['error-shift-fraction', 'gappy', 'shift', ['a', 1.5]],
   ['error-cumulative-empty', 'gappy', 'cumulative', [{}]],
+  [
+    'error-cumulative-threshold',
+    'gappy',
+    'cumulative',
+    [{ a: { using: 'increase', threshold: -1 } }],
+  ],
+  [
+    'error-cumulative-threshold-null',
+    'gappy',
+    'cumulative',
+    [{ a: { using: 'decrease', threshold: null } }],
+  ],
+  [
+    'error-cumulative-using',
+    'gappy',
+    'cumulative',
+    [{ a: { using: 'sideways' } }],
+  ],
   ['error-fill-literal-kind', 'gappy', 'fill', [{ a: 'bogus' }]],
   ['error-fill-maxgap', 'gappy', 'fill', ['hold', { maxGap: '2 s' }]],
   ['error-diff-text', 'mixed', 'diff', ['host']],
@@ -3853,6 +3925,89 @@ const CASES = [
     'gappy',
     'withColumn',
     ['r', { expr: { op: 'div', args: [{ col: 'a' }, { col: 'b' }] } }],
+  ],
+  // Maths ([PND-SCANDATA]): pond-rs uses Rust's functions, which can
+  // differ from JavaScript's in the last digit, so these carry a tolerance.
+  [
+    'withColumn-expr-hypot',
+    'gappy',
+    'withColumn',
+    [
+      'r',
+      {
+        expr: {
+          op: 'sqrt',
+          args: [
+            {
+              op: 'add',
+              args: [
+                { op: 'pow', args: [{ col: 'a' }, { lit: 2 }] },
+                { op: 'pow', args: [{ col: 'b' }, { lit: 2 }] },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    1e-9,
+  ],
+  [
+    'withColumn-expr-trig',
+    'noisy',
+    'withColumn',
+    [
+      't',
+      {
+        expr: {
+          op: 'add',
+          args: [
+            {
+              op: 'mul',
+              args: [
+                { op: 'sin', args: [{ col: 'x' }] },
+                { op: 'cos', args: [{ col: 'y' }] },
+              ],
+            },
+            { op: 'atan2', args: [{ col: 'y' }, { col: 'x' }] },
+          ],
+        },
+      },
+    ],
+    1e-12,
+  ],
+  [
+    // asin outside -1..1 and sqrt of a negative are gaps
+    'withColumn-expr-asin-sqrt-gaps',
+    'gappy',
+    'withColumn',
+    [
+      'g',
+      {
+        expr: {
+          op: 'add',
+          args: [
+            {
+              op: 'asin',
+              args: [{ op: 'div', args: [{ col: 'a' }, { lit: 4 }] }],
+            },
+            { op: 'sqrt', args: [{ col: 'a' }] },
+          ],
+        },
+      },
+    ],
+    1e-12,
+  ],
+  [
+    // a gap ** 0 stays a gap; an overflow is a gap
+    'mapColumns-expr-pow-gaps',
+    'gappy',
+    'mapColumns',
+    [
+      {
+        a: { expr: { op: 'pow', args: [{ col: 'a' }, { lit: 0 }] } },
+        b: { expr: { op: 'pow', args: [{ col: 'b' }, { lit: 400 }] } },
+      },
+    ],
   ],
   [
     'withColumn-expr-fill',

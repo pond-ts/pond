@@ -453,34 +453,45 @@ export function buildTrackFromStreams(
     cadence?.length ?? 0,
     temperatureC?.length ?? 0,
   );
-  // Missing/non-finite → `undefined` (NOT 0, a valid reading). pond rejects
-  // null/NaN but accepts undefined for required:false columns and records it in
-  // the validity bitmap, so the gap stays a gap — lossless; readColumns reads it
-  // back as NaN.
-  const cell = (a: number[] | undefined, i: number): number | undefined => {
-    const v = a?.[i];
-    return v != null && Number.isFinite(v) ? v : undefined;
+  // Each channel goes to pond as one column. A missing or non-finite reading
+  // (or one past a shorter channel's end) is NaN, which pond keeps as a
+  // missing cell (NOT 0, a valid reading); readColumns reads it back as NaN.
+  const column = (a: number[] | undefined): Float64Array => {
+    const out = new Float64Array(n).fill(NaN);
+    if (a)
+      for (let i = 0; i < n; i++) {
+        const v = a[i];
+        if (v != null && Number.isFinite(v)) out[i] = v;
+      }
+    return out;
   };
-  const points: geo.TrackPoint[] = new Array(n);
+  const time = new Float64Array(n);
+  const lat = new Float64Array(n).fill(NaN);
+  const lng = new Float64Array(n).fill(NaN);
   for (let i = 0; i < n; i++) {
-    const ms = startMs + (timeSeconds?.[i] ?? i) * 1000;
+    time[i] = startMs + (timeSeconds?.[i] ?? i) * 1000;
     // A sample with no fix (null, or a non-finite pair) is a missing cell.
     const pos = latlng[i];
-    const fix =
-      pos != null && Number.isFinite(pos[0]) && Number.isFinite(pos[1]);
-    points[i] = [
-      ms,
-      fix ? pos[0] : undefined,
-      fix ? pos[1] : undefined,
-      cell(altitudeMeters, i),
-      cell(heartrate, i),
-      cell(watts, i),
-      cell(cadence, i),
-      cell(temperatureC, i),
-      cell(distanceMeters, i),
-    ];
+    if (pos != null && Number.isFinite(pos[0]) && Number.isFinite(pos[1])) {
+      lat[i] = pos[0];
+      lng[i] = pos[1];
+    }
   }
-  return geo.buildTrack(name, points);
+  return TimeSeries.fromColumns({
+    name,
+    schema: geo.TRACK_SCHEMA,
+    columns: {
+      time,
+      lat,
+      lng,
+      ele: column(altitudeMeters),
+      hr: column(heartrate),
+      power: column(watts),
+      cadence: column(cadence),
+      temp: column(temperatureC),
+      distance: column(distanceMeters),
+    },
+  });
 }
 
 /**
@@ -508,6 +519,9 @@ export interface PreparedActivity {
   /** Whether the samples carry timestamps (so speed is meaningful and a
    *  sample has a place on the time axis). */
   hasTime: boolean;
+  /** Where the distance axis comes from: a pool swim's lengths, the GPS
+   *  line, the device's own distance, or nothing. */
+  distanceSource: 'pool-lengths' | 'gps' | 'device' | 'none';
   /** Whether the activity has a time axis at all: its samples' timestamps,
    *  or a pool swim's timed lengths and rests (which need no pool size and
    *  no samples). Elapsed, moving and swimming time need it. */
@@ -911,6 +925,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     n,
     hasTime,
     hasClock: hasTime || !!segments,
+    distanceSource: pool.poolLengths
+      ? 'pool-lengths'
+      : hasTrack && !deviceDistance
+        ? 'gps'
+        : n && cum[n - 1]! > 0
+          ? 'device'
+          : 'none',
     hasTrack,
     positionGaps,
     movingRule: moving.rule,

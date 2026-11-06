@@ -126,6 +126,15 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
       }
     | undefined;
 
+  /**
+   * Row `i`'s key object is row `row[i]`'s event key in `source`; its
+   * events are still built here, as new objects. Used by `trim` on `time`
+   * keys, whose event path built new events over the source's own keys.
+   */
+  readonly #keySource:
+    | { readonly source: SeriesStore<S>; readonly row: Int32Array }
+    | undefined;
+
   private constructor(
     store: ColumnarStore<S>,
     eventCache: Map<number, SeriesEvent>,
@@ -135,11 +144,13 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
       readonly source: Int32Array | undefined;
       readonly row: Int32Array;
     },
+    keySource?: { readonly source: SeriesStore<S>; readonly row: Int32Array },
   ) {
     this.store = store;
     this.#eventCache = eventCache;
     this.#dense = dense;
     this.#delegate = delegate;
+    this.#keySource = keySource;
   }
 
   /** Schema declared at construction. */
@@ -304,15 +315,60 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * The rows `rows` (ascending, in range) as a new store that builds its own
+   * events, but whose key objects are this store's event keys for those rows
+   * (see `#keySource`). Module-private.
+   */
+  _selectRowsSharingKeysModulePrivate(rows: Int32Array): SeriesStore<S> {
+    const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
+    // Walk to the store that owns the key objects, so a chain of selections
+    // stays one step deep (see `_selectRowsModulePrivate`).
+    let source: SeriesStore<S> = this;
+    let row = rows;
+    for (;;) {
+      const keySource = source.#keySource;
+      const delegate = source.#delegate;
+      if (keySource !== undefined) {
+        row = composeRows(keySource.row, row);
+        source = keySource.source;
+      } else if (delegate !== undefined && delegate.source === undefined) {
+        row = composeRows(delegate.row, row);
+        source = delegate.sources[0]!;
+      } else {
+        break;
+      }
+    }
+    return new SeriesStore<S>(store, new Map(), undefined, undefined, {
+      source,
+      row,
+    });
+  }
+
+  /**
    * The rows `rows` (ascending, in range) as a new store whose events are
    * this store's events for those rows (see `#delegate`). Module-private.
    */
   _selectRowsModulePrivate(rows: Int32Array): SeriesStore<S> {
     const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
+    const delegate = this.#delegate;
+    if (delegate === undefined) {
+      return new SeriesStore<S>(store, new Map(), undefined, {
+        sources: [this],
+        source: undefined,
+        row: rows,
+      });
+    }
+    // A delegated store holds none of its events (they all live in its
+    // sources), so point the new store at those sources directly. Without
+    // this, `s = s.after(t)` in a loop builds a chain that every lookup
+    // walks one call per link (10,000 links overflowed the stack).
     return new SeriesStore<S>(store, new Map(), undefined, {
-      sources: [this],
-      source: undefined,
-      row: rows,
+      sources: delegate.sources,
+      source:
+        delegate.source === undefined
+          ? undefined
+          : composeRows(delegate.source, rows),
+      row: composeRows(delegate.row, rows),
     });
   }
 
@@ -383,6 +439,10 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
       throw new RangeError(
         `SeriesStore.keyAt out of range: ${i} not in [0, ${this.length})`,
       );
+    }
+    const keySource = this.#keySource;
+    if (keySource !== undefined) {
+      return keySource.source._eventKeyAtModulePrivate(keySource.row[i]!);
     }
     let cached = this.#keyCache.get(i);
     if (cached === undefined) {
@@ -654,6 +714,13 @@ export function materializeKey(keys: KeyColumn, i: number): EventKey {
     `SeriesStore.keyAt: key kind '${keys.kind}' has no EventKey representation ` +
       `(value-keyed stores are accessed via ValueSeries, not SeriesStore)`,
   );
+}
+
+/** `outer[inner[j]]` for each `j`: a selection of a selection. */
+function composeRows(outer: Int32Array, inner: Int32Array): Int32Array {
+  const out = new Int32Array(inner.length);
+  for (let j = 0; j < inner.length; j += 1) out[j] = outer[inner[j]!]!;
+  return out;
 }
 
 function buildRowData(store: ColumnarStore, i: number): SeriesRowData {

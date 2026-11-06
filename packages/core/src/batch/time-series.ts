@@ -81,10 +81,12 @@ import {
   normalizeAggregateColumns,
   tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
+  tryRollingTimeColumnarNumeric,
+  rollingWindowBoundsByTime,
 } from './aggregate-columns.js';
 import {
   cumulativeOp,
-  type CumulativeReducer,
+  type CumulativeAccumulator,
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
@@ -1018,13 +1020,22 @@ type TrustedStoreInput<S extends SeriesSchema> = {
  * Callers must have produced the store from data that already satisfies
  * the intake invariants: keys non-decreasing, column kinds matching the
  * schema, non-finite numerics rejected.
+ *
+ * @internal Exported for `LiveSeries`' `'columns'` listener, not from the
+ * package index. `schemaIsFrozenCopy` says `schema` is already a frozen
+ * array nobody else can change, so it is used as is.
  */
-function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+export function timeSeriesFromTrustedStore<S extends SeriesSchema>(
   name: string,
   schema: S,
   columnarStore: ColumnarStore<ColumnSchema>,
+  schemaIsFrozenCopy = false,
 ): TimeSeries<S> {
-  const frozenSchema = Object.freeze(schema.slice()) as S;
+  // A caller that already holds a frozen copy (a `LiveSeries` wrapping each
+  // push) can skip the copy: freezing a fresh array costs ~0.5 µs.
+  const frozenSchema = schemaIsFrozenCopy
+    ? schema
+    : (Object.freeze(schema.slice()) as S);
   const store = SeriesStore.fromTrustedStore(
     columnarStore as unknown as ColumnarStore<S>,
   ) as SeriesStore<S>;
@@ -3716,8 +3727,18 @@ export class TimeSeries<S extends SeriesSchema> {
    * Computes running accumulations for the specified numeric columns.
    * Non-accumulated columns pass through unchanged.
    *
-   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`.
-   * Custom accumulators: `(acc: number, value: number) => number`.
+   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`,
+   * `"increase"` and `"decrease"`. Custom accumulators:
+   * `(acc: number, value: number) => number`.
+   *
+   * `"increase"` is the running total of rises between values, and
+   * `"decrease"` the running total of falls (a positive number). With
+   * `{ using: 'increase', threshold: 3 }` a change counts only once the
+   * value has moved at least 3 from the last value that counted, in either
+   * direction; smaller wiggles are ignored, though slow drift still counts
+   * once it adds up. Elevation gain with a 3 m dead band is
+   * `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`. The
+   * first value starts the total at 0; gaps carry it.
    *
    * **Multi-entity series:** the running accumulation interleaves
    * across entities — `host-A`'s next event sums on top of
@@ -3727,12 +3748,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * entity. See {@link TimeSeries.partitionBy}.
    */
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [K in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [K in Targets]: CumulativeAccumulator;
   }): TimeSeries<DiffSchema<S, Targets>> {
     type OutSchema = DiffSchema<S, Targets>;
     // Column-native (Step 4): the running accumulation is computed straight
@@ -3742,7 +3758,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const { store, schema } = cumulativeOp<S, OutSchema>(
       this.#store.store,
       this.schema,
-      spec as unknown as Readonly<Record<string, CumulativeReducer>>,
+      spec as unknown as Readonly<Record<string, CumulativeAccumulator>>,
     );
     return TimeSeries.#fromTrustedStore(
       this.name,
@@ -4551,6 +4567,37 @@ export class TimeSeries<S extends SeriesSchema> {
           fastOutColumns,
         );
         return TimeSeries.#fromTrustedStore(this.name, resultSchema, fastStore);
+      }
+    }
+    // Duration-window numeric fast path: the same per-column sweep, over
+    // windows found once from the keys (`rollingWindowBoundsByTime`, which
+    // follows the three alignment loops below row for row).
+    if (countWindow === null) {
+      const timeColumns = tryRollingTimeColumnarNumeric(
+        (name) => store.columns.get(name),
+        rowCount,
+        columnSpecs,
+        () =>
+          rollingWindowBoundsByTime(
+            store.keys.begin,
+            rowCount,
+            windowMs,
+            alignment,
+          ),
+        alignment,
+        minSamples,
+      );
+      if (timeColumns !== null) {
+        const timeOutColumns = new Map<string, ColumnarColumn>();
+        for (let c = 0; c < columnSpecs.length; c += 1) {
+          timeOutColumns.set(columnSpecs[c]!.output, timeColumns[c]!);
+        }
+        const timeStore = ColumnarStore.fromTrustedStore(
+          resultSchema as unknown as ColumnSchema,
+          store.keys,
+          timeOutColumns,
+        );
+        return TimeSeries.#fromTrustedStore(this.name, resultSchema, timeStore);
       }
     }
     const sourceCols = columnSpecs.map(
@@ -5763,6 +5810,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * re-sorted (stably) by key, so its rows may come back in a different order than the input's.
    */
   trim(range: RangeLike): TimeSeries<S> {
+    const fromColumns = this.#trimColumns(range);
+    if (fromColumns !== undefined) return fromColumns;
     const trimmedEvents = this.events
       .map((event) => event.trim(range))
       .filter((event): event is EventForSchema<S> => event !== undefined);
@@ -5782,6 +5831,103 @@ export class TimeSeries<S extends SeriesSchema> {
     }
 
     return TimeSeries.#fromTrustedEvents(this.name, this.schema, trimmedEvents);
+  }
+
+  /**
+   * [PND-TRIMCOL] `trim` on the key buffers: keep the rows whose key
+   * overlaps the range, clip `timeRange` / `interval` edges with the same
+   * `Math.max` / `Math.min` as `TimeRange.intersection`, re-sort (stably,
+   * by begin then end, as `compareEventKeys`) only if clipping broke the
+   * order, and gather the value columns. `time` keys are not clipped
+   * (`Time.trim` returns the key itself), so their rows keep the source's
+   * key objects. Returns `undefined` where the event path must run: an
+   * empty series (it never reads `range`), a store whose events may differ
+   * from its columns, or an array column (old events shared array cells).
+   */
+  #trimColumns(range: RangeLike): TimeSeries<S> | undefined {
+    const seriesStore = this.#store;
+    const n = seriesStore.length;
+    if (n === 0 || seriesStore._eventsMayDifferFromColumnsModulePrivate()) {
+      return undefined;
+    }
+    for (let c = 1; c < this.schema.length; c += 1) {
+      if (this.schema[c]!.kind === 'array') return undefined;
+    }
+    // Every key kind's `trim` reads the range through `toTimeRange`, so
+    // a bad range throws the same error here.
+    const r = toTimeRange(range);
+    const rb = r.begin();
+    const re = r.end();
+    const store = seriesStore.store;
+    const keys = store.keys;
+    const begins = keys.begin;
+    const ends = keys.end;
+    const kept = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      if (begins[i]! <= re && rb <= ends[i]!) kept[k++] = i;
+    }
+    let rows = k === n ? kept : kept.slice(0, k);
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    if (keys.kind === 'time') {
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: frozenSchema,
+        [TRUSTED_STORE_SENTINEL]:
+          seriesStore._selectRowsSharingKeysModulePrivate(rows),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+    }
+    let newBegin = new Float64Array(k);
+    let newEnd = new Float64Array(k);
+    let sorted = true;
+    for (let j = 0; j < k; j += 1) {
+      const i = rows[j]!;
+      newBegin[j] = Math.max(begins[i]!, rb);
+      newEnd[j] = Math.min(ends[i]!, re);
+      if (
+        j > 0 &&
+        (newBegin[j - 1]! > newBegin[j]! ||
+          (newBegin[j - 1] === newBegin[j] && newEnd[j - 1]! > newEnd[j]!))
+      ) {
+        sorted = false;
+      }
+    }
+    if (!sorted) {
+      const order = Array.from({ length: k }, (_, j) => j);
+      const b0 = newBegin;
+      const e0 = newEnd;
+      order.sort((a, b) => b0[a]! - b0[b]! || e0[a]! - e0[b]!);
+      const sortedRows = new Int32Array(k);
+      newBegin = new Float64Array(k);
+      newEnd = new Float64Array(k);
+      for (let j = 0; j < k; j += 1) {
+        const o = order[j]!;
+        sortedRows[j] = rows[o]!;
+        newBegin[j] = b0[o]!;
+        newEnd[j] = e0[o]!;
+      }
+      rows = sortedRows;
+    }
+    const gathered = withRowSelection(store, rows);
+    const newKeys =
+      keys.kind === 'timeRange'
+        ? new TimeRangeKeyColumn(newBegin, newEnd, k)
+        : new IntervalKeyColumn(
+            newBegin,
+            newEnd,
+            (gathered.keys as IntervalKeyColumn).labels,
+            k,
+          );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      frozenSchema,
+      ColumnarStore.fromTrustedStore(
+        store.schema,
+        newKeys,
+        gathered.columns,
+      ) as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /** Example: `series.before(Date.now())`. Returns the events ending strictly before the supplied temporal boundary. */

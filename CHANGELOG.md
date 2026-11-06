@@ -78,7 +78,96 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`cumulative` takes `'increase'` and `'decrease'`** ([PND-SCANDATA]):
+  the running total of rises (or falls) between values. With
+  `{ using: 'increase', threshold: 3 }` a change counts only once the value
+  has moved at least 3 from the last value that counted, in either
+  direction, so small wiggles are ignored but slow drift still adds up.
+  Elevation gain with a 3 m dead band is
+  `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`, with no
+  step function. On `TimeSeries`, `partitionBy`, `LiveSeries` and live
+  views, and in pond-rs (`Cumulative::increase().threshold(3.0)`; the
+  `@pond-ts/rs` and Python bridges take the same spec as pond-ts). Through
+  `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
+  step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
+  `CumulativeAccumulator` and `CumulativeChange`.
+
+- **`@pond-ts/fit`: series, route, edits, explain and views** ([PND-FITAPI],
+  RFC §8–§10, §17). `section.series.heartRate` (also `power`, `cadence`,
+  `speed`, `elevation`, `distance`) gives a channel's samples on the
+  activity's clock as a `Measured` (`at`, `times`, `values`, gaps as
+  `null`), with `toTimeSeries()` as the explicit way down to pond.
+  `activity.route` is the line and its bounds (null with no GPS).
+  `activity.edit({ crop, laps: { splitAt, removeBoundaryAt }, parts })`
+  takes durations on the original recording and returns a new activity
+  with `original`, `appliedEdit`, `changes`, `parts`, and `toOriginal` /
+  `fromOriginal` to move a stretch between the edited clock and the
+  original's; editing an edited activity starts again from the original.
+  `activity.explain('distance' | 'elapsed' | 'moving' | …)` gives the
+  source, method, coverage and edits behind a number. New entry point
+  `@pond-ts/fit/views`: `chartData(section, options)` (a pond series over
+  time or distance, for `@pond-ts/charts`) and `mapData(route, options)`.
+
+- **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
+  with just the rows that push added, as a `TimeSeries`, so a listener can
+  read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
+  instead of one `Event` per row. On a default (`strict`, time-keyed) series
+  no `Event` is built and no row is copied (handing the batch over costs
+  well under a microsecond a push). 1M rows in pushes of 1,000: a
+  listener summing a column 320 → 141 ms, copying a column into a buffer
+  356 → 142 ms, writing JSON rows 446 → 251 ms, against the same work on
+  `'batch'`. `reorder` / `drop` series build the batch from the added
+  events, sorted by key. Fires after `'batch'` and before `'evict'`;
+  partition sub-series fire it too. `'event'` / `'batch'` / `'evict'` are
+  unchanged.
+
+- **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
+  ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
+  over whole columns like the other expression steps, in pond-ts, pond-rs
+  (`Expr::sqrt` …, `Expr::pow`), `@pond-ts/rs` and Python (`col("w") ** 2`,
+  `.sqrt()`, …). Angles are radians; `y.atan2(x)` reads `this` as `y`, as
+  `Math.atan2(y, x)` does. Same gap rule as arithmetic: a gap in is a gap
+  out, and a result that is not a finite number is a gap (`sqrt` of a
+  negative, `asin(2)`, `0 ** -1`, an overflow). Unlike JavaScript,
+  `gap ** 0` stays a gap rather than becoming 1. Enough for haversine
+  distance between GPS points (bit-identical to the plain `Math` loop in
+  pond-ts) and a 4th-power average. **pond-rs uses Rust's own maths
+  functions**, which can differ from pond-ts in the last digit (on a
+  haversine over 1M rows, 99.6% of results are identical and the largest
+  difference is 4 parts in 10^16); the shared parity cases allow for it.
+  A haversine over 36,000 rows takes about 6 ms in pond-ts and 4 ms in
+  `@pond-ts/rs`, against 1 ms for a hand-written loop
+  (`packages/core/scripts/perf-expr-maths.mjs`).
+
 ### Changed
+
+- **`cumulative` refuses an unknown accumulator name** ([PND-SCANDATA]).
+  Batch used to fail with an unhelpful error and live `cumulative` used to
+  pass the column through unchanged; both now throw a `TypeError` naming
+  the column. In pond-rs, `cumulative` is now generic over
+  `Into<Cumulative>`: specs of `Reducer`s compile as before, but an empty
+  literal (`cumulative(&[])`) or the method used as a function value now
+  needs the type spelled out.
+
+- **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A
+  duration window (`rolling('30s', …)`, any alignment) with built-in
+  reducers over number columns now takes the same per-column sweep that
+  `rolling({ count })` already had: each row's window is found once from
+  the keys, and the result columns are written as typed arrays. A 30 s
+  `avg` over 36,000 rows went from 10.3 to 1.4 ms, and 1M rows of `avg` +
+  `sum` from 224 to 72 ms (`packages/core/scripts/perf-rolling-time.mjs`).
+  Output is identical, cell for cell: rows sharing a key still share one
+  read, a column with values past the overflow-lane split (2^480) runs the
+  laned reducer states from the start, and leading / centered windows
+  still drop rows before adding them. A custom reducer or a text output
+  still takes the general sweep.
+- **`scan` over a number column reads and writes typed buffers**
+  ([PND-ROLLTIME]): no boxed array and no second packing pass. The 3 m
+  climb example from the `scan` docs over 36,000 rows went from 1.03 to
+  0.64 ms; output is identical. Most of what is left is the step function's
+  own allocation (a `[next, output]` tuple per row).
 
 - **`@pond-ts/fit`: a new `Activity` model** ([PND-FITAPI],
   docs/rfcs/fit-api.md). Breaking: replaces the old façade outright.
@@ -573,6 +662,28 @@ include new features and type-level changes; patch bumps are strictly additive.
   update 1338 vs 2647.
 
 ### Changed
+
+- **Live operators set up faster on a series that already holds rows**
+  ([PND-LIVEREPLAY]). `filter` / `map` / `window` views, `rolling`,
+  `aggregate`, `reduce` and `partitionBy` read the rows already in a
+  `LiveSeries` the way they read new pushes: fresh `Event`s, without
+  filling the series' per-row cache. Results are unchanged. 200k rows:
+  `rolling` 423–480 → 216–251 ms, `reduce` 558–642 → 193–274 ms,
+  `partitionBy().collect()` 1,057–1,079 → 358–436 ms; and the pushes right
+  after building a view on a full, retention-capped series no longer slow
+  down (45–56 → 2.2 ms per push of 1,600 rows, [PND-LATCACHE]). One
+  behaviour change: a replayed row's `Event` is no longer the same object
+  as the series' `at(i)` (unless the series had already built it), which
+  is how rows pushed after the operator was attached already behaved.
+
+- **`trim` clips on the key columns** ([PND-TRIMCOL]) instead of trimming
+  an `Event` per row. Output is identical: same rows, clipped keys, re-sort
+  when clipping breaks the key order, and errors; `time` keys still come
+  back as the source's key objects. 1M rows: 2.3–4.1 s → 18–94 ms. Also,
+  selections of selections now point straight at the original rows, so a
+  loop like `s = s.after(t)` or `s = s.dedupe()` no longer builds a chain
+  that every lookup walks (10,000 links overflowed the stack; this came in
+  with the `dedupe` / span-selector rewrites above and never shipped).
 
 - **`before`, `after`, `within`, `tail`, `overlapping` and `containedBy`
   read the key columns** ([PND-SPANFILTER]) instead of building an `Event`

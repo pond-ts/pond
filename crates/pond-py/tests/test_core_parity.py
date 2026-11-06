@@ -466,7 +466,10 @@ EXPR_OPS = {
     "eq": operator.eq, "ne": operator.ne, "gt": operator.gt, "ge": operator.ge,
     "lt": operator.lt, "le": operator.le, "and": operator.and_, "or": operator.or_,
     "add": operator.add, "sub": operator.sub, "mul": operator.mul, "div": operator.truediv,
+    "pow": operator.pow,
 }
+# Ops built by the method of the same name.
+EXPR_METHODS = {"sqrt", "sin", "cos", "asin", "atan2"}
 
 
 def expr_of(tree):
@@ -479,6 +482,8 @@ def expr_of(tree):
     op = tree["op"]
     if op in EXPR_OPS:
         return EXPR_OPS[op](*args)
+    if op in EXPR_METHODS:
+        return getattr(args[0], op)(*args[1:])
     if op == "when":
         return pond_rs.when(*args)
     if op == "in":

@@ -15,9 +15,9 @@ use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Change, Column,
-    ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions,
-    Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver,
-    RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
+    ColumnData, ColumnKind, Cumulative, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType,
+    JsonOptions, Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling,
+    RollingOver, RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
 };
 use serde_json::{Value, json};
 
@@ -526,15 +526,33 @@ fn range(options: &Value) -> Option<(i64, i64)> {
     }
 }
 
-fn cumulative_spec(json: &Value) -> Vec<(&str, Reducer)> {
+fn cumulative_spec(json: &Value) -> Vec<(&str, Cumulative)> {
     json.as_object()
         .expect("cumulative takes a mapping")
         .iter()
         .map(|(c, r)| {
-            (
-                c.as_str(),
-                Reducer::parse(r.as_str().expect("reducer")).unwrap(),
-            )
+            let entry = match r {
+                Value::String(name) if name == "increase" => Cumulative::increase(),
+                Value::String(name) if name == "decrease" => Cumulative::decrease(),
+                Value::String(name) => Reducer::parse(name).unwrap().into(),
+                Value::Object(o) => {
+                    let base = match o["using"].as_str() {
+                        Some("increase") => Cumulative::increase(),
+                        Some("decrease") => Cumulative::decrease(),
+                        // A bad direction cannot be written in Rust (the enum
+                        // has two), so this case stands in a value pond-rs
+                        // refuses for another reason: a NaN threshold.
+                        _ => return (c.as_str(), Cumulative::increase().threshold(f64::NAN)),
+                    };
+                    match o.get("threshold") {
+                        None => base,
+                        // `null`: pond-ts refuses it; NaN is refused here.
+                        Some(t) => base.threshold(t.as_f64().unwrap_or(f64::NAN)),
+                    }
+                }
+                other => panic!("cumulative entry {other}"),
+            };
+            (c.as_str(), entry)
         })
         .collect()
 }
