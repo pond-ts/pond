@@ -16,6 +16,15 @@ export {
   type SectionKind,
 } from './activity.js';
 export { sportOf, type Sport } from './sport.js';
+export {
+  Measured,
+  type ActivitySeries,
+  type SeriesChannel,
+  type SeriesPoint,
+} from './series.js';
+export { Route, type LatLng } from './route.js';
+export { type ActivityEdit, type EditChange } from './editing.js';
+export { type Explainable, type Explanation } from './explain.js';
 export { type MovingRule } from './moving.js';
 export {
   type Stats,
