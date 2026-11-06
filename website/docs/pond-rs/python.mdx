@@ -1,0 +1,451 @@
+---
+id: python
+title: Python (pond_rs)
+sidebar_position: 1.5
+description: pond-rs from Python. Install from PyPI, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
+---
+
+# Python (pond_rs)
+
+pond-rs has a Python package. It takes the frames you already use (polars,
+pandas, pyarrow) and gives frames back, so pond's time-aware operations fit
+into an existing notebook or service: rolling windows, buckets by calendar
+day in a time zone (days of 23 and 25 hours included), per-host work on
+several cores, the 109 finance studies of `@pond-ts/financial`, and live
+series. The answers are the same as pond-ts's and pond-rs's: the package's
+tests run pond-ts's own test cases and compare every value to the bit.
+
+```sh
+pip install pond-rs            # the package is named pond-rs
+pip install "pond-rs[polars]"  # plus polars; or [pandas], [pyarrow]
+```
+
+```python
+import pond_rs                 # and imported as pond_rs
+```
+
+- **Python 3.9 or newer.** There is one wheel per platform for every
+  Python from 3.9 on: Linux (x86-64 and ARM, glibc 2.17 or newer), macOS
+  (Intel and Apple silicon) and Windows (x86-64). Elsewhere pip builds it
+  from source, which needs Rust 1.88 or newer.
+- **No required dependencies.** Frames cross through Arrow's C interface.
+  `to_polars()` needs polars, `to_pyarrow()` needs pyarrow, and
+  `to_pandas()` needs pandas 2.2+ and pyarrow; the extras above install
+  them.
+- **Versions** follow pond-ts: `pond_rs` 0.75.0 is released with pond-ts
+  0.75.0 and gives the same answers. `pond_rs.__version__` says which you
+  have.
+- **Type hints** for every method ship in the package, so an editor
+  completes method and option names.
+
+To try work not yet released, install from the repository (needs Rust):
+`pip install "git+https://github.com/pond-ts/pond#subdirectory=crates/pond-py"`.
+
+## A first example
+
+Hourly CPU readings for two hosts. A five-hour average per host, then one
+row per calendar day in New York.
+
+```python
+import datetime as dt
+import polars as pl
+import pond_rs
+
+df = pl.DataFrame({
+    "time": [dt.datetime(2026, 3, 8, h) for h in range(24)],  # no zone: UTC
+    "host": ["a", "b"] * 12,
+    "cpu": [float(h) for h in range(24)],
+})
+s = pond_rs.TimeSeries(df)  # the time column is called "time"
+
+# Five-hour trailing average, per host, back as a polars frame.
+avg = s.partition_by("host").rolling("5h", {"cpu_avg": ("cpu", "avg")}).collect()
+avg.to_polars()  # columns: time, cpu_avg, host
+
+# Calendar days in New York. 8 March 2026 is the day the clocks go
+# forward, so that day is 23 hours long.
+days = pond_rs.Sequence.calendar("day", "America/New_York")
+daily = s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")})
+daily.as_time().to_pandas()  # columns: time (each day's start), cpu_max, n
+```
+
+Every operation returns a new series; nothing changes in place.
+
+## Frames in
+
+`pond_rs.TimeSeries(data)` takes:
+
+- a **polars** `DataFrame`,
+- a **pandas** `DataFrame` (pandas 2.2 or newer),
+- a **pyarrow** `Table` or `RecordBatch`, or anything else with
+  `__arrow_c_stream__`,
+- a **dict** of columns: `{"time": [...], "cpu": [...]}`.
+
+Rules for the data:
+
+- **The time column** is `"time"` unless you say otherwise:
+  `TimeSeries(df, key="ts")`. It may hold datetimes (one without a time
+  zone is read as UTC), dates, or integers (milliseconds since 1970). In a
+  dict it may also hold text such as `"2026-03-08T12:00:00Z"`, but in a
+  frame text is refused: parse it first, with
+  `pl.read_csv(path, try_parse_dates=True)` or
+  `pd.read_csv(path, parse_dates=["time"])`.
+- **Rows must be in time order.** Out of order is an error that names the
+  first bad row, so sort first: `df.sort("time")` in polars,
+  `df.sort_values("time", ignore_index=True)` in pandas. Several rows may
+  share a time (one per host, say).
+- **pandas: mind the index.** A pandas frame hands its index over too,
+  unless it is the plain 0, 1, 2, … one. After `sort_values` without
+  `ignore_index=True`, or a filter, it turns up as an extra number column
+  called `__index_level_0__`; `df.reset_index(drop=True)` removes it. Times
+  kept in the index are read as the key only if the index is named `time`
+  (or the `key=` name); otherwise `df.rename_axis("time").reset_index()`
+  makes them the `time` column.
+- **Times are whole milliseconds.** A time with a part smaller than a
+  millisecond is an error, not rounded. To drop it, use
+  `pl.col("time").dt.truncate("1ms")` in polars or `df["time"].dt.floor("ms")`
+  in pandas.
+- **Every other column is a value column.** Numbers (integers become
+  floats), text (pandas categoricals too), true/false values, exact
+  decimals and lists.
+- **Gaps:** `None`, a null or a NaN is a gap. Reducers skip gaps; `fill`
+  fills them.
+- `key_kind="time_range"` or `"interval"` reads a key of spans: columns
+  `<key>` and `<key>End`, plus `<key>Label` for intervals (this is what an
+  `aggregate` writes out, so its output reads back in).
+
+Files: `TimeSeries.read_ipc(path)` reads an Arrow IPC (Feather v2) file,
+compressed or not; `s.write_ipc(path)` writes one.
+
+## Frames out
+
+- `s.to_polars()`, `s.to_pandas()`, `s.to_pyarrow()`. A series is also an
+  Arrow stream, so `pl.DataFrame(s)` and `pa.table(s)` work.
+- **Times come out in UTC**, as `datetime[ms, UTC]` (polars) or
+  `datetime64[ms, UTC]` (pandas). For local times convert the column:
+  `pl.col("time").dt.convert_time_zone("America/New_York")` in polars,
+  `df["time"].dt.tz_convert("America/New_York")` in pandas.
+- **Numbers come out as floats**, counts included. Cast if you want
+  integers: `pl.col("n").cast(pl.Int64)`.
+- **A bucket key is three columns.** `aggregate` keys each row by its
+  bucket, which comes out as `interval` (the start), `intervalEnd` and
+  `intervalLabel` (the start again, as a number). `as_time()` turns the key
+  into one `time` column holding each bucket's start; `as_time("end")` or
+  `as_time("center")` picks another point. Then `select` / `drop` the rest
+  in polars or pandas as usual.
+
+Single values without a frame:
+
+```python
+s.columns                  # ["host", "cpu"]: the value columns
+len(s)                     # rows
+s.column("cpu")            # a list, None for a gap
+s.last()["cpu"]            # one cell; s[0], s.first(), s.at(i) also give a Row
+s.last().key               # the time, as epoch milliseconds
+s.reduce({"peak": ("cpu", "max")})   # {"peak": 23.0}
+for row in s:              # rows, if you must
+    row.key, row["host"], row.to_dict()
+```
+
+## Reducers
+
+Wherever values are summed up (`rolling`, `aggregate`, `reduce`, the live
+nodes), you name each output column and say where it comes from:
+
+```python
+{"cpu_avg": ("cpu", "avg"), "cpu_p95": ("cpu", "p95"), "n": ("cpu", "count")}
+{"cpu": "avg"}             # reduce a column into a column of the same name
+```
+
+One entry gives one output column, so for two reducers of one column
+write two entries (`{"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}`);
+a list of reducers is refused.
+
+Reducers: `count`, `sum`, `avg` (or `mean`), `min`, `max`, `first`, `last`,
+`median`, `stdev`, `difference` (max minus min), `keep` (the value when
+every row has the same one, else a gap: handy for a `host` column),
+percentiles `p50`, `p95`, `p99` (any number), and three that give a list
+per row: `unique`, `samples` (every value) and `top3` (the three most
+frequent values; any number). A bucket with no values has `count` and
+`sum` 0 and a gap for the others. The
+[reducer reference](../pond-ts/transforms/reducer-reference.mdx) has the
+details.
+
+## Rolling windows
+
+```python
+s.rolling("5m", {"avg": ("cpu", "avg")})            # trailing 5 minutes
+s.rolling(10, {"avg": ("cpu", "avg")})              # the last 10 rows
+s.rolling("5m", {"avg": ("cpu", "avg")}, append=True)  # keep the source columns
+s.rolling("5m", {"avg": ("cpu", "avg")}, alignment="centered", min_samples=3)
+```
+
+- The window is a duration (`"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"1d"`, or
+  a `timedelta` / `pd.Timedelta`) or an int, which counts rows. pandas
+  spellings such as `"15min"` or `"1D"` are refused; write `"15m"`, `"1d"`.
+- A trailing window of 15 minutes at time t holds the rows with a time
+  after t − 15m, up to and including t: a row exactly 15 minutes earlier
+  is not in it (pandas' `rolling("15min")` draws the same line).
+- One output row per input row. **The output has only the reducer columns
+  unless `append=True`**, which keeps the source columns beside them.
+- `alignment` is `"trailing"` (default: the window ends at the row),
+  `"leading"` or `"centered"`. `min_samples=n` gives a gap until the window
+  holds n values.
+- `over=` a grid (`"1m"` or a `Sequence`) gives one row per grid point
+  instead of one per input row.
+
+## Per host, per symbol: `partition_by`
+
+`partition_by(column)` (or a list of columns) splits the series by value.
+Every operation then runs per group, on several cores, and `collect()`
+puts the groups back into one series in time order. **The partition column
+stays in the output**, so you can tell the groups apart.
+
+```python
+per_host = s.partition_by("host")
+per_host.rolling("5m", {"avg": ("cpu", "avg")}).collect().to_polars()
+per_host.fill("hold").diff("cpu").collect()       # steps chain per group
+per_host.aggregate("1h", {"peak": ("cpu", "max")}).collect()
+
+per_host.keys()                     # ["a", "b"]
+groups = per_host.to_dict()         # {"a": TimeSeries, "b": TimeSeries}
+s.group_by("host")                  # the same dict, in one call
+```
+
+Without `partition_by`, a rolling window or a `diff` on a series that mixes
+hosts mixes their rows, which is rarely what you want.
+
+## Calendar buckets
+
+`aggregate(grid, reducers)` gives one row per bucket of a grid. A grid is a
+fixed step (`"5m"`, `"1h"`, `pond_rs.Sequence.every("15m")`) or calendar
+units in a time zone:
+
+```python
+days = pond_rs.Sequence.calendar("day", "America/New_York")
+weeks = pond_rs.Sequence.calendar("week", "Europe/London", week_starts_on=1)  # Monday
+months = pond_rs.Sequence.calendar("month", "Asia/Tokyo")
+
+daily = s.aggregate(days, {"avg": ("cpu", "avg"), "n": ("cpu", "count")})
+out = daily.as_time().to_polars().with_columns(
+    pl.col("time").dt.convert_time_zone("America/New_York"),  # local midnight
+    pl.col("n").cast(pl.Int64),
+)
+```
+
+- Units: `day`, `week`, `month`, `quarter`, `year`; the zone is any IANA
+  name (`"UTC"` if left out). For minutes and hours use a fixed step
+  (`"15m"`, `"1h"`): they are the same in every zone with whole-hour
+  offsets.
+- A calendar day is midnight to midnight in that zone, so around a clock
+  change a day is 23 or 25 hours long. Fixed steps (`"1d"`) are always
+  24 hours of UTC; use `calendar("day", zone)` for days.
+- Buckets run from the one holding the first row to the one holding the
+  last; a bucket with no rows in between still gets a row (`count` and
+  `sum` 0, other reducers a gap).
+- A time zone only changes where buckets start; output times are still
+  UTC (see [Frames out](#frames-out)).
+
+## Other operations
+
+The full list is in the type hints (`pond_rs.pyi`); the
+[Operations](./operations.mdx) page explains each for Rust, and the Python
+methods take the same words as keyword arguments. The most used:
+
+```python
+s.diff("cpu")                       # change from the previous row; also rate, pct_change
+s.shift("cpu", 1)
+s.fill("hold")                      # or "linear", "zero", a value, {"cpu": "hold"}
+s.fill("hold", max_gap="5m")        # only across short gaps
+s.align("1m", method="linear")      # a value on every minute
+s.cumulative({"cpu": "sum"})
+s.smooth("cpu", "ema", alpha=0.2)
+s.baseline("cpu", "10m", 2.0)       # adds avg, sd, upper, lower
+s.outliers("cpu", "10m", 3.0)       # only the outlying rows
+s.within("2026-03-08T00:00:00Z", "2026-03-09T00:00:00Z")
+s.tail("1h")                        # the last hour
+s.select("cpu"), s.rename({"cpu": "load"}), s.slice(0, 100)
+a.join(b)                           # columns side by side, matched on time
+pond_rs.TimeSeries.concat([a, b])   # rows stacked
+```
+
+### Row rules: expressions or Python functions
+
+Write a per-row rule with `col`, `lit` and `when`, so it runs inside
+pond-rs with no Python call per row:
+
+```python
+from pond_rs import col, lit, when
+
+s.filter((col("cpu") > 80) & (col("host") == "a"))
+s.with_column("pct", col("used") / col("total") * 100)
+s.with_column("level", when(col("cpu") > 80, lit("high"), lit("ok")))
+```
+
+Combine with `&`, `|` and `~`, not `and`, `or`, `not`. A Python function
+also works (`s.filter(lambda row: row["cpu"] > 80)`, `s.map("cpu", f)`,
+`s.scan(...)`), and an exception in it comes out as itself, but it is
+called once per row: on a million rows a filter takes about 10 ms as an
+expression and about 360 ms as a function.
+
+## Finance studies
+
+All 109 studies of `@pond-ts/financial` run on a series of bars, with
+pond-ts's numbers to the last bit. Each study is a method; it adds its
+columns and keeps every row (gaps until its window fills).
+
+```python
+bars = pond_rs.TimeSeries(df)      # time, open, high, low, close, volume
+out = bars.rsi(period=14).bollinger(period=20, std_dev=2)
+out.columns                        # [..., "rsi", "bbMiddle", "bbUpper", "bbLower"]
+bars.macd()                        # adds macdLine, macdSignal, macdHist
+bars.study("macd", fast_period=12) # the same, by name
+bars.partition_by("symbol").atr(period=14).collect()   # per symbol
+```
+
+- **Columns read** default to `open`, `high`, `low`, `close` and `volume`.
+  Pass `column="price"` (one-column studies) or `high=`, `low=`,
+  `close=`, `volume=` to use others.
+- **Options** are keywords in Python's spelling (`std_dev`, `fast_period`;
+  pond-ts's `stdDev` also works). Some have no default and must be given
+  (`bollinger` needs `period`). An option the study does not have is a
+  `TypeError`, so a typo such as `peroid=14` cannot pass silently.
+- **Output names** are pond-ts's (`rsi`, `bbUpper`, `macdHist`). Pass
+  `output="rsi14"` to rename a one-column study's output.
+- **Definitions** are the usual ones, checked against TA-Lib and pandas:
+  RSI uses Wilder's smoothing as TA-Lib does, and Bollinger bands use the
+  population standard deviation (dividing by the period). On a
+  partitioned series each symbol's study sees only its own bars.
+- `pond_rs.studies()` lists every study, and `pond_rs.study_info("bollinger")`
+  describes one: the columns it reads, its options with defaults and
+  ranges, and `output_names`.
+
+Session studies (session VWAP, pivot points) need trading sessions. A
+`TradingCalendar` builds them from rules:
+
+```python
+nyse = pond_rs.TradingCalendar.from_rules(
+    "America/New_York", "09:30", "16:00", "2024-01-02", "2024-12-31",
+    holidays=["2024-07-04"], early_closes={"2024-12-24": "13:00"},
+)
+bars.session_vwap(sessions=nyse)   # adds svwap, restarting each session
+nyse.is_open("2024-07-04T15:00:00Z")          # False: a holiday
+nyse.session_on("2024-12-24")                 # {"date", "open", "close", "breaks"}, ms
+```
+
+`sessions=` also takes a list of sessions, and `session="column"` uses a
+column of session ids you already have.
+
+## Live series
+
+`LiveSeries` takes events as they arrive. Nodes built on it (filters,
+fills, buckets, rolling windows, per-host partitions) update with every
+push. The results match pond-ts's live layer, output for output.
+
+```python
+live = pond_rs.LiveSeries(
+    {"time": "time", "host": "string", "cpu": "number"},  # key first, then values
+    max_age="10m",                                        # keep ten minutes
+)
+avg = live.rolling("1m", {"avg": ("cpu", "avg")})        # a node
+per_min = live.aggregate("1m", {"max": ("cpu", "max")})
+per_min.watch("event")                                    # report closed buckets
+
+live.push("2026-03-08T12:00:00Z", host="a", cpu=0.5)     # one event
+live.push_many([("2026-03-08T12:00:10Z", {"host": "b", "cpu": 0.2})])
+outputs = live.push_frame(frame)                          # a polars / pandas / pyarrow frame
+
+for out in outputs:            # what the watched nodes emitted during this push
+    out.kind                   # "event": per_min closed a bucket
+    out.event.key              # the bucket: (label, begin, end) in ms
+    out.event["max"]
+avg.value()                    # {"avg": ...}: the rolling window now
+per_min.to_polars()            # every closed bucket so far
+```
+
+- **Schema** is `{column: kind}`, key first. Key kinds: `"time"`,
+  `"time_range"`, `"interval"`; value kinds: `"number"`, `"string"`,
+  `"boolean"`, `"array"`, `"decimal"`. `TimeSeries.schema` works too. Value columns may
+  have gaps unless given as `(name, kind, True)`.
+- **Pushing:** `push(time, values)` takes keywords, a dict or a list in
+  schema order; `push_many` takes `(time, values)` pairs or dicts holding
+  the time column; `push_frame` takes a frame with the key column and
+  exactly the series' value columns, and is the fastest way in (about 4.5
+  million events a second into a rolling window and buckets).
+- **Gaps in a push** are `None` or a column left out. A NaN is refused by
+  `push` and `push_many` (in a frame, `push_frame` included, NaN is a gap
+  as usual), so when looping over pandas rows turn NaN into `None` first:
+  `cpu=None if math.isnan(r.cpu) else r.cpu`.
+- **Order:** an event older than the newest is an error by default.
+  `ordering="drop"` drops it; `ordering="reorder", grace_window="5s"`
+  puts it in place if it is at most that late.
+- **Memory:** `max_age="10m"` or `max_events=n` drop the oldest events.
+- **Reading:** every node has `len()`, `events()`, `last()`,
+  `to_series()`, `to_polars()`, `to_pandas()`. A rolling window or `reduce`
+  has `value()`; an aggregation has `snapshot()` (closed buckets plus the
+  open one).
+- **When a bucket closes:** an aggregation's bucket closes when an event at
+  or after its end arrives (on a partitioned node: an event of the same
+  partition). Closing is what `watch("event")` reports. The bucket still
+  open is in `snapshot()`, not in `events()` or the pushes' outputs.
+- **What a push returns:** a list of `LiveOutput`s from the nodes you
+  `watch()`; an empty list when nothing is watched. `out.kind` is `"event"`
+  (a new event; for an aggregation a closed bucket), `"batch"`,
+  `"evict"`, `"bucket"` (an open bucket's current values) or `"update"`.
+  `watch("event")` limits it to those kinds.
+
+Per host:
+
+```python
+by_host = live.partition_by("host")
+per_host = by_host.fill("hold").rolling(
+    "1m", {"cpu": "avg", "host": ("host", "last")}
+).collect()
+per_host.to_polars()           # time, cpu, host
+```
+
+**A live partition's output does not carry the partition column by
+itself.** Unlike the batch `collect()`, the gathered rows have only the
+reducer columns, so add the column through a reducer (`("host", "last")`
+or `"keep"`), as above, if you need to know which host a row is from.
+Watch the `collect()` node to hear about every partition's outputs as they
+happen (a partitioned node itself emits nothing, and `watch()` on it is an
+error):
+
+```python
+buckets = live.partition_by("host").aggregate(
+    "30m", {"max": ("cpu", "max"), "host": ("host", "last")}
+).collect()
+buckets.watch("event")
+for i, (t, host, cpu) in enumerate(rows):
+    for out in live.push(t, host=host, cpu=cpu):
+        label, begin, end = out.event.key      # the bucket that closed
+        print(out.event["host"], begin, out.event["max"], "closed by", i)
+```
+
+A function given to a live node (`filter`, `map`) runs during the push. If
+it raises, that event gets no value from it, the other nodes carry on, and
+the first error is raised when the push returns, with the push's outputs as
+its `outputs` attribute (the push has happened). It must not use the series
+it belongs to. Calls from several threads are safe: each takes the series
+in turn.
+
+## Errors
+
+- `pond_rs.PondError` (a `ValueError`) for bad data or arguments: an
+  unknown column, rows out of order, a bad duration or reducer name. The
+  message names the call and the column, for example
+  `rolling: no column named 'cpux' (columns: cpu)`.
+- `TypeError` for a value of the wrong type (text where a number is
+  needed) and for an unknown keyword or study option.
+
+## Threads and speed
+
+Every call lets go of Python's lock while it works, so calls from several
+Python threads run at the same time, and operations on a partitioned
+series use several cores by themselves. On a million rows, frame in to
+frame out, a rolling average or RSI is about as fast as polars or faster,
+and the cheapest operations (`diff`) are slower, because getting a frame in
+costs about 7 ms (the time column is copied and checked). The
+[package README](https://github.com/pond-ts/pond/tree/main/crates/pond-py#speed)
+has the table against polars and pandas.

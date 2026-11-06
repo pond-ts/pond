@@ -11,6 +11,14 @@ Rust implementation of [pond](https://pond-ts.org). Results are the same as
 pond-ts (TypeScript) and pond-rs (Rust): the test suite runs pond-ts's own
 parity fixture through this package and every case matches.
 
+```sh
+pip install pond-rs                # import pond_rs
+pip install "pond-rs[polars]"      # plus polars; or [pandas], [pyarrow]
+```
+
+The guide is on the docs site:
+[Python (pond_rs)](https://pond-ts.org/docs/pond-rs/python).
+
 ```python
 import datetime as dt
 import polars as pl
@@ -35,10 +43,14 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
 
 - **In:** `TimeSeries(data, key="time")` takes a pyarrow Table or RecordBatch,
   a polars or pandas DataFrame, anything with `__arrow_c_stream__`, or a dict
-  of columns. `key_kind="time_range"` or `"interval"` reads a key of spans
+  of columns. Rows must be in time order (sort first). `key_kind="time_range"`
+  or `"interval"` reads a key of spans
   (`<key>` and `<key>End`, plus `<key>Label` for intervals). Every other column
   is a value column: numbers, exact decimals, text, true/false values or lists.
-  A null or NaN is a gap. A column Arrow marks nullable is optional.
+  A null or NaN is a gap. A column Arrow marks nullable is optional. A pandas
+  frame hands over its index unless it is the plain 0, 1, 2, … one, so after
+  `sort_values` use `ignore_index=True` (or `reset_index(drop=True)`), or the
+  index arrives as a column named `__index_level_0__`.
 - **Out:** `to_pyarrow()`, `to_polars()`, `to_pandas()`, or hand the series to
   `pyarrow.table(s)` / `polars.DataFrame(s)` directly. Times come out as
   `timestamp[ms, UTC]`. Arrow, IPC files (`read_ipc` / `write_ipc`) and pond's
@@ -48,8 +60,9 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
   text such as `"2026-03-08T12:00:00Z"`, an int of milliseconds, or a numpy
   `datetime64` / integer. A time
   with a part smaller than a millisecond is refused, not rounded.
-- **Durations** are text (`"500ms"`, `"5s"`, `"5m"`, `"1h"`, `"1d"`) or a
-  `timedelta`. In `rolling`, an int is a count of rows instead.
+- **Durations** are text (`"500ms"`, `"5s"`, `"5m"`, `"1h"`, `"1d"`; not
+  pandas' `"15min"` or `"1D"`) or a `timedelta`. In `rolling`, an int is a
+  count of rows instead.
 - **Reducers** are named per output column: `{"avg": ("cpu", "avg")}`, or
   `{"cpu": "avg"}` to reduce a column into itself. count, sum, avg, min, max,
   first, last, median, stdev, difference, keep, unique, samples, `top3`,
@@ -132,7 +145,11 @@ smooth.to_polars()
 ```
 
 A frame is the fastest way in (`push_frame`); `push_many` takes a batch of
-`(time, values)` rows; `push` takes one event. A function you give a node
+`(time, values)` rows; `push` takes one event. In `push` and `push_many` a
+gap is `None` or a column left out; a NaN is refused there (in a frame it is
+a gap). A live partition's gathered output (`collect()`) carries only the
+reducer columns, so add the partition column through a reducer
+(`{"host": ("host", "last")}`) to know where each row came from. A function you give a node
 (`filter`, `map`) runs during the push; if it raises, that event gets no
 value from it, the other nodes carry on, and the first error is raised when
 the push returns, with the push's outputs as its `outputs` attribute (the
@@ -189,5 +206,18 @@ batch, and a frame skips reading Python values altogether.
 
 ## Versions
 
-The package carries pond-ts's version number and is released with it.
-Wheels are abi3: one wheel per platform serves Python 3.9 and later.
+The package carries pond-ts's version number and is released with it: every
+`v*` tag of the repository publishes pond-ts to npm and this package to PyPI
+(`.github/workflows/python-wheels.yml`). Wheels are abi3, so one wheel per
+platform serves Python 3.9 and later: Linux x86-64 and aarch64 (manylinux
+2014, glibc 2.17+), macOS x86-64 and arm64, Windows x86-64. Elsewhere pip
+builds from the sdist, which needs Rust 1.88 or newer.
+
+Build and test from a checkout:
+
+```sh
+pip install maturin
+maturin build --release -m crates/pond-py/Cargo.toml --out dist
+pip install pytest pyarrow polars pandas numpy dist/*.whl
+pytest crates/pond-py/tests
+```

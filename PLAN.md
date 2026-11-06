@@ -640,10 +640,23 @@ the study oracle) is done.
   docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
   pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
   P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
-  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
-  J2 split the same way: J2a studies + trading calendars built 2026-10-31;
+  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. ~~P3 (wheels
+  in CI, PyPI on `v*`, docs page, agent trial)~~ — built 2026-11-02
+  (`python-wheels.yml`); the first upload needs PyPI's trusted publisher set
+  up by the owner. The Python steps are complete. J2 split the same way: J2a studies + trading calendars built 2026-10-31;
   J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
-  columns across, rows built in JS). Next J3. Detail in the breakout plan.
+  columns across, rows built in JS). J3 built 2026-10-31: one glue for Node
+  and browsers (top-level await in browsers), browser test in headless
+  Chromium incl. a strict CSP, `release.yml` publishes `@pond-ts/rs` after
+  the workspaces; first publish needs Peter on npmjs.com (trusted
+  publishing needs the package to exist). Next P3. Detail in the breakout
+  plan.
+
+- **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
+  no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
+  give the `declare module` workaround). Write an `index.d.ts` from
+  pond-ts's types where the shapes match, and check it in CI against the
+  parity tests' calls. Detail in the breakout plan ([PND-RUST-R4]).
 
 - **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
   2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
@@ -692,7 +705,10 @@ the study oracle) is done.
   (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
   snippets in all, each checked against pond-ts output. Install lines now say
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
-  snippets also pass against the published 0.1.0. Open: run the script in
+  snippets also pass against the published 0.1.0. Expressions page
+  (`pond-ts/transforms/expressions`, 2026-10-31): `col` / `lit` / `when` with
+  TypeScript, Rust and Python tabs, all checked against pond-ts; `rust ignore`
+  fences are skipped by the script (excerpts from other repos). Open: run the script in
   CI.
 - **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
   `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose

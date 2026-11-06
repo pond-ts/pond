@@ -634,8 +634,13 @@ export function BarChart<
     label,
   ]);
 
-  // The category labels — the ordinal axis's ordered column set (`xCategories`),
-  // and the per-bar readout label. `null` unless this is a categorical chart.
+  // The category keys — the ordinal axis's ordered slot identities
+  // (`xCategories`) — and their display labels, which the axis draws
+  // ([PND-CATID]). `null` unless this is a categorical chart.
+  const categoryKeys = useMemo<readonly string[] | null>(
+    () => categories?.map((c) => c.key ?? c.label) ?? null,
+    [categories],
+  );
   const categoryLabels = useMemo<readonly string[] | null>(
     () => categories?.map((c) => c.label) ?? null,
     [categories],
@@ -1063,9 +1068,12 @@ export function BarChart<
         // Categorical labels go to the axis the categories actually land on:
         // x for a vertical chart (the container's band scale), y for a
         // horizontal one, where they label the unit slots ([PND-HCAT]).
-        ...(categoryLabels !== null
+        ...(categoryKeys !== null && categoryLabels !== null
           ? vertical
-            ? { xCategories: () => categoryLabels }
+            ? {
+                xCategories: () => categoryKeys,
+                xCategoryLabels: () => categoryLabels,
+              }
             : { binCategories: () => categoryLabels }
           : {}),
         // No x-scrub flag for a stack / horizontal chart — hover + click read it
@@ -1120,9 +1128,10 @@ export function BarChart<
                   // A per-bin colour override wins over the group fill, so the
                   // readout pill reads the bar's own colour.
                   color: stackStyle.binFills?.[bi] ?? stackStyle.fills[g]!,
-                  // A categorical bar reports its category name; a stack reports
-                  // the group.
-                  label: stableMark ?? name,
+                  // A categorical bar reports its category's display label
+                  // (its `mark` is the key, [PND-CATID]); a stack reports the
+                  // group.
+                  label: ss.markLabels?.[bi] ?? stableMark ?? name,
                   ...(stableMark !== undefined ? { mark: stableMark } : {}),
                 };
               },
@@ -1171,7 +1180,8 @@ export function BarChart<
                           value: ss.values[b * G + g]!,
                           color:
                             stackStyle.binFills?.[b] ?? stackStyle.fills[g]!,
-                          label: stableMark ?? ss.groups[g]!,
+                          label:
+                            ss.markLabels?.[b] ?? stableMark ?? ss.groups[g]!,
                           ...(stableMark !== undefined
                             ? { mark: stableMark }
                             : {}),
@@ -1208,6 +1218,7 @@ export function BarChart<
     shape,
     binAxisKind,
     binBuckets,
+    categoryKeys,
     categoryLabels,
     orientation,
     singleStyle,

@@ -3,8 +3,9 @@
  * the GPS-only case with no activity behind it: a route drawn from stored
  * `[lat, lng]` vertices, a map overlay, a planned line. The fluent face over the
  * polyline operators in {@link import('../geo/index.js') geo} (`polylineCumulative`,
- * `interpolateAtDistance`, `polylineSlice`, `boundsOf`) — measure it, sample a
- * point at a distance, slice a sub-track, get its bounds.
+ * `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `simplify`) — measure
+ * it, sample a point at a distance, slice a sub-track, get its bounds, thin it
+ * for drawing.
  *
  * For a track WITH time/channels (a recorded activity), use {@link
  * import('../activity/index.js').Activity} instead — `Track` is deliberately the
@@ -16,6 +17,7 @@ import {
   interpolateAtDistance,
   polylineSlice,
   boundsOf,
+  simplify,
 } from '../geo/index.js';
 import { Distance } from '../quantities.js';
 
@@ -94,5 +96,14 @@ export class Track {
     return new Track(
       polylineSlice(this.pts, from.meters, to.meters, sliceOpts),
     );
+  }
+
+  /** A thinned copy for drawing — Douglas–Peucker with a distance tolerance:
+   *  every dropped vertex lies within `tolerance` of the kept line, and both
+   *  endpoints are always kept. The map overview line; `summary().polyline` is
+   *  this at 12 m. Perpendicular distance uses a local equirectangular
+   *  approximation — fine at track scale, not a projection engine. */
+  simplify(tolerance: Distance): Track {
+    return new Track(simplify(this.pts, tolerance.meters));
   }
 }

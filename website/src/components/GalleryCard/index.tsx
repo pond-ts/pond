@@ -37,10 +37,10 @@ interface GalleryCardProps {
    * `src/lib/autoplay.ts`.
    */
   autoplay?: AutoplayOptions;
-  /** Fixed pixel height for the chart stage. **Must budget for the
-   *  `ChartContainer`'s auto-rendered time-axis strip** (`showAxis`
-   *  defaults `true`, adding ~22px below the rows) on top of the sum of
-   *  the mounted example's own `<ChartRow height>`s — the stage clips
+  /** Fixed pixel height for the chart stage. **Must budget for the x-axis
+   *  strip** (the container's implicit one, or the example's own `<XAxis>`,
+   *  which replaces it — ~22px bare) on top of the sum of the mounted
+   *  example's own `<ChartRow height>`s — the stage clips
    *  (`overflow: hidden`) anything taller, silently cutting off axis
    *  labels rather than erroring. */
   height?: number;
