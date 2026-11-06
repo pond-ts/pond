@@ -1,6 +1,6 @@
 # API.md — public API map for agents
 
-A fast-navigation map of every public export across pond's six packages,
+A fast-navigation map of every public export across pond's seven packages,
 written **for coding agents**. Use it to find the right primitive and the file
 it lives in without crawling `src/`. It is a map, not a reference: one line per
 export, grouped by purpose, with the source path. Verify exact signatures in
@@ -33,6 +33,7 @@ next door is the point.
 | `packages/financial` | `@pond-ts/financial` | `.`, `./fluent` (prototype augmentation), `./catalog`  | `website/docs/financial/` |
 | `packages/fit`       | `@pond-ts/fit`       | `.`, `./files`, `./views`                              | `website/docs/fit/`       |
 | `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental** | `website/docs/process/`   |
+| `packages/rs`        | `@pond-ts/rs`        | `.` (pond-rs as WebAssembly; Node and browsers)        | `website/docs/pond-rs/`   |
 
 ---
 
@@ -763,11 +764,35 @@ deleted builds green and breaks only downstream. If you mark something
 
 ---
 
-## pond-rs (Rust crate, unpublished)
+## @pond-ts/rs
+
+pond-rs (below) compiled to WebAssembly, with pond-ts's class and method
+names and argument shapes; released with the other packages at the same
+version. The authority is `packages/rs/index.js` (plain JS, no `src/`, so
+the `API map` workflow does not guard it; keep this section in step by
+hand). Node 20+ loads the `.wasm` synchronously (`wasm.node.js`); browsers
+and bundlers with a top-level `await` (`wasm.browser.js`), chosen by the
+`node` condition of package.json `imports` (`#wasm`). Differences from
+pond-ts: `packages/rs/README.md`. Docs:
+[website/docs/pond-rs/javascript.mdx](website/docs/pond-rs/javascript.mdx).
+
+| Group           | Exports                                                                                                                                                                                                                         | Source                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Batch series    | `TimeSeries` (pond-ts's constructor, `fromJSON`, `fromArrow`, batch methods, `partitionBy`, one method per study, `toJSON`, `toArrow`, `numbers`, `times`, `free()`), `PartitionedSeries`, `Sequence`                           | `packages/rs/index.js` |
+| Keys and events | `Time` (`parse`), `TimeRange`, `Interval`, `Event` (cut down: `get`, `data`, `key`, `type`, `begin`, `end`, `timeRange`)                                                                                                        | `packages/rs/index.js` |
+| Expressions     | `col`, `lit`, `when`, `Expr` (same JSON tree as pond-ts's)                                                                                                                                                                      | `packages/rs/index.js` |
+| Studies         | `studies()`, `studyInfo(name)`; `TradingCalendar` (`fromRules`, `fromSessions`, lookups, `tagSessions`, `free()`), `generateSessions`                                                                                           | `packages/rs/index.js` |
+| Live            | `LiveSeries`, `LiveView`, `LiveAggregation`, `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, `LivePartitionedSeries`, `LivePartitionedView`, `LivePartitionedFusedRolling`, `LivePartitionedSyncRolling`, `Trigger` | `packages/rs/index.js` |
+| Housekeeping    | `version` (pond-rs's), `alive()`, `livesAlive()`, `calendarsAlive()` (objects not yet freed)                                                                                                                                    | `packages/rs/index.js` |
+
+---
+
+## pond-rs (Rust crate)
 
 A native Rust implementation of pond's core, in progress (RFC
 [pond-rs.md](docs/rfcs/pond-rs.md), plan
-[PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md)). Not on crates.io yet.
+[PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md)). On crates.io as `pond-rs`
+(API docs on docs.rs).
 Results are checked bit for bit against pond-ts by `crates/pond-rs/tests/`.
 The authority is `crates/pond-rs/src/lib.rs`. Cargo feature `parallel` (on by
 default, not on wasm32) computes a call's output columns on several cores

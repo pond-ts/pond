@@ -672,7 +672,12 @@ To cut a release from `main`:
    deps). If any slipped through unreviewed, open a short follow-up
    to spot-check before releasing.
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
-   them lock-step — the release tag covers the whole monorepo. The Python
+   them lock-step — the release tag covers the whole monorepo. That is
+   **seven** manifests: the six npm workspaces plus `packages/rs`
+   (`@pond-ts/rs`, the WebAssembly bridge). `packages/rs` is not a workspace,
+   so it is not in `package-lock.json` (step 3 stays at six), and it has no
+   peer ranges (step 2 skips it); CI and `release.yml` fail while its version
+   differs from pond-ts's. The Python
    bridge rides the same number: bump `version` in
    `crates/pond-py/Cargo.toml` too (and run `cargo update -p pond-py` so
    `Cargo.lock` follows). CI's `python` job fails while the two differ. The
@@ -707,7 +712,7 @@ To cut a release from `main`:
    ```
 
    **Why it must be done:** the lock records each **workspace** package's own
-   version, so bumping the six manifests leaves it stale — and CI installs with
+   version, so bumping the six workspace manifests leaves it stale — and CI installs with
    `npm ci`, which fails outright on a lock that disagrees with the manifests
    rather than quietly repairing it. That would red the publish workflow _after_
    the tag is pushed, which is the worst moment to find out: the tag is already
