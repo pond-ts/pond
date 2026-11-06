@@ -70,7 +70,14 @@ export type TextRead =
   | { kind: 'string'; values: Array<string | null> }
   | { kind: 'number'; values: Float64Array };
 
-const decoder = new TextDecoder('utf-8');
+// The core build targets plain ES2022 types (no DOM or Node lib), so
+// TextDecoder is reached through globalThis. Node and browsers both have it.
+interface Utf8Decoder {
+  decode(bytes: Uint8Array): string;
+}
+const decoder: Utf8Decoder = new (
+  globalThis as unknown as { TextDecoder: new (label: string) => Utf8Decoder }
+).TextDecoder('utf-8');
 
 /** Longest all-ASCII run passed to `String.fromCharCode` in one call. */
 const CHAR_CODE_LIMIT = 4096;
