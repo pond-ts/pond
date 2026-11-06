@@ -31,7 +31,7 @@ FIN = REPO / "packages/financial/test/fixtures"
 
 
 def load(name):
-    return json.loads((FIN / name).read_text())
+    return json.loads((FIN / name).read_text(encoding="utf-8"))
 
 
 def calendar(spec) -> TradingCalendar:

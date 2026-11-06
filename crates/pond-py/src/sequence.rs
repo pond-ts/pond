@@ -30,10 +30,11 @@ impl PySequence {
         Ok(PySequence { inner })
     }
 
-    /// Calendar buckets (`"minute"`, `"hour"`, `"day"`, `"week"`,
-    /// `"month"`, `"quarter"`, `"year"`) in an IANA time zone, so a day
-    /// is 23 or 25 hours when the clocks change. Weeks start on Monday
-    /// unless `week_starts_on` (1 = Monday … 7 = Sunday) says otherwise.
+    /// Calendar buckets (`"day"`, `"week"`, `"month"`, `"quarter"`,
+    /// `"year"`) in an IANA time zone, so a day is 23 or 25 hours when the
+    /// clocks change; for minutes and hours use `Sequence.every`. Weeks
+    /// start on Monday unless `week_starts_on` (1 = Monday … 7 = Sunday)
+    /// says otherwise.
     #[staticmethod]
     #[pyo3(signature = (unit, time_zone="UTC", *, week_starts_on=None))]
     fn calendar(unit: &str, time_zone: &str, week_starts_on: Option<i8>) -> PyResult<Self> {

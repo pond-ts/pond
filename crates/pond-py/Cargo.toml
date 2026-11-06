@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+# Not needed to build the package; keeps them out of the sdist.
+exclude = ["agent-trial", "bench"]
 
 [lib]
 name = "pond_rs"
