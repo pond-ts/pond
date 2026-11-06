@@ -195,6 +195,12 @@ export interface StackedBarSeries {
    * `undefined` for a time / value series whose `begin` is already stable.
    */
   readonly marks?: readonly string[];
+  /**
+   * Display labels, index-aligned with {@link marks}, for a categorical series
+   * whose keys and labels differ ([PND-CATID]). `marks` is identity; this is
+   * what a hit reports as `SelectInfo.label`. Absent ⇒ the mark is the label.
+   */
+  readonly markLabels?: readonly string[];
 }
 
 /**
@@ -975,15 +981,25 @@ export function stacksFromBins(
  * ordered list of these is the explicit categorical data source; Phase 2's
  * transpose reader produces the same list from a wide series' row.
  *
- * **Labels are the stable identity** — the axis maps each `label` to a slot and
- * selection/highlight key on it (so a pick survives a reorder). They must be
- * **unique** within the list: two categories sharing a label collapse to one axis
- * tick and both highlight together on a pick. The transpose reader satisfies this
- * for free (a series' column names are unique); only a hand-built list can break
- * it. `value` may be **negative** — a single-series category bar draws it below
- * the baseline (the P&L / delta case).
+ * **`key` is the stable identity; `label` is what is drawn** ([PND-CATID]). The
+ * axis maps each key to a slot, and selection / highlight / the controlled
+ * `selected` echo key on it — `SelectInfo.mark` carries the key, while
+ * `SelectInfo.label`, the axis tick and the readout carry the label. `key`
+ * defaults to `label`, so a list without keys behaves exactly as before.
+ *
+ * Keys must be **unique** within the list: two categories sharing a key collapse
+ * to one slot and highlight together on a pick. Labels need not be — two
+ * categories may render the same string and still select independently, which
+ * is the point of the split: shortening, prettifying or localizing a label no
+ * longer changes what a selection means. The transpose reader satisfies key
+ * uniqueness for free (a series' column names are unique). `value` may be
+ * **negative** — a single-series category bar draws it below the baseline (the
+ * P&L / delta case).
  */
 export interface CategoryDatum {
+  /** The category's identity — selection's `mark`. Defaults to {@link label}. */
+  readonly key?: string;
+  /** The display string — axis tick, readout, `SelectInfo.label`. */
   readonly label: string;
   readonly value: number;
 }
@@ -999,6 +1015,8 @@ export interface CategoryDatum {
  * rather than a zero — the same rule every other reader applies.
  */
 export interface CategoryStackDatum {
+  /** The category's identity — see {@link CategoryDatum.key}. Defaults to `label`. */
+  readonly key?: string;
   readonly label: string;
   readonly values: Readonly<Record<string, number | undefined>>;
 }
@@ -1039,7 +1057,7 @@ export function categoryStacks(
   for (let i = 0; i < n; i += 1) {
     begin[i] = i;
     end[i] = i + 1;
-    marks[i] = records[i]!.label;
+    marks[i] = records[i]!.key ?? records[i]!.label;
     const row = records[i]!.values;
     for (let g = 0; g < G; g += 1) {
       const v = row[columns[g]!];
@@ -1047,7 +1065,31 @@ export function categoryStacks(
       values[i * G + g] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
     }
   }
-  return { begin, end, groups: columns, values, length: n, marks };
+  return {
+    begin,
+    end,
+    groups: columns,
+    values,
+    length: n,
+    marks,
+    ...labelsIfKeyed(records, marks),
+  };
+}
+
+/**
+ * `markLabels` when any category's key differs from its label, else nothing —
+ * so an unkeyed list builds the very series it always did ([PND-CATID]).
+ */
+function labelsIfKeyed(
+  records: readonly { readonly label: string }[],
+  marks: readonly string[],
+): { markLabels?: readonly string[] } {
+  for (let i = 0; i < records.length; i += 1) {
+    if (records[i]!.label !== marks[i]) {
+      return { markLabels: records.map((r) => r.label) };
+    }
+  }
+  return {};
 }
 
 /**
@@ -1072,11 +1114,19 @@ export function categoryStack(
     end[i] = i + 1;
     const v = records[i]!.value;
     values[i] = Number.isFinite(v) ? v : NaN;
-    marks[i] = records[i]!.label;
+    marks[i] = records[i]!.key ?? records[i]!.label;
   }
-  // `marks` carry the category names — the stable per-bar identity the categorical
-  // axis selects on (the slot index `begin` renumbers on reorder; the name doesn't).
-  return { begin, end, groups: ['value'], values, length: n, marks };
+  // `marks` carry the category keys — the stable per-bar identity the categorical
+  // axis selects on (the slot index `begin` renumbers on reorder; the key doesn't).
+  return {
+    begin,
+    end,
+    groups: ['value'],
+    values,
+    length: n,
+    marks,
+    ...labelsIfKeyed(records, marks),
+  };
 }
 
 /** Which row {@link transposeRow} reads across. */

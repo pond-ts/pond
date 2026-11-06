@@ -39,8 +39,14 @@ export interface ScaleBand {
   bandwidth(): number;
   /** Slot pitch in pixels — same as {@link bandwidth} (padding is the bar's `gap`). */
   step(): number;
-  /** The category name at slot value `v` (`categories[floor(v)]`), or `''`. */
+  /** The category's display label at slot value `v`, or `''`. */
   label(value: number): string;
+  /**
+   * The category's **key** at slot value `v` (`categories[floor(v)]`), or `''` —
+   * its identity, which equals {@link label} unless the categories were given
+   * distinct display labels ([PND-CATID]).
+   */
+  key(value: number): string;
   domain(): [number, number];
   domain(next: readonly [number, number]): ScaleBand;
   range(): [number, number];
@@ -49,14 +55,18 @@ export interface ScaleBand {
 }
 
 /**
- * Build a {@link ScaleBand} over an ordered list of category names. Configure like
+ * Build a {@link ScaleBand} over an ordered list of category keys, with optional
+ * index-aligned display `labels` (omitted ⇒ each key is its own label). Configure like
  * a d3 scale: `scaleBand(tickers).domain([0, n]).range([0, width])` — the
  * container sets `domain([0, n])` from the layer's slot extent and `range([0,
  * plotWidth])`. `categories` supplies the labels; the domain drives the geometry,
  * so the two must agree on count (`categories.length === n`), which they do when
  * both come from the same layer's `xCategories()` / slot extent.
  */
-export function scaleBand(categories: readonly string[]): ScaleBand {
+export function scaleBand(
+  categories: readonly string[],
+  labels?: readonly string[],
+): ScaleBand {
   let domain: [number, number] = [0, Math.max(1, categories.length)];
   let range: [number, number] = [0, 1];
   const lin = scaleLinear();
@@ -94,9 +104,15 @@ export function scaleBand(categories: readonly string[]): ScaleBand {
   };
   scale.step = scale.bandwidth;
 
-  scale.label = (value: number): string => {
+  scale.key = (value: number): string => {
     const i = Math.floor(value - domain[0]);
     return i >= 0 && i < categories.length ? categories[i]! : '';
+  };
+
+  scale.label = (value: number): string => {
+    const i = Math.floor(value - domain[0]);
+    if (i < 0 || i >= categories.length) return '';
+    return labels?.[i] ?? categories[i]!;
   };
 
   scale.tickFormat = () => scale.label;
@@ -124,7 +140,7 @@ export function scaleBand(categories: readonly string[]): ScaleBand {
   scale.range = rangeFn;
 
   scale.copy = (): ScaleBand =>
-    scaleBand(categories).domain(domain).range(range);
+    scaleBand(categories, labels).domain(domain).range(range);
 
   return scale;
 }
