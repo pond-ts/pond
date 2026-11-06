@@ -1,0 +1,64 @@
+# Headed runs on a real 120 Hz display at Retina resolution (2026-10-15)
+# MacBook Pro, Apple M1 Pro, built-in Liquid Retina XDR (3456x2234, ProMotion, no external
+# monitor). macOS 15.7.7 (24G720), Google Chrome 155.0.8059.40, --channel chrome, headed.
+# On battery the whole time (44% -> 38%), each run under `caffeinate -i`. Also running:
+# Spotlight indexing (mds + mdworker ~60% CPU), NordVPN ~13%, Messages, Claude; WindowServer 62%.
+# Code: pond-ts/pond-ts-live-demo @ cef42f5 (this directory's spike, copied over).
+# Commands:
+#   node bench.mjs --headed --channel chrome --dpr 2 --max-prefill 30000000 --where group=space,pipeline=raw
+#   node bench.mjs --headed --channel chrome --dpr 2 --only busy
+#   node bench.mjs --headed --channel chrome --dpr 2 --only receive
+# Console rows verbatim. The per-second JSON for these runs stayed on the Mac.
+
+## space, raw (history cap 30M ticks)
+space   worker raw      m4         1000/s  10s busy  0 every 16ms dpr 2 | pts      9998 fps  120 p95 9.1ms work 0.71ms (view 0.00 ext 0.01 draw 0.70) ingest 1ms/s 998t/s lat 10/18ms page 120fps max 10ms
+space   worker raw      m4         1000/s  60s busy  0 every 16ms dpr 2 | pts     59994 fps  120 p95 9.3ms work 1.03ms (view 0.00 ext 0.03 draw 1.00) ingest 1ms/s 1000t/s lat 10/18ms page 120fps max 9ms
+space   worker raw      m4         1000/s 300s busy  0 every 16ms dpr 2 | pts    299975 fps  120 p95 9.2ms work 2.17ms (view 0.00 ext 0.13 draw 2.04) ingest 0ms/s 998t/s lat 11/19ms page 120fps max 9ms
+space   worker raw      m4        10000/s  10s busy  0 every 16ms dpr 2 | pts     99921 fps  120 p95 9.3ms work 1.56ms (view 0.00 ext 0.07 draw 1.49) ingest 1ms/s 10008t/s lat 11/19ms page 120fps max 10ms
+space   worker raw      m4        10000/s  60s busy  0 every 16ms dpr 2 | pts    599471 fps  120 p95 9.3ms work 3.41ms (view 0.00 ext 0.24 draw 3.16) ingest 1ms/s 9996t/s lat 13/20ms page 120fps max 9ms
+space   worker raw      m4        10000/s 300s busy  0 every 16ms dpr 2 | pts   2986062 fps   74 p95 15.9ms work 12.79ms (view 0.00 ext 1.34 draw 11.45) ingest 1ms/s 10011t/s lat 28/41ms page 120fps max 10ms
+space   worker raw      m4       100000/s  10s busy  0 every 16ms dpr 2 | pts    992001 fps  120 p95 9.3ms work 4.73ms (view 0.00 ext 0.38 draw 4.34) ingest 2ms/s 99942t/s lat 14/21ms page 120fps max 10ms
+space   worker raw      m4       100000/s  60s busy  0 every 16ms dpr 2 | pts   5178001 fps   43 p95 23.8ms work 22.56ms (view 0.00 ext 3.82 draw 18.74) ingest 1ms/s 100217t/s lat 34/44ms page 120fps max 9ms
+space   worker raw      m4      1000000/s  10s busy  0 every 16ms dpr 2 | pts   5876000 fps   48 p95 25.0ms work 19.66ms (view 0.00 ext 1.80 draw 17.85) ingest 2ms/s 426557t/s DROP 25459/s lat 1535/2643ms page 120fps max 11ms
+space   worker raw      buckets    1000/s  10s busy  0 every 16ms dpr 2 | pts     10007 fps  120 p95 11.1ms work 0.58ms (view 0.00 ext 0.01 draw 0.57) ingest 1ms/s 1002t/s lat 11/19ms page 120fps max 14ms
+space   worker raw      buckets    1000/s  60s busy  0 every 16ms dpr 2 | pts     60032 fps  120 p95 10.9ms work 0.56ms (view 0.00 ext 0.00 draw 0.55) ingest 1ms/s 998t/s lat 11/18ms page 120fps max 14ms
+space   worker raw      buckets    1000/s 300s busy  0 every 16ms dpr 2 | pts    300197 fps  120 p95 10.8ms work 0.59ms (view 0.00 ext 0.01 draw 0.58) ingest 1ms/s 1000t/s lat 11/19ms page 120fps max 14ms
+space   worker raw      buckets   10000/s  10s busy  0 every 16ms dpr 2 | pts     99971 fps  120 p95 10.3ms work 0.53ms (view 0.00 ext 0.01 draw 0.52) ingest 1ms/s 9972t/s lat 10/18ms page 120fps max 13ms
+space   worker raw      buckets   10000/s  60s busy  0 every 16ms dpr 2 | pts    600042 fps  120 p95 10.7ms work 0.60ms (view 0.00 ext 0.01 draw 0.59) ingest 2ms/s 10010t/s lat 10/19ms page 120fps max 13ms
+space   worker raw      buckets   10000/s 300s busy  0 every 16ms dpr 2 | pts   2996587 fps  120 p95 11.0ms work 0.59ms (view 0.00 ext 0.01 draw 0.58) ingest 1ms/s 9975t/s lat 10/19ms page 120fps max 20ms
+space   worker raw      buckets  100000/s  10s busy  0 every 16ms dpr 2 | pts    993141 fps  120 p95 10.3ms work 0.56ms (view 0.00 ext 0.00 draw 0.55) ingest 2ms/s 100120t/s lat 11/19ms page 120fps max 13ms
+space   worker raw      buckets  100000/s  60s busy  0 every 16ms dpr 2 | pts   5882358 fps  120 p95 10.2ms work 0.48ms (view 0.00 ext 0.01 draw 0.46) ingest 2ms/s 100280t/s lat 10/18ms page 120fps max 11ms
+space   worker raw      buckets  100000/s 300s busy  0 every 16ms dpr 2 | pts  29415809 fps  120 p95 10.3ms work 0.55ms (view 0.00 ext 0.01 draw 0.54) ingest 2ms/s 100006t/s lat 11/18ms page 120fps max 16ms
+space   worker raw      buckets 1000000/s  10s busy  0 every 16ms dpr 2 | pts   8027086 fps  120 p95 10.3ms work 0.31ms (view 0.00 ext 0.00 draw 0.30) ingest 7ms/s 1001750t/s lat 12/20ms page 120fps max 11ms
+space   worker raw      buckets 1000000/s  60s busy  0 every 16ms dpr 2 | pts  39091000 fps  120 p95 10.2ms work 0.25ms (view 0.00 ext 0.00 draw 0.24) ingest 7ms/s 1003526t/s lat 12/19ms page 120fps max 10ms  fill 30/60s
+space   worker raw      buckets 1000000/s 300s busy  0 every 16ms dpr 2 | pts  39041000 fps  120 p95 10.3ms work 0.12ms (view 0.00 ext 0.00 draw 0.11) ingest 7ms/s 997400t/s lat 12/19ms page 120fps max 12ms  fill 30/300s
+
+## busy
+busy    worker chunk    m4       100000/s  10s busy  0 every 16ms dpr 2 | pts    990901 fps  120 p95 10.0ms work 4.81ms (view 0.00 ext 0.36 draw 4.44) ingest 11ms/s 99860t/s lat 14/22ms page 120fps max 11ms
+busy    main   chunk    m4       100000/s  10s busy  0 every 16ms dpr 2 | pts    991801 fps  120 p95 10.3ms work 4.73ms (view 0.00 ext 0.36 draw 4.36) ingest 12ms/s 100225t/s lat 15/22ms page 120fps max 11ms
+busy    worker chunk    m4       100000/s  10s busy 20 every 16ms dpr 2 | pts    991901 fps  120 p95 10.2ms work 4.76ms (view 0.00 ext 0.36 draw 4.39) ingest 12ms/s 99900t/s lat 14/22ms page 106fps max 31ms
+busy    main   chunk    m4       100000/s  10s busy 20 every 16ms dpr 2 | pts    992301 fps  100 p95 25.4ms work 4.80ms (view 0.00 ext 0.43 draw 4.36) ingest 11ms/s 99705t/s lat 17/35ms page 100fps max 26ms
+busy    worker chunk    m4       100000/s  10s busy 40 every 16ms dpr 2 | pts    992101 fps  120 p95 10.3ms work 4.74ms (view 0.00 ext 0.36 draw 4.38) ingest 12ms/s 99798t/s lat 15/22ms page 62fps max 47ms
+busy    main   chunk    m4       100000/s  10s busy 40 every 16ms dpr 2 | pts   1000001 fps   33 p95 46.5ms work 5.15ms (view 0.00 ext 0.74 draw 4.40) ingest 11ms/s 100325t/s lat 56/91ms page 33fps max 48ms
+busy    worker chunk    buckets  100000/s  10s busy  0 every 16ms dpr 2 | pts    992301 fps  120 p95 10.2ms work 0.52ms (view 0.00 ext 0.01 draw 0.50) ingest 19ms/s 100240t/s lat 10/18ms page 120fps max 12ms
+busy    main   chunk    buckets  100000/s  10s busy  0 every 16ms dpr 2 | pts    992201 fps  120 p95 10.0ms work 0.51ms (view 0.00 ext 0.01 draw 0.50) ingest 19ms/s 99927t/s lat 11/18ms page 120fps max 11ms
+busy    worker chunk    buckets  100000/s  10s busy 20 every 16ms dpr 2 | pts    992401 fps  120 p95 10.2ms work 0.34ms (view 0.00 ext 0.00 draw 0.33) ingest 12ms/s 99760t/s lat 10/18ms page 109fps max 27ms
+busy    main   chunk    buckets  100000/s  10s busy 20 every 16ms dpr 2 | pts    992301 fps  120 p95 22.2ms work 0.32ms (view 0.00 ext 0.01 draw 0.31) ingest 12ms/s 100125t/s lat 11/30ms page 119fps max 25ms
+busy    worker chunk    buckets  100000/s  10s busy 40 every 16ms dpr 2 | pts    992001 fps  120 p95 10.2ms work 0.32ms (view 0.00 ext 0.01 draw 0.31) ingest 12ms/s 99982t/s lat 10/18ms page 62fps max 49ms
+busy    main   chunk    buckets  100000/s  10s busy 40 every 16ms dpr 2 | pts    992401 fps   60 p95 44.1ms work 0.32ms (view 0.00 ext 0.01 draw 0.31) ingest 11ms/s 100093t/s lat 30/50ms page 60fps max 45ms
+
+## receive
+receive worker raw      buckets 1000000/s  10s busy  0 every 16ms dpr 2 | pts   8896000 fps  120 p95 10.3ms work 0.27ms (view 0.00 ext 0.00 draw 0.26) ingest 7ms/s 996875t/s lat 12/20ms page 120fps max 11ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 4 every 16ms dpr 2 | pts   8918000 fps  120 p95 9.8ms work 4.26ms (view 0.00 ext 0.00 draw 0.25) ingest 7ms/s 999700t/s lat 16/23ms page 120fps max 10ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 8 every 16ms dpr 2 | pts   8918000 fps   85 p95 16.7ms work 8.26ms (view 0.00 ext 0.00 draw 0.25) ingest 6ms/s 1001125t/s lat 24/36ms page 120fps max 10ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 12 every 16ms dpr 2 | pts   7525000 fps   73 p95 16.3ms work 12.23ms (view 0.00 ext 0.00 draw 0.23) ingest 6ms/s 894441t/s DROP 42094/s lat 905/1049ms page 120fps max 10ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 16 every 16ms dpr 2 | pts   4844719 fps   58 p95 18.2ms work 16.21ms (view 0.00 ext 0.00 draw 0.20) ingest 3ms/s 498790t/s DROP 626543/s lat 1852/2376ms page 120fps max 10ms  NOT-CAUGHT-UP
+receive worker raw      buckets 1000000/s  10s busy  0 spin 24 every 16ms dpr 2 | pts   3523000 fps   40 p95 26.3ms work 24.17ms (view 0.00 ext 0.00 draw 0.17) ingest 2ms/s 326006t/s DROP 740990/s lat 3431/4364ms page 120fps max 10ms  NOT-CAUGHT-UP
+receive worker raw      buckets 1000000/s  10s busy  0 rx worker every 16ms dpr 2 | pts   8916000 fps  120 p95 10.2ms work 0.27ms (view 0.00 ext 0.01 draw 0.26) ingest 7ms/s 1002650t/s lat 12/19ms page 120fps max 11ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 8 rx worker every 16ms dpr 2 | pts   8927000 fps   84 p95 16.6ms work 8.26ms (view 0.00 ext 0.00 draw 0.25) ingest 7ms/s 996025t/s lat 20/28ms page 120fps max 10ms
+receive worker raw      buckets 1000000/s  10s busy  0 spin 16 rx worker every 16ms dpr 2 | pts   8963000 fps   60 p95 17.0ms work 16.27ms (view 0.00 ext 0.00 draw 0.26) ingest 7ms/s 998361t/s lat 28/36ms page 120fps max 10ms
+receive worker chunk    buckets  250000/s  10s busy  0 every 16ms dpr 2 | pts   2242500 fps  120 p95 10.0ms work 0.34ms (view 0.00 ext 0.01 draw 0.33) ingest 30ms/s 249850t/s lat 10/18ms page 120fps max 10ms
+receive worker chunk    buckets  500000/s  10s busy  0 every 16ms dpr 2 | pts   4474500 fps  120 p95 10.3ms work 0.28ms (view 0.00 ext 0.00 draw 0.27) ingest 48ms/s 500813t/s lat 11/18ms page 120fps max 11ms
+receive worker chunk    buckets 1000000/s  10s busy  0 every 16ms dpr 2 | pts   8909000 fps  120 p95 10.0ms work 0.26ms (view 0.00 ext 0.00 draw 0.25) ingest 75ms/s 999900t/s lat 11/19ms page 120fps max 10ms
+receive worker chunk    buckets  500000/s  10s busy  0 rx worker every 16ms dpr 2 | pts   4482500 fps  120 p95 10.2ms work 0.30ms (view 0.00 ext 0.00 draw 0.29) ingest 48ms/s 499350t/s lat 11/19ms page 120fps max 11ms
+receive worker chunk    buckets 1000000/s  10s busy  0 rx worker every 16ms dpr 2 | pts   8928000 fps  120 p95 10.0ms work 0.27ms (view 0.00 ext 0.00 draw 0.26) ingest 78ms/s 1001900t/s lat 12/20ms page 120fps max 11ms

@@ -1234,12 +1234,12 @@ fn is_prime(n: u64) -> bool {
     if n < 4 {
         return true;
     }
-    if n % 2 == 0 || n % 3 == 0 {
+    if n.is_multiple_of(2) || n.is_multiple_of(3) {
         return false;
     }
     let mut f = 5u64;
     while f * f <= n {
-        if n % f == 0 || n % (f + 2) == 0 {
+        if n.is_multiple_of(f) || n.is_multiple_of(f + 2) {
             return false;
         }
         f += 6;
@@ -1536,7 +1536,12 @@ mod tests {
     /// The prime ladder against trial division, and its edges.
     #[test]
     fn primes_match_trial_division() {
-        let slow = |n: u64| n >= 2 && (2..n).take_while(|d| d * d <= n).all(|d| n % d != 0);
+        let slow = |n: u64| {
+            n >= 2
+                && (2..n)
+                    .take_while(|d| d * d <= n)
+                    .all(|d| !n.is_multiple_of(d))
+        };
         for n in 0..5_000 {
             assert_eq!(is_prime(n), slow(n), "{n}");
         }
@@ -1609,8 +1614,8 @@ mod tests {
                 let r = (x % 1_000_003) as f64 / 7.0;
                 match i {
                     _ if (300..340).contains(&i) => f64::NAN,
-                    _ if x % 23 == 0 => f64::NAN,
-                    _ if x % 97 == 0 => -0.0,
+                    _ if x.is_multiple_of(23) => f64::NAN,
+                    _ if x.is_multiple_of(97) => -0.0,
                     _ if i % 1000 == 999 => 0.0,
                     _ if i % 701 == 700 => f64::INFINITY,
                     _ if i % 977 == 976 => f64::NEG_INFINITY,

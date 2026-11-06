@@ -53,10 +53,23 @@ Available:
   turns a value axis into a scale you can read a verdict off. Generalises to
   heart-rate zones, SLO bands, and control-chart spec limits.
 
-In flight:
+- [**A streaming aggregator, in TypeScript and Rust**](./streaming-aggregator)
+  — adapted from the [gRPC experiment](https://github.com/pjm17971/pond-grpc-experiment):
+  a gRPC firehose of per-host metrics into one `LiveSeries`, per-host
+  1-minute baselines and 200 ms slices on a shared clock trigger, and
+  frames out to a browser dashboard. Built twice, on pond-ts and on
+  pond-rs, with a side-by-side check that both give the same rows,
+  bounded producer queues, and a race of the two (and the latency
+  measuring mistake it caught).
 
-- A gRPC stream-processor guide once that experimental work surfaces
-  something worth writing up.
+- [**A live chart at 120 fps, off the main thread**](./live-chart-in-a-worker)
+  — built from the [offscreen-stream spike](https://github.com/pond-ts/pond/blob/main/spikes/offscreen-stream/REPORT.md):
+  a market feed drawn in a Web Worker on an `OffscreenCanvas`, with the
+  WebSocket on a second worker, ticks kept in a `LiveSeries` through
+  `pushSeries`, and one bucket per pixel column so a frame costs the same at
+  10 thousand points or 30 million. Covers hover across threads, resizing,
+  what the spike measured on a 120 Hz screen, and when `LineChart` is the
+  better choice.
 
 For shorter, primitive-focused docs, see the
 [pond-ts core reference](../pond-ts/) and

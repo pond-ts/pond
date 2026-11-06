@@ -14,17 +14,19 @@ back.
 
 ## Add the dependency
 
-pond-rs is not on crates.io yet, so point Cargo at the GitHub repository.
-The crate lives in the pond monorepo; Cargo finds it by name.
+pond-rs is on [crates.io](https://crates.io/crates/pond-rs):
 
 ```toml
 # Cargo.toml
 [dependencies]
-pond-rs = { git = "https://github.com/pond-ts/pond" }
+pond-rs = "0.1"
 ```
 
-To stay on one version while the API is still moving, pin a commit with
-`rev = "<commit sha>"`. pond-rs needs Rust 1.85 or newer (edition 2024).
+or run `cargo add pond-rs`. pond-rs needs Rust 1.88 or newer. Every type
+and function is described in the API reference on
+[docs.rs](https://docs.rs/pond-rs). To try work not yet released, depend on
+the repository instead:
+`pond-rs = { git = "https://github.com/pond-ts/pond" }`.
 
 The crate is named `pond-rs`; in code it is `pond_rs`.
 

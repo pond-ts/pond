@@ -37,6 +37,13 @@ the API is expected to move as friction reports land. Pin an exact
 version.
 :::
 
+:::note[TypeScript only]
+`@pond-ts/process` has no Rust version. pond's core and financial studies
+come in [Rust](../pond-rs/index.mdx) as well, but the process layer
+(registry, host, requests, cache) is TypeScript only for now, so the
+examples here have no Rust tab.
+:::
+
 **Install** — `npm install @pond-ts/process pond-ts`. Peer-depends on
 `pond-ts`; the pond packages release together, so keep their ranges in
 step.

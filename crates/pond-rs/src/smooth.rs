@@ -279,7 +279,12 @@ pub enum Sample {
     /// order in the series. The same `seed` picks the same rows; pond-ts
     /// has no seed. A series of at most `size` rows is kept whole. `size`
     /// must be at least 1.
-    Reservoir { size: usize, seed: u64 },
+    Reservoir {
+        /// How many rows to keep.
+        size: usize,
+        /// Seed for the random picks.
+        seed: u64,
+    },
 }
 
 /// SplitMix64: a small, fast generator, enough for picking rows.

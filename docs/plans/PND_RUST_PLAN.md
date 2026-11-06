@@ -537,6 +537,36 @@ The first two are logged as [PND-RUSTOUT] below.
 The one result short of a clean win is one-core B: polars is faster
 (22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
+## Cross-library comparison, all steps re-run (2026-10-21)
+
+Every speed table from R1a and R1b steps 2a–8i4 re-run in one session on one
+machine (3 repeats each), with polars added where it has a matching call:
+[`crates/pond-rs/bench/COMPARISON.md`](../../crates/pond-rs/bench/COMPARISON.md).
+Outcome: pond-rs is faster than pond-ts in 171 of 174 cases (median 5.7×;
+slower on the 1M × 1M outer join and wide-table JSON in); against polars it
+is about even overall (faster in 61 cases, slower in 64 on 4 cores). The
+R1a "≥2× pond-ts single-core" target holds on A but not on B's compute
+(1.8×; 2.2× on total time). R1a A is now a tie with polars on 4 cores
+(compute 128–139 vs 134–166 ms) rather than a pond-rs lead. Two earlier
+numbers did not reproduce: pond-ts `shift` / `fill` (fixed since, #776) and
+pond-rs `from_json` dense (45 ms in step 8d2's table; 75–91 ms at that
+step's own commit on this machine, so not a regression).
+
+**Revised 2026-10-22 after a Codex review** found polars runners doing
+different work or giving different answers (gap handling in cumulative
+sum, an off-by-one centred window, a missing reducer, dropped buckets, tie
+rules, missing time / interval columns, different JSON formats). Every
+pond-rs and polars runner now writes each case's answer (`BENCH_DUMP`) and
+`bench/check_outputs.py` / `check_all.sh` compare them cell by cell; all
+147 compared cases match. Polars cases were added where polars has a
+counterpart the first run missed (leading / centred time windows, minimum
+row counts, rolling list reducers). Re-timed on main with #811: pond-rs vs
+pond-ts faster in 170 of 173 (median 7.5×); vs polars on 4 cores faster in
+73, slower in 59, same in 9 (median 1.08). R1a A compute 117–120 vs polars
+142–177 ms on 4 cores; B's ≥2× single-core target still missed (1.9×).
+Decision: an answer check is now part of the benchmark, so a polars
+"equivalent" that is not equivalent fails rather than reads as a number.
+
 ## [PND-CHAIN] — chain-friendly options, both libraries (2026-10-22)
 
 Peter asked what a fluent chain looks like (study → operators → a final fold
@@ -569,6 +599,75 @@ libraries, surfaced five rough edges; he asked to work on them. Outcome:
 Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
 partitioned variants); a mutation run (dropping one appended column, renaming
 the output) failed all 10.
+
+## [PND-RUSTPUB] — publish pond-rs on crates.io (2026-10-29)
+
+Peter asked (2026-10-29) for pond-rs to be published with API docs so Rust
+users can find it. Crate name `pond-rs` was free on crates.io (checked
+2026-10-29; `pond` is an unrelated 2017 thread-pool crate).
+
+Done in the publish-prep PR:
+
+- **Metadata.** description, homepage (pond-ts.org), documentation
+  (docs.rs), keywords, categories, `readme`, a copy of the MIT `LICENSE`.
+  `include` packs only `src/`, three user examples (`quickstart`, `rsi`,
+  `live_stream`), README and licence (~385 KB). Tests, benches and the perf
+  examples read fixtures elsewhere in the monorepo, so they stay out.
+- **Minimum Rust is 1.88, not 1.85.** The `icu_*` crates need 1.88, and two
+  `if let` match guards (stable only in newer Rust) were rewritten. Raising
+  `rust-version` turned on two clippy lints (`is_multiple_of`, collapsed
+  `if let` chains), applied with `clippy --fix`. CI now has a `rust-msrv`
+  job on 1.88.
+- **Docs.** Every public item documented; `#![warn(missing_docs)]` plus
+  `RUSTDOCFLAGS=-D warnings` in CI keep it so. The crate front page was
+  rewritten as a landing page (what it is, where to start, feature table).
+  docs.rs builds with all features and `--cfg docsrs`, which marks
+  `live`-only items.
+- **Release workflow** `.github/workflows/release-rs.yml`: dispatch on main
+  (dry run by default) or tag `pond-rs-v<version>`. The first publish needs
+  a `CARGO_REGISTRY_TOKEN` secret (crates.io only offers trusted publishing
+  for a crate that already exists); after it, set up trusted publishing on
+  crates.io and delete the secret.
+
+Version: Peter chose 0.1.0 with its own numbering, not lock-step with
+pond-ts (2026-10-29); this settles [PND-RUSTRFC]'s versioning question.
+
+## Codex review of the whole crate (2026-10-29)
+
+pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
+findings (2 P1, 10 P2, 2 P3), checked one by one against main after #852
+and fixed in small PRs, each with a test that fails before the fix. Where
+pond-ts shares the defect it is fixed there too, under its own tag.
+
+| #   | Finding                                                    | Status                                         |
+| --- | ---------------------------------------------------------- | ---------------------------------------------- |
+| R01 | reduce keeps what a window view trimmed                    | fixed, both libs, [PND-REDUCETRIM]             |
+| R02 | reduce on a view of a reorder series uses FIFO-only states | fixed, both libs, [PND-REDUCETRIM]             |
+| R03 | a batch can mix interval label kinds                       | fixed, both libs, [PND-LIVELABEL]              |
+| R04 | live map keeps `required` though it can make gaps          | fixed, both libs, [PND-MAPGAP]                 |
+| R05 | declared live groups skip the rows already held            | fixed (pond-ts already refused)                |
+| R08 | numeric group names round ties up, JavaScript to even      | fixed: shares the JSON writer's digits         |
+| R09 | catalog refuses `100.0` / `1e2` session milliseconds       | fixed: whole-number floats read                |
+| R10 | partitions built over history: O(rows x groups)            | fixed: map, 64k groups 7.6 s → 0.19 s          |
+| R07 | empty leading/centred time windows admit earlier rows      | fixed, both libs, [PND-ROLLEMPTY]              |
+| R06 | batch partition map panics on a missing partition column   | fixed: error; mismatched results refused too   |
+| R12 | Arrow time value `i64::MIN` panics in `abs()`              | fixed: `unsigned_abs`                          |
+| R13 | huge study periods panic; Ichimoku offsets flip sign       | fixed: gaps (period > rows); offsets error     |
+| R14 | `max_age` near `i64::MAX` overflows the cutoff             | fixed: saturating cutoff                       |
+| R11 | declared minimum Rust version too low                      | handled in the crates.io prep PR (#851), 1.88  |
+
+Codex also listed four existing limitations, not on the fix list:
+duplicate-timestamp retention removing still-held view rows (mirrors
+pond-ts, belongs to [PND-CHANGE]), schema-only Arrow IPC files unreadable,
+composition tests (view→reduce, window→reduce, building over history,
+schema after transforms) and ARCHITECTURE.md describing only the
+TypeScript classes.
+
+R13 note: an existing test (`huge_periods_give_gaps`) pins that a period no
+window can fill gives gaps, not an error, so the fix short-circuits those
+studies rather than capping periods at 2^53. A sweep of every catalog bar
+option at usize::MAX, isize::MAX + 1 and 2^53 + 2 (catalog cap lifted for
+the run) found exactly the reviewed studies and no others.
 
 ## Next
 
@@ -3474,7 +3573,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     differs from pond-ts's documented gap; the data never has that case.
 
 - **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; revised
-  twice on 2026-10-25 after two reviews of the plan; not started). RFC
+  twice on 2026-10-25 after two reviews of the plan; done 2026-10-29). RFC
   phase R3: pond-ts `packages/core/src/live/`, 9.7k lines (`LiveSeries`
   1.65k, partitioned 1.6k + 1.15k rolling, `LiveView` 1.2k, rolling / fused
   rolling 1.3k, aggregation 0.5k, reduce 0.5k, storage 1.4k, triggers
@@ -3562,8 +3661,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `drop` / `reorder`, `pushMany` with a bad second row commits and
        emits the first row's `event` (no `batch`) before throwing, while
        `strict` refuses the whole batch, so the "never half-committed"
-       rule in the design above holds for pond-ts only under `strict`
-       (step 2 decides: copy, or fix pond-ts first); disposing the last
+       rule in the design above held for pond-ts only under `strict`
+       (pjm17971 chose to fix pond-ts: [PND-BATCHATOM], so every mode
+       now refuses a bad batch whole); disposing the last
        view on an intermediate view disposes the intermediate too, but
        only when nothing listens to it (case `view-dispose-chain`, an
        unwatched node; pond-rs's `remove` goes down the tree, so this
@@ -3581,27 +3681,742 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `event_rate`, snapshots incl. `to_json` / `from_json`, `stats`),
        plus `filter` and a fixed-bucket `aggregate` queried through
        handles, `watch`, and `remove`.
+       Built 2026-10-27 (`src/live/`: `mod.rs` owner, `event.rs`,
+       `buffer.rs`, `view.rs`, `aggregation.rs`, `json.rs`; cargo feature
+       `live`, on by default). 31 of the 51 fixture cases run (every case
+       whose nodes are only `filter` / `aggregate`), each push's outputs and
+       every node's final state (aggregation `stats` included) equal. Five
+       cases were added to the fixture for this step:
+       `view-dispose-chain-filters`, `aggregate-reducers` (every reducer),
+       `aggregate-grace`, `aggregate-boolean-array`,
+       `aggregate-dispose-on-view`. Decisions
+       and differences from pond-ts:
+       - Rows were first stored as a `VecDeque` of shared events
+         (`Arc` key + values, `Arc` schema): a filter or a watched output
+         handed the same event on with two reference counts. Cost was about
+         250 bytes per event (each cell a 48-byte `Value`). Replaced by a
+         column store before step 4 (below, "Memory").
+       - `push_many` checks every row, then dry-runs the ordering over the
+         batch, then commits, in every mode (pond-ts after [PND-BATCHATOM]).
+       - `remove(node)`: that node's handle then returns `Err`; nodes
+         built on it stay readable but get no more events. When a view is
+         removed, a source view left with no children and no watched
+         output is detached too, and so on up (pond-ts's upward dispose,
+         case `view-dispose-chain`); it stays readable. Removing an
+         aggregation does not walk up (`LiveAggregation.dispose` only
+         unsubscribes; case `aggregate-dispose-on-view`, found in review).
+         The root cannot be removed.
+       - pond-rs refuses what pond-ts accepts and gets wrong: number
+         reducers on text columns ([PND-KINDREDUCE]; case
+         `aggregate-bad-mapping` is listed as refused in the harness),
+         decimal columns and duplicate column names in a live schema, and
+         intervals whose label kind differs from the events held.
+       - `keep` on an array column compares the arrays' elements, as
+         batch pond-rs does; pond-ts compares the array objects, so two
+         equal arrays give a gap there ([PND-ARRAYKEY], logged with the
+         batch reducers). The fixture's array case leaves `keep` out.
+       - Bucket edges are worked out in i128, and `aggregate` refuses a
+         step and anchor whose edges for a supported time would not fit
+         an i64 (an anchor of `i64::MIN` panicked before review).
+       - A late event a `reorder` source accepts goes into each view in
+         key order; pond-ts views throw ([PND-LATE]). No fixture case
+         reaches it with only step 2 nodes; step 3 decides.
+       - `aggregate` refuses calendar sequences for now (step 5 with the
+         full `LiveAggregation`).
+       - For step 6: pond-ts #838 (partition fan-out per `pushMany`)
+         finishes partitions (retention, `batch`, `evict`, settle) in the
+         order of each partition's last row in the batch; fixture case
+         `partition-pushmany`.
+       - Timing (`examples/perf_live.rs` vs `bench/live_pond_ts.mjs`, 1M
+         events, pond-ts after the fix below): one at a time 298 ms vs
+         3,548 (12x); `max_events` 10k 220 vs 2,667; reorder 398 vs 587;
+         filter + aggregate 418 vs 3,864, all outputs watched 696 vs
+         4,401, on a 10k window 408 vs 10,766. Batches of 1,000: 260 vs
+         148, pond-rs slower: storing takes ~125 ms and freeing the 1M
+         events when the series is dropped ~130 ms (counted in the time);
+         pond-ts stores batches by column and makes no per-event object
+         when nothing listens. A column store would close that.
+       - Timing found a pond-ts bug, fixed in the same PR:
+         [PND-LIVEPUSHSCAN] (one-at-a-time `push` slowed as the series
+         grew).
     3. Views: `map`, `select`, `sample`, `window`; live `diff` / `rate` /
        `pct_change` / `fill` / `cumulative`.
+       Built 2026-10-28 (`src/live/views.rs`; `window` trimming in
+       `view.rs`). 39 of the 52 fixture cases run, every output and final
+       state equal; one case added, `views-reorder-late`. Decisions and
+       differences from pond-ts:
+       - Late events ([PND-LATE]): pjm17971 chose insert in order
+         (2026-10-28; the other options were stateful views skip it, or
+         refuse the push). pond-ts was changed to match (its
+         views threw after the root had stored the event): every view puts
+         a late event at its key position, after equal keys; `diff`,
+         `rate`, `pct_change`, `fill`, `cumulative` and `sample` work in
+         arrival order. A pond-ts re-keying `map` that went backwards also
+         threw; it now inserts in order too (pond-rs `map` cannot re-key).
+       - Fixed in pond-ts on the way: live `fill('zero')` wrote `0` into
+         text columns (batch skips them); case `fill-cumulative` showed it.
+       - pond-rs refuses at build what pond-ts takes silently: unknown or
+         repeated columns, `diff` / `rate` / `pct_change` / `cumulative`
+         on a column that is not a number (pond-ts gives gaps; case
+         `diff-rate-pct` node `bad` is listed as refused in the harness),
+         `Zero` or a value of the wrong kind in a per-column `fill` (batch
+         pond-rs refuses the same), `Bfill` / `Linear`, `sample` with
+         `Reservoir` (pond-ts has stride only) or stride 0, a row window of
+         0, `cumulative` with a reducer other than sum / max / min / count.
+       - `map(from, |event| cells)` returns the new cells in schema order
+         and keeps the key and schema (no re-keying, no new columns);
+         a wrong number of cells or a cell of the wrong kind panics during
+         the push. Non-finite numbers become gaps, as pond-ts.
+       - `fill_with(.., limit)`: a live view fills the first `limit` gaps
+         of a longer run and leaves the rest (pond-ts live); batch
+         `fill_with` leaves the whole run unfilled.
+       - A `window` view trims itself silently (no `Evict` output, and
+         views on it keep what it trimmed), as pond-ts. `filter`, `map`
+         and `select` on a time window keep its length for `event_rate`.
+       - Timing (1M events, same quiet run, pond-rs vs pond-ts, ms): on a
+         `max_events` 10k root, diff + rate + pct_change 739 vs 4,404;
+         fill hold + cumulative 606 vs 3,523; map + select + sample 480
+         vs 3,678; two windows 309 vs 3,173; reorder 5% late with diff +
+         fill + window 761 vs 1,239. Each view that makes new events costs
+         pond-rs ~0.2-0.3 µs an event (an `Arc`, a `Vec` and a text clone
+         per event; the row layout noted under memory below). Timing found
+         a pond-ts slowdown, fixed in the same PR: [PND-EVICTSPLICE]
+         (dropping old events copied the whole buffer per push; before the
+         fix pond-ts took 115 s on the first case). pond-rs also stopped
+         collecting a view's evicted events when nothing follows them.
+       - Memory (gRPC experiment friction, 2026-10-28,
+         pjm17971/pond-grpc-experiment#45): a 30 s window at 1000 hosts x
+         1000 events/s held ~10.3M rows in 2,540 MB, ~250 bytes per row
+         against ~67 for a plain `VecDeque` of the same rows, and the batch
+         handler's p99 doubled; cause is one `Arc` + a `Vec` of 48-byte
+         `Option<Value>` cells per event. Same column-store point as the
+         step 2 `push_many` timing. Also `LiveSeries::to_json` copies into
+         a `TimeSeries` first.
+       - Fixed 2026-10-28, before step 4 (pjm17971 asked whether to fix it
+         now; yes, since steps 4-6 add more nodes that keep events): series
+         and views store events by column (`live/buffer.rs`): a start time
+         per event (plus end and label for range and interval keys) and a
+         `VecDeque` per value column, numbers as `f64` with NaN for a gap
+         (live number columns never hold NaN otherwise), text as
+         `Option<String>`, true/false as `Option<bool>`. A `LiveEvent` is
+         built when read (`at`, `events`, `find`, … now return owned events)
+         or when a push hands an event down the tree; the root stores an
+         event after handing it on, moving its cells in when no output kept
+         it. Simpler than the sealed chunks the design above names: no
+         `Arc` sharing of chunks with `to_time_series` (which builds
+         columns straight from the store). Memory (`examples/mem_live.rs`,
+         1M events, bytes held per event): time + 3 numbers 249 → 34;
+         time + text + 2 numbers 250 → 51; the same plus a pass-all filter
+         133 → 51 per event summed over both nodes (the view alone went
+         from ~16 to ~51: it now holds its own copy rather than sharing the
+         root's events, so each pass-through view costs about as much as
+         the series; worth remembering as steps 4-6 add nodes); time + 10
+         numbers 585 → 92. Timing
+         (`perf_live`, ms, best of two interleaved runs, before → after):
+         one at a time 268 → 220; batches of 1,000 217 → 204; reorder 306
+         → 230; filter + aggregate 382 → 293; fill + cumulative 600 → 450;
+         filter + aggregate on a 10k-capped root 278 → 339 and map +
+         select + sample 462 → 499 (copying cells into each view, text
+         cells allocate); the rest within ±6%. Batches of 1,000 are still
+         slower than pond-ts (92 ms): each row still makes one short-lived
+         event and frees the caller's cell list.
     4. Rolling: single-window (`LiveRollingAggregation`), fused
        multi-window (`LiveFusedRolling`), `reduce`.
+       Built 2026-10-28 (`src/live/rolling.rs`, `reduce.rs`, `states.rs`;
+       batch `rolling.rs` states shared). 52 of the 57 fixture cases run
+       (the 5 left are partitioned, step 6), every output and final state
+       equal. Five cases added (`reduce-and-rolling-reorder`,
+       `rolling-reducers`, `rolling-tags`, `rolling-history`,
+       `rolling-overflow`) after mutation testing showed the first fixture
+       missed a reduce that ignored where a late event went, or ignored
+       that a reorder root drops events out of arrival order; 14 planted
+       bugs, all caught now. Decisions and differences from pond-ts:
+       - Triggers for rolling and reduce came with this step (the fixture
+         cases use them): `Trigger::event`, `every(duration)`,
+         `clock(sequence)` (calendar sequences refused), `count(n)`. Step 5
+         is left with the full `LiveAggregation` (closed and open buckets,
+         calendar sequences).
+       - A reduce over a series or view removes each evicted event under
+         the index it was added with (pond-ts finds it by object identity):
+         it keeps the index of each event its source holds, in the
+         source's order, inserting a late event where the source put it
+         and dropping what a `window` view trims silently.
+       - Sources as pond-ts allows them: `rolling` on the series, a view
+         or an aggregation; `reduce` on the series or a view; nothing on a
+         reduce or on fused windows (pond-ts has no methods there). The
+         first build allowed any source; review on #843 found those had
+         no pond-ts behaviour to match.
+       - A reduce built over existing events emits for them during the
+         build. pond-ts emits on a microtask after the build, so a caller
+         that pushes again without yielding gets one emission covering
+         both from pond-ts and two from pond-rs. pond-rs has no event loop
+         to wait for; the fixture (which waits after each step) matches.
+       - `value()` peeks (copies a `stdev` state before reading), so
+         reading changes nothing. In pond-ts a read can move the reference
+         point of a running `stdev` and with it the last bit of a later
+         value; pond-rs copies the reads pond-ts makes inside a push (for
+         `update` listeners, made whether or not any listen), so pushed
+         results match bit for bit.
+       - A clock trigger on a source keyed by time range or interval is
+         refused: pond-ts emits time keys under that schema.
+       - Huge values: sums of values from 2^960 (2^480 for `stdev`) go to
+         an exact big-integer lane as pond-ts (`num-bigint`, new optional
+         dependency of the `live` feature), so a window that overflowed to
+         infinity reads finite again once they leave.
+       - `Output::Update` now carries the rolling window's values (pond-ts
+         passes `value()` to `update` listeners); `None` for an
+         aggregation.
+       - `keep` over array cells counts by event (pond-ts compares array
+         objects, so equal arrays from different events differ).
+       - Timing (1M events, each case alone in its own process, pond-rs
+         vs pond-ts, ms, root keeping 10k events): root alone 182 vs
+         2,049; rolling 30 s avg + max + stdev 328 vs 3,719; rolling 100
+         rows avg, history off, `update` watched 291 vs 2,935; fused 1 m +
+         5 m + 15 m avg 338 vs 3,493; reduce avg + max + count 357 vs
+         6,443. Each node adds 0.11-0.18 µs an event to pond-rs (time
+         over the root alone; not broken down further). Timing found a
+         pond-ts slowdown, fixed in the same PR: [PND-REDUCEMICRO] (reduce
+         queued a microtask per push in a loop that never awaits; the
+         reduce case took 12,633 ms before).
     5. Triggers (`event`, `clock(sequence)`, `every(duration)`,
        `count(n)`; calendar sequences refused for clock triggers) across
        rolling, reduce and the full `LiveAggregation` (closed and open
        buckets).
+       Built 2026-10-28. Triggers had come with step 4, and closed and
+       open buckets with step 2, so what was left was pond-ts's
+       per-aggregation grace (the `LiveAggregation` constructor's
+       `{ grace }`, now `aggregate_with`) and calendar sequences.
+       pond-ts refused those in live `aggregate` too (`stepMs()` throws),
+       so they were new work in both libraries; pjm17971 chose to add them
+       (2026-10-28) rather than close the step with grace only.
+       - pond-ts: `LiveAggregation` takes the bucket holding each event
+         from `sequence.bounded` over the single instant (coverage
+         `'overlap'`) and keeps the last one, so only an event outside it
+         does time-zone arithmetic. Fixed sequences keep the arithmetic
+         path. Clock triggers still refuse calendar sequences.
+       - pond-rs: `Sequence::calendar_bucket` (one bucket, no walk past
+         it: `buckets_overlapping` computes the next bucket's end first,
+         which fails a year earlier near jiff's limits). While a calendar
+         aggregation exists the series refuses times outside years -9997
+         to 9997 UTC (`CALENDAR_RANGE_MS`; jiff handles ±9999 and a year
+         bucket in a zone 14 h off needs the year beside it), and building
+         one over such an event is refused. pond-ts takes any time.
+       - Fixture: cases `aggregate-own-grace` and
+         `aggregate-calendar-zones` (New York days across the 2026 DST
+         change, Sunday weeks, London months, a filter view, a late row
+         into the day before the cached one), `aggregate-calendar-fallback`
+         (New York's 25-hour fall-back day, Santiago's skipped midnight);
+         `aggregate-calendar` now records buckets instead of an error. 55
+         of 60 cases run, all equal. A cache that checked only `ts < end` survived until the
+         late row went into an earlier bucket.
+       - Timing (1M events, root keeping 10k, each case alone, ms): daily
+         New York buckets 198 vs pond-ts 2,469; the fixed path unchanged
+         (filter + aggregate 1 m 315 vs 3,103, 3,489 for pond-ts in the
+         step 4 run).
     6. Partitioned: `partition_by` (a node owning one subtree per key),
        `to_map` / `apply` / `collect` (append-only fan-in), partitioned
        fused rolling with synchronised emission.
+       Built 2026-10-28 (`src/live/partition.rs`, `partition_rolling.rs`,
+       `series.rs`), after pond-ts #838 merged (pjm17971 chose to merge it
+       first so pond-rs copies its batch routing).
+       - Partitions are series inside the owner (`SubSeries`); the root is
+         one too. Each slot records its nearest series, whose push settles
+         the reduces below it. `partition_by` is root-only in pond-rs.
+       - pond-ts's partitioned sugar (`p.fill(..)`, `p.diff(..)`,
+         `p.rolling(..)` without a clock, ...) is one call:
+         `per_partition(from, |live, part| ...)`, a closure that builds the
+         chain on a partition and is run again for every partition
+         `collect` / `apply` / `partition_outputs` builds on, and once on an
+         empty stub to learn the schema. `node::<T>(id)` gives a typed
+         handle for its output.
+       - Routing copies pond-ts exactly, since output order depends on it:
+         on a strict time-keyed root, a push goes to the partitions first
+         (each built in order of its first row, then every row's event in
+         push order, then each partition closes in order of its last row,
+         #838); otherwise each root event is routed as it arrives. The
+         quiet-partition age sweep runs every `max_age / 8` of time.
+       - A push a partition would refuse (value outside `groups`, an event
+         a stricter partition ordering refuses) is refused whole before
+         anything is stored; pond-ts stores it in the root and throws
+         (case `partition-groups`, compared without that row). An order a
+         gathered (`collect` / `apply`) series refuses fails the push
+         after it is delivered, as pond-ts throws mid-delivery.
+       - Synchronised rolling (`partition_rolling`, `_rows`, `_windows`)
+         reuses the rolling window state per partition (`take`, `advance`
+         added to `LiveRolling`). Emitting order: declared groups, then
+         first event. Its partition column is text (pond-ts declares the
+         source column's type but writes the key text into it).
+       - Fixture: 4 cases added (`partition-over-history`,
+         `partition-max-age`, `partition-max-age-sweep`,
+         `partition-rolling-history`) after mutation runs showed history
+         replay, inherited retention, the sweep step, group order and
+         chain-fed rolling were unchecked. 65 of 65 cases run, all equal.
+       - Timing found pond-rs slower than pond-ts at 1000 partitions: the
+         end-of-push settle scanned every node per series push (fixed: a
+         list of reduces), plus a linear search per routed row (fixed:
+         map). 1000 hosts, batches of 1000, per-host rolling 4,288 ms
+         before, 994 after. The up-front partition check is skipped when
+         the root's own order check already covers it.
+       - Threads (tried 2026-10-28/29, not kept; pjm17971 chose "stop").
+         `PartitionOptions::threads(n)` split partitions over shards, each
+         push's per-partition work ran on rayon and outputs were merged
+         back in one-thread order (an event engine trait shared by the
+         owner and a shard). Outputs matched on 1-5 shards (fixture plus
+         random pipelines), but the go/no-go (>= 1.5x on 4 threads, 1000
+         hosts, 1000-row pushes, rolling + collect) failed: 0.96 s on one
+         thread, 1.5-1.9 s on 2-4. Causes measured: a 1000-row push holds
+         ~0.5 ms of work, about what waking threads and merging cost;
+         with glibc malloc each shard ran ~2x slower when shards ran
+         together (mimalloc removed most of that and made one thread
+         35% faster); `collect` stays on the owner. At 50 hosts and 1M
+         rows/s one thread already does 1.0-1.4M rows/s (1.4-2.0M with
+         mimalloc); threads gave at best 1.3x. The parked code is commit
+         ff570b52 (reachable from branch claude/project-thread-225u77).
+         For more cores: several `LiveSeries`, each with a share of the
+         keys (2.5x on 4 threads at 1000 hosts). The same work found
+         the per-row linear search through declared `groups` (fixed,
+         1000 declared hosts 2.8 s -> 1.2 s).
     7. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
        a streaming task against polars-or-hand-written Rust; also the same
        task with a channel-style API vs owner-and-handles, to test rather
        than assume which agents get right.
+       **Done 2026-10-29.**
+       - Perf: every `examples/perf_live.rs` case re-run on one machine
+         (pond-rs middle of 3 runs; pond-ts one process per case, since one
+         process for all cases grew slower as its heap filled and ran out
+         of memory on the last case). One series: ~3M events/s pond-rs,
+         ~250k pond-ts (331 vs 3,944 ms per 1M); views, rolling, reduce
+         and 4-host partitions 5-17x, 1,000-host partitions 2.6-2.7x. Weak spots: batches of 1,000 (pond-ts 2.5x
+         faster, [PND-RUSTLIVEBATCH]) and `Reorder` with views (1.2x).
+         Much of pond-ts's one-at-a-time cost is its strict path building
+         a one-row chunk per push ([PND-LIVEONEPUSH]): in-order rows into a
+         `Reorder` series take pond-ts 0.76-0.8 s, so pond-rs is ~2x there. Table in
+         `website/docs/pond-rs/live.mdx` (Speed).
+       - Speed review, 2026-10-29 (thread "Review live series speed top
+         to bottom", Peter's ask: top to bottom, including the batches
+         slower than node). Method: `examples/prof_live.rs` (perf_live
+         twin, one case per run inside `timed`) under callgrind, so the
+         record is instructions per event, not this VM's ±30% timings; a
+         `git worktree` of the base commit gives the before numbers.
+         Findings at 200k rows: a bare batch push cost 1,877 instructions
+         per row, ~45% of it allocation: an `Arc<EventData>` per row even
+         when nobody reads events (~700), freeing the caller's `Vec` per
+         row (~190), the row check (~220). `reduce` rebuilt a `LiveEvent`
+         per evicted event (34% of its case). Partition routing made a
+         fresh `HashMap` + `Vec` per partition per push (~14% of the
+         1,000-host case) and partition rolling cloned and hashed the key
+         twice per event. Rolling, reduce and partition-rolling outputs
+         went through a throwaway `Vec`; leaf `map`/`select`/`diff` views
+         built an `Arc` + `Vec` per event only to copy the cells out.
+         Fixes (all internal, parity 65/65, no API change): a series with
+         no subscribers, routers or partitions (`bare_root`) stores cells
+         straight from the checked rows; `compare_keys` returns as soon as
+         the starts differ and the order check borrows keys; eviction
+         reads the cells a `reduce` must remove before they go
+         (`EventBuffer::cell`); each partition keeps a `share_at` table
+         across pushes and partition rolling maps slot → feed index with
+         the window made lazily on the first event (making it at spawn
+         changed pond-ts's emit order and broke parity); `append_values`
+         writes output rows from an iterator; a view step returns
+         `Kept::Pass(event)` or `Kept::New(cells)` so a leaf view stores
+         cells without an event. Result: 7–42% fewer instructions per
+         event on every case (push −41%, batches −37%, `Reorder` −42%,
+         `reduce` −31%, 1,000-host sync −27%, views 7–15%). Wall clock
+         moved where the cut was big (push 372 → 234 ms, batches 296 →
+         255, reduce 826 → 398, 1,000-host sync 2,954 → 2,475) and sat in
+         the noise elsewhere. The batch gap vs node: with the library's
+         share now ~50 ms per 1M rows, 70–130 ms is freeing the caller's
+         per-row `Vec`s and the host `String`s (measured by timing the
+         pushes, then the drop, then the bench's own batching alone);
+         node does that in its garbage collector, off the clock. Only a
+         column-shaped push removes it ([PND-RUSTLIVEBATCH]). Not done:
+         a threads-in-library trial (already parked), any API change.
+       - [PND-RUSTLIVEBATCH] done 2026-10-29 (Peter: "work on it").
+         `LiveSeries::push_series(&TimeSeries)`: a batch series pushed as
+         one batch, same rules and outputs as `push_many` of its rows
+         (key kind must match; the live series' value columns by name in
+         any order, same kinds; a gap in a required column or a non-finite
+         number in an array cell is refused naming the row; extra or
+         missing columns refused; all or nothing). With nothing built on
+         or watching the series, `ingest_bare_series` copies each run of
+         in-order rows into storage column by column
+         (`EventBuffer::append_series`, `Cells::extend_from`); a late row
+         under `Drop` is skipped, under `Reorder` inserted on its own,
+         and `Strict` has refused the batch already. Otherwise rows become
+         events as in `push_many`. Measured (callgrind, 200k rows):
+         `push_many` batches 1,158 instructions/row, `push_series` 517
+         (−55%); with filter + 1 m aggregate built on it 3,385/row, the
+         same as pushing rows (the event path). Wall clock, 1M rows,
+         batches of 1,000, same machine same hour: `push_many` 247 ms,
+         `push_series` 126 ms, pond-ts `pushMany` 192 ms. Tests: the same
+         session run twice (rows vs series) in 8 modes × 3 batchings
+         gives the same outputs, rows, stats and errors; shape and row
+         errors pinned. Chosen shape: a `TimeSeries` rather than
+         `push_columns(keys, columns)`, since that is what Arrow and JSON
+         readers hand back and it carries validated, sorted keys. Not
+         built: a column path for a series with nodes (each node still
+         takes one event at a time, as pond-ts); pond-ts has no
+         column-shaped push, so no parity case (the rows-vs-series test
+         stands in).
+       - Agent trial (`bench/agent-trial/r3/README.md`): per-host minute
+         buckets over late events with a 5 s grace, against plain Rust
+         (std only; polars has no push-one-event API). 10/10 right on both
+         sides, 0 failed runs on both. The task spells out its rules, so
+         plain Rust needs ~60 lines; it does not separate the sides. 9/10
+         pond-rs agents also wrote the rules by hand to cross-check the
+         library. Friction: 10/10 found gathered partition outputs carry
+         no partition key ([PND-LIVEKEY]); 5/10 had to read source to
+         tell the series grace window (refuses late events) from
+         `aggregate_with`'s bucket grace (doc comment on `aggregate` now
+         says so); 7/10 unsure whether the gathered series needs
+         `Reorder`.
+       - Channel-API arm not run: pond-rs has no channel API (owner and
+         handles chosen 2026-10-25), and no agent had trouble with handles
+         or `push` returning outputs.
   - Out of scope: React hooks, charts, live financial studies (none exist
     in pond-ts), and `@pond-ts/process` (RFC decision 4), including its
     `fromLive` binding. So R3 gives live series and studies, not the
     process layer's op registry, envelopes or wire format; an app that
     needs those keeps using `@pond-ts/process` in TypeScript, or a process
     port becomes its own phase.
+
+- **[PND-RUST-R4]** — bridges to JavaScript (WebAssembly) and Python
+  (planned 2026-10-29; pjm17971 chose "Yes, all" on 2026-10-30: a separate
+  npm package, both bridges at once, same version as pond-ts on every `v*`
+  tag; Python name `pond-rs`, imported as `pond_rs`). Plan doc for review:
+  https://claude.ai/artifact/3RY7ofiG8B21stg3W7nvtf.
+  - Why: pond-rs's speed for JavaScript and Python users without writing
+    Rust. Probes (2026-10-29, 1M rows, outputs bit for bit pond-ts's):
+    - WebAssembly (wasm-bindgen 0.2.129, `default-features = false`):
+      live pushes one at a time 7-12x pond-ts (plain 326 vs 3,539-4,043
+      ms); rolling 5 m 6.1x, `sma` 2.3x, `rsi` 2.0x, aggregate 1.5x,
+      `bollinger` 1.4x, `diff` even (JS arrays in and out, copies
+      included). Size, brotli: core 269 KB, + live 655 KB (the live query
+      path pulls in the ICU collator, ~1.1 MB raw), everything 1,015 KB.
+      ~5 ns per call; 1M numbers in 0.6 ms, out 1.0 ms.
+    - Python (PyO3 0.29 + arrow-pyarrow 59.3.2, abi3 wheel 2.3 MB):
+      pyarrow / polars / pandas frames in and out, gap-free number columns
+      not copied; mimalloc cut a 4-column round trip 44-49 -> 14-17 ms.
+      Against polars, frame in to frame out: rolling, aggregate, `sma`
+      even, `rsi` ~2x faster, `diff` slower (the copy is the whole cost).
+  - Costs (JavaScript): `free()` per series (a finalizer backs it up),
+    out of memory or a panic kills the instance (the binding must return
+    errors, never unwrap), one thread, 3.84 GB memory cap.
+  - Shape (JavaScript): a separate package with pond-rs's API, not
+    WebAssembly inside pond-ts (the RFC's first R4 idea); that stays open
+    for single hot spots.
+  - Steps, each checked against the pond-ts fixtures the crate passes:
+    - J1 `crates/pond-wasm`: series from / to JS typed arrays and Arrow
+      IPC, the batch core, errors as JS exceptions, `free()` + finalizer,
+      size cuts (no collator in the live path; Arrow decompression only).
+      Check: core parity fixture through JS.
+    - J2: studies through the catalog (`study(name, options)` plus named
+      helpers from the catalog table) and `LiveSeries`. Check: study and
+      live parity fixtures through JS.
+      - J2a outcome (2026-10-31): studies and calendars
+        (`crates/pond-wasm/src/study.rs`). `series.study(name, options)`
+        is a dispatcher op (so it also runs as a `partitionBy` step, per
+        group); index.js adds one method per catalog name from
+        `study_names()` on `TimeSeries` and `PartitionedSeries`;
+        `studies()` / `studyInfo()` return the catalog JSON exactly
+        (`undefined` for no such study, as pond-ts `studyDescriptor`).
+        `TradingCalendar` lives in a second Rust table (`free()` +
+        finalizer) and crosses as `{"calendar": id}` in `sessions`;
+        `fromRules(rules, { from, to })`, `fromSessions`, the lookups,
+        `tagSessions`, plus `generateSessions`. Decisions: (1) options a
+        study does not have are ignored, as pond-ts's runtime does
+        (Python refuses them as its rule for an unexpected keyword; in JS
+        a shared `{ high, low, close, volume }` object handed to several
+        studies is an ordinary idiom, and pond-ts's types already refuse
+        a typo); (2) calendar lookups take a date only as `YYYY-MM-DD`,
+        as the Python bridge (the fixture's 32 other texts are checked to
+        throw); (3) instants are whole ms. Fixed on the way: a number as
+        a duration (`rolling(60000, …)`, `Sequence.every(60000)`, the
+        `rolling(sequence, window)` window, `tail`, the smooth window) was
+        refused, and a number `maxGap` was silently ignored (every gap
+        filled); `numbers()` returned a non-finite value (a
+        gap to pond-rs) as itself instead of NaN, which hid gaps from
+        study output checks. Check (`test/studies.mjs`, CI `js-bridge`):
+        study parity 3,702 matched bit for bit + 827 errors agree + 526
+        known refusals (the Rust harness's counts), a planted 1-ulp change
+        fails all but 560 cases (those with no finite non-zero output);
+        oracle 220/220 within 5e-10; 109/109 descriptors equal pond-ts's,
+        109/109 run from their method with defaults; calendar parity
+        110/110. Speed, 1M one-minute bars, series in / out, bridge vs
+        `@pond-ts/financial` (`scripts/perf-studies.mjs`): sma 4.5 vs
+        45.7 ms, ema 2.6 vs 13.0, rsi 10.9 vs 40.9, bollinger 24.8 vs
+        98.9, macd 18.3 vs 91.8, atr 9.3 vs 31.1, sessionVwap 9.9 vs
+        85.4. Size 6.9 MB raw, 1.26 MB brotli. J2b: `LiveSeries`.
+      - J2b outcome (2026-10-31): `LiveSeries`
+        (`crates/pond-wasm/src/live.rs`, plain Rust, and `live_js.rs`, the
+        exports; pond-rs's `live` feature now on in pond-wasm). One owner
+        per root series in a thread-local table; nodes are u32 handles;
+        builders go through one dispatcher (op name + JSON args, functions
+        as `{"fn": k}`) like the batch ops. JS classes carry pond-ts's
+        names (`LiveSeries`, `LiveView`, `LiveAggregation`,
+        `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, the
+        `LivePartitioned*` set). Decisions: (1) listeners run after the
+        Rust push returns, from its list of outputs, not from inside
+        pond-rs's callbacks: a listener can then call the bridge (read,
+        build, push) without re-entering a borrowed series; a push from a
+        listener is queued until the current one is done, and listener
+        errors are isolated with the first rethrown (pond-ts's emit); (2)
+        a node function that throws does not stop the push: outputs are
+        delivered, then its first exception is rethrown; over history the
+        node is removed and the exception rethrown; a function that pushes
+        into its own series gets a "busy" error, never a panic; (3)
+        number-only rows take dedicated exports (`push1/2/3`, a
+        Float64Array batch through `push_series` when ordered and finite)
+        and everything else takes JSON; a random-rows differential checks
+        both paths agree; (4) `apply(factory)` records the chain once and
+        repeats it per partition (no per-partition JS factory, which would
+        need a JS call per new partition inside pond-rs's push); (5) a
+        reduce built over history emits its first value from a microtask,
+        skipped if a push came first, as pond-ts defers it. Differences
+        kept: a disposed node cannot be read; `pushJson` has no
+        `timeZone`; pushes go into the root only; `cumulative` takes one
+        function column (pond-rs's `cumulative_with`); `toTimeSeries`
+        takes no name; partitioned fused rolling stats have no
+        `windowsCount`; a `map` cell of the wrong type is a gap; a fold
+        result that is not a number is NaN. Review (PR #870) fixes: a
+        partition's `clear` / `pushJson` reached the root (now every push
+        and `clear` on a non-root series is refused; pond-ts pushes into
+        the partition itself, which pond-rs's partitions do not take);
+        `pushJson` from a listener was not queued (now as `pushMany`;
+        `clear` runs at once, both as pond-ts); node functions were held
+        in wasm-bindgen's table, so one referring to its series kept it
+        alive for good (now kept in the series' own JS array and called
+        through one shared callback by series id + index; a gc test pins
+        it); node kinds were looked up by `constructor.name` (broke
+        subclasses and minifiers; now a field); a second `dispose()` and
+        `on()` after dispose threw (now no-ops, as pond-ts). Also
+        differences, documented: a node function cannot even read its own
+        series during a push (the series is borrowed); reducers are names
+        only (pond-rs has no function reducer; pond-ts takes one); keys are
+        whole ms. Not changed: the function schema cache compares the
+        column list on each call; a pointer check would need pond-rs to
+        expose the event's `Arc` schema. Check (`test/live.mjs`, CI
+        `js-bridge`): pond-ts's own fixture generator
+        (`buildLiveFixture`) run against the bridge, compared with the
+        committed fixture: 71/71 cases, 7,961 outputs and 3,596 final rows
+        bit for bit, 40 errors agree, the Rust harness's 2 refused nodes
+        and 1 refused push; plus 13 checks for throwing functions,
+        re-entrancy, the fast path (ordered and unordered random rows),
+        partitions, listener order, gc and leaks (a planted strong hold on
+        the functions, an unqueued `pushJson` and an unchecked partition
+        `clear` each fail them). Planted mistakes: map off by
+        1e-12 fails 2 cases + extras, filter inverted fails 16, a -0 to 0
+        change on the fast path fails only the extras (2 fixture cases are
+        number-only). Speed, 1M events, bridge vs pond-ts
+        (`scripts/perf-live.mjs`): push 250 vs 1593 ms, pushMany (1,000 a
+        batch) 39 vs 111, rolling 1m avg + 1m buckets 570 vs 2943 (push) /
+        365 vs 835 (pushMany), plus a listener on every rolling update
+        1338 vs 2647 / 642 vs 875. pond-ts's `push` with
+        `retention: { maxAge }` costs ~25 us an event (100k events 2.4 s),
+        so the bench runs without retention. Size 7.5 MB raw, 1.39 MB
+        brotli (+0.6 MB, +130 KB). Next J3.
+      - toJSON speed (2026-10-31): `toJSON()` built each row cell by
+        cell across the boundary (1M rows: 227-627 ms, 1.2-2.8x slower
+        than pond-ts, much of it GC). Now `series_columns` sends whole
+        columns once (key times as `Float64Array`, numbers as their raw
+        `Float64Array` with a non-finite value a gap, text as a table of
+        distinct strings + `Uint32Array` places, booleans as `Uint8Array`
+        0/1/2, lists and decimals as cells) and JS builds the rows in one
+        loop, written out per schema with `new Function` so each row is
+        one literal (cached per schema + format). Rejected by numbers
+        (1M rows, no gc between samples, ms for 1 / 4 number columns /
+        number+text+bool): Rust writing JSON text + one `JSON.parse`
+        569 / 1421 / 644 (the old path 171 / 576 / 547; the text writer
+        also drops `-0`); a generic per-cell loop over the columns 738 /
+        428 / 492; column-by-column `push` 170 / 300 / 861; the written-out
+        loop 71 / 181 / 127. Freezing rows as pond-ts does would cost
+        ~2x, so rows stay unfrozen (a known difference). `rowFormat:
+        'object'` now works (it was ignored). Check (`test/tojson.mjs`,
+        CI `js-bridge`, which now builds pond-ts): 300 random series x 3
+        formats deep-equal (Object.is per cell) to pond-ts's `toJSON` and
+        the same JSON text; a planted -0 to 0 and a boolean gap as
+        `undefined` each fail it. Speed (`scripts/perf-tojson.mjs`,
+        `--expose-gc`, bridge before / after / pond-ts): 1 number column
+        227 / 37 / 220 ms, 4 columns 430 / 56 / 216, number + text +
+        boolean 593 / 74 / 235, time-range keys 627 / 64 / 224, object
+        rows of number + text + boolean - / 73 / 200. Size +5 KB.
+        Still differs: the constructor names the key by its kind
+        (`time`, `timeRange`, `interval`) whatever the schema says, so a
+        renamed key comes back under the default name.
+        Review (PR #871) fixes: a column named `__proto__` set an object
+        row's prototype (the literal `"__proto__": v`); now written as a
+        computed key, an own field like any name (pond-ts refuses
+        `__proto__` / `constructor` at construction; the bridge takes
+        them, a known difference). Where `new Function` is refused
+        (`--disallow-code-generation-from-strings`, Workers, strict CSP)
+        toJSON fell over with EvalError; now it checks once and falls back
+        to a cell-by-cell loop with the same output (1M rows: 171 / 149 /
+        181 / 201 ms, object rows 263; pond-ts ~175-220). The test now
+        also runs itself in a child with code generation off, uses names
+        that need escaping (quotes, backslash, newline, U+2028, keywords,
+        the loop's own variable names), repeated and empty interval
+        labels, the reserved names, a decimal column from Arrow and an
+        unknown rowFormat. Planted: a plain `"__proto__"` key, -0 to 0 in
+        the fallback and `__proto__` by assignment in the fallback each
+        fail it. Speed after: 37.7 / 48.7 / 75.8 / 62.1 / 69.1 ms
+        (unchanged).
+    - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
+      docs JavaScript tab, speed table vs pond-ts.
+    - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
+      possible), the batch core with keyword options, `datetime` and
+      duration strings, mimalloc, errors as Python exceptions. Check: core
+      parity fixture through pytest.
+      - Outcome (2026-10-30, merged #860 after Peter's OK): built.
+        PyO3 0.29 abi3-py39 + arrow-pyarrow 59.3.2 + mimalloc; one wheel
+        3.4 MB stripped (the probe's 2.3 MB bound far less). In: anything
+        with `__arrow_c_stream__` / `__arrow_c_array__` (pyarrow, polars,
+        pandas 2.2+), or a dict of columns. Out: the series is itself an
+        Arrow stream, plus `to_pyarrow` / `to_polars` / `to_pandas`. A
+        gap-free float column of a one-chunk table crosses both ways
+        without a copy (pytest checks buffer addresses). Every pond-rs
+        call runs with the GIL released; Python callbacks (`filter`,
+        `map`, `scan`, `collapse`, `as_interval`, `find`) take it back and
+        their first exception is re-raised as itself. Option words are
+        keyword arguments; the shared series / partitioned methods are
+        written once (`shared_methods!`). Lookups return `Row` objects.
+        pytest: all 1,230 core cases, 2,907 lookups, 1,332 time texts,
+        JSON / columns / points, value series and pond-ts's Arrow
+        exports, with the Rust harness's known differences; a planted
+        wrong answer in each of the 990 series cases is caught.
+        Decisions: a naive `datetime` is UTC (as Arrow's naive
+        timestamps); a sub-millisecond time is refused, not rounded; a
+        nullable Arrow field gives an optional column (pyarrow's default
+        is nullable); `rolling(window=int)` counts rows. Speed, 1M rows,
+        frame in to frame out vs polars 2.1: rolling 35.5 vs 39.1 ms,
+        1-minute buckets 11.6 vs 14.7, New York days 11.8 vs 7.1, `diff`
+        16.5 vs 3.3 (data in costs ~7 ms: the time key is copied and
+        checked), 100-host rolling 428 vs 127, slow in pond-rs itself
+        ([PND-RSPARTMERGE]).
+    - P2: studies through the catalog, `LiveSeries`. Split in two PRs:
+      P2a studies (and the trading calendars the session studies need),
+      P2b `LiveSeries` (with `push_series` for Arrow frames, #857).
+      - P2a outcome (2026-10-30): `series.study(name, **options)` runs any
+        catalog study; each study is also a method in Python's spelling
+        (`series.rsi(period=14)`), found by attribute lookup and typed in
+        `pond_rs.pyi` by `scripts/gen_stubs.py` (a pytest checks the stub
+        is current). On a `PartitionedSeries` the study runs per group
+        (`PartitionedSeries::map`). Options take Python or pond-ts
+        spelling. Decision: an option the study does not have is a
+        `TypeError` (Python's rule for an unexpected keyword; pond-ts's
+        types refuse it at compile time, only its runtime ignores it), so a
+        typo such as `peroid=` cannot pass silently. 22 study-parity cases
+        pass such options (volume studies given `high`/`low`); they are
+        checked to raise. `TradingCalendar` (`from_rules`, `from_sessions`,
+        lookups, `tag_sessions`; sessions are dicts, times in epoch ms) and
+        `sessions=` taking a calendar, a list or `session=` a column.
+        `studies()` / `study_info()` give the catalog JSON plus `method`
+        and `output_names`. pytest: study parity 3,680 matched + 22
+        refused options (= the Rust harness's 3,702), 827 errors agree,
+        526 known refusals; a planted 1-ulp change in each of 3,270 cases
+        with a finite value was caught every time (one-off run); oracle
+        220/220 within 5e-10; 109 descriptors equal pond-ts's; every study
+        runs from its method with its defaults; calendar parity 110/110.
+        Decision (review): calendar lookups (`session_on`,
+        `is_trading_day`, `next_session`, `previous_session`) take only
+        `YYYY-MM-DD` text as a date; other text is an error, or a time for
+        next/previous. pond-ts compares any text with session dates as
+        strings, so `""` or `"Jan 12"` quietly found nothing or the wrong
+        neighbour (pond-rs keeps pond-ts's rule; the fixture's 32 such
+        queries are checked to raise here).
+        Speed, 1M rows, frame in to frame out (shared 4-core VM; runs vary
+        by about a third): RSI 21.5 ms vs polars 36.3 / pandas 58.4 (both
+        hand-written, as neither has RSI), Bollinger 22.2 vs 34.6 / 70.2.
+      - P2b outcome (2026-10-30): `pond_rs.LiveSeries` (`src/live.rs`).
+        Schema as `{name: kind}`, tuples or a `TimeSeries.schema`; value
+        columns optional unless marked. `push` / `push_many` / `push_frame`
+        (any frame `TimeSeries()` reads, then `push_series`) /
+        `push_json` / `clear` return the watched nodes' outputs as
+        `LiveOutput` objects. Every node is one `LiveNode` class with a
+        `kind` word; builders are shared by `LiveSeries` and `LiveNode`
+        (`live_builders!`), and on a partitioned node each step is built
+        per partition through `per_partition` (a `Step` value cloned into
+        each partition's chain), so `partition_by(..).fill(..).rolling(..)
+.collect()` reads as in pond-ts. A partitioned `rolling` with a
+        clock trigger (a duration or `Sequence`) or several windows builds
+        the synchronised `partition_rolling` node, as pond-ts does.
+        Decisions: (1) the owner sits behind a `Mutex`; a call takes it
+        with Python's lock released, except short calls (`push`, `len`)
+        which first try it without releasing Python's lock (releasing and
+        retaking it cost more than the call: `len()` 162 -> 64 ns), falling
+        back to waiting released. Safe because a thread holding both runs
+        only Rust, so no other thread can be holding Python's lock while
+        waiting for the series. (2) A node's Python function runs inside
+        the push; an exception costs only that event's value from that
+        node (filter: left out; map: gaps; cumulative fold: the running
+        value stays), every function keeps running, and the first
+        exception is raised when the push returns with the push's outputs
+        as its `outputs` attribute (the push has happened: pond-rs has no
+        rollback). Review of #864 found the first version skipping every
+        later function call in the push, which broke unrelated nodes and
+        left a fold at NaN for good. (3) A function that calls back into
+        its own series would wait on its own lock; a thread id kept with
+        the lock turns that into an error on the push's thread (handing
+        the call to another thread and joining it still waits forever).
+        A partitioned node refuses `watch()` (it emits nothing itself).
+        (4) A node built over history runs its function at once; if that
+        raises, the node is removed before the error reaches Python (no
+        handle would exist). (5) No Python `apply(fn)`: chaining on a
+        partitioned node then `collect()` builds the same thing without a
+        Python function per partition. pytest: all 70 live parity cases
+        (7,897 outputs and 5,918 final rows compared, with the Rust
+        harness's two refused nodes and one refused push); planted
+        mistakes (map off by 1e-12, filter inverted, -0 read as 0) each
+        fail cases. Speed (`bench/bench_live.py`, 1M events, rolling 1m
+        avg + 1m buckets): `push` one call per event 631 ms, `push_many`
+        1,000-row batches 299 ms, `push_frame` 10,000-row tables 219 ms,
+        frame into a bare series 19 ms; the same two sums hand-written in
+        Python 317 ms. Rust alone does those pushes in ~0.26 us per event;
+        a Python `push` call adds ~0.3 us (argument reading, the lock,
+        the result list), found with callgrind and trimmed from ~0.55 us
+        (float fast path, list fast path, no-release lock, empty-output
+        early return, lazy row labels in `push_many`).
+    - P3: wheels in CI (Linux x86 + ARM manylinux2014, macOS, Windows),
+      PyPI `pond-rs` on `v*`, docs Python tab, agent trial vs polars and
+      pandas.
+  - J1 built (2026-10-30, `crates/pond-wasm` + `packages/rs`, private
+    until J3). Shape: pond-ts's method names and argument shapes in JS; each
+    call sends the method name and its arguments as JSON (`{"series": id}`
+    for another series, `{"sequence": …}` for a `Sequence`, `{"f64": …}` for
+    -0 / NaN / infinities) to one Rust dispatcher (`dispatch.rs`, ported
+    from `core_parity.rs`'s runner, errors returned not panicked). Series
+    live in a Rust table addressed by number; `free()` plus a finalizer.
+    Chosen over one wasm-bindgen export per method: one place to keep in
+    step with pond-ts, and the core parity fixture runs through the public
+    JS API unchanged. Check: 1,159 of 1,159 core parity cases match through
+    JS (`node packages/rs/test/parity.mjs`, CI job `js-bridge`), 0 series
+    left after freeing; 71 callback cases (`filter`, `mapColumns`, `scan`,
+    `collapse`, `asInterval` with a function) wait for J1b with row lookups
+    and `Time.parse`. An error case matches any pond-rs error but not a JS
+    `TypeError` or the dispatcher refusing an argument (six listed cases
+    aside); review of #859 found such a slip hiding a `mapColumns` case.
+    `test/inputs.mjs` pins what the fixture misses: the constructor's cell
+    checks (pond-ts's messages), -0 as a whole number, empty lists. Size
+    6.2 MB raw, 1.12 MB brotli before `wasm-opt` and the size cuts (J2).
+  - J1b built (2026-10-30, PR pending Peter's OK as new API): functions,
+    row lookups, `Time.parse`. A function argument crosses as `{"fn": k}`,
+    the k-th entry of a JS array passed beside the JSON; Rust calls it back
+    through one trait (`callbacks.rs`), so the dispatcher stays testable
+    without JS. pond-rs closures cannot fail, so the first exception is
+    kept, the remaining rows skip the function, and the call rethrows that
+    same exception object. The input series is cloned out of the table
+    first, so a function may call the bridge. Where pond-ts does not check a
+    function's result, the bridge copies it: a result of the wrong type is a
+    gap (`mapColumns`, `collapse`, `scan` output), and `scan` reads
+    `result[0]` / `result[1]` of anything but null / undefined. New JS
+    classes, cut-down versions of pond-ts's: `Event` (lookup and test
+    results), `Time`, `TimeRange`, `Interval`. Also changed: the constructor now refuses
+    `null` cells (pond-ts does; `fromJSON` still reads them as gaps). Check:
+    all 1,230 core cases, 2,907 row lookups and 1,332 time texts match
+    through JS; `test/inputs.mjs` passes against pond-ts itself too (one
+    listed line aside: `joinMany([])`).
+  - Found by both probes, handed to the live speed review: pond-rs live
+    filter + aggregate over 1M one-at-a-time pushes took 230-256 ms from
+    Rust; a hand-written Python dict took 110-132 ms.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

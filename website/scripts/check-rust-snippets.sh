@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile and run every ```rust block in the pond-rs docs pages against the
+# Compile and run every ```rust block in the docs pages against the
 # crate in this checkout, so the examples cannot drift from the code.
 # Each block must be a whole program (`fn main`). A failed assert fails it.
 #
@@ -20,18 +20,20 @@ edition = "2024"
 publish = false
 [dependencies]
 pond-rs = { path = "$crate" }
+serde_json = "1"
 [workspace]
 TOML
-python3 - "$repo/website/docs/pond-rs" "$work/src/bin" <<'PY'
+python3 - "$repo/website/docs" "$work/src/bin" <<'PY'
 import pathlib, re, sys
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 n = 0
-for page in sorted(src.glob("*.mdx")):
+for page in sorted(src.rglob("*.mdx")):
     text = page.read_text()
     for i, block in enumerate(re.findall(r"```rust[^\n]*\n(.*?)```", text, re.S)):
         if "fn main" not in block:
-            sys.exit(f"{page.name} block {i + 1}: not a whole program (no fn main)")
-        (out / f"{page.stem.replace('-', '_')}_{i + 1}.rs").write_text(block)
+            sys.exit(f"{page.relative_to(src)} block {i + 1}: not a whole program (no fn main)")
+        stem = '_'.join(page.relative_to(src).with_suffix('').parts).replace('-', '_')
+        (out / f"{stem}_{i + 1}.rs").write_text(block)
         n += 1
 print(f"{n} snippets")
 PY

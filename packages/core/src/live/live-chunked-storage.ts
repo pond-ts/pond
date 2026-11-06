@@ -51,32 +51,37 @@ import type {
   SeriesSchema,
 } from '../schema/index.js';
 import type { ReadableLiveStorage } from './live-storage.js';
+import { materializeKey } from './series-store.js';
 
 /**
- * Materialize a fresh `Event[]` from a (time / timeRange) store —
- * used by `LiveSeries`'s transient `'event'` / `'batch'` fan-out on
- * the chunked path. These events are NOT cached (young-gen, GC'd
- * after the listeners run), so they don't defeat the heap win.
+ * Materialize a fresh `Event[]` from a store of any key kind (time /
+ * timeRange / interval) — used by `LiveSeries`'s transient `'event'` /
+ * `'batch'` fan-out on the chunked path, and by `pushSeries` to hand a
+ * batch to the per-row backing. These events are NOT cached (young-gen,
+ * GC'd after the listeners run), so they don't defeat the heap win.
  */
 export function materializeEventsFromStore<S extends SeriesSchema>(
   store: ColumnarStore<S>,
   schema: S,
 ): EventForSchema<S>[] {
-  const keyKind = schema[0].kind;
+  const timeKeyed = schema[0].kind === 'time';
   const valueNames: string[] = [];
+  const columns: Column[] = [];
   for (let i = 1; i < schema.length; i += 1) {
-    valueNames.push((schema[i] as { name: string }).name);
+    const name = (schema[i] as { name: string }).name;
+    valueNames.push(name);
+    columns.push(store.columns.get(name)!);
   }
   const out: EventForSchema<S>[] = new Array(store.length);
   for (let i = 0; i < store.length; i += 1) {
-    const begin = store.beginAt(i);
-    const key =
-      keyKind === 'time'
-        ? new Time(begin)
-        : new TimeRange({ start: begin, end: store.endAt(i) });
+    // `time` keys inline: this loop is the chunked backing's per-event
+    // listener path, and the shared helper's call cost showed there.
+    const key = timeKeyed
+      ? new Time(store.beginAt(i))
+      : materializeKey(store.keys, i);
     const data: Record<string, unknown> = {};
     for (let v = 0; v < valueNames.length; v += 1) {
-      data[valueNames[v]!] = store.valueAt(i, valueNames[v]!);
+      data[valueNames[v]!] = columns[v]!.read(i);
     }
     out[i] = new Event(key, data) as unknown as EventForSchema<S>;
   }
@@ -260,18 +265,16 @@ export class ChunkedColumnarLiveStorage<
 
   /**
    * Compact the pending tier into one packed chunk. Rows are trusted
-   * (gathered from a validated source store), but reusing
-   * `validateAndNormalizeColumnar` is fine — it runs once per
-   * `#flushThreshold` rows (amortized O(N)), and avoids re-implementing
-   * per-kind column + validity construction.
+   * (gathered from a validated source store), so the intake runs in
+   * `trusted` mode: no per-cell checks, no `Time` per key, no array
+   * re-freeze — only the column building is shared.
    */
   #flushPending(): void {
     if (this.#pending.length === 0) return;
-    const { keys, columns } = validateAndNormalizeColumnar<S>({
-      name: 'live-chunk',
-      schema: this.#schema,
-      rows: this.#pending,
-    });
+    const { keys, columns } = validateAndNormalizeColumnar<S>(
+      { name: 'live-chunk', schema: this.#schema, rows: this.#pending },
+      { trusted: true },
+    );
     this.#chunks.push(
       ColumnarStore.fromTrustedStore(this.#schema, keys, columns),
     );
@@ -286,6 +289,18 @@ export class ChunkedColumnarLiveStorage<
    */
   #locate(i: number): [number, number] | null {
     if (i < 0 || i >= this.#committed) return null;
+    // Walk from the nearer end. A one-row `push` appends a one-row chunk,
+    // and its order check reads the last row, so a walk from the front
+    // made each push cost O(chunks) — 1M pushes took tens of minutes
+    // ([PND-LIVEPUSHSCAN]). The newest rows are now found from the back.
+    if (i >= this.#committed / 2) {
+      let end = this.#committed;
+      for (let c = this.#chunks.length - 1; c >= 0; c -= 1) {
+        const start = end - this.#chunks[c]!.length;
+        if (i >= start) return [c, i - start];
+        end = start;
+      }
+    }
     let acc = 0;
     for (let c = 0; c < this.#chunks.length; c += 1) {
       const len = this.#chunks[c]!.length;
@@ -308,6 +323,31 @@ export class ChunkedColumnarLiveStorage<
       this.#cache.set(index, event);
     }
     return event;
+  }
+
+  /**
+   * Calls `fn` with every row's `Event` in order, without filling the
+   * per-row cache: a cached event is reused, any other is built fresh and
+   * dropped, as the `'event'` fan-out does.
+   */
+  forEachEvent(fn: (event: EventForSchema<S>) => void): void {
+    let index = 0;
+    for (let c = 0; c < this.#chunks.length; c += 1) {
+      const store = this.#chunks[c]!;
+      const n = store.length;
+      if (this.#cache.size === 0) {
+        const events = materializeEventsFromStore(store, store.schema);
+        for (let i = 0; i < n; i += 1) fn(events[i]!);
+      } else {
+        for (let i = 0; i < n; i += 1) {
+          fn(this.#cache.get(index + i) ?? this.#materializeAt(c, i));
+        }
+      }
+      index += n;
+    }
+    for (let p = 0; p < this.#pending.length; p += 1) {
+      fn(this.#cache.get(index + p) ?? this.#materializePending(p));
+    }
   }
 
   keyAt(index: number): EventKey | undefined {

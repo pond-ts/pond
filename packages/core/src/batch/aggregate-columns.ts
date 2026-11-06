@@ -5,6 +5,7 @@ import {
   rollingStateFor,
 } from '../reducers/index.js';
 import { plainRollingSum } from '../reducers/sum.js';
+import { STDEV_SPLIT } from '../reducers/overflow-lanes.js';
 import { WindowStdev, WindowSum } from '../reducers/window-accumulators.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
@@ -12,7 +13,7 @@ import {
   ColumnarStore,
   Float64Column,
   IntervalKeyColumn,
-  arrayColumnFromArray,
+  arrayColumnFromOwnedCells,
   bitmapByteCount,
   stringColumnFromArray,
   validityFromBits,
@@ -175,8 +176,22 @@ type ColumnarAggregatePlan =
   | { kind: 'boundary'; column: Column; which: 'first' | 'last' }
   | {
       /**
-       * Everything else — `unique` / `top` / `samples` / `keep` /
-       * `difference`, a reducer over a non-number or chunked column, or a
+       * `keep` / `difference` / `unique` / `top${N}` / `samples`: the
+       * reducer's range kernel over any column (`reduceCellRange`) — the
+       * answer its bucket state would give, read off the column.
+       */
+      kind: 'cells';
+      column: Column;
+      reduce: (
+        col: Column,
+        start: number,
+        end: number,
+      ) => ColumnValue | undefined;
+    }
+  | {
+      /**
+       * Everything else — a built-in reducer with no range kernel for this
+       * column (e.g. `sum` over a chunked or non-number column), or a
        * custom function: the reducer's own bucket state, fed this
        * column's cells in order. The same values in the same order the
        * row path feeds it, so the answer is what this column alone gets.
@@ -199,10 +214,11 @@ type ColumnarAggregatePlan =
  *   `ReducerDef.definedBoundary`). That is what lets a partitioned
  *   `aggregate`, whose auto-injected partition-column reducer is
  *   `'first'`, take this path;
- * - every other column (`unique` / `top` / `samples` / `keep` /
- *   `difference`, a reducer over a non-number or chunked column, a
- *   custom function) feeds its reducer's bucket state, as the row path
- *   does.
+ * - `keep` / `difference` / `unique` / `top${N}` / `samples` take their
+ *   range kernel (`reduceCellRange`) over any column kind;
+ * - every other column (a reducer with no range kernel for it, such as
+ *   `sum` over a chunked or non-number column, or a custom function)
+ *   feeds its reducer's bucket state, as the row path does.
  *
  * This used to be all-or-nothing: one column of the third kind sent the
  * whole call to the row path, where `sum` / `avg` lose the blocked
@@ -246,6 +262,15 @@ function planColumnarAggregate(
       continue;
     }
 
+    if (def?.reduceCellRange !== undefined) {
+      plans.push({
+        kind: 'cells',
+        column: source,
+        reduce: def.reduceCellRange,
+      });
+      continue;
+    }
+
     plans.push({ kind: 'state', column: source, reducer: spec.reducer });
   }
   return plans;
@@ -272,6 +297,8 @@ function reduceBucket(
     if (plan.kind === 'reduce') {
       // A non-finite result (an overflow) is missing — same as every
       // reducer result path (`finiteOrMissing`, [PND-NANREP]).
+      out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
+    } else if (plan.kind === 'cells') {
       out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
     } else if (plan.kind === 'state') {
       // `bucketStateFor` applies the non-finite policy in and out.
@@ -530,8 +557,10 @@ export function tryAggregateColumnarStore(
         column = stringColumnFromArray(stringBufs[c]!);
         break;
       default:
-        column = arrayColumnFromArray(
-          arrayBufs[c]! as Parameters<typeof arrayColumnFromArray>[0],
+        // Each cell is this function's own frozen copy, already checked by
+        // `assertCellKind` — no second validation or copy.
+        column = arrayColumnFromOwnedCells(
+          arrayBufs[c]! as Array<ArrayValue | undefined>,
         );
         break;
     }
@@ -628,7 +657,151 @@ export function tryRollingCountColumnarNumeric(
 }
 
 /**
- * One column's trailing / leading / centred count-window sweep.
+ * Each row's window as row indices, `lo`…`hi` inclusive (`hi < lo` when
+ * the window holds no row). @internal
+ */
+export interface RollingWindowBounds {
+  lo: Int32Array;
+  hi: Int32Array;
+  /** 1 for a row whose key equals the row before's: it shares that row's
+   *  window, and its answer is read once for the group. */
+  sameKey: Uint8Array;
+}
+
+/**
+ * The rows in each row's duration window, from the key's begin times.
+ * Exactly the windows the event-driven `rolling` sweep in `TimeSeries`
+ * builds: rows sharing a begin time share a window; trailing is
+ * `(t - window, t]`, leading `[t, t + window)`, centered
+ * `[t - window/2, t + window/2)`; and a leading or centered window left
+ * empty steps past the rows before its lower bound ([PND-ROLLEMPTY]).
+ * Both ends only move forward, so this is O(n). @internal
+ */
+export function rollingWindowBoundsByTime(
+  begin: Float64Array,
+  rowCount: number,
+  windowMs: number,
+  alignment: RollingAlignment,
+): RollingWindowBounds {
+  const lo = new Int32Array(rowCount);
+  const hi = new Int32Array(rowCount);
+  const sameKey = new Uint8Array(rowCount);
+  let windowStart = 0;
+  let windowEnd = 0;
+  // One loop per alignment, so the hot loop carries no alignment test.
+  if (alignment === 'trailing') {
+    for (let i = 0; i < rowCount; i++) {
+      const anchor = begin[i]!;
+      if (i > 0 && begin[i - 1] === anchor) {
+        lo[i] = lo[i - 1]!;
+        hi[i] = hi[i - 1]!;
+        sameKey[i] = 1;
+        continue;
+      }
+      while (windowEnd < rowCount && begin[windowEnd]! <= anchor) windowEnd++;
+      const lowerBound = anchor - windowMs;
+      while (windowStart < windowEnd && begin[windowStart]! <= lowerBound)
+        windowStart++;
+      lo[i] = windowStart;
+      hi[i] = windowEnd - 1;
+    }
+    return { lo, hi, sameKey };
+  }
+  const below = alignment === 'leading' ? 0 : windowMs / 2;
+  const above = alignment === 'leading' ? windowMs : windowMs / 2;
+  for (let i = 0; i < rowCount; i++) {
+    const anchor = begin[i]!;
+    if (i > 0 && begin[i - 1] === anchor) {
+      lo[i] = lo[i - 1]!;
+      hi[i] = hi[i - 1]!;
+      sameKey[i] = 1;
+      continue;
+    }
+    const lowerBound = anchor - below;
+    while (windowStart < windowEnd && begin[windowStart]! < lowerBound)
+      windowStart++;
+    if (windowStart === windowEnd) {
+      while (windowEnd < rowCount && begin[windowEnd]! < lowerBound)
+        windowEnd++;
+      windowStart = windowEnd;
+    }
+    const upperBound = anchor + above;
+    while (windowEnd < rowCount && begin[windowEnd]! < upperBound) windowEnd++;
+    lo[i] = windowStart;
+    hi[i] = windowEnd - 1;
+  }
+  return { lo, hi, sameKey };
+}
+
+/**
+ * The duration-window sibling of {@link tryRollingCountColumnarNumeric}: the
+ * same per-column sweep over windows found from the keys. `null` when the
+ * mapping can't take the fast path (a custom reducer, a non-number output,
+ * a chunked or non-numeric source). @internal
+ */
+export function tryRollingTimeColumnarNumeric(
+  getColumn: (name: string) => Column | undefined,
+  rowCount: number,
+  columns: ReadonlyArray<AggregateColumnSpec>,
+  findBounds: () => RollingWindowBounds,
+  alignment: RollingAlignment,
+  minSamples: number,
+): Float64Column[] | null {
+  const sources: Float64Column[] = [];
+  for (const spec of columns) {
+    if (typeof spec.reducer !== 'string') return null;
+    if (spec.kind !== 'number') return null;
+    const source = getColumn(spec.source);
+    if (source === undefined) return null;
+    if (source.kind !== 'number' || source.storage !== 'packed') return null;
+    sources.push(source);
+  }
+  // Only now, with the fast path known to apply, find the windows.
+  const bounds = findBounds();
+  // A column with values big enough for the reducers' overflow lanes runs
+  // the laned states from the start, as the generic sweep does: the plain
+  // accumulators would round such a window differently. Checked once per
+  // source column, however many outputs read it.
+  const laned = new Map<Float64Column, boolean>();
+  return columns.map((spec, c) => {
+    const source = sources[c]!;
+    let isLaned = laned.get(source);
+    if (isLaned === undefined) {
+      isLaned = hasLaneSizedValue(source, rowCount);
+      laned.set(source, isLaned);
+    }
+    return sweepRollingColumn(
+      spec,
+      source,
+      rowCount,
+      0,
+      alignment,
+      minSamples,
+      isLaned,
+      bounds,
+    );
+  });
+}
+
+/** Whether a column holds a finite value at or past the smallest
+ *  overflow-lane split (`STDEV_SPLIT`, 2^480; `sum`'s is 2^960). Ordinary
+ *  data never does, and this one pass is cheap next to the sweep. ±Infinity
+ *  is a missing cell, so it does not count. */
+function hasLaneSizedValue(source: Float64Column, rowCount: number): boolean {
+  const values = source._values;
+  for (let i = 0; i < rowCount; i++) {
+    const v = values[i]!;
+    if ((v >= STDEV_SPLIT || v <= -STDEV_SPLIT) && Number.isFinite(v))
+      return true;
+  }
+  return false;
+}
+
+/**
+ * One column's trailing / leading / centred rolling sweep. With `bounds`
+ * unset it is a count window of `count` rows; with `bounds` set (a duration
+ * window, from `rollingWindowBoundsByTime`) the windows come from there and
+ * `count` is unused.
  *
  * `avg` and `stdev` drive their accumulators directly; everything else
  * drives its reducer state, which is now monomorphic at this call site.
@@ -645,6 +818,7 @@ function sweepRollingColumn(
   alignment: RollingAlignment,
   minSamples: number,
   laned: boolean,
+  bounds: RollingWindowBounds | null = null,
 ): Float64Column {
   const values = source._values;
   const allFinite = source.allFinite;
@@ -716,7 +890,56 @@ function sweepRollingColumn(
   for (let index = 0; index < rowCount; index += 1) {
     let lo: number;
     let hi: number;
-    if (alignment === 'trailing') {
+    if (bounds !== null) {
+      // A duration window: its rows were found up front from the keys.
+      if (bounds.sameKey[index] === 1) {
+        // Same key, same window: reuse the group's answer rather than read
+        // the state again (a stdev read can move its shift, so a second read
+        // may differ in the last bits; the generic sweep reads once too).
+        const prev = outValues[index - 1]!;
+        if (prev - prev === 0) {
+          outValues[index] = prev;
+          outDefined += 1;
+        }
+        continue;
+      }
+      lo = bounds.lo[index]!;
+      hi = bounds.hi[index]!;
+      if (alignment !== 'trailing') {
+        // Leading and centered windows drop rows before adding, as the
+        // generic sweep does (the same order keeps sums bit-identical) …
+        const stop = lo < windowEnd ? lo : windowEnd;
+        if (kind === 'avg') {
+          while (windowStart < stop) {
+            if (allFinite || values[windowStart]! - values[windowStart]! === 0)
+              wSum.remove(values[windowStart]!);
+            windowStart += 1;
+          }
+        } else if (kind === 'stdev') {
+          while (windowStart < stop) {
+            if (allFinite || values[windowStart]! - values[windowStart]! === 0)
+              wStdev.remove(values[windowStart]!);
+            windowStart += 1;
+          }
+        } else {
+          while (windowStart < stop) {
+            state!.remove(
+              windowStart,
+              allFinite || values[windowStart]! - values[windowStart]! === 0
+                ? values[windowStart]!
+                : undefined,
+            );
+            windowStart += 1;
+          }
+        }
+        // … and an emptied window steps past rows that never entered it
+        // ([PND-ROLLEMPTY], see `rollingWindowBoundsByTime`).
+        if (windowStart === windowEnd && lo > windowEnd) {
+          windowStart = lo;
+          windowEnd = lo;
+        }
+      }
+    } else if (alignment === 'trailing') {
       lo = index - count + 1 < 0 ? 0 : index - count + 1;
       hi = index;
     } else if (alignment === 'leading') {
@@ -801,6 +1024,7 @@ function sweepRollingColumn(
           alignment,
           minSamples,
           true,
+          bounds,
         );
       }
       continue;

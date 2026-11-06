@@ -214,3 +214,208 @@ describe('column-native partition routing — array fallback', () => {
     expect([a.at(0)!.get('value'), a.at(1)!.get('value')]).toEqual([5, 10]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* [PND-PARTBATCH] Each partition takes its slice of a source chunk in one     */
+/* pass — storage, retention, one `'batch'`, one settle — while `'event'`      */
+/* still fans out in source order across partitions.                           */
+/* -------------------------------------------------------------------------- */
+
+describe('[PND-PARTBATCH] one pass per partition per chunk', () => {
+  const ROWS = [
+    [0, 1, 'a'],
+    [1000, 2, 'b'],
+    [2000, 3, 'a'],
+    [3000, 4, 'b'],
+    [4000, 5, 'a'],
+  ] as const;
+
+  it("'event' stays in source order; 'batch' fires once per partition with its rows", () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    live.push([0, 0, 'a']);
+    live.push([0, 0, 'b']);
+    const events: string[] = [];
+    const batches: string[] = [];
+    for (const [key, part] of byHost.toMap()) {
+      part.on('event', (e) => events.push(`${key}@${e.begin()}`));
+      part.on('batch', (es) =>
+        batches.push(`${key}:${es.map((e) => e.begin()).join(',')}`),
+      );
+    }
+    live.pushMany(ROWS.slice());
+    expect(events).toEqual(['a@0', 'b@1000', 'a@2000', 'b@3000', 'a@4000']);
+    // Partitions close in order of their last row (b@3000 before a@4000).
+    expect(batches).toEqual(['b:1000,3000', 'a:0,2000,4000']);
+  });
+
+  it("a partition's rows are all stored before its first 'event' (like pushMany)", () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    live.push([0, 0, 'a']);
+    const a = byHost.toMap().get('a')!;
+    const seen: number[] = [];
+    a.on('event', () => seen.push(a.length));
+    live.pushMany(ROWS.slice());
+    expect(seen).toEqual([4, 4, 4]);
+  });
+
+  it('settles once per partition per chunk (a partition reduce emits once)', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    live.push([0, 0, 'a']);
+    const out: number[] = [];
+    byHost
+      .toMap()
+      .get('a')!
+      .reduce({ value: 'sum' })
+      .on('event', (e) => out.push(e.get('value') as number));
+    live.pushMany(ROWS.slice());
+    expect(out).toEqual([9]);
+  });
+
+  it('per-partition retention runs once, after the whole slice is stored', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host', { retention: { maxEvents: 1 } });
+    live.push([0, 0, 'a']);
+    const a = byHost.toMap().get('a')!;
+    const evicts: number[][] = [];
+    a.on('evict', (es) => evicts.push(es.map((e) => e.begin())));
+    live.pushMany(ROWS.slice());
+    expect(evicts).toEqual([[0, 0, 2000]]);
+    expect(a.length).toBe(1);
+    expect(a.at(0)!.begin()).toBe(4000);
+  });
+
+  it('a throwing listener on one partition does not starve the others', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    live.push([0, 0, 'a']);
+    live.push([0, 0, 'b']);
+    const parts = byHost.toMap();
+    parts.get('a')!.on('event', () => {
+      throw new Error('boom');
+    });
+    const bSeen: number[] = [];
+    parts.get('b')!.on('event', (e) => bSeen.push(e.begin()));
+    expect(() => live.pushMany(ROWS.slice())).toThrow('boom');
+    expect(bSeen).toEqual([1000, 3000]);
+    expect(parts.get('a')!.length).toBe(4);
+    expect(parts.get('b')!.length).toBe(3);
+    // The partitions' guards closed: the next push goes straight through.
+    live.pushMany([[5000, 6, 'b']]);
+    expect(bSeen).toEqual([1000, 3000, 5000]);
+  });
+
+  it('an undeclared group value drops only that row; the rest are routed', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host', { groups: ['a', 'b'] });
+    expect(() =>
+      live.pushMany([
+        [0, 1, 'a'],
+        [1000, 2, 'z'],
+        [2000, 3, 'b'],
+      ]),
+    ).toThrow(/not in declared groups/);
+    const parts = byHost.toMap();
+    expect(parts.get('a')!.length).toBe(1);
+    expect(parts.get('b')!.length).toBe(1);
+    expect(byHost.stats().eventsRouted).toBe(2);
+  });
+
+  it('a push made from a partition listener lands after the current chunk', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    const all = byHost.collect();
+    live.push([0, 0, 'a']);
+    let once = false;
+    byHost
+      .toMap()
+      .get('a')!
+      .on('event', () => {
+        if (once) return;
+        once = true;
+        live.push([9000, 9, 'b']);
+      });
+    live.pushMany(ROWS.slice());
+    const times: number[] = [];
+    for (let i = 0; i < all.length; i += 1) times.push(all.at(i)!.begin());
+    expect(times).toEqual([0, 0, 1000, 2000, 3000, 4000, 9000]);
+  });
+
+  it('apply() over a settle-emitting output stays in key order (review on #838)', () => {
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    const sums = byHost.apply((p) => p.reduce({ value: 'sum' }));
+    live.pushMany([
+      [0, 1, 'a'],
+      [1000, 2, 'b'],
+      [2000, 3, 'a'],
+    ]);
+    live.pushMany([
+      [3000, 4, 'c'],
+      [3000, 5, 'b'],
+      [4000, 6, 'a'],
+      [5000, 7, 'c'],
+    ]);
+    const rows: unknown[] = [];
+    for (let i = 0; i < sums.length; i += 1) {
+      const e = sums.at(i)!;
+      rows.push([e.begin(), e.get('value')]);
+    }
+    // One output per partition per pushMany, ordered by each partition's
+    // last row: b@1000, a@2000 | b@3000, a@4000, c@5000.
+    expect(rows).toEqual([
+      [1000, 2],
+      [2000, 4],
+      [3000, 7],
+      [4000, 10],
+      [5000, 11],
+    ]);
+  });
+
+  it('rows packed past the staging threshold match the Event[] backing, every kind', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'n', kind: 'number', required: false },
+      { name: 's', kind: 'string', required: false },
+      { name: 'b', kind: 'boolean', required: false },
+      { name: 'arr', kind: 'array', required: false },
+      { name: 'host', kind: 'string' },
+    ] as const;
+    const rows: unknown[][] = [];
+    for (let i = 0; i < 700; i += 1) {
+      rows.push([
+        i * 10,
+        i % 7 === 0 ? undefined : i * 1.5,
+        i % 5 === 0 ? undefined : `s${i % 3}`,
+        i % 6 === 0 ? undefined : i % 2 === 0,
+        i % 4 === 0 ? undefined : [i, `x${i}`],
+        i % 3 === 0 ? 'a' : 'b',
+      ]);
+    }
+    const dump = (backing: 'auto' | 'array') => {
+      const live = new LiveSeries({
+        name: 's',
+        schema,
+        __backing: backing,
+      } as never) as unknown as LiveSeries<typeof schema>;
+      const byHost = live.partitionBy('host');
+      for (let i = 0; i < rows.length; i += 50) {
+        live.pushMany(rows.slice(i, i + 50) as never);
+      }
+      const out: Record<string, unknown[]> = {};
+      for (const [key, part] of byHost.toMap()) {
+        out[key] = [];
+        for (let i = 0; i < part.length; i += 1) {
+          const e = part.at(i)!;
+          out[key]!.push([e.begin(), e.data()]);
+        }
+      }
+      return out;
+    };
+    const chunked = dump('auto');
+    expect(chunked.a!.length).toBe(234);
+    expect(chunked).toEqual(dump('array'));
+  });
+});

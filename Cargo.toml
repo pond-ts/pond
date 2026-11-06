@@ -8,6 +8,14 @@ exclude = ["spikes"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/pond-ts/pond"
+
+# The WebAssembly build for @pond-ts/rs (packages/rs/build.sh): one code
+# unit and whole-program optimisation make the file smaller and faster.
+[profile.wasm-release]
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"

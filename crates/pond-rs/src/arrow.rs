@@ -906,7 +906,7 @@ fn read_time_values(
             let whole = v
                 .div_euclid(per_ms)
                 .checked_mul(ms_per)
-                .filter(|ms| ms.abs() <= MAX_EXACT_F64)
+                .filter(|ms| ms.unsigned_abs() <= MAX_EXACT_F64 as u64)
                 .ok_or_else(|| {
                     invalid(
                         FROM,
@@ -929,11 +929,11 @@ fn read_time_values(
 /// checked to fit the field's precision (a file can hold values that do
 /// not).
 fn read_decimals(batches: &[RecordBatch], c: usize) -> Result<DecimalColumn> {
-    if let [batch] = batches {
-        if let Some(a) = batch.column(c).as_primitive_opt::<Decimal128Type>() {
-            // A clone shares the buffers; nothing is copied.
-            return DecimalColumn::with_type(a.clone(), a.precision(), a.scale());
-        }
+    if let [batch] = batches
+        && let Some(a) = batch.column(c).as_primitive_opt::<Decimal128Type>()
+    {
+        // A clone shares the buffers; nothing is copied.
+        return DecimalColumn::with_type(a.clone(), a.precision(), a.scale());
     }
     let (precision, scale) = match batches[0].column(c).data_type() {
         DataType::Decimal32(p, s) | DataType::Decimal64(p, s) | DataType::Decimal128(p, s) => {
@@ -971,10 +971,10 @@ fn read_strings(batches: &[RecordBatch], c: usize, name: &str) -> Result<StringC
         if array.data_type() == &DataType::Utf8 {
             return Ok(StringColumn::plain(array.as_string::<i32>().clone()));
         }
-        if let Some(dict) = array.as_dictionary_opt::<Int32Type>() {
-            if let Some(column) = StringColumn::dictionary(dict.clone()) {
-                return Ok(column);
-            }
+        if let Some(dict) = array.as_dictionary_opt::<Int32Type>()
+            && let Some(column) = StringColumn::dictionary(dict.clone())
+        {
+            return Ok(column);
         }
     }
     let mut values: Vec<Option<&str>> = Vec::new();
@@ -1758,6 +1758,24 @@ mod tests {
         .unwrap();
         let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
         assert!(e.to_string().contains("too large"), "{e}");
+
+        // Codex review R12: i64::MIN panicked in `abs()` (debug) instead of
+        // being refused; with overflow unchecked it slipped past the check.
+        for v in [i64::MIN, i64::MIN + 1, i64::MAX] {
+            let b = RecordBatch::try_from_iter([
+                (
+                    "time",
+                    Arc::new(TimestampMillisecondArray::from(vec![0])) as ArrayRef,
+                ),
+                (
+                    "v",
+                    Arc::new(TimestampMillisecondArray::from(vec![v])) as ArrayRef,
+                ),
+            ])
+            .unwrap();
+            let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
+            assert!(e.to_string().contains("too large"), "{v}: {e}");
+        }
     }
 
     #[test]

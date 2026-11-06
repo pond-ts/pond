@@ -1,0 +1,110 @@
+---
+title: Series, route and views
+sidebar_position: 9
+description: The measured values over time, the line on the map, and the data shaped for a chart or a map.
+---
+
+# Series, route and views
+
+`stats()` answers with numbers. When you want the samples themselves, or
+the line the activity followed, or data shaped for a screen, there are three
+more ways in, kept apart from the numbers.
+
+## Series: the measured values over time
+
+`series` holds each recorded channel as its samples, on the activity's
+clock. A gap is `null`, never a zero. Any section has one too, holding only
+its own samples.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+
+const hr = run.series.heartRate!;
+console.log(hr.length, 'samples, in', hr.unit);
+const p = hr.at(600)!;
+console.log(p.elapsed.format(), p.value?.format());
+
+const rep = run.section({ elapsed: { from: minutes(10), to: minutes(11) } });
+console.log(rep.series.heartRate!.length, run.series.power);
+```
+
+```text output
+3084 samples, in bpm
+10:00 135 bpm
+61 null
+```
+
+A channel the activity didn't record is `null`, and so is every channel when
+the samples carry no timestamps. `speed` is worked out from distance and
+time between samples rather than recorded, and `distance` is metres from the
+start on the activity's own distance axis.
+
+The way down to pond is one explicit call: `toTimeSeries()` gives a pond
+`TimeSeries` with one `value` column.
+
+```ts
+const ts = hr.toTimeSeries();
+console.log(ts.length, ts.at(0)!.get('value'));
+```
+
+```text output
+3084 88
+```
+
+## Route: the line on the map
+
+`route` is the line the activity followed and the box around it; `null`
+with no GPS.
+
+```ts
+const route = run.route!;
+console.log(route.points.length, route.cleaned);
+console.log(route.bounds.southWest, route.bounds.northEast);
+```
+
+```text output
+3084 false
+[ 44.11861647851765, 6.980010671541095 ] [ 44.1213786508888, 7.043941542506218 ]
+```
+
+## Views: shaped for a chart or a map
+
+`@pond-ts/fit/views` turns an activity into what a screen draws, so the
+activity itself stays free of any one screen's needs.
+
+`chartData` gives one pond series with a column per metric, keyed by time,
+or by distance with `x: 'distance'`. Either goes straight into
+[@pond-ts/charts](../charts/).
+
+```ts
+import { chartData, mapData } from '@pond-ts/fit/views';
+
+const byTime = chartData(run, { metrics: ['heartRate', 'pace'] });
+console.log(byTime.metrics, byTime.series.length);
+
+const byDistance = chartData(run, { x: 'distance', metrics: ['heartRate'] });
+console.log(byDistance.series.length);
+```
+
+```text output
+[ 'heartRate', 'pace' ] 3084
+3084
+```
+
+`mapData` gives the route's line at the detail a map needs: every point, a
+thumbnail line, or a tolerance in metres.
+
+```ts
+console.log(
+  mapData(route).points.length,
+  mapData(route, { detail: 'thumbnail' }).points.length,
+);
+```
+
+```text output
+3084 17
+```

@@ -1,5 +1,6 @@
 import type { ColumnValue, ScalarValue } from '../schema/index.js';
 import type { ReducerDef } from './types.js';
+import { dictStrings, packedNumbers, reduceCellsByRead } from './cells.js';
 
 function isScalar(v: ColumnValue | undefined): v is ScalarValue {
   return (
@@ -44,6 +45,30 @@ export const samples: ReducerDef = {
     const out: ScalarValue[] = [];
     for (const v of defined) collectInto(out, v);
     return out;
+  },
+  reduceCellRange(col, start, end) {
+    const values = packedNumbers(col);
+    if (values !== null) {
+      const out: ScalarValue[] = [];
+      for (let i = start; i < end; i += 1) {
+        const v = values[i]!;
+        if (v - v === 0) out.push(v);
+      }
+      return out;
+    }
+    const strings = dictStrings(col);
+    if (strings !== null) {
+      const dict = strings.dictionary!;
+      const codes = strings.indices!;
+      const validity = strings.validity;
+      const out: ScalarValue[] = [];
+      for (let i = start; i < end; i += 1) {
+        if (validity !== undefined && !validity.isDefined(i)) continue;
+        out.push(dict[codes[i]!]!);
+      }
+      return out;
+    }
+    return reduceCellsByRead(samples.reduce, col, start, end);
   },
   bucketState() {
     const items: ScalarValue[] = [];

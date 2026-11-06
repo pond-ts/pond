@@ -34,14 +34,23 @@ use crate::series::TimeSeries;
 /// A picker's grouping, one per study.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StudyFamily {
+    /// Moving averages (`sma`, `ema`, …).
     MovingAverage,
+    /// Bands around a centre line (`bollinger`, `keltner`, …).
     Bands,
+    /// Momentum oscillators (`rsi`, `stochastic`, …).
     Momentum,
+    /// Trend direction and strength (`dmi`, `aroon`, …).
     Trend,
+    /// Volatility (`atr`, `historicalVolatility`, …).
     Volatility,
+    /// Volume-weighted studies (`obv`, `mfi`, …).
     Volume,
+    /// Statistics (`linearRegression`, `correlation`, …).
     Statistical,
+    /// Prices built from a bar (`typicalPrice`, …).
     Price,
+    /// Per trading session (`sessionVwap`, `pivotPoints`, …).
     Session,
 }
 
@@ -129,6 +138,7 @@ pub struct StudyInput {
 pub struct StudyParam {
     /// The option key (`"period"`, `"maType"`).
     pub name: &'static str,
+    /// Number or menu, with its default and range.
     pub kind: ParamKind,
     /// Leaving the option out switches a behaviour off rather than meaning
     /// a default value (`balanceOfPower`'s `period`); it then has an
@@ -144,6 +154,7 @@ pub struct StudyParam {
 pub enum ParamKind {
     /// A number; `integer` for bar counts.
     Number {
+        /// A whole number (a bar count).
         integer: bool,
         /// The value used when the option is left out; `None` means
         /// required (or [`StudyParam::optional`]).
@@ -153,14 +164,18 @@ pub enum ParamKind {
         /// The legal range, inclusive, where the study checks a fixed
         /// bound.
         min: Option<f64>,
+        /// See `min`.
         max: Option<f64>,
         /// The useful range a control is drawn on (advisory).
         suggest: Option<(f64, f64)>,
     },
     /// One of a closed list of names (`maType`, a pivot `method`).
     Enum {
+        /// The legal names.
         of: &'static [&'static str],
+        /// The name used when the option is left out.
         default: Option<&'static str>,
+        /// For an option with no default: a name that makes the study run.
         example: Option<&'static str>,
     },
 }
@@ -245,6 +260,7 @@ pub struct StudyOutput {
     /// [`StudyNaming::Prefix`]; `""` is the bare prefix, and the only id
     /// under [`StudyNaming::Output`].
     pub id: &'static str,
+    /// What the values measure.
     pub unit: StudyUnit,
 }
 
@@ -275,6 +291,7 @@ pub enum StudyAnchor {
 pub struct StudyDescriptor {
     /// pond-ts's name for the study (`"atr"`).
     pub name: &'static str,
+    /// The picker group.
     pub family: StudyFamily,
     /// One line, for a menu.
     pub summary: &'static str,
@@ -283,11 +300,13 @@ pub struct StudyDescriptor {
     /// The number and menu options, in options order. Column inputs, the
     /// naming option and the anchors are not params.
     pub params: &'static [StudyParam],
+    /// How the output columns are named, and the default name.
     pub naming: StudyNaming,
     /// The columns written, in order, under the default options (a menu
     /// value can change the set: `pivotPoints`' `camarilla` adds `R4` and
     /// `S4`).
     pub outputs: &'static [StudyOutput],
+    /// An input that is not a column or number option, if the study has one.
     pub anchor: Option<StudyAnchor>,
 }
 

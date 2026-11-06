@@ -189,7 +189,14 @@ in `'reorder'` ordering), and three subscription channels:
 
 Validation at ingest: `push(...rows)` runs each row through the same
 schema validation as `TimeSeries`. Eviction runs after each push to
-honor retention.
+honor retention. Column-shaped batches come in as a `TimeSeries`
+(`pushSeries`, usually fed by `TimeSeries.fromColumns`); on the
+chunked backing the batch's own columns become one chunk, unchecked
+per row and uncopied (a batch holding much more than its rows need,
+such as a `slice()` of a much bigger series, is copied first, so it
+doesn't keep its parent alive; so is a batch of 8 rows or fewer, since
+for arrays made fresh for the push copying costs about what deciding
+whether to copy would, and keeps less memory).
 
 `live.toTimeSeries()` snapshots to a batch series — the standard
 crossing point between layers.
@@ -703,6 +710,18 @@ it should.
   [PND-TSJSONT] showed it isn't. `RowForSchema` has since honoured
   `required: false` as well.)
 
+### Column data into a `LiveSeries` arrives as a `TimeSeries`
+
+Decided 2026-11-01 ([PND-LPUSHCOL]): `live.pushSeries(ts)`, not a
+`pushColumns(columns)`. `fromColumns` stays the one door that turns
+typed arrays into a series (adoption, gap and ordering rules live
+there once); pond-rs's `push_series` has the same shape; and the
+saving a raw-columns method could add over
+`pushSeries(fromColumns(...))` is at most `fromColumns`' own cost,
+~2 µs per call (`fromColumns` alone at one row per push in
+`perf-live-push-series.mjs`). The batch's buffers are shared with the
+live series, not copied (see `docs/plans/PND_LIVE_PLAN.md`).
+
 ### Patterns we deliberately don't generalize
 
 - **`{ groups }` as a runtime config object.** Each operator that
@@ -740,6 +759,7 @@ it should.
 | Declarative graph authoring / remote sources   | `packages/process/src/plan/` (`fluent.ts`, `source.ts`, `host.ts`)                                |
 | Public exports                                 | `packages/core/src/index.ts`                                                                      |
 | Rust implementation (pond-rs) + parity tests   | `crates/pond-rs/` (tests read `packages/*/test/fixtures/{parity,study-oracle}.json`)              |
+| Python bridge (PyPI `pond-rs`)                 | `crates/pond-py/` (PyO3 over pond-rs; Arrow frames in/out; pytest reads `parity.json`)            |
 | Plan / status / roadmap                        | `PLAN.md`                                                                                         |
 | Process / discipline / release                 | `CLAUDE.md`                                                                                       |
 | Release notes                                  | `CHANGELOG.md`                                                                                    |

@@ -2,26 +2,66 @@
 slug: /
 sidebar_position: 1
 sidebar_label: Introduction
-description: The platform walkthrough — typed TimeSeries and streaming LiveSeries with aggregate, rolling, align and partitionBy, then React hooks, canvas charts and the domain packages, in one page of runnable examples.
+description: The platform walkthrough — typed time series in TypeScript (pond-ts) or Rust (pond-rs), batch and streaming, then React hooks, canvas charts and the domain packages, in one page of runnable examples.
 ---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 {/* TODO(core-IA restructure): this is now the top-of-docs Introduction — THE platform walkthrough. Rewrite the opener from "Typed time-series primitives" to the core-hub-with-three-branches story (see docs/notes/core-and-landing-docs-plan-2026-07.md §0, §5d). Narrative owned by pjm (human-review-gated). */}
 
-# pond-ts
+# pond
 
-Typed time-series primitives for TypeScript. Schema-driven events,
-composable transforms, a live-ingest mode, and an optional React
-integration — all strict TS end to end, all immutable.
+Typed time-series primitives, in **TypeScript or Rust**. Schema-driven
+events, composable transforms, a live-ingest mode, financial studies, and
+an optional React integration — all immutable.
+
+pond comes in two languages that give the same answers:
+
+- **pond-ts** is the TypeScript library: strict types end to end, runs in
+  the browser and on Node, and carries the React hooks and charts.
+- **pond-rs** is the same core written in Rust: the same operations and the
+  same results, bit for bit, at native speed and on several cores. See
+  [pond-rs (Rust)](./pond-rs/index.mdx).
+
+| Package                      | TypeScript                          | Rust                             |
+| ---------------------------- | ----------------------------------- | -------------------------------- |
+| Core: batch series           | `pond-ts`                           | `pond-rs`                        |
+| Core: live series            | `pond-ts`                           | `pond-rs` (`pond_rs::live`)      |
+| Financial studies            | `@pond-ts/financial`                | `pond-rs` (`pond_rs::financial`) |
+| Process (computation graphs) | `@pond-ts/process`                  | TypeScript only                  |
+| React hooks, charts, fitness | `@pond-ts/react`, `/charts`, `/fit` | TypeScript only                  |
+
+Examples on these pages show TypeScript and, where pond-rs has the same
+thing, a **Rust** tab beside it. Pick one and every tabbed example on the site follows.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```sh
 npm install pond-ts                 # core
 npm install @pond-ts/react          # React hooks (optional)
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```toml
+# Cargo.toml
+[dependencies]
+pond-rs = "0.1"
+```
+
+</TabItem>
+</Tabs>
+
 ## First example: batch
 
-Your data is rows with timestamps. Tell pond-ts the schema once; every
-transform downstream narrows off of it.
+Your data is rows with timestamps. Tell pond the schema once; every
+transform downstream works off it.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { Sequence, TimeSeries } from 'pond-ts';
@@ -74,6 +114,67 @@ bands.toPoints(); // [{ ts, cpu, ..., avg, sd, upper, lower }, ...]
 anomalies.length; // how many spikes tripped the 2σ band
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, JsonOptions, Reducer, Rolling, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 1. The same rows and schema, as pond-ts JSON. Column kinds are checked
+    //    when the code runs: `numbers()` on the text column `host` is an error.
+    let cpu = TimeSeries::from_json(
+        r#"{
+          "name": "cpu",
+          "schema": [
+            {"name": "time", "kind": "time"},
+            {"name": "cpu", "kind": "number"},
+            {"name": "requests", "kind": "number"},
+            {"name": "host", "kind": "string"}
+          ],
+          "rows": [
+            ["2025-01-01T00:00:00Z", 0.31, 120, "host1"],
+            ["2025-01-01T00:01:00Z", 0.44, 135, "host2"],
+            ["2025-01-01T00:02:00Z", 0.52, 141, "host1"],
+            ["2025-01-01T00:03:00Z", 0.48, 128, "host1"],
+            ["2025-01-01T00:04:00Z", 0.63, 166, "host3"]
+          ]
+        }"#,
+        &JsonOptions::new(),
+    )?;
+
+    // 2. Compose operations. Each returns a new series; the source is unchanged.
+    let by_minute = cpu.aggregate(
+        &Sequence::every("1m")?,
+        &[
+            Agg::of("cpu", Reducer::Avg),
+            Agg::of("requests", Reducer::Sum),
+            Agg::of("host", Reducer::Last),
+        ],
+    )?;
+
+    // avg / sd / upper / lower columns in one rolling pass.
+    let bands = cpu.baseline("cpu", "2m", 2.0, Rolling::default())?;
+
+    // Same columns, only the spikes.
+    let anomalies = cpu.outliers("cpu", "2m", 2.0, Rolling::default())?;
+
+    // 3. Chart-ready output: one JSON object per row.
+    println!("{}", by_minute.to_points_json()?);
+    println!("{}", bands.to_points_json()?);
+    assert_eq!(anomalies.len(), 0); // how many spikes tripped the 2σ band
+    Ok(())
+}
+```
+
+Rust cannot carry column names and kinds in its types the way TypeScript
+does, so pond-rs checks them when the code runs: a misspelt column or
+`numbers()` on a text column returns an error that names the problem. The
+output of both tabs is the same, number for number.
+
+</TabItem>
+</Tabs>
+
 The whole batch API is composable like this — `filter`, `map`,
 `rolling`, `smooth`, `groupBy`, `join`, `reduce`, `diff`, `rate`,
 `fill` all fit the same "TimeSeries in, TimeSeries out, typed schema
@@ -84,6 +185,9 @@ preserved" shape.
 Drop a `LiveSeries` wherever events arrive incrementally — a
 WebSocket, a polling loop, a message queue. Push in as they come;
 snapshot to a regular `TimeSeries` at any moment for batch analytics.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { LiveSeries, Sequence } from 'pond-ts';
@@ -113,14 +217,66 @@ const snap = live.toTimeSeries();
 snap.aggregate(Sequence.every('1m'), { cpu: 'avg' });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 1. Same schema; a live series that keeps only the last 10 minutes.
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("requests", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_age("10m"),
+    )?;
+
+    // 2. Ask for the series' own events back from each push.
+    live.watch(live.root(), OutputKind::Event)?;
+
+    // 3. Push as events arrive; each push is checked against the schema
+    //    and returns what you watched. React to them inline.
+    let now = 1_735_689_600_000;
+    let out = live.push(now, [Some(0.95.into()), Some(128.0.into()), Some("api-1".into())])?;
+    for output in &out {
+        if let Output::Event { event, .. } = output {
+            if event.number("cpu")?.is_some_and(|cpu| cpu > 0.9) {
+                println!("High CPU on {}", event.string("host")?.unwrap_or("?"));
+            }
+        }
+    }
+    assert_eq!(out.len(), 1);
+
+    // 4. Copy it to an ordinary series for batch work at any time.
+    let snap = live.to_time_series()?;
+    let per_minute = snap.aggregate(&Sequence::every("1m")?, &[Agg::of("cpu", Reducer::Avg)])?;
+    assert_eq!(per_minute.len(), 1);
+    Ok(())
+}
+```
+
+pond-rs has no listeners: each `push` returns the outputs you asked for
+with `watch`, in the order pond-ts's listeners would fire.
+
+</TabItem>
+</Tabs>
+
 The live side also has its own `aggregate` / `rolling` / `filter`
 views that stay incremental — good for continuously-updated dashboard
-numbers without snapshot overhead. See [Live](./pond-ts/live/live-series).
+numbers without snapshot overhead. See [Live](./pond-ts/live/live-series)
+(TypeScript) or [Live series](./pond-rs/live) (Rust).
 
 ## Third example: React (optional)
 
 You do **not** need React to use pond-ts. Everything above is the
-core package. `@pond-ts/react` is a separate install that wraps the
+core package. React is TypeScript only, so this example has no Rust tab.
+`@pond-ts/react` is a separate install that wraps the
 live primitives in hooks — it's the bridge, not the library.
 
 ```tsx
@@ -162,10 +318,15 @@ function Dashboard() {
 See [@pond-ts/react](./react) for the hook reference and end-to-end
 dashboard patterns.
 
-## What pond-ts is (and isn't)
+## What pond is (and isn't)
 
-- **Typed** — the schema is a `readonly` TypeScript tuple; every
-  transform output narrows off it. No `as` casts at the call site.
+- **Typed** — in TypeScript the schema is a `readonly` tuple and every
+  transform output narrows off it, with no `as` casts at the call site. In
+  Rust the column kinds are checked when the code runs, with errors that
+  say what to fix.
+- **Two languages, one answer** — pond-rs is checked against pond-ts's own
+  output on a shared set of test cases, so a result does not depend on
+  which language computed it.
 - **Immutable** — `Event` and `TimeSeries` are frozen; transforms
   return new instances.
 - **Batch and streaming as peers** — `TimeSeries` is in-memory
@@ -188,6 +349,8 @@ every other charting option.
 - **Start here** — install, first workflow, the mental model.
 - **pond-ts (core)** — `TimeSeries`, `LiveSeries`, advanced
   (array columns, bridging to other chart libraries).
+- **pond-rs (Rust)** — the core and the financial studies in Rust:
+  getting started, what differs from pond-ts, and the benchmarks.
 - **@pond-ts/react** — React hooks for subscribing to live sources.
 - **@pond-ts/fit** — activity/fitness analytics on top of core.
 - **@pond-ts/charts** — first-party canvas charts consuming a
@@ -196,4 +359,5 @@ every other charting option.
 - **Recipes** — single-technique, code-forward pages.
 - **Reference** — benchmarks and cross-package reference material.
 
-The full API reference lives in-site at [**/docs/api**](/docs/api/).
+The full TypeScript API reference lives in-site at [**/docs/api**](/docs/api/);
+the Rust one is on [**docs.rs**](https://docs.rs/pond-rs).

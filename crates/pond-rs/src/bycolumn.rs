@@ -21,7 +21,12 @@ pub enum Bins {
     /// the values in `[origin + i * width, origin + (i + 1) * width)`.
     /// Every bin from the lowest one holding a value to the highest is
     /// given, empty ones included.
-    Width { width: f64, origin: f64 },
+    Width {
+        /// Each bin's width.
+        width: f64,
+        /// Where bin 0 starts.
+        origin: f64,
+    },
     /// Explicit edges `e0 < e1 < … < en`, giving `n` bins, all of them
     /// given. Bin `i` holds `[e_i, e_i+1)`; with `upper_inclusive` it
     /// holds `(e_i, e_i+1]` instead (a value on an edge belongs to the bin
@@ -29,7 +34,9 @@ pub enum Bins {
     /// edge is in bin 0, so with `upper_inclusive` bin 0 is
     /// `[e0, e1]`.
     Edges {
+        /// The bin edges, increasing.
         edges: Vec<f64>,
+        /// Bins hold their upper edge, not their lower one.
         upper_inclusive: bool,
     },
 }

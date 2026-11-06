@@ -12,6 +12,8 @@
 //! (O(N + C)) and keeps rolling window states, so most reducers cost O(1)
 //! a row; median and percentiles keep a sorted window, O(W) a row.
 
+mod common;
+
 use std::time::Instant;
 
 use pond_rs::{Agg, Bins, Column, ColumnData, Reducer, Table, TimeSeries};
@@ -124,6 +126,7 @@ fn main() -> pond_rs::Result<()> {
             continue;
         }
         let (ms, out) = median_ms(f);
+        common::write_dump(name, &out);
         let (n, sum) = checksum(&out);
         println!("| {name} | {ms:.1} ms | {n} {sum:.6e} |");
     }

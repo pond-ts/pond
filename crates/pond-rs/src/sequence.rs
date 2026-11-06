@@ -14,10 +14,15 @@ use crate::series::{IntervalKeys, Labels};
 /// A calendar unit for [`Sequence::calendar`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarUnit {
+    /// Calendar days in the zone (23 or 25 hours on clock-change days).
     Day,
+    /// Weeks starting Monday.
     Week,
+    /// Calendar months.
     Month,
+    /// Quarters starting January, April, July and October.
     Quarter,
+    /// Calendar years.
     Year,
 }
 
@@ -43,6 +48,12 @@ impl FromStr for CalendarUnit {
         })
     }
 }
+
+/// Times a live calendar aggregation takes, `[lo, hi)`: years -9997 to
+/// 9997 (UTC). jiff handles years -9999 to 9999, and a bucket near either
+/// end, in a zone up to 14 hours off UTC, needs the year beside it.
+#[cfg(feature = "live")]
+pub(crate) const CALENDAR_RANGE_MS: (i64, i64) = (-377_642_044_800_000, 253_339_228_800_000);
 
 /// An unbounded grid of buckets. Realised over a concrete range by
 /// [`Sequence::buckets_overlapping`]. Build one with [`Sequence::every`] or
@@ -110,6 +121,16 @@ impl Sequence {
             zone,
             week_starts_on: 1,
         }))
+    }
+
+    /// `(step, anchor)` in ms for a fixed-length sequence; `None` for a
+    /// calendar one.
+    #[cfg(feature = "live")]
+    pub(crate) fn fixed_step(&self) -> Option<(i64, i64)> {
+        match self.0 {
+            Grid::Every { step_ms, anchor_ms } => Some((step_ms, anchor_ms)),
+            Grid::Calendar { .. } => None,
+        }
     }
 
     /// The same grid shifted so a bucket starts at `anchor_ms`. Calendar
@@ -203,6 +224,23 @@ impl Sequence {
                 Ok(labelled_by_start(starts, ends))
             }
         }
+    }
+
+    /// The calendar bucket containing `t`, as `(start, end)`; `None` for a
+    /// fixed sequence. An error past the years jiff handles (±9999).
+    #[cfg(feature = "live")]
+    pub(crate) fn calendar_bucket(&self, t: i64) -> Option<Result<(i64, i64)>> {
+        if !matches!(self.0, Grid::Calendar { .. }) {
+            return None;
+        }
+        let mut bucket = (0, 0);
+        Some(
+            self.walk_calendar(t, |start, next| {
+                bucket = (start, next);
+                false
+            })
+            .map(|()| bucket),
+        )
     }
 
     /// The buckets whose sample point (`at`: start, middle or end) falls in
@@ -441,6 +479,31 @@ fn labelled_by_start(begin: Vec<i64>, end: Vec<i64>) -> IntervalKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "live")]
+    fn calendar_buckets_cover_the_live_range() {
+        let (lo, hi) = CALENDAR_RANGE_MS;
+        for unit in ["day", "week", "month", "quarter", "year"] {
+            for zone in [
+                "UTC",
+                "Pacific/Kiritimati",
+                "Pacific/Pago_Pago",
+                "+14:00",
+                "-12:00",
+            ] {
+                let seq = Sequence::calendar(unit, zone).unwrap();
+                for t in [lo, lo + 1, hi - 1] {
+                    let (start, end) = seq
+                        .calendar_bucket(t)
+                        .unwrap()
+                        .unwrap_or_else(|e| panic!("{unit} {zone} {t}: {e}"));
+                    assert!(start <= t && t < end, "{unit} {zone} {t}");
+                }
+            }
+        }
+        assert!(Sequence::every("1s").unwrap().calendar_bucket(0).is_none());
+    }
 
     #[test]
     fn overlap_includes_the_bucket_holding_begin() {

@@ -825,7 +825,18 @@ fn session_list(a: &Args<'_>, v: &Value) -> Result<Vec<Session>> {
                 .into(),
         )
     };
-    let ms = |v: &Value| v.as_i64().ok_or_else(bad);
+    // A whole number of milliseconds, however the JSON spells it: `100`,
+    // `100.0` and `1e2` are one number to pond-ts, and Python or an agent
+    // may write any of them (Codex review R09: only the first was read).
+    let ms = |v: &Value| {
+        v.as_i64()
+            .or_else(|| {
+                v.as_f64()
+                    .filter(|x| x.fract() == 0.0 && x.abs() <= 9_007_199_254_740_992.0)
+                    .map(|x| x as i64)
+            })
+            .ok_or_else(bad)
+    };
     v.as_array()
         .ok_or_else(bad)?
         .iter()

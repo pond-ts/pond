@@ -16,7 +16,9 @@ use crate::series::{Column, TimeSeries};
 /// milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionBreak {
+    /// Start of the break (it does not trade).
     pub start: i64,
+    /// End of the break (trading resumes).
     pub end: i64,
 }
 
@@ -31,8 +33,11 @@ pub struct SessionBreak {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
+    /// The trading day, `YYYY-MM-DD`; the session's name.
     pub date: String,
+    /// First instant that trades, epoch milliseconds.
     pub open: i64,
+    /// First instant after the session, epoch milliseconds.
     pub close: i64,
     /// Sorted, not overlapping, inside `[open, close]`.
     pub breaks: Vec<SessionBreak>,
@@ -484,7 +489,9 @@ pub enum Stamped {
 /// (`YYYY-MM-DD`, compared with session dates).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRef<'a> {
+    /// An instant, epoch milliseconds.
     At(i64),
+    /// A date, `YYYY-MM-DD`.
     Date(&'a str),
 }
 
@@ -604,6 +611,7 @@ impl TradingCalendar {
         self.sessions.len()
     }
 
+    /// `true` when there are no sessions.
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
     }

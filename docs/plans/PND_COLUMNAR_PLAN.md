@@ -21,6 +21,70 @@ the archive: "3C" historically meant both the batch rolling _output_ path
 
 ## Tasks
 
+### [PND-PARTBATCH] — Partition routing one pass per partition per chunk (DONE 2026-10-27)
+
+**Why.** The gRPC experiment revival (2026-10-27) re-benched its aggregator
+across pond-ts versions and found 0.20.0 (#175, column-native partition
+routing) cut throughput ~22% at 1000 hosts x 1000 ev/s, and 15-33% overall vs
+0.17. In-pond repro (`packages/core/scripts/perf-partition-rolling.mjs`): the
+chunked backing was 30-37% slower than `__backing: 'array'` with a fused
+rolling attached, equal with no listener. Cause: `#routeChunk` called
+`part._stageRows(store, [i])` per row, so every row paid an order check, a
+staging call, a re-entrancy guard, a retention pass, a one-row `'batch'` and a
+settle; the staged rows were then re-validated at flush.
+
+**What shipped.** `#routeChunk` buckets the chunk's rows per partition, then
+(1) `_stageRowsOpen` per partition: order check, stage the whole slice, open
+the partition's guard; (2) `_emitStagedEvent` for every row in source order;
+(3) `_stageRowsClose` per partition: retention, one `'batch'`, `'evict'`,
+settle, drain queued pushes (partitions close in the order of their last row in
+the chunk — Layer-2 review on #838 found that closing in first-seen order sent
+a partition `reduce` under `apply()` out of key order into the strict unified
+buffer). All partitions' guards are open during step 2, so
+a push made from a partition listener queues until that partition closes. Per-partition
+scratch slots are reused chunk to chunk (fresh `indices` arrays, not
+`length = 0`, which V8 runs as a slow runtime call; it was the hottest line).
+The pending-tier flush runs `validateAndNormalizeColumnar` with a new internal
+`trusted` option (no per-cell checks, no `Time` per key, no array re-freeze):
+rows there were already validated by the source.
+
+**Decision: source-order `'event'`, batched everything else.** Bucketed
+`'event'` fan-out was rejected again for the same reason #175 rejected it
+(strict `collect()` and the clock-triggered partitioned rolling need source
+order). Batched `'batch'` / retention / settle makes a routed chunk look to a
+partition exactly like a `pushMany` into it — the per-row behaviour was an
+artefact of the routing loop, not a contract (the non-strict per-event path
+still delivers one row per push, because its source fans out one event at a
+time; unchanged). Error handling changed on purpose: a throwing partition
+listener or an undeclared `groups` value no longer aborts routing for the
+rest of the chunk; the first error is thrown after every partition is closed.
+Pinned by the `[PND-PARTBATCH]` tests in
+`test/live/LivePartitionedSeries.columnar-routing.test.ts` (6 of 8 fail on
+the old code) and live-parity case `partition-pushmany` (only partition
+`'batch'` / `'evict'` counts and the partition `reduce`'s output count differ
+from the old build; every `'event'` is identical). An old-vs-new oracle over
+1,500 random strict partitioned sessions (collect, fused rolling, partition
+rolling, diff, per-partition events and evictions, retention variants) was
+identical apart from eviction grouping.
+
+**Numbers** (median of 4 alternating runs, noisy container; the unchanged
+`array` path moved up to ±17% between runs):
+
+| cell (+ fused rolling)     | before  | after   | auto / array before → after |
+| -------------------------- | ------- | ------- | --------------------------- |
+| 1000 hosts x 1 row/batch   | 1406 ms | 1145 ms | 1.47 → 1.21                 |
+| 1000 hosts x 10 rows/batch | 1219 ms | 946 ms  | 1.43 → 1.09                 |
+| 100 hosts x 10 rows/batch  | 1136 ms | 804 ms  | 1.55 → 0.94                 |
+
+No listener: 10 rows/batch 25-37% faster; 1 row/batch unchanged within noise.
+
+**Not closed:** with one row per partition per chunk the chunked path is still
+~20% behind the `Event[]` path when a rolling listens. What's left is the
+columnar design itself (rows are validated into columns, gathered into the
+partition's staging tier, then rebuilt as transient `Event`s for listeners,
+where the `Event[]` path builds one `Event` and shares it). Closing it needs
+[PND-COLOUT] / [PND-LROLL]-style column-native consumers, not routing work.
+
 ### [PND-COLOUT] — Column-native output (§A)
 
 The dominant remaining allocation slice at the live output boundary:
@@ -30,6 +94,56 @@ Events are all emit-side. Spike plan:
 [docs/briefs/column-native-output-spike.md](../briefs/column-native-output-spike.md)
 (payload fork, additive listener name, before-number locked by the V6
 re-bench, API gate).
+
+**Second consumer (offscreen-stream spike, 2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3):** a live chart fed from a `LiveSeries` in a worker needs each appended
+batch as columns, every 16 ms, to copy into its own drawing buffer. With no
+public way to get that, the spike used the internal `_onChunk` hook; the
+public `'batch'` / `'event'` listeners make an `Event` per tick. Through
+`_onChunk` a `LiveSeries` took in 1M ticks/s on an M1 Pro, and reading the
+data for a frame cost 0.00–0.01 ms (cloud) against 4–362 ms through
+`toTimeSeries()` ([PND-LSNAP](PND_LIVE_PLAN.md)). This adds the per-frame
+chart case alongside the gRPC fan-out case above;
+[PND-STREAMDRAW](PND_CHARTS_PLAN.md) would consume it.
+
+**Outcome (built 2026-11-05, Peter chose the shape by card):**
+`live.on('columns', (batch) => …)`. The brief's open choices, settled:
+
+- **Payload: a plain `TimeSeries`** (the brief's option (a)), not a new
+  window type. On the chunked backing it wraps the very `ColumnarStore` the
+  push appended (`timeSeriesFromTrustedStore`, now exported `@internal`),
+  so nothing is copied. That store never changes afterwards: retention
+  drops whole chunks or replaces the boundary chunk with a `sliceStore`
+  copy, never writes into one. Wrapping costs ~0.4 µs a push once the
+  schema copy is skipped (`schemaIsFrozenCopy`; freezing a fresh schema
+  array was ~0.5 µs of the first ~1 µs).
+- **Name: `'columns'`** (says what you get), over the brief's lean `'run'`.
+- **Every backing.** Per-row backing (`reorder` / `drop`, non-time keys):
+  `TimeSeries.fromEvents(added)`, sorted by key, sharing the pushed
+  `Event`s. Partition sub-series on the column-native route gather their
+  slice with `withRowSelection` in `_stageRowsOpen` (only when a
+  `'columns'` listener is attached) and fire in `_stageRowsClose`.
+- **When:** right after `'batch'`, before `'evict'`, once per push that
+  added rows.
+- Not built: columnar `'evict'`, `'columns'` on views / aggregations /
+  partitioned series as a whole, a pond-rs counterpart ([PND-RUSTCOLS]).
+
+Numbers (`packages/core/scripts/perf-live-columns.mjs`, 10k-row buffer,
+median of 5, same consumer work on `'batch'` vs `'columns'`):
+
+| pushes          | listener      | `'batch'` | `'columns'` |
+| --------------- | ------------- | --------: | ----------: |
+| 1M rows × 1,000 | none attached |    130 ms |      130 ms |
+| 1M rows × 1,000 | sum a column  |    320 ms |      141 ms |
+| 1M rows × 1,000 | copy a column |    356 ms |      142 ms |
+| 1M rows × 1,000 | JSON rows     |    446 ms |      251 ms |
+| 1M rows × 100   | sum a column  |    453 ms |      281 ms |
+| 200k rows × 10  | sum a column  |    176 ms |      136 ms |
+| 100k rows × 1   | sum a column  |    300 ms |      265 ms |
+
+Garbage collections at 1,000-row pushes: 21–30 with `'batch'`, 5–11 with
+`'columns'`. The gRPC experiment's A/B (brief increment 2) has not been run.
 
 ### [PND-REORD] — Columnar reorder (§B)
 
@@ -665,6 +779,282 @@ amortised O(1) whatever the window.
 
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
+
+### [PND-SMOOTHSLOW] — SHIPPED (smooth / baseline / outliers / sample stride on columns)
+
+Logged from pond-rs R1b step 8h, picked up from the Codex PR #810
+investigation. `smooth`'s `movingAverage` / `loess` read anchors and values
+from `this.events` and rebuilt every row (`event.set` / `merge`, then row
+intake); `baseline` zipped the source events with `rolling.at(i)` and
+rebuilt rows; `outliers` and `sample({ stride })` rebuilt the store from the
+kept `Event`s. Now:
+
+- `smooth` reads anchors from the key buffers (a time key's timestamp; else
+  `begin + (end − begin) / 2`, which is what `timeRange().midpoint()`
+  computes) and values with `read`, runs the same window / LOESS code, and
+  writes one number column (replace or append) with the key and every other
+  column passed through. A target that is missing or not a number column
+  keeps the event path, so its current odd results ([PND-SMOOTHCHECK]) are
+  unchanged. The `ema` fast path was already columnar.
+- `baseline` appends the rolling result's `avg` / `sd` columns as they are
+  (one row per source row) and computes `upper` / `lower` from them. The
+  result store is built in one call against the result schema, so repeated
+  output names (`names: { avg: 'x', lower: 'x' }`) still fail with the
+  store's duplicate-name `RangeError` (the pond-rs parity fixture pins that
+  message; appending column by column gave a different one).
+- `outliers` and `sample({ stride })` collect row numbers and gather, with
+  `SeriesStore._selectRowsModulePrivate`, so a kept row's `Event` is the
+  source row's (as in `dedupe`, above). `sample({ reservoir })`
+  is unchanged: its key sort is stable over reservoir order, which a row
+  number sort would not reproduce for equal keys.
+- `scan` (80 ms on 1M vs 54 ms in pond-rs) left as is.
+
+Checked: 300 random series (time / time-range / interval keys incl. ranges
+whose midpoints run backwards, repeated keys, missing, `-0`, values near
+±1.7e308) give identical JSON against the previous build for
+`movingAverage` (4 windows × 4 alignments × 3 `missing` × replace/append),
+`loess` (6 spans incl. invalid × 2 `missing` × 2 columns), text / unknown /
+same-name / colliding targets, missing options, `ema`, `baseline` and
+`outliers` (3 windows × 3 alignments × 2 `minSamples` × 2 sigmas, names,
+collisions, sigma 0 and 1e308), partitioned `baseline` / `smooth` /
+`outliers`, and 7 strides incl. invalid; identity compared where every
+event was built first. Planted bugs caught: anchors taken as `begin` (56/90
+series differ), `sd >= 0` in baseline (88/90), `>=` in outliers (7/90). The
+non-finite guard on smoothed values is defensive: no case produced a
+non-finite average (the window sum uses `LanedSum`).
+
+Bench `scripts/perf-smooth.mjs` (median of 7 after 3 warm-ups; old build 5
+after 2). The old build's events were already built after its first
+warm-up, so its numbers leave out the ~1 s of building 1M events a first
+call pays:
+
+| Case                                 | Before | After  |
+| ------------------------------------ | ------ | ------ |
+| movingAverage 5 min, 1M rows         | 2.11 s | 205 ms |
+| movingAverage centered, skip, append | 2.21 s | 171 ms |
+| movingAverage 1 ms window (1 row)    | 2.05 s | 236 ms |
+| baseline 5 min, 1M rows              | 4.34 s | 798 ms |
+| outliers 5 min, 1M rows              | 2.40 s | 813 ms |
+| loess span 0.05, 20k rows            | 133 ms | 96 ms  |
+| partitioned baseline, 4 × 250k       | 9.58 s | 4.14 s |
+| sample stride 10, 1M rows            | 31 ms  | 7.8 ms |
+
+`baseline` / `outliers` are now the duration `rolling` call (~550 ms for
+`avg` + `stdev`), logged as [PND-ROLLTIME]; partitioned adds `concat`
+([PND-CONCATSORT]).
+
+### [PND-ALIGNHOLD] / [PND-DEDUPEMAP] — SHIPPED (align / materialize / dedupe on columns)
+
+Logged from pond-rs R1b step 5, picked up from the Codex PR #810
+investigation. `align` (hold) did a `new Time`, a binary search through
+`atOrBefore` and a whole `Event` per bucket; `linear` and `materialize`
+walked `series.events`; `dedupe` built a string per row and a `Map` of
+arrays, then rebuilt the store from the kept `Event`s; all three outputs
+went back through row intake. Now (`batch/operators/align.ts`,
+`batch/operators/dedupe.ts`):
+
+- Each op picks a **source row number per output row** off the key buffers
+  (`-1` = none) and gathers every column with one `sliceByIndices`.
+  `linear` also keeps the second row and the ratio and interpolates number
+  columns straight from the column; an overflowing interpolation is stored
+  as missing, as row intake did ([PND-NANREP]).
+- `hold` restates `atOrBefore(new Time(t))` over the buffers:
+  `compareEventKeys` order (`begin`, then `end`, then the key kind's name
+  against `'time'` — so a zero-length interval key at `t` counts as before
+  `Time(t)` and a zero-length time range as after), and only a time key can
+  equal `Time(t)`. Sample times rise strictly (a `BoundedSequence` is
+  sorted, non-overlapping, positive-length), so one forward cursor finds
+  the same rows as the binary search.
+- `dedupe`: rows are sorted by key, so equal `begin`/`end` are runs. The
+  exception is interval labels: inside one span, two different strings can
+  compare equal (precomposed vs decomposed `é`) and interleave, so a span
+  with more than one row groups by `String(label)` in first-seen order, as
+  the old `Map` did. Each group is resolved in the old branch order, so an
+  invalid `keep` still throws only when a duplicate exists, with the same
+  message. A custom `keep` function keeps the old event path.
+- **Typed fixed grids.** After the above, building 1M `Interval`s for the
+  grid was ~80% of a 1M-bucket `align`. `Sequence._fixedGridModulePrivate`
+  lays out a fixed-step grid as `begin` / `end` buffers using `bounded`'s
+  own index range (shared `#fixedIndexRange`), checks `new Interval` /
+  `BoundedSequence`'s rules on each bucket, and returns `undefined` — so
+  the caller takes `bounded()` and gets its exact error — for a calendar
+  grid, an empty grid, rounding that makes buckets empty or overlapping
+  (step 3 at 2^53), or indices past 2^52. A `-0` first index is kept so a
+  `-0` anchor stays `-0`. `materialize` never builds interval keys, since a
+  `BoundedSequence` with mixed label types is fine there.
+- Partitioned `materialize` filled each empty bucket's partition columns
+  by mapping every event; it now uses a literal fill on the column
+  (`_fillLiteralModulePrivate`, which writes the value as given — public
+  `fill({ host: 'hold' })` would read `'hold'` as a strategy name).
+
+**Decision: event identity in `dedupe`.** The old path built every source
+`Event` (`this.events`) and rebuilt the result from them, so
+`result.at(j) === source.at(i)` for every kept row (`concat` pins the same
+rule in a test). Building every `Event` up front would cost most of the
+win, so the result's store instead **asks the source store for row `i`'s
+event** (`SeriesStore` `#delegate`, set by `_selectRowsModulePrivate`): the
+event is built once, in the source, whichever side asks first. The cost is
+that the result keeps the source store alive, where the old result kept
+its `Event`s alive instead.
+
+Checked: 700 random series (time / time-range / interval keys incl.
+zero-length keys, repeated keys, number and text interval labels incl.
+both `é` forms, `-0`, missing cells, values near ±1.7e308) give identical
+JSON against the previous build for `align` (hold / linear × 3 sample
+points × 8 fixed grids incl. step 0.3, `-0` and 2^40 anchors, plus 4
+bounded sequences incl. mixed labels and an empty one, plus a wider range),
+`materialize` (3 selects × the same grids), 16 `dedupe` policies incl.
+invalid ones and custom functions (identity compared where every event was
+built first), and partitioned `align` / `materialize` / `dedupe` with
+partition values `'hold'` / `'linear'` and booleans. Planted bugs caught:
+flipping the key-kind tie (139/150 series differ), treating interval labels
+as runs (30/150), `<=` in materialize's cursor (148/150), ignoring the kind
+tie for interval keys only (45/150). The `begin[prev] === begin[idx]` check
+in `linear` can't fire (prev < t ≤ idx) and was kept as in the old code.
+New `test/TimeSeries.grid-columnar.test.ts` covers the fixed-grid fallback
+errors, `-0` anchor, hold vs `atOrBefore` for every key kind, linear
+overflow, label grouping, `keep` validation, identity, and a partition
+named `'hold'`.
+
+Bench `scripts/perf-grid.mjs` (median of 7 after 3 warm-ups; old build 5
+after 2):
+
+| Case                                     | Before | After  |
+| ---------------------------------------- | ------ | ------ |
+| align hold, 1M rows → 1 s grid           | 3.62 s | 60 ms  |
+| align linear (center), 1M → 1 s          | 905 ms | 75 ms  |
+| materialize last, 1M → 1 s               | 743 ms | 37 ms  |
+| materialize nearest, 1M → 1 s            | 783 ms | 40 ms  |
+| align hold, 1M → 1 min                   | 86 ms  | 5.8 ms |
+| materialize last, 1M → 1 min             | 54 ms  | 6.5 ms |
+| align hold, 10k rows → 600k buckets      | 1.37 s | 26 ms  |
+| materialize, 10k rows → 600k buckets     | 406 ms | 15 ms  |
+| dedupe last, 1M rows, 10% repeats        | 1.18 s | 49 ms  |
+| dedupe first                             | 1.05 s | 42 ms  |
+| dedupe max v                             | 1.16 s | 65 ms  |
+| dedupe, no repeats                       | 1.23 s | 38 ms  |
+| partitioned align, 4 × 100k              | 2.31 s | 754 ms |
+| partitioned dedupe + materialize, 4×100k | 2.83 s | 1.40 s |
+
+The partitioned cases are now mostly `TimeSeries.concat` re-sorting the
+pieces ([PND-CONCATSORT], next).
+
+### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
+
+From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,
+built a frozen row per event and re-read the rows; `arrayExplode` built one
+row per element and went through strict `new TimeSeries` intake. Now:
+
+- `arrayAggregate` reads the array column, reduces each cell, and shares the
+  key and every other column. For built-in reducers a cell is passed as
+  `defined` directly (an array cell can hold only finite numbers, strings and
+  booleans, so the row path's filtering removed nothing). One visible
+  difference from the row path: with `as:`, the untouched array column is
+  the input's own column, so `out.at(i).get('tags') === src.at(i).get('tags')`
+  (before: an equal copy). Within one series every row still has its own
+  array; `select` / `rename` already shared columns this way.
+- `arrayExplode` numbers the output rows, gathers the key and the other
+  columns once (`withRowSelection`; replace mode drops the array column
+  first), and builds the element column directly.
+- Kind errors keep their exact text (`row N col C: expected …`) via
+  `assertCellKind` per output cell — the pond-rs parity fixture pins these
+  messages. An `as:` naming an existing column keeps the old row path, so
+  its error is unchanged too.
+- `arrayColumnFromOwnedCells` builds an `ArrayColumn` from cells the caller
+  owns, skipping the constructor's element validation and copy. Gathers
+  (`sliceByRange` / `sliceByIndices`, chunked gather and compaction) still
+  give **every result row its own copy** of the array, with a plain element
+  loop (on V8 `slice()` of a frozen array is ~4x slower: 250k small cells
+  236 vs 53 ms). `aggregate` uses it for its already-copied array results.
+- `median` / percentile `reduce` and bucket snapshots sort lists of up to 32
+  numbers by insertion (`sortedNumbers`): stable like the comparator sort, so
+  `-0` / `0` order is unchanged (test compares 2,000 random lists).
+
+**Decision: keep one array per row.** Sharing the source's frozen cell
+between gathered rows (what Codex's prototype did) would make explode and
+gathers ~2x faster again, but `keep` (and other by-reference comparisons,
+[PND-ARRAYKEY]) would then see two rows holding the same array. Planting
+that sharing made 22 of 300 oracle series differ. Left for Peter: either
+accept sharing, or first make array comparison by value ([PND-ARRAYKEY]),
+after which sharing is invisible.
+
+Checked: 300 random series (time / range / interval keys, number / text /
+mixed lists, empty and missing cells, signed zeros) give identical JSON —
+values, schema and error text — against the previous build for 17 reducers
+(incl. custom) × 3 columns × both modes, 12 explode variants each, plus
+aggregates of `keep` / `unique` over exploded and filtered array columns.
+
+Bench `scripts/perf-array-ops.mjs`, 100k rows (median of 7 after 5 warm-ups,
+middle of 3 processes; busy machine):
+
+| Case                            | Before | After  |
+| ------------------------------- | ------ | ------ |
+| arrayAggregate nums count       | 637 ms | 8.3 ms |
+| arrayAggregate nums avg         | 663 ms | 16 ms  |
+| arrayAggregate nums median      | 734 ms | 16 ms  |
+| arrayAggregate nums unique      | 1.08 s | 137 ms |
+| arrayAggregate nums first       | 654 ms | 11 ms  |
+| arrayAggregate tags count       | 471 ms | 20 ms  |
+| arrayExplode tags               | 792 ms | 68 ms  |
+| arrayExplode nums               | 879 ms | 114 ms |
+| arrayExplode tags (keep array)  | 1.24 s | 127 ms |
+| aggregate 1s unique (array out) | 127 ms | 85 ms  |
+| filter half (array gather)      | 96 ms  | 17 ms  |
+
+Not done: `arrayContains*` (identity, see PLAN.md), and the packed list
+layout (offsets + one value buffer) Codex measured — a storage decision.
+
+### [PND-REDUCECELLS] — SHIPPED (column kernels for keep / difference / unique / top / samples)
+
+From the Codex PR #810 investigation: these five reducers had no column
+kernel, so whole-series `reduce` built every `Event` first, and `aggregate`
+fed a fresh reducer state per bucket. New optional `ReducerDef.reduceCellRange
+(col, start, end)` works on any column kind: packed numbers and dictionary
+strings are read off their buffers (`keep` stops at the first differing
+value; `difference` is a min/max scan; `top` counts runs of equal values once;
+dictionary strings count codes, then decode), everything else reads cells and
+calls `reduce` (`reducers/cells.ts`). `reduce` uses it; `aggregate` plans it
+as a `'cells'` column; `reduce`'s fallback for any other reducer reads the
+column instead of `Event`s (an `Event`'s data reads the same column).
+
+Ranges of up to 4,096 cells (`SORT_RANGE_MAX`) sort a copy of their values
+for `unique` / `top` instead of hashing: on 60-row buckets the typed sort was
+4x faster than a `Set` per bucket (35 vs 133–157 ms over 1M values). Bigger
+ranges keep the hash, which wins when values repeat (whole-column `unique`
+on 100 distinct values: 9 ms).
+
+Checked: 400 random series (signed zeros, gaps, 1 / 4 / 1,000 distinct
+values, dictionary and plain strings, booleans, arrays, empty) give
+identical JSON from `reduce` and `aggregate` against the previous build for
+10 reducers on 4 columns, plus a custom reducer; a planted miscount made 105
+differ. Unit test `reducer-cell-kernels.test.ts` checks every range of each
+column shape against `reduce`, including a dictionary that holds one string
+under two codes (public intake never builds one, so the oracle can't).
+
+Bench `scripts/perf-reducers-cells.mjs`, 1M rows (100 distinct numbers, 4
+hosts; median of 7 after 5 warm-ups, middle of 3 processes; busy machine,
+±20%):
+
+| Case                          | Before | After  |
+| ----------------------------- | ------ | ------ |
+| reduce v keep                 | 95 ms  | < 0.01 |
+| reduce v difference           | 104 ms | 3.5 ms |
+| reduce v unique               | 139 ms | 9.1 ms |
+| reduce v top3                 | 124 ms | 19 ms  |
+| reduce v samples              | 133 ms | 22 ms  |
+| reduce host unique            | 103 ms | 8.6 ms |
+| reduce host top3              | 109 ms | 14 ms  |
+| aggregate 1m v keep           | 17 ms  | 6.9 ms |
+| aggregate 1m v unique         | 283 ms | 156 ms |
+| aggregate 1m v top3           | 303 ms | 213 ms |
+| aggregate 1s v top3           | 2.99 s | 1.61 s |
+| reduce, all-distinct v unique | 420 ms | 441 ms |
+| reduce, all-distinct v top3   | 768 ms | 627 ms |
+
+Not fixed here: all-distinct values (hashing a million keys is the cost,
+as Codex warned; no gain), and `aggregate` with ~1 row per bucket (1s grid),
+where making 1M `Interval`s and validating / copying 1M array cells for the
+output column dominate — the array-column and grid PRs address those.
 
 ### [PND-ROLLGRID] — SHIPPED (two cursors for grid rolling)
 
@@ -1654,6 +2044,274 @@ medians. `packages/financial/scripts/perf-agent-queries.mjs` (500k bars): the
 
 ---
 
+### Per-row `Event` leftovers — [PND-HOOKSIGNAL] / [PND-SPANFILTER] / [PND-ROWSOUT] / [PND-GROUPEVENTS]
+
+Logged 2026-10-31 from Peter's list of methods that build one `Event` per
+row when they could work on columns. Three groups:
+
+1. **Forced by the method's promise** (they hand the caller an `Event`):
+   `at`, `first`, `last`, `atOrBefore`, `atOrAfter`, `nearest`, iteration,
+   `toArray`, `.events`, live `'event'` listeners. Cost is per row read, not
+   per row stored. Stays as is.
+2. **Leftovers that could work on columns**: `concat` ([PND-CONCATSORT],
+   owned by the Codex-speedups work), `toJSON`/`toRows`/`toObjects`/
+   `toPoints` ([PND-ROWSOUT]), the key-only selectors
+   ([PND-SPANFILTER]), `groupBy`/`pivotByGroup` ([PND-GROUPEVENTS]).
+   Already logged elsewhere: [PND-ALIGNHOLD], [PND-DEDUPEMAP],
+   [PND-SMOOTHSLOW], [PND-ARRAYSLOW].
+3. **Live layer**: built-in operators listen for `'event'`
+   ([PND-COLOUT]); the React hooks do too, only as a change signal
+   ([PND-HOOKSIGNAL]).
+
+Rules for every PR in this set: output and behaviour stay exactly as now
+(including `Event` identity where it holds today, e.g. `after(t).at(0) ===
+series.at(k)`), each PR carries before/after timings, and Peter OKs each
+merge. pond-rs mirrors pond-ts output, so any change visible in output is
+flagged to the pond-rs side.
+
+Baseline (2026-10-31, 1M rows, `time`/`cpu`/`host` with 8 hosts, fresh
+series per run, median of 5): `toColumns` 190 ms; `toJSON` 1,523 ms;
+`toRows` 2,238 ms; `toObjects` 1,352 ms; `toPoints` 1,446 ms; `slice` 1 ms;
+`before` 1,239 ms; `after` 1,236 ms; `tail('100s')` 1,079 ms; `within`
+1,174 ms; `overlapping` 1,490 ms; `containedBy` 1,189 ms; `groupBy` 2,446
+ms; `pivotByGroup` 3,320 ms. Most of each key-only selector's time is
+building the `Event`s, which the series then caches, so a second call on
+the same series is cheaper.
+
+Live hook baseline (200k rows into a `maxEvents: 10_000` buffer, column
+backing, median of 7):
+
+| batch | no listener | `'event'` | `'event'` + `'evict'` |
+| ----: | ----------: | --------: | --------------------: |
+|     1 |      458 ms |    488 ms |                610 ms |
+|    10 |      102 ms |    183 ms |                230 ms |
+|   100 |       37 ms |     77 ms |                141 ms |
+|  1000 |       25 ms |     64 ms |                126 ms |
+
+**[PND-HOOKSIGNAL] shipped** : `LiveSeries[ON_SIGNAL]('event' |
+'evict', fn)` (registered symbol `pond-ts:onSignal`, internal, not exported)
+fires `fn` with no argument once per push in which the channel delivered
+rows, at the point of the channel's last call: for `'event'` after the rows
+are stored and before retention (on both backings and on the partition
+staging path, in `_stageRowsClose`), for `'evict'` where `'evict'` fires
+(retention, `_sweepAge`, `clear()`). The hooks use it when the source offers
+it and fall back to `on()` otherwise. Why the same moment matters: with
+`throttle: 0`, `useSnapshot` / `useLatest` read the series inside the
+callback, so a later point (after retention) would change what they show.
+Sharp edge kept, not fixed: because `'event'` fires before retention,
+`useSnapshot(live, { throttle: 0 })` can show more rows than `maxEvents`
+(maxEvents 2, push 3 rows: the snapshot has 3, the series 2). `useEventRate`
+is unchanged: its `window()` view stores `Event`s, so its listener on the
+view costs nothing measurable (138 vs 125–146 ms, noise). After, same bench
+(two runs):
+
+| batch | no listener |  signal | signal + evict | `'event'` + `'evict'` |
+| ----: | ----------: | ------: | -------------: | --------------------: |
+|     1 |  402–449 ms | 410–427 |        422–467 |               545–601 |
+|    10 |  101–107 ms | 106–115 |        105–112 |               211–236 |
+|   100 |    31–36 ms |   32–36 |          36–40 |               130–136 |
+|  1000 |       24 ms |   20–25 |          25–36 |               108–142 |
+
+**[PND-ROWSOUT] part 1 shipped — `toJSON` / `toPoints`.** Rows are written
+from the key buffers and `column.read(i)`, which is exactly what `eventAt(i)`
+builds a fresh event from, so a row with no event yet gives the same output.
+A row whose event already exists goes through the event (an event handed in
+through a trusted door may hold a value the column stores as a gap). When
+every event exists the old path runs (a per-row cache lookup made it 2.5×
+slower: 205 → 517 ms), and so does any schema with an array column (array
+cells are shared objects; [PND-ARRAYSLOW] owns that storage). Checked with
+an old-vs-new oracle: 3,000 random series × 5 exports (time / timeRange /
+interval keys, gaps, `-0`, partial and full event caches, filter / concat /
+map results), all equal, frozen-ness included; a planted wrong edge in the
+timeRange key was caught (90 mismatches). 1M rows, median of 7:
+
+| export                            | before (s) | after (s) |
+| --------------------------------- | ---------: | --------: |
+| `toJSON()`                        |  1.36–1.41 | 0.22–0.25 |
+| `toJSON({ rowFormat: 'object' })` |  1.23–1.32 |      0.10 |
+| `toPoints()`                      |  1.28–1.43 | 0.14–0.16 |
+| `toJSON()`, events already built  |  0.21–0.24 |      0.22 |
+| `toJSON()`, one event built       |       1.30 |      0.18 |
+
+`toRows` / `toObjects` are part 2: they hand out key objects, which must be
+the same objects the events carry, so they wait for #873's source-event
+lookup (a selected row's event is its source's).
+
+**[PND-SPANFILTER] + [PND-ROWSOUT] part 2 shipped — key-span selectors,
+`rows` / `toObjects`.** The six selectors test `keys.begin[i]` /
+`keys.end[i]` with the same comparison their `filter` predicate made
+(`overlapping` on the range `toTimeRange` gives, which is what
+`event.overlaps` calls for every key kind) and keep the rows through
+`_selectRowsModulePrivate` (#873), so `result.at(j) === source.at(i)` as
+with `filter`. Error behaviour is kept: `overlapping` on an empty series
+never reads the range, so a bad range only throws on a non-empty one, as
+before. `rows` / `toObjects` take #877's `#rowsFromColumns` with the key
+from new `SeriesStore._eventKeyAtModulePrivate(i)`: the key the row's event
+has or will have (a dense or cached event's own key, a delegated row's
+source key, else `keyAt(i)`, which `eventAt` builds with), so
+`rows[i][0] === at(i).key()` holds whichever is asked first. Old-vs-new
+oracle (main's build vs this one): 3,000 random series × 27 calls (time /
+timeRange / interval keys, an array column in some; filter / concat / map /
+dedupe / slice / chained-selector sources; partial and full event caches;
+bad and `NaN` ranges, `Date` and key boundaries), comparing output, thrown
+errors, which source event each result row is, key and cell identity, and
+frozen-ness: 81,000/81,000 equal. A planted `>=` for `>` in `after` gave
+2,707 mismatches, `keyAt` for the event key 2,154. 1M rows, median of 5
+(`scripts/perf-span-select.mjs`; `slice` 1.7 ms for scale):
+
+| call                               | before (ms) | after (ms) |
+| ---------------------------------- | ----------: | ---------: |
+| `after(mid)`                       |         952 |         16 |
+| `before(mid)`                      |         943 |         26 |
+| `within(1 s, end − 1 s)`           |         990 |         27 |
+| `tail('1h')`                       |       1,118 |          7 |
+| `overlapping([0, mid])`            |       1,449 |         15 |
+| `containedBy([0, mid])`            |       1,074 |         15 |
+| `after(mid)`, events already built |          72 |         17 |
+| `rows`                             |       1,542 |        487 |
+| `toObjects()`                      |       1,356 |        416 |
+| `rows`, events already built       |         649 |        635 |
+| `after(mid).rows`                  |       1,205 |        291 |
+
+`rows` still makes one key object per row (they are part of the output) and
+caches it so the row's later event shares it; that cache is most of what is
+left.
+
+**[PND-TRIMCOL] shipped — `trim` on the key buffers.** Keep the rows whose
+key overlaps the range (`b <= re && rb <= e` on the range `toTimeRange`
+gives, which every key kind's `trim` reads), clip `timeRange` / `interval`
+edges with the same `Math.max` / `Math.min` as `TimeRange.intersection`,
+re-sort stably by begin then end only when clipping broke the order, and
+gather the value columns. `time` keys are not clipped and `Time.trim`
+returned the key itself, so the result keeps the source's key objects: new
+`SeriesStore._selectRowsSharingKeysModulePrivate` builds a store whose
+`keyAt(i)` is the source's event key for that row while its events stay new
+objects (`out.at(j) !== s.at(i)`, `out.at(j).key() === s.at(i).key()`, as
+before). The event path still runs for an empty series (it never read the
+range), a store whose events may differ from its columns, and array columns.
+Oracle (main vs this build): 4,000 random series × 11 ranges, 44,000/44,000
+equal (output, errors, event / key identity, frozen-ness); planted bugs:
+no re-sort 402 mismatches, no end clip 3,679, key sharing dropped 6,324.
+1M rows, median of 5, two runs each (`scripts/perf-trim.mjs`):
+
+| call                              | before (ms) | after (ms) |
+| --------------------------------- | ----------: | ---------: |
+| `time`, trim to all but the edges | 3,948–4,090 |      33–49 |
+| `time`, trim to half              | 2,028–2,989 |      18–33 |
+| `timeRange`, clips both ends      | 2,332–2,633 |      51–64 |
+| `interval`, clips both ends       | 3,896–4,056 |      85–94 |
+| `timeRange`, events already built | 1,051–1,095 |     90–453 |
+
+(The audit's 1.7 s was a smaller range on a lighter heap; the last row's
+spread is garbage collection with 1M built events alive.)
+
+**Chains of selections flattened.** The post-merge review of #901 found that
+`s = s.after(t)` (or `dedupe`, `tail`, …) in a loop built a chain of
+delegated stores that every `at()` / `rows` walked one call per link:
+10,000 links overflowed the stack, 1,000 were ~35× slower. A delegated
+store holds none of its own events, so `_selectRowsModulePrivate` on one now
+points at its sources with composed row numbers, and
+`_selectRowsSharingKeysModulePrivate` walks to the store that owns the keys.
+Lookups stay one step deep. Not changed, and worth knowing: a small
+selection (`tail('10s')` of 1M rows) keeps the whole source store alive,
+because its events are the source's; the old `filter` path held only the
+kept events.
+
+**[PND-LIVEREPLAY] shipped — operators replay existing rows like pushes.**
+Peter's call (2026-11-05, decision card): replayed rows may be fresh `Event`
+objects rather than the series' cached ones, which is how rows pushed after
+an operator is attached already behaved. New `ChunkedColumnarLiveStorage.forEachEvent`
+builds each chunk's events with `materializeEventsFromStore` (the
+`'event'` fan-out's builder) and never fills the per-row cache; an event
+the series already built and cached is reused. `LiveSeries._forEachEventModulePrivate`
+calls it on the chunked backing and reads `at(i)` on the per-row backing
+(unchanged there, so `ordering: 'reorder'`, which the reduce identity map
+needs, behaves as before). `live/replay.ts` `replaySource` duck-types it,
+and every construction replay uses it: `LiveView`, `LiveRollingAggregation`,
+`LiveAggregation`, `LiveReduce`, fused rolling, and `LivePartitionedSeries`
+(`#replayChunked`, per-event routing, `collect`, `apply`, sync rolling).
+`LiveReduce` on the chunked backing now resolves replayed evictions through
+its FIFO frontier, as it already did for pushed events. Old-vs-new oracle
+(main 3bc21452 vs this build): 4,000 random cases (11 operators, rows
+before and after attaching, one-at-a-time and batched pushes, `maxEvents` /
+`maxAge` retention, no / some / all events pre-read), comparing operator
+contents before and after the later pushes, `value()`, every emitted event,
+and the source: 4,000/4,000 equal; a planted replay that skipped each
+chunk's first row gave 1,356 mismatches. 200k rows, batches of 1,000,
+median of 5, two runs (`scripts/perf-live-replay.mjs`):
+
+| call                                                   | before (ms) | after (ms) |
+| ------------------------------------------------------ | ----------: | ---------: |
+| attach `filter` view                                   |     241–252 |     93–109 |
+| attach `rolling('1m', avg)`                            |     423–480 |    216–251 |
+| attach `aggregate(every('1m'), avg)`                   |     273–281 |     71–111 |
+| attach `reduce(avg)`                                   |     558–642 |    193–274 |
+| attach `partitionBy('host').collect()`                 | 1,057–1,079 |    358–436 |
+| attach `partitionBy('host').rolling('1m', avg)`        |     348–392 |    196–240 |
+| next 50 pushes after a view (maxEvents 200k), per push |       45–56 |        2.2 |
+
+What is left in setup time is each operator's own per-row work (window
+states, buckets, partition routing), not `Event` building.
+
+**[PND-GROUPEVENTS] shipped.** `groupBy` groups row numbers by
+`String(column.read(i))` (`'undefined'` for a gap, so a gap and the text
+`'undefined'` still share a group, as before) in first-seen order and
+gathers each group with `withRowSelection`. `pivotByGroup` reads the key,
+group and value cells off the columns; its grouping and output build are
+unchanged. Both fall back to the event path when the store holds a dense
+event array (`_eventsMayDifferFromColumnsModulePrivate`: a `map` /
+`fromEvents` result may carry, say, `NaN` where the column has a gap;
+cached events came from the columns or were checked against them).
+`groupBy` also falls back for an array column (the old path re-validated
+array cells) and for a required column holding a gap (the old path threw
+`ValidationError … is required`; it still does). Group events are fresh objects, as they were (the old path rebuilt
+each group from rows).
+Old-vs-new oracle: 3,000 random series × 11 calls (groupBy on string /
+number / boolean / key / unknown columns, with a transform; pivot plain,
+aggregated, typed, key column as group) over time / timeRange / interval
+keys, partial and full caches, filter / concat / map (incl. `NaN`) /
+fromColumns (incl. required gaps) inputs: 33,000/33,000 equal, thrown
+errors included; a planted wrong gap key gave 13,857 mismatches. 1M rows,
+median of 5:
+
+| call                            | before (s) | after (s) |
+| ------------------------------- | ---------: | --------: |
+| `groupBy('host')`, 8 groups     |       4.60 |      0.11 |
+| `groupBy('host')`, 1,000 groups |       5.42 |      0.19 |
+| `pivotByGroup('host', 'cpu')`   |       2.71 |      0.86 |
+| `groupBy`, events already built |       2.55 |      0.15 |
+
+`pivotByGroup`'s remaining time is its per-timestamp `Map` of `Map`s and
+the output build, not events.
+
+### [PND-TRIMCOL] / [PND-LIVEREPLAY] — found in the 2026-11-05 audit
+
+Peter asked (2026-11-05) which core calls still build an `Event` per row
+when they need not. An audit of main (3a242488; Node 22, 1M rows, median of
+3, `slice` 2 ms for scale) found two not yet logged; Peter agreed to log
+both and take them after [PND-SPANFILTER] / [PND-ROWSOUT].
+
+- **`trim`** — 1.7 s. `this.events.map(e => e.trim(range))`, then a
+  re-sort when clipping brings two keys to the same start out of order.
+  Column version: clip begin/end buffers per row, drop rows outside the
+  range, gather value columns by row number, keep the stable re-sort.
+  Output must stay identical. Today every kept row is a new `Event`
+  (`Event.trim` always builds one), so no identity rule to keep.
+- **Live set-up replay** — `LiveView`, `LiveRollingAggregation`,
+  `LiveAggregation`, `LiveReduce`, fused rolling and `LivePartitionedSeries`
+  (`#replayChunked`, `collect`, `apply`) read every existing source row with
+  `source.at(i)`. On a 200k-row `LiveSeries` (batches of 1,000):
+
+  | operator                             | attach to existing rows | same rows pushed after attach\* |
+  | ------------------------------------ | ----------------------: | ------------------------------: |
+  | `rolling('1m', { cpu: 'avg' })`      |                  214 ms |                           99 ms |
+  | `aggregate(Sequence.every('1m'), …)` |                  135 ms |                           47 ms |
+  | `partitionBy('host').collect()`      |                  352 ms |                          127 ms |
+
+  \* extra time over a plain push of the same rows. `filter(fn)` views
+  stay on events (the predicate takes an `Event`). Each `at(i)` also fills
+  the event cache, which is what sets off [PND-LATCACHE].
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly
@@ -1702,3 +2360,106 @@ open; the text below is the entry as it read before the cleanup.
   Acceptance benchmarks already exist in
   `spikes/columnar-wasm/bench/controls.mjs`; each control is checked against
   pond-ts's answer before it is timed.
+
+### Duration-window `rolling` and typed `scan` — [PND-ROLLTIME] (shipped)
+
+Found 2026-11-05 while moving `@pond-ts/fit`'s maths onto pond operators:
+on a 36,000-sample ride, `rolling('30s', { power: 'avg' })` took 5–10 ms
+where fit's own loop took 0.3–0.6 ms and pond-rs (WebAssembly) 0.65 ms, and
+the `scan` climb example took 1.0 ms against a 0.1 ms loop. A profile put
+rolling's time in its generic sweep (`#rolling`, `snapshotWindow`): one
+boxed array per row, then the result columns checked and packed again.
+`rolling({ count })` already had a typed per-column sweep
+(`tryRollingCountColumnarNumeric`); duration windows did not.
+
+Shipped:
+
+- `rollingWindowBoundsByTime` finds each row's window (`lo`…`hi`) once from
+  the key begins, following the generic sweep's three alignment loops row
+  for row, including [PND-ROLLEMPTY]'s step past rows that never entered an
+  emptied window. `tryRollingTimeColumnarNumeric` then runs the count
+  path's `sweepRollingColumn` over those bounds.
+- Three things the sweep had to copy from the generic path to stay
+  identical, each found by the parity fixture or the old-vs-new oracle:
+  leading and centered windows remove before they add (the add/remove
+  order changes the last bits of a stdev); a row whose key equals the row
+  before reuses that row's answer (the generic path reads once per key
+  group, and a stdev read can move its shift); and a column holding a
+  value at or past `STDEV_SPLIT` (2^480) runs the laned states from the
+  start (the plain accumulators would round such a window differently).
+  The count path has the last difference too (it re-runs laned only on a
+  non-finite answer); left as is here, since changing it changes the
+  count path's output.
+- `scanOp` reads a packed number column's buffer and writes a typed one.
+
+Checked with an old-vs-new oracle against main's build: 20,000 random
+series × mappings (every built-in reducer, the three alignments, window
+lengths from 1 ms to 1 h, gaps, `-0`, duplicate keys, long time gaps,
+`minSamples`, values of ±1e300), every cell compared with `Object.is`:
+20,000/20,000 equal. Planted bugs (`<=` → `<` on the trailing bound)
+gave 279 mismatches in 3,000 cases. `scan`: 5,000/5,000 equal across step functions that
+return NaN, ±Infinity, `undefined` and `-0`.
+
+Timings (`packages/core/scripts/perf-rolling-time.mjs`, median of 7, ms):
+
+| case                                | before | after |
+| ----------------------------------- | -----: | ----: |
+| 36k · 30s avg                       |  10.26 |  1.43 |
+| 100k · 60s avg + sum                |  27.46 |  6.48 |
+| 1M · 60s avg + sum                  | 223.71 | 71.76 |
+| 100k · 1ms avg (one row per window) |  15.27 |  2.91 |
+| 100k · 60s avg, leading             |  15.21 |  3.03 |
+| 100k · 60s avg, centered            |  19.20 |  3.02 |
+| 100k · 60s avg + sum, gaps          |  35.15 |  5.96 |
+| 100k · 60s avg, duplicate keys      |  20.59 |  3.39 |
+| 100k · 60s stdev                    |  25.16 |  5.37 |
+| 100k · 60s min + max                |  44.97 | 13.67 |
+| 100k · 60s median                   |  29.42 | 11.93 |
+
+[PND-ROLLGAP]'s slowdown with empty windows did not reproduce on main in
+this container (1M rows `rolling('5m', avg)`: 158 ms without outages, 145
+ms with three), so this PR does not claim it.
+
+Left: `scan`'s remaining cost is the caller's step function allocating a
+tuple per row, which pond cannot remove; and pond-rs calls back into
+JavaScript for every row, so a `scan` there is about 6× slower than in
+pond-ts. See [PND-SCANDATA].
+
+## `cumulative` increase / decrease — [PND-SCANDATA] (first fold shipped)
+
+**What.** Two new running accumulators for `cumulative`, in pond-ts (batch,
+partitioned, live) and pond-rs (batch, partitioned, live; the wasm and
+Python bridges): `'increase'` is the running total of rises between values,
+`'decrease'` the running total of falls, and `{ using, threshold }` ignores
+changes smaller than the threshold. The rule: the first value sets a
+reference point and the total starts at 0; then `d = value − reference`,
+`d >= threshold` adds `d` to the rises and moves the reference,
+`d <= −threshold` adds `−d` to the falls and moves it. Gaps carry the total.
+
+**Why.** It is the dead-band climb rule (`@pond-ts/fit`'s
+`elevationGainLoss`, the `scan` docs' 3 m example) written as data, so
+pond-rs runs it without calling back into JavaScript per row.
+
+**Naming.** Peter's call (2026-11-05): a general `increase` / `decrease`,
+not a domain-specific `climb`. Meter readings, counters and any noisy level
+use the same rule.
+
+**Shape considered and not taken.** A separate `deadBand` / `hysteresis`
+operator: rejected because it is a running accumulation like `sum`, and
+`cumulative` already owns "running value down a column, gaps carry". The
+threshold rides on an object entry (`{ using, threshold }`), so plain names
+keep working. In pond-rs, `cumulative` became generic over
+`Into<Cumulative>`, so existing `&[("v", Reducer::Sum)]` calls compile
+unchanged (an empty literal, or the method as a function value, now needs
+the type spelled out).
+
+**Parity.** Same operations in the same order in both cores, so the same
+bits. The core parity fixture has seven new cases (both directions, a
+threshold, a change exactly at the threshold, signed zeros, overflow,
+partitioned) plus two refusals, and the live fixture one more node; pond-rs
+native, the wasm bridge and the Python bridge all match.
+
+**Speed** (36,000 rows, 3 m threshold; `scripts/perf-cumulative-change.mjs`
+and the fit bench): plain loop 0.3 ms; pond-ts `cumulative` 0.34–0.42 ms
+(the `scan` step it replaces: 0.9 ms); pond-rs `cumulative` 0.15 ms against
+about 10 ms for the same rule as a `scan` step through the wasm bridge.

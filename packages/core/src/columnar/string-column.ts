@@ -286,9 +286,8 @@ export class StringColumn {
    * shared. Fallback: gathers strings into a new array.
    *
    * **Dictionary retention.** The output keeps the full source
-   * dictionary even if some entries are no longer referenced. A
-   * future `compactDictionary` op (deferred until a use case
-   * justifies it) trims unused entries.
+   * dictionary even if some entries are no longer referenced;
+   * `compactDictionary` trims the unused ones.
    */
   sliceByIndices(sourceRowIndices: Int32Array): StringColumn {
     const outLength = sourceRowIndices.length;
@@ -345,6 +344,57 @@ export function stringColumnDictEncoded(
     indices,
     ...(validity !== undefined ? { validity } : {}),
   });
+}
+
+/**
+ * A dict-encoded column rebuilt with only the dictionary entries its
+ * defined cells use, in first-use order; a fallback column is returned
+ * as it is. O(length): a slice or gather shares its source's whole
+ * dictionary, so a 100-row slice of a column with 50k distinct values
+ * would otherwise keep all 50k strings alive.
+ */
+export function compactDictionary(column: StringColumn): StringColumn {
+  const { dictionary, indices, validity, length } = column;
+  if (dictionary === undefined) return column;
+  const kept: string[] = [];
+  const out = new Int32Array(length);
+  // From 256 rows, with the dictionary at most 8 times the rows, a lookup
+  // table over the whole dictionary measured 2-4x faster than a Map when
+  // the rows hold mostly distinct values, and 1.1-1.6x slower (a few µs a
+  // call) when they repeat a few dozen values or fewer, since the Map then
+  // stays small. That can't be known before the loop, and the table's win
+  // is the bigger one. Fewer rows or a bigger dictionary, filling the table
+  // costs more than it saves (16 rows of a 50,000-entry dictionary: ~60 µs
+  // against ~1 µs).
+  if (length >= 256 && dictionary.length <= 8 * length) {
+    const remap = new Int32Array(dictionary.length).fill(-1);
+    for (let i = 0; i < length; i += 1) {
+      // A missing cell's index is a placeholder that is never read.
+      if (validity !== undefined && !validity.isDefined(i)) continue;
+      const old = indices![i]!;
+      let next = remap[old]!;
+      if (next < 0) {
+        next = kept.length;
+        remap[old] = next;
+        kept.push(dictionary[old]!);
+      }
+      out[i] = next;
+    }
+    return stringColumnDictEncoded(kept, out, validity);
+  }
+  const remap = new Map<number, number>();
+  for (let i = 0; i < length; i += 1) {
+    if (validity !== undefined && !validity.isDefined(i)) continue;
+    const old = indices![i]!;
+    let next = remap.get(old);
+    if (next === undefined) {
+      next = kept.length;
+      remap.set(old, next);
+      kept.push(dictionary[old]!);
+    }
+    out[i] = next;
+  }
+  return stringColumnDictEncoded(kept, out, validity);
 }
 
 /**

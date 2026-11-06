@@ -57,10 +57,12 @@ impl Float64Column {
         Self::from_values(values.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect())
     }
 
+    /// Number of values.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -148,6 +150,7 @@ impl StringColumn {
         })
     }
 
+    /// Number of values.
     pub fn len(&self) -> usize {
         match &self.repr {
             StringRepr::Plain(a) => a.len(),
@@ -155,6 +158,7 @@ impl StringColumn {
         }
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -223,6 +227,41 @@ impl StringColumn {
     }
 }
 
+impl StringColumn {
+    /// Per row, 1 where `keep` holds for the value, 0 where it does not,
+    /// `gap` for a gap. A dictionary column decides once per distinct
+    /// string, then reads its keys (column expressions' text tests).
+    pub(crate) fn test_values(&self, keep: impl Fn(&str) -> bool, gap: i8) -> Vec<i8> {
+        match &self.repr {
+            StringRepr::Plain(a) => (0..a.len())
+                .map(|i| {
+                    if a.is_valid(i) {
+                        keep(a.value(i)) as i8
+                    } else {
+                        gap
+                    }
+                })
+                .collect(),
+            StringRepr::Dictionary(a) => {
+                let values = a.values().as_string::<i32>();
+                let table: Vec<i8> = (0..values.len())
+                    .map(|k| keep(values.value(k)) as i8)
+                    .collect();
+                let keys = a.keys();
+                (0..a.len())
+                    .map(|i| {
+                        if a.is_valid(i) {
+                            table[keys.value(i) as usize]
+                        } else {
+                            gap
+                        }
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
 /// `rows` as Arrow row numbers, `None` as a null.
 pub(crate) fn indices_of(rows: &[Option<usize>]) -> UInt32Array {
     rows.iter()
@@ -254,10 +293,12 @@ impl BooleanColumn {
         Self { values }
     }
 
+    /// Number of values.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -295,13 +336,52 @@ impl BooleanColumn {
 /// for a gap.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// A number.
     Number(f64),
     /// As a fill value, must have the column's scale.
     Decimal(Decimal),
+    /// Text.
     String(String),
+    /// A true/false value.
     Boolean(bool),
     /// The elements of one array cell (see [`ArrayColumn`]).
     Array(Vec<Scalar>),
+}
+
+impl From<f64> for Value {
+    fn from(v: f64) -> Self {
+        Value::Number(v)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(v: &str) -> Self {
+        Value::String(v.to_string())
+    }
+}
+
+impl From<String> for Value {
+    fn from(v: String) -> Self {
+        Value::String(v)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(v: bool) -> Self {
+        Value::Boolean(v)
+    }
+}
+
+impl From<Vec<Scalar>> for Value {
+    fn from(v: Vec<Scalar>) -> Self {
+        Value::Array(v)
+    }
+}
+
+impl From<Decimal> for Value {
+    fn from(v: Decimal) -> Self {
+        Value::Decimal(v)
+    }
 }
 
 impl Value {
@@ -474,10 +554,12 @@ impl DecimalColumn {
         Ok(Self { values: array })
     }
 
+    /// Number of values.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -580,8 +662,11 @@ impl DecimalColumn {
 /// match (`1` is not `"1"`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Scalar {
+    /// A number.
     Number(f64),
+    /// Text.
     String(String),
+    /// A true/false value.
     Boolean(bool),
 }
 
@@ -721,10 +806,12 @@ impl ArrayColumn {
         }
     }
 
+    /// Number of values.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -792,14 +879,20 @@ impl PartialEq for ArrayColumn {
 /// values, or arrays.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnData {
+    /// Numbers (`f64`, `NaN` marks a gap).
     Number(Float64Column),
+    /// Exact decimals.
     Decimal(DecimalColumn),
+    /// Text.
     String(StringColumn),
+    /// True/false values.
     Boolean(BooleanColumn),
+    /// Arrays of scalars.
     Array(ArrayColumn),
 }
 
 impl ColumnData {
+    /// Number of values.
     pub fn len(&self) -> usize {
         match self {
             ColumnData::Number(c) => c.len(),
@@ -810,6 +903,7 @@ impl ColumnData {
         }
     }
 
+    /// `true` when there are no values.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -889,7 +889,8 @@ pub(crate) fn read_time(
                 ),
             ))
         }
-        Json::String(text) if let Some(zone) = zone => {
+        Json::String(text) if zone.is_some() => {
+            let zone = zone.unwrap_or_default();
             crate::parse_time_in(text, zone).map_err(|e| invalid(call, format!("row {row}: {e}")))
         }
         other if zone.is_some() => Err(invalid(
@@ -907,7 +908,7 @@ pub(crate) fn read_time(
 
 /// The start and end of a time range (`[begin, end]` / `{start, end}`) or
 /// an interval (`[label, begin, end]` / `{value, start, end}`).
-fn read_span<'a>(
+pub(crate) fn read_span<'a>(
     call: &'static str,
     v: &'a Json<'a>,
     row: usize,

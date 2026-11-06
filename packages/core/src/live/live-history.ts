@@ -11,6 +11,7 @@
  */
 import type { RetentionPolicy } from './live-series.js';
 import { parseDuration } from '../core/duration.js';
+import { dropFront } from './array-front.js';
 
 export type HistoryOption = boolean | RetentionPolicy;
 
@@ -108,6 +109,6 @@ export function applyHistoryRetention(
     if (i > evictCount) evictCount = i;
   }
   if (evictCount > 0) {
-    events.splice(0, evictCount);
+    dropFront(events, evictCount);
   }
 }

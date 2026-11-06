@@ -42,7 +42,9 @@ pub enum OnConflict {
 /// Options for [`TimeSeries::join`] and [`TimeSeries::join_many`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Join {
+    /// Which keys the result keeps (default: outer).
     pub how: JoinType,
+    /// What to do when both sides have a column of the same name.
     pub on_conflict: OnConflict,
 }
 

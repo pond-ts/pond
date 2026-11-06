@@ -2,6 +2,9 @@
 sidebar_label: ValueSeries deep dive
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # ValueSeries deep dive
 
 `ValueSeries` is the **value-keyed** counterpart of `TimeSeries` — the third of
@@ -26,6 +29,9 @@ You never call the constructor directly (it's trusted-construction only). One
 door **projects** an existing `TimeSeries`; the other three **construct
 directly**, one per shape the data arrives in.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // 1. PROJECT a TimeSeries onto one of its monotonic columns.
 //    For data that starts life time-keyed — a ride sampled every second,
@@ -45,6 +51,73 @@ ValueSeries.fromJSON({ name: 'chain', schema, rows }); // row tuples / objects
 ValueSeries.fromColumns({ name: 'chain', schema, columns }); // struct-of-arrays
 ValueSeries.fromArrow(table, { axis: 'strike' }); // an Arrow Table
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, TimeSeries, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 1. PROJECT a TimeSeries onto one of its non-decreasing columns.
+    let ride = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("cumDist", vec![0.0, 20_000.0, 38_000.0]),
+            Column::required("hr", vec![120.0, 130.0, 140.0]),
+        ],
+    )?;
+    let by_distance = ride.by_value("cumDist")?; // TimeSeries → ValueSeries
+    assert_eq!(by_distance.axis(), &[0.0, 20_000.0, 38_000.0]);
+
+    // 2. CONSTRUCT directly, from whatever you are holding.
+    // Rust values, one Vec per column:
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::required("iv", vec![0.31, 0.28, 0.26]),
+            Column::required("oi", vec![1200.0, 3400.0, 8800.0]),
+        ],
+    )?;
+
+    // Row JSON:
+    let rows = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"#;
+    assert_eq!(ValueSeries::from_json(rows, KeyOrder::Strict)?, chain);
+
+    // Columns JSON:
+    let columns = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"#;
+    assert_eq!(
+        ValueSeries::from_columns_json(columns, KeyOrder::Strict)?,
+        chain
+    );
+
+    // Arrow, naming the field to use as the axis:
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    assert_eq!(ValueSeries::from_ipc_bytes("chain", file, "strike")?, chain);
+    Ok(())
+}
+```
+
+`ValueSeries::new(name, axis_name, axis, columns)` is the Rust door for values you already hold, as `TimeSeries::new` is for a time series.
+
+</TabItem>
+</Tabs>
 
 All four share **one ingest engine** and the same monotonicity contract; they
 differ only in where the axis comes from and how the payload is laid out.
@@ -75,6 +148,9 @@ The shape data arrives in from an ordinary JSON API or a CSV parse: one record
 per row, as **tuples** aligned with the schema or as **objects** keyed by
 column name.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 ValueSeries.fromJSON({
   name: 'chain',
@@ -87,6 +163,48 @@ ValueSeries.fromJSON({
   // or: [{ strike: 90, iv: 0.31, oi: 1200 }, …]
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{KeyOrder, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let schema = r#"[
+      {"name": "strike", "kind": "value"},
+      {"name": "iv", "kind": "number"},
+      {"name": "oi", "kind": "number"}
+    ]"#;
+    let with_rows =
+        |rows: &str| format!(r#"{{"name": "chain", "schema": {schema}, "rows": {rows}}}"#);
+
+    let tuples = ValueSeries::from_json(
+        &with_rows("[[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]"),
+        KeyOrder::Strict,
+    )?;
+    let objects = ValueSeries::from_json(
+        &with_rows(
+            r#"[{"strike": 90, "iv": 0.31, "oi": 1200},
+                {"strike": 95, "iv": 0.28, "oi": 3400},
+                {"strike": 100, "iv": 0.26, "oi": 8800}]"#,
+        ),
+        KeyOrder::Strict,
+    )?;
+    assert_eq!(objects, tuples);
+
+    // The axis must be a number: there is no time zone to read text in.
+    assert!(
+        ValueSeries::from_json(&with_rows(r#"[["90", 0.31, 1200]]"#), KeyOrder::Strict).is_err()
+    );
+    // A required column refuses a gap.
+    assert!(ValueSeries::from_json(&with_rows("[[90, null, 1200]]"), KeyOrder::Strict).is_err());
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 The `TimeSeries.fromJSON` contract minus the one thing a value axis has no use
 for: **there is no timestamp parsing and no `parse.timeZone`.** The axis cell
@@ -136,11 +254,45 @@ A decoded Apache Arrow `Table` — often how a cross-sectional payload arrives i
 the first place, since an options chain or a spectrum reaching you over Arrow
 has no time column to key on.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { tableFromIPC } from 'apache-arrow';
 
 const chain = ValueSeries.fromArrow(tableFromIPC(bytes), { axis: 'strike' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![Column::required("iv", vec![0.31, 0.28, 0.26])],
+    )?;
+    let mut bytes = Vec::new();
+    chain.write_ipc(&mut bytes)?;
+
+    // The axis is required: name the field to key on.
+    let back = ValueSeries::read_ipc("chain", bytes.as_slice(), "strike")?;
+    assert_eq!(back, chain);
+
+    // Naming a field that is not there is an error.
+    assert!(ValueSeries::read_ipc("chain", bytes.as_slice(), "price").is_err());
+    Ok(())
+}
+```
+
+pond-rs reads Arrow itself: `read_ipc` takes any reader, `from_ipc_bytes` bytes already in memory, and `from_arrow` `RecordBatch`es you already hold. Unlike pond-ts it refuses a time-typed axis field and reads true/false, decimal and list value fields; see [Arrow and JSON](../pond-rs/arrow#value-series).
+
+</TabItem>
+</Tabs>
 
 pond takes **no dependency** on `apache-arrow` — bring your own and hand the
 `Table` over; the input is duck-typed against the small slice pond reads.
@@ -164,6 +316,9 @@ bit-identical to pond's).
 The operator surface is small and deliberately ordering-based — the part of the
 algebra that was never about time:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 byDistance.length; // number of rows
 byDistance.axisName; // 'cumDist' — the key column's name
@@ -175,6 +330,49 @@ byDistance.column('hr'); // a value column → read with .read(i) / .values()
 byDistance.nearestIndex(40_000); // row nearest the 40 km mark (binary search)
 byDistance.sliceByValue(40_000, 60_000); // the [40 km, 60 km) sub-series (zero-copy)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000, 3_000, 4_000, 5_000],
+        vec![
+            Column::required(
+                "cumDist",
+                vec![0.0, 20_000.0, 38_000.0, 41_000.0, 55_000.0, 70_000.0],
+            ),
+            Column::required("hr", vec![120.0, 130.0, 140.0, 150.0, 155.0, 160.0]),
+        ],
+    )?;
+    let by_distance = ride.by_value("cumDist")?;
+
+    assert_eq!(by_distance.len(), 6); // number of rows
+    assert_eq!(by_distance.axis_name(), "cumDist"); // the key column's name
+    assert_eq!(by_distance.axis()[3], 41_000.0); // the axis, as a slice
+
+    assert_eq!(by_distance.column("hr")?.numbers()?.get(2), Some(140.0));
+
+    // Row nearest the 40 km mark; clamps outside the axis.
+    assert_eq!(by_distance.nearest_index(40_000.0), Some(3));
+    assert_eq!(by_distance.nearest_index(1e9), Some(5));
+
+    // The [40 km, 60 km) sub-series.
+    let leg = by_distance.slice_by_value(40_000.0, 60_000.0);
+    assert_eq!(leg.axis(), &[41_000.0, 55_000.0]);
+    assert!(by_distance.slice_by_value(60_000.0, 40_000.0).is_empty());
+    Ok(())
+}
+```
+
+`axis()` is a plain `&[f64]`, so pond-ts's `axisAt(i)` is `axis()[i]`. `nearest_index` gives `None` for an empty series, where pond-ts gives `-1`.
+
+</TabItem>
+</Tabs>
 
 - **`axisValues()`** returns the **live** key buffer — zero-copy, so treat it as
   read-only.
@@ -192,6 +390,9 @@ byDistance.sliceByValue(40_000, 60_000); // the [40 km, 60 km) sub-series (zero-
 Every ingest door has a matching export door, so a `ValueSeries` is never a
 dead end — `fromX(series.toX())` reconstructs the series.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 chain.toRows(); // [[90, 0.31, 1200], …] — tuples, gaps as undefined
 chain.toObjects(); // [{ strike: 90, iv: 0.31, oi: 1200 }, …]
@@ -200,6 +401,53 @@ chain.toJSON({ rowFormat: 'object' }); // …with object rows
 chain.toColumns(); // { name, schema, columns } — one array per column
 chain.toArrow(); // { length, fields } — Arrow's layout, zero copy
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, RowFormat, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::required("iv", vec![0.31, 0.28, 0.26]),
+            Column::required("oi", vec![1200.0, 3400.0, 8800.0]),
+        ],
+    )?;
+
+    let rows = chain.to_json(RowFormat::Array)?;
+    assert!(rows.ends_with(r#""rows":[[90,0.31,1200],[95,0.28,3400],[100,0.26,8800]]}"#));
+
+    let objects = chain.to_json(RowFormat::Object)?;
+    assert!(objects.ends_with(r#"{"strike":100,"iv":0.26,"oi":8800}]}"#));
+
+    let columns = chain.to_columns_json()?;
+    assert!(columns.ends_with(
+        r#""columns":{"strike":[90,95,100],"iv":[0.31,0.28,0.26],"oi":[1200,3400,8800]}}"#
+    ));
+
+    // Every door out reads back in.
+    assert_eq!(ValueSeries::from_json(&rows, KeyOrder::Strict)?, chain);
+    assert_eq!(ValueSeries::from_json(&objects, KeyOrder::Strict)?, chain);
+    assert_eq!(
+        ValueSeries::from_columns_json(&columns, KeyOrder::Strict)?,
+        chain
+    );
+
+    let batch = chain.to_arrow()?; // an Arrow RecordBatch
+    assert_eq!(batch.num_rows(), 3);
+    Ok(())
+}
+```
+
+pond-rs has no `toRows` / `toObjects` for a value series: read the axis with `axis()` and each column with `column(name)`.
+
+</TabItem>
+</Tabs>
 
 | You want                                    | Door                       | Cost                                        |
 | ------------------------------------------- | -------------------------- | ------------------------------------------- |
@@ -244,6 +492,9 @@ returns (the exporter is shared; a `'value'` axis simply exports as a plain
 `float64` field where a time key would come out `timestamp`). pond takes no
 dependency on `apache-arrow`, so the caller assembles the `Table`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { makeData, makeVector, Float64 } from 'apache-arrow';
 
@@ -260,6 +511,42 @@ const vec = makeVector(
   }),
 );
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::arrow_array::{Array, Float64Array};
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![Column::optional("iv", vec![Some(0.31), None, Some(0.26)])],
+    )?;
+
+    let batch = chain.to_arrow()?;
+    // The axis is the first field, a plain Float64.
+    assert_eq!(batch.schema().field(0).name(), "strike");
+
+    let iv = batch
+        .column_by_name("iv")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert_eq!(iv.value(0), 0.31);
+    assert!(iv.is_null(1)); // a gap is an Arrow null
+    Ok(())
+}
+```
+
+`to_arrow` returns an Arrow `RecordBatch`, so there is nothing to assemble.
+
+</TabItem>
+</Tabs>
 
 From there another engine — polars, DuckDB, arrow-js — is reachable without a
 re-ingest. **The returned buffers are pond's live storage, not copies**: the

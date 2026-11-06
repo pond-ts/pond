@@ -1,0 +1,15 @@
+# Section 3 re-run twice more on the same box, to show how much it varies
+
+## 3. pushMany cost with a live.window() LiveView attached (ms per push, window already full, median of 3)
+window(events)   10k ticks/s (160 a push): no view  with view   100k ticks/s (1,600 a push): no view  with view
+1000                                            0.18       0.71                                     0.47      10.48
+10000                                           0.04       2.57                                     0.51       6.31
+50000                                           0.04      23.87                                     0.27     270.87
+100000                                          0.03      55.73                                     0.29     395.14
+
+## 3. pushMany cost with a live.window() LiveView attached (ms per push, window already full, median of 3)
+window(events)   10k ticks/s (160 a push): no view  with view   100k ticks/s (1,600 a push): no view  with view
+1000                                            0.17       0.64                                     0.43      13.09
+10000                                           0.05       2.27                                     0.57      37.24
+50000                                           0.03      34.03                                     0.53     278.03
+100000                                          0.03      76.61                                     0.50     397.95

@@ -2,6 +2,9 @@
 sidebar_position: 15
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Reshaping
 
 Operations that change the **shape** of a series — pivot from long
@@ -82,12 +85,68 @@ Reshape long-form data into wide rows. Each distinct value of the
 group column becomes its own column in the output schema named
 `{group}_{value}`, holding the value column at that timestamp.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Long: one row per (timestamp, host).
 // Wide: one row per timestamp, columns per host.
 const wide = long.pivotByGroup('host', 'cpu');
 // schema: [time, "api-1_cpu", "api-2_cpu", ...]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Pivot, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Long: one row per (time, host).
+    let long = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 60_000, 60_000, 120_000],
+        vec![
+            Column::required("host", vec!["api-2", "api-1", "api-1", "api-2", "api-1"]),
+            Column::required("cpu", vec![0.5, 0.2, 0.3, 0.6, 0.4]),
+        ],
+    )?;
+
+    // Wide: one row per time, a column per host.
+    let wide = long.pivot_by_group("host", "cpu", &Pivot::default())?;
+    let names: Vec<&str> = wide.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["api-1_cpu", "api-2_cpu"]); // sorted
+    assert_eq!(wide.key().begin(), &[0, 60_000, 120_000]);
+    let api2: Vec<_> = wide.column("api-2_cpu")?.numbers()?.iter().collect();
+    assert_eq!(api2, [Some(0.5), Some(0.6), None]); // no api-2 row at 120 s
+
+    // Two rows with the same time and host: an error unless you say how
+    // to combine them.
+    let dup = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 60_000],
+        vec![
+            Column::required("host", vec!["api-1", "api-1", "api-2"]),
+            Column::required("cpu", vec![0.2, 0.4, 0.6]),
+        ],
+    )?;
+    assert!(
+        dup.pivot_by_group("host", "cpu", &Pivot::default())
+            .is_err()
+    );
+    let avg = dup.pivot_by_group("host", "cpu", &Pivot::default().aggregate(Reducer::Avg))?;
+    assert_eq!(
+        avg.column("api-1_cpu")?.numbers()?.get(0),
+        Some(0.30000000000000004)
+    );
+    Ok(())
+}
+```
+
+`Pivot::default().aggregate(Reducer::Avg)` is `{ aggregate: 'avg' }`. pond-rs has no custom reducer functions here.
+
+</TabItem>
+</Tabs>
 
 The wide-row counterpart of [`groupBy`](#groupby): where `groupBy`
 gives you `N` separate `TimeSeries`, `pivotByGroup` gives you
@@ -113,9 +172,10 @@ long.pivotByGroup('host', 'cpu', { aggregate: 'avg' });
 ```
 
 The aggregator's output kind must match the value column's kind —
-e.g. `count`, `unique`, `topN` produce kind-changing reductions
-and are rejected upfront with a clear error. Use `aggregate()`
-first if you need a kind-changing reduction.
+e.g. `unique` and `topN` produce arrays, so on a number column they
+are rejected upfront with a clear error. (`count` gives a number, so it
+is fine on a number column.) Use `aggregate()` first if you need a
+kind-changing reduction.
 
 Composes with every other transform — every wide column is a
 regular numeric column:
@@ -151,6 +211,9 @@ dashboards even when they pretend otherwise), pass `groups` and the
 output schema becomes literal-typed — every wide column has a known
 name, every downstream transform narrows correctly:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const HOSTS = ['api-1', 'api-2'] as const;
 const wide = long.pivotByGroup('host', 'cpu', { groups: HOSTS });
@@ -168,6 +231,44 @@ const banded = wide.baseline('api-1_cpu', { window: '1m', sigma: 2 });
 const point = wide.toPoints()[0];
 const value: number | undefined = point['api-1_cpu'];
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Pivot, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Long: one row per (time, host).
+    let long = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 60_000, 60_000, 120_000],
+        vec![
+            Column::required("host", vec!["api-2", "api-1", "api-1", "api-2", "api-1"]),
+            Column::required("cpu", vec![0.5, 0.2, 0.3, 0.6, 0.4]),
+        ],
+    )?;
+
+    let wide = long.pivot_by_group(
+        "host",
+        "cpu",
+        &Pivot::default().groups(["api-1", "api-2", "api-3"]),
+    )?;
+    // Columns in the order given; api-3 has no rows but still gets one.
+    let names: Vec<&str> = wide.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["api-1_cpu", "api-2_cpu", "api-3_cpu"]);
+
+    // A host not on the list is an error.
+    let only_one = long.pivot_by_group("host", "cpu", &Pivot::default().groups(["api-1"]));
+    assert!(only_one.is_err());
+    Ok(())
+}
+```
+
+Rust has no type-level column names, so `groups` only fixes the columns and their order; a misspelt column name is caught when the code runs.
+
+</TabItem>
+</Tabs>
 
 Behavior changes when `groups` is supplied:
 
@@ -278,12 +379,62 @@ const perHost = series.groupBy('host');
 The transform callback is the common form — avoids building
 intermediate maps of `TimeSeries`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const perHostAvg = series.groupBy('host', (group) =>
   group.reduce({ cpu: 'avg', requests: 'sum' }),
 );
 // Map { 'api-1' => { cpu: 0.42, requests: 12543 }, ... }
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "m",
+        vec![0, 0, 60_000, 60_000],
+        vec![
+            Column::required("host", vec!["api-1", "api-2", "api-1", "api-2"]),
+            Column::required("cpu", vec![0.4, 0.8, 0.5, 0.6]),
+            Column::required("requests", vec![100.0, 50.0, 120.0, 70.0]),
+        ],
+    )?;
+
+    // (key, series) pairs, one per host, in the order hosts first appear.
+    let per_host = series.group_by(&["host"])?;
+    assert_eq!(per_host.len(), 2);
+
+    // The transform form is an ordinary map over the pairs.
+    let mut per_host_avg = Vec::new();
+    for (key, group) in &per_host {
+        let host = key[0].as_ref().and_then(Value::as_str).unwrap_or("");
+        let r = group.reduce(&[
+            Agg::new("cpu", "cpu", Reducer::Avg),
+            Agg::new("requests", "requests", Reducer::Sum),
+        ])?;
+        per_host_avg.push((host.to_string(), r.number("cpu")?, r.number("requests")?));
+    }
+    assert_eq!(
+        per_host_avg,
+        [
+            ("api-1".to_string(), Some(0.45), Some(220.0)),
+            ("api-2".to_string(), Some(0.7), Some(120.0)),
+        ]
+    );
+    Ok(())
+}
+```
+
+`group_by` takes several columns (pond-ts takes one), and gives `(key, series)` pairs rather than a `Map`. Each key part is an `Option<Value>`.
+
+</TabItem>
+</Tabs>
 
 Callback receives the group key as a second argument:
 
@@ -323,6 +474,9 @@ pond-ts stateful operators (`fill`, `align`, `rolling`, `smooth`,
 each output. When a series interleaves multiple entities (host,
 region, device, …), those neighbors silently cross entity boundaries:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Multi-host series — events for several hosts interleaved by time:
 //   ts=0,   cpu=0.5, host='a'
@@ -338,6 +492,43 @@ series.fill({ cpu: 'linear' });
 series.partitionBy('host').fill({ cpu: 'linear' }).collect();
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Two hosts interleaved by time; host a misses its reading at 60 s.
+    let ts = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 60_000, 120_000, 120_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b", "a", "b"]),
+            Column::optional(
+                "cpu",
+                vec![Some(0.5), None, Some(0.9), Some(0.7), Some(0.3)],
+            ),
+        ],
+    )?;
+
+    // Without partitioning: host a's gap is filled from host b's 0.9.
+    let mixed = ts.fill(&[("cpu", Fill::Linear)])?;
+    assert_eq!(mixed.column("cpu")?.numbers()?.get(1), Some(0.9));
+
+    // With partitioning: each host fills against its own rows only.
+    let per_host = ts
+        .partition_by(&["host"])?
+        .fill(&[("cpu", Fill::Linear)])?
+        .collect()?;
+    assert_eq!(per_host.column("cpu")?.numbers()?.get(1), Some(0.6));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
 ### Persistent partition + `.collect()`
 
 The view is **persistent across chains** — each sugar method returns
@@ -345,14 +536,74 @@ another `PartitionedTimeSeries`, so multi-step per-partition
 workflows compose cleanly. Call `.collect()` at the end to
 materialize back to a regular `TimeSeries`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const cleaned = ts
   .partitionBy('host')
-  .dedupe({ keep: 'last' }) // (when shipped — per-host)
+  .dedupe({ keep: 'last' }) // per-host
   .fill({ cpu: 'linear' }) // per-host
   .rolling('5m', { cpu: 'avg', host: 'last' }) // per-host
   .collect(); // back to TimeSeries<S>
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Fill, Keep, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Two hosts interleaved by time; host a misses its reading at 60 s.
+    let ts = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 60_000, 120_000, 120_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b", "a", "b"]),
+            Column::optional(
+                "cpu",
+                vec![Some(0.5), None, Some(0.9), Some(0.7), Some(0.3)],
+            ),
+        ],
+    )?;
+
+    let cleaned = ts
+        .partition_by(&["host"])?
+        .dedupe(Keep::Last)? // per host
+        .fill(&[("cpu", Fill::Linear)])? // per host
+        .rolling(
+            "5m",
+            &[Agg::of("cpu", Reducer::Avg), Agg::of("host", Reducer::Last)],
+        )? // per host
+        .collect()?; // back to one series
+
+    let rows: Vec<_> = cleaned
+        .rows()
+        .map(|r| {
+            (
+                r.begin(),
+                r.string("host").unwrap(),
+                r.number("cpu").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (0, Some("a"), Some(0.5)),
+            (60_000, Some("a"), Some(0.55)), // a filled from its own 0.5 and 0.7
+            (60_000, Some("b"), Some(0.9)),
+            (120_000, Some("a"), Some(0.6)),
+            (120_000, Some("b"), Some(0.6)),
+        ]
+    );
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 Without `.collect()` you stay in partition view. Single-shot ops
 need it too:
@@ -392,12 +643,54 @@ control of the per-partition pipeline), `apply(fn)` runs `fn` on
 each partition and **reassembles directly to a `TimeSeries`** — no
 `.collect()` needed. It's the terminal escape hatch.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const out = ts
   .partitionBy('host')
   .apply((g) => g.fill({ cpu: 'linear' }).rolling('5m', { cpu: 'avg' }));
 // `out` is TimeSeries<...> — no .collect()
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Fill, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Two hosts interleaved by time; host a misses its reading at 60 s.
+    let ts = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 60_000, 120_000, 120_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b", "a", "b"]),
+            Column::optional(
+                "cpu",
+                vec![Some(0.5), None, Some(0.9), Some(0.7), Some(0.3)],
+            ),
+        ],
+    )?;
+
+    let out = ts.partition_by(&["host"])?.apply(|g| {
+        g.fill(&[("cpu", Fill::Linear)])?
+            .rolling("5m", &[Agg::of("cpu", Reducer::Avg)])
+    })?;
+    // out is a TimeSeries: no collect() needed.
+    let cpu: Vec<_> = out.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(
+        cpu,
+        [Some(0.5), Some(0.55), Some(0.9), Some(0.6), Some(0.6)]
+    );
+    Ok(())
+}
+```
+
+pond-rs also has `map`, which runs your closure on each partition and stays partitioned. Partitions run on several cores.
+
+</TabItem>
+</Tabs>
 
 Use the sugar chain when you want partition state to persist;
 `apply` when you've got a one-off composition you'd rather express
@@ -413,12 +706,12 @@ per-group and reassembles back to one `TimeSeries<S>`. Reach for
 `groupBy` when you want N outputs; for `partitionBy` when you want
 one output with per-partition computation correctly scoped.
 
-:::tip[Live-side hazard is the same — primitive is queued]
+:::tip[Live-side hazard is the same — and so is the fix]
 The same cross-entity hazard applies to live transforms
 (`LiveRollingAggregation`, `LiveAggregation`, `LiveView.window()`,
-live `diff`/`rate`/`fill`/`cumulative`). Per-partition support on
-the live side is queued — see PLAN.md "Queued: live partitioning".
-For now, snapshot to a `TimeSeries` and use batch `partitionBy`.
+live `diff`/`rate`/`fill`/`cumulative`). `LiveSeries` has its own
+`partitionBy`, which runs them per partition; see
+[Live transforms](../live/live-transforms).
 :::
 
 ## `concat` \{#concat\}
@@ -428,10 +721,70 @@ For now, snapshot to a `TimeSeries` and use batch `partitionBy`.
 with all events sorted by key. The row-append / vertical-stack
 counterpart to [`joinMany`](#joinmany) (column-merge by key).
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const combined = TimeSeries.concat([cpuLastWeek, cpuThisWeek]);
 // same schema as the inputs; events from both weeks concatenated and sorted.
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let last_week = TimeSeries::new(
+        "cpu",
+        vec![0, 2_000],
+        vec![Column::required("cpu", vec![1.0, 3.0])],
+    )?;
+    let this_week = TimeSeries::new(
+        "cpu",
+        vec![1_000, 2_000],
+        vec![Column::required("cpu", vec![2.0, 4.0])],
+    )?;
+    let combined = TimeSeries::concat(&[&last_week, &this_week])?;
+    // Same columns; rows from both, sorted by time. At 2 s both rows stay.
+    assert_eq!(combined.key().begin(), &[0, 1_000, 2_000, 2_000]);
+    assert_eq!(
+        combined.column("cpu")?.numbers()?.values(),
+        &[1.0, 2.0, 3.0, 4.0]
+    );
+
+    // group_by, then concat: one series per host and back again.
+    // Two hosts interleaved by time; host a misses its reading at 60 s.
+    let ts = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 60_000, 120_000, 120_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b", "a", "b"]),
+            Column::optional(
+                "cpu",
+                vec![Some(0.5), None, Some(0.9), Some(0.7), Some(0.3)],
+            ),
+        ],
+    )?;
+
+    let filled_by_host = ts
+        .group_by(&["host"])?
+        .into_iter()
+        .map(|(_, g)| g.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().limit(2)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let refs: Vec<&TimeSeries> = filled_by_host.iter().collect();
+    let combined = TimeSeries::concat(&refs)?;
+    let cpu: Vec<_> = combined.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(cpu, [Some(0.5), Some(0.6), Some(0.9), Some(0.7), Some(0.3)]);
+    Ok(())
+}
+```
+
+A column is required in the result only if it is required in every input. pond-rs also refuses series whose interval labels differ in kind (text in one, numbers in another), which pond-ts allows.
+
+</TabItem>
+</Tabs>
 
 **The fan-in primitive.** [`groupBy(col, fn)`](#groupby) is the
 fan-out (one series → many); `concat` is the fan-in (many same-schema
@@ -477,8 +830,8 @@ right one based on whether you want more rows (concat) or wider rows
 
 **When events share a key.** Events with the same key from
 different inputs are both kept; this is row-append, not
-key-deduplication. If you need same-key collapse, see the queued
-`dedupe` work in PLAN.md or do it yourself before / after `concat`.
+key-deduplication. If you need same-key collapse, call
+[`dedupe`](./cleaning#deduplicate) after `concat`.
 
 :::note[Not the same as `Event.merge`]
 `Event.merge(patch)` is a **per-event** payload merge (column-wise:
@@ -524,9 +877,17 @@ Most callers should reach for [`concat`](#concat) first — it does the
 event-spread for you. Use `fromEvents` when you've already got a
 flat events array and don't have a list of series.
 
+pond-rs has no `fromEvents`, because it has no event objects to build
+from: its rows are read straight from the series' columns. Build a
+series from columns with `TimeSeries::new`, or join several with
+`TimeSeries::concat`.
+
 ## `join` \{#join\}
 
 Exact-key pairwise join of two series with the same key kind.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const joined = thisWeek.join(lastWeek, {
@@ -537,6 +898,64 @@ const joined = thisWeek.join(lastWeek, {
 // colliding columns get `<prefix>_` (the underscore is added for you):
 //   [time, this_cpu, this_requests, last_cpu, last_requests, ...]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Join, JoinType, OnConflict, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let this_week = TimeSeries::new(
+        "this",
+        vec![0, 60_000],
+        vec![
+            Column::required("cpu", vec![0.5, 0.6]),
+            Column::required("requests", vec![10.0, 12.0]),
+        ],
+    )?;
+    let last_week = TimeSeries::new(
+        "last",
+        vec![60_000, 120_000],
+        vec![
+            Column::required("cpu", vec![0.4, 0.3]),
+            Column::required("requests", vec![9.0, 8.0]),
+        ],
+    )?;
+
+    let joined = this_week.join(
+        &last_week,
+        Join {
+            how: JoinType::Outer,
+            on_conflict: OnConflict::Prefix(vec!["this".into(), "last".into()]),
+            ..Join::default()
+        },
+    )?;
+    let names: Vec<&str> = joined.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(
+        names,
+        ["this_cpu", "this_requests", "last_cpu", "last_requests"]
+    );
+    assert_eq!(joined.key().begin(), &[0, 60_000, 120_000]);
+    let last_cpu: Vec<_> = joined.column("last_cpu")?.numbers()?.iter().collect();
+    assert_eq!(last_cpu, [None, Some(0.4), Some(0.3)]);
+
+    // The default refuses columns with the same name.
+    assert!(this_week.join(&last_week, Join::default()).is_err());
+
+    // Or rename one side first.
+    let right = last_week
+        .select(&["cpu"])?
+        .rename(&[("cpu", "right_cpu")])?;
+    let joined = this_week.join(&right, Join::default())?;
+    let names: Vec<&str> = joined.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "requests", "right_cpu"]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 **Join types:**
 
@@ -624,6 +1043,9 @@ const wide = TimeSeries.joinMany(
 
 With prefixes to disambiguate same-named columns across sources:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 TimeSeries.joinMany([cpuA, cpuB, cpuC], {
   type: 'outer',
@@ -632,6 +1054,40 @@ TimeSeries.joinMany([cpuA, cpuB, cpuC], {
 });
 // schema: [time, a_cpu, b_cpu, c_cpu]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Join, JoinType, OnConflict, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let one = |name: &str, values: Vec<f64>| {
+        TimeSeries::new(name, vec![0, 60_000], vec![Column::required("cpu", values)])
+    };
+    let (cpu_a, cpu_b, cpu_c) = (
+        one("a", vec![1.0, 2.0])?,
+        one("b", vec![3.0, 4.0])?,
+        one("c", vec![5.0, 6.0])?,
+    );
+
+    let wide = TimeSeries::join_many(
+        &[&cpu_a, &cpu_b, &cpu_c],
+        Join {
+            how: JoinType::Outer,
+            on_conflict: OnConflict::Prefix(vec!["a".into(), "b".into(), "c".into()]),
+            ..Join::default()
+        },
+    )?;
+    let names: Vec<&str> = wide.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["a_cpu", "b_cpu", "c_cpu"]);
+    assert_eq!(wide.column("c_cpu")?.numbers()?.get(1), Some(6.0));
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 The prefix array length must equal the input series count. Same
 exact-key contract as `join` — `align` first if your sources tick

@@ -1,0 +1,92 @@
+name: Publish pond-rs
+
+# Publishes crates/pond-rs to crates.io. Separate from `Publish` (npm): the
+# crate has its own version, so a pond-ts release does not publish it and a
+# pond-rs release does not publish npm packages.
+#
+# Run it from the Actions tab (workflow_dispatch) on main, or push a tag
+# `pond-rs-v<version>`. A manual run is a dry run unless `dry_run` is
+# unticked. docs.rs builds the API docs by itself after a publish.
+#
+# Auth: the CARGO_REGISTRY_TOKEN secret when it is set (needed for the very
+# first publish, since crates.io only offers trusted publishing for a crate
+# that already exists); otherwise crates.io trusted publishing (OIDC), once
+# it is set up for this repository and workflow on crates.io.
+
+on:
+  push:
+    tags:
+      - 'pond-rs-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Package and check only; do not upload'
+        type: boolean
+        default: true
+
+jobs:
+  publish-crate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check a manual run is on main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "Run this workflow on main (got ${GITHUB_REF}); crates.io versions cannot be replaced."
+          exit 1
+
+      - name: Read the crate version
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pond-rs") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "pond-rs $version"
+
+      - name: Check the tag matches the version
+        if: github.event_name == 'push'
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "pond-rs-v${{ steps.version.outputs.version }}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match crate version ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Check the version is not on crates.io yet
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -A 'pond-rs release workflow (github.com/pond-ts/pond)' \
+            "https://crates.io/api/v1/crates/pond-rs/${{ steps.version.outputs.version }}")
+          if [ "$code" = "200" ]; then
+            echo "pond-rs ${{ steps.version.outputs.version }} is already on crates.io; bump the version first"
+            exit 1
+          fi
+
+      - name: Test
+        run: |
+          cargo test -p pond-rs
+          cargo test -p pond-rs --no-default-features
+
+      - name: Package (builds the crate from the packaged files)
+        run: cargo package -p pond-rs
+
+      - name: Get a crates.io token (trusted publishing)
+        id: auth
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) && env.HAS_TOKEN != 'true' }}
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: cargo publish -p pond-rs

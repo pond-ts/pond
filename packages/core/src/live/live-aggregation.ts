@@ -1,3 +1,6 @@
+import { replaySource } from './replay.js';
+import { Expr } from '../core/expression.js';
+import { livePredicate } from './expression-predicate.js';
 import { onSourceSettle } from './settle.js';
 import {
   normalizeAggregateColumns,
@@ -5,6 +8,7 @@ import {
 } from '../batch/aggregate-columns.js';
 import { Event } from '../core/event.js';
 import { Interval } from '../core/interval.js';
+import { TimeRange } from '../core/time-range.js';
 import {
   LiveView,
   makeDiffView,
@@ -88,9 +92,13 @@ export class LiveAggregation<
   readonly schema: Out;
 
   readonly #columns: AggregateColumnSpec[];
-  readonly #stepMs: number;
+  readonly #sequence: Sequence;
+  readonly #stepMs: number | undefined;
   readonly #anchorMs: number;
   readonly #graceMs: number;
+  // Calendar sequences: the last bucket looked up, so events in the same
+  // bucket skip the time-zone arithmetic.
+  #lastBucket: { start: number; end: number } | undefined;
 
   readonly #pending: Map<number, PendingBucket>;
   #watermark: number;
@@ -115,8 +123,10 @@ export class LiveAggregation<
     options?: LiveAggregationOptions,
   ) {
     this.name = source.name;
-    this.#stepMs = sequence.stepMs();
-    this.#anchorMs = sequence.anchor();
+    this.#sequence = sequence;
+    const fixed = sequence.kind() === 'fixed';
+    this.#stepMs = fixed ? sequence.stepMs() : undefined;
+    this.#anchorMs = fixed ? sequence.anchor() : 0;
     const sourceGraceMs =
       'graceWindowMs' in source &&
       typeof (source as any).graceWindowMs === 'number' &&
@@ -153,9 +163,7 @@ export class LiveAggregation<
     this.#onClose = new Set();
     this.#onUpdate = new Set();
 
-    for (let i = 0; i < source.length; i++) {
-      this.#ingest(source.at(i)!);
-    }
+    replaySource(source, (event) => this.#ingest(event));
 
     this.#settleSource = source;
     this.#unsubscribe = source.on('event', (event) => {
@@ -226,7 +234,11 @@ export class LiveAggregation<
 
   // ── View transforms ─────────────────────────────────────────
 
-  filter(predicate: (event: EventForSchema<Out>) => boolean): LiveView<Out> {
+  /** Keeps events that pass `test`: a function, or an expression such as `col('value').gt(0)`. */
+  filter(
+    test: ((event: EventForSchema<Out>) => boolean) | Expr<'boolean' | 'any'>,
+  ): LiveView<Out> {
+    const predicate = livePredicate(test, this.schema);
     return new LiveView(this as any, (event: any) =>
       predicate(event) ? event : undefined,
     );
@@ -376,10 +388,24 @@ export class LiveAggregation<
   // ── Private ─────────────────────────────────────────────────
 
   #bucketFor(timestamp: number): { start: number; end: number } {
-    const start =
-      Math.floor((timestamp - this.#anchorMs) / this.#stepMs) * this.#stepMs +
-      this.#anchorMs;
-    return { start, end: start + this.#stepMs };
+    const step = this.#stepMs;
+    if (step !== undefined) {
+      const start =
+        Math.floor((timestamp - this.#anchorMs) / step) * step + this.#anchorMs;
+      return { start, end: start + step };
+    }
+    // Calendar buckets (a day, week, month, … in the sequence's time
+    // zone) vary in length; take the one containing the timestamp.
+    const last = this.#lastBucket;
+    if (last && timestamp >= last.start && timestamp < last.end) return last;
+    const interval = this.#sequence
+      .bounded(new TimeRange({ start: timestamp, end: timestamp }), {
+        coverage: 'overlap',
+      })
+      .first()!;
+    const bucket = { start: interval.begin(), end: interval.end() };
+    this.#lastBucket = bucket;
+    return bucket;
   }
 
   #ingest(event: EventForSchema<S>): void {

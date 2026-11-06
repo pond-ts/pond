@@ -50,6 +50,7 @@ import {
   TimeRangeKeyColumn,
   columnBuilderForKind,
   stringColumnFromArray,
+  withRowSelection,
 } from '../columnar/index.js';
 import type { EventKey } from '../core/temporal.js';
 import type { RowForSchema, SeriesSchema } from '../schema/index.js';
@@ -110,14 +111,46 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   // Lazy full-materialization snapshot.
   #eventsArray?: ReadonlyArray<SeriesEvent>;
 
+  /**
+   * Row `i`'s event is row `row[i]`'s event of `sources[source[i]]` (or of
+   * `sources[0]` when `source` is absent), built there on first use. Set
+   * for stores gathered from other stores' rows (`dedupe`, …) so
+   * a result row and its source row share one `Event` whichever is asked
+   * for first, as when those ops rebuilt the store from the source events.
+   */
+  readonly #delegate:
+    | {
+        readonly sources: ReadonlyArray<SeriesStore<S>>;
+        readonly source: Int32Array | undefined;
+        readonly row: Int32Array;
+      }
+    | undefined;
+
+  /**
+   * Row `i`'s key object is row `row[i]`'s event key in `source`; its
+   * events are still built here, as new objects. Used by `trim` on `time`
+   * keys, whose event path built new events over the source's own keys.
+   */
+  readonly #keySource:
+    | { readonly source: SeriesStore<S>; readonly row: Int32Array }
+    | undefined;
+
   private constructor(
     store: ColumnarStore<S>,
     eventCache: Map<number, SeriesEvent>,
     dense?: ReadonlyArray<SeriesEvent>,
+    delegate?: {
+      readonly sources: ReadonlyArray<SeriesStore<S>>;
+      readonly source: Int32Array | undefined;
+      readonly row: Int32Array;
+    },
+    keySource?: { readonly source: SeriesStore<S>; readonly row: Int32Array },
   ) {
     this.store = store;
     this.#eventCache = eventCache;
     this.#dense = dense;
+    this.#delegate = delegate;
+    this.#keySource = keySource;
   }
 
   /** Schema declared at construction. */
@@ -282,6 +315,64 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * The rows `rows` (ascending, in range) as a new store that builds its own
+   * events, but whose key objects are this store's event keys for those rows
+   * (see `#keySource`). Module-private.
+   */
+  _selectRowsSharingKeysModulePrivate(rows: Int32Array): SeriesStore<S> {
+    const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
+    // Walk to the store that owns the key objects, so a chain of selections
+    // stays one step deep (see `_selectRowsModulePrivate`).
+    let source: SeriesStore<S> = this;
+    let row = rows;
+    for (;;) {
+      const keySource = source.#keySource;
+      const delegate = source.#delegate;
+      if (keySource !== undefined) {
+        row = composeRows(keySource.row, row);
+        source = keySource.source;
+      } else if (delegate !== undefined && delegate.source === undefined) {
+        row = composeRows(delegate.row, row);
+        source = delegate.sources[0]!;
+      } else {
+        break;
+      }
+    }
+    return new SeriesStore<S>(store, new Map(), undefined, undefined, {
+      source,
+      row,
+    });
+  }
+
+  /**
+   * The rows `rows` (ascending, in range) as a new store whose events are
+   * this store's events for those rows (see `#delegate`). Module-private.
+   */
+  _selectRowsModulePrivate(rows: Int32Array): SeriesStore<S> {
+    const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
+    const delegate = this.#delegate;
+    if (delegate === undefined) {
+      return new SeriesStore<S>(store, new Map(), undefined, {
+        sources: [this],
+        source: undefined,
+        row: rows,
+      });
+    }
+    // A delegated store holds none of its events (they all live in its
+    // sources), so point the new store at those sources directly. Without
+    // this, `s = s.after(t)` in a loop builds a chain that every lookup
+    // walks one call per link (10,000 links overflowed the stack).
+    return new SeriesStore<S>(store, new Map(), undefined, {
+      sources: delegate.sources,
+      source:
+        delegate.source === undefined
+          ? undefined
+          : composeRows(delegate.source, rows),
+      row: composeRows(delegate.row, rows),
+    });
+  }
+
+  /**
    * Materializes the `EventKey` for row `i`. Returns the concrete
    * `Time` / `TimeRange` / `Interval` instance depending on the
    * underlying key column kind. Lazily cached — `keyAt(i) ===
@@ -293,12 +384,112 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
         `SeriesStore.keyAt out of range: ${i} not in [0, ${this.length})`,
       );
     }
+    const keySource = this.#keySource;
+    if (keySource !== undefined) {
+      return keySource.source._eventKeyAtModulePrivate(keySource.row[i]!);
+    }
     let cached = this.#keyCache.get(i);
     if (cached === undefined) {
       cached = materializeKey(this.store.keys, i);
       this.#keyCache.set(i, cached);
     }
     return cached;
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): whether any row's `Event` already
+   * exists (a dense event array, or entries in the per-row cache). When
+   * false, every `eventAt(i)` would be built fresh from `keyAt(i)` and the
+   * columns' `read(i)`, so a row export can read the columns instead and
+   * give the same values.
+   */
+  _hasBuiltEventsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    // A delegated row's event is its source's, so ask the sources.
+    if (delegate !== undefined) {
+      return delegate.sources.some((s) => s._hasBuiltEventsModulePrivate());
+    }
+    return this.#dense !== undefined || this.#eventCache.size > 0;
+  }
+
+  /**
+   * Module-internal ([PND-GROUPEVENTS]): whether `eventAt(i)` can differ
+   * from what the columns hold at row `i`. Only a dense event array can: it
+   * holds events handed in through a trusted door (e.g. a `map` result,
+   * whose events may carry a value the column stores as a gap). Cached
+   * events either came from the columns (`eventAt`) or were checked against
+   * them at adoption (`fromTrustedStore`).
+   */
+  _eventsMayDifferFromColumnsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    // A delegated row's event is its source's, so ask the sources.
+    if (delegate !== undefined) {
+      return delegate.sources.some((s) =>
+        s._eventsMayDifferFromColumnsModulePrivate(),
+      );
+    }
+    return this.#dense !== undefined;
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): whether every row's `Event` already
+   * exists. A row export then reads the events, which is cheaper than a
+   * per-row cache lookup.
+   */
+  _hasAllEventsModulePrivate(): boolean {
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      return delegate.sources.every((s) => s._hasAllEventsModulePrivate());
+    }
+    return (
+      this.#dense !== undefined ||
+      this.#eventsArray !== undefined ||
+      this.#eventCache.size === this.length
+    );
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): row `i`'s `Event` if it already
+   * exists, else `undefined` (nothing is built). A row export uses the
+   * existing event where there is one, since its values can differ from the
+   * columns' (an event handed in through a trusted door may carry a value
+   * the column stores as a gap).
+   */
+  _builtEventAtModulePrivate(i: number): SeriesEvent | undefined {
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from._builtEventAtModulePrivate(delegate.row[i]!);
+    }
+    const dense = this.#dense;
+    if (dense !== undefined) return dense[i];
+    return this.#eventCache.get(i);
+  }
+
+  /**
+   * Module-internal ([PND-ROWSOUT]): the key object row `i`'s `Event` has
+   * or will have, without building the event. `eventAt(i)` builds with
+   * `keyAt(i)`, a delegated row takes its source row's, and a dense or
+   * cached event carries its own. A row export that hands out key objects
+   * uses this so they stay `===` to `eventAt(i).key()`.
+   */
+  _eventKeyAtModulePrivate(i: number): EventKey {
+    const dense = this.#dense;
+    if (dense !== undefined) return dense[i]!.key() as EventKey;
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from._eventKeyAtModulePrivate(delegate.row[i]!);
+    }
+    const cached = this.#eventCache.get(i);
+    if (cached !== undefined) return cached.key() as EventKey;
+    return this.keyAt(i);
   }
 
   /**
@@ -314,6 +505,14 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     }
     const dense = this.#dense;
     if (dense !== undefined) return dense[i]!;
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from.eventAt(delegate.row[i]!);
+    }
     let cached = this.#eventCache.get(i);
     if (cached === undefined) {
       const key = this.keyAt(i) as Time | TimeRange | Interval;
@@ -424,7 +623,12 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
 /* Internal helpers — key + row materialization, cache validation.            */
 /* -------------------------------------------------------------------------- */
 
-function materializeKey(keys: KeyColumn, i: number): EventKey {
+/**
+ * The `EventKey` at row `i` of a key column: a `Time`, `TimeRange` or
+ * `Interval`. Exported for `materializeEventsFromStore` (the live layer);
+ * not part of the package's public surface.
+ */
+export function materializeKey(keys: KeyColumn, i: number): EventKey {
   if (keys.kind === 'time') {
     return new Time(keys.beginAt(i));
   }
@@ -454,6 +658,13 @@ function materializeKey(keys: KeyColumn, i: number): EventKey {
     `SeriesStore.keyAt: key kind '${keys.kind}' has no EventKey representation ` +
       `(value-keyed stores are accessed via ValueSeries, not SeriesStore)`,
   );
+}
+
+/** `outer[inner[j]]` for each `j`: a selection of a selection. */
+function composeRows(outer: Int32Array, inner: Int32Array): Int32Array {
+  const out = new Int32Array(inner.length);
+  for (let j = 0; j < inner.length; j += 1) out[j] = outer[inner[j]!]!;
+  return out;
 }
 
 function buildRowData(store: ColumnarStore, i: number): SeriesRowData {

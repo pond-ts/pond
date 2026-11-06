@@ -1,0 +1,132 @@
+---
+title: Best efforts
+sidebar_position: 8
+description: The best average power for a duration, the fastest time for a distance, and the stretch each came from.
+---
+
+# Best efforts
+
+A best effort is the best stretch of a given size inside a section: the
+highest average power held for 20 minutes, the fastest kilometre. They sit
+under the measure they are about: `power` and `pace`.
+
+## Power
+
+```ts
+import { readFileSync } from 'node:fs';
+import { km, minutes, seconds } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const best20 = ride.power.bestEffort(minutes(20))!;
+console.log(best20.duration.format(), best20.power.format());
+console.log(
+  best20.section.label,
+  best20.section.bounds.elapsed?.from.format(),
+  '→',
+  best20.section.bounds.elapsed?.to.format(),
+);
+```
+
+```text output
+20:00 269 W
+Best 20:00 58:49 → 1:18:49
+```
+
+Each result hands back the `Section` it came from, so you can ask that stretch
+anything else: where it was, what the heart rate did, how it compares.
+
+```ts
+const where = best20.section.stats();
+console.log(
+  where.distance?.format('km'),
+  where.heartRate.average?.format(),
+  where.cadence.average?.format(),
+);
+```
+
+```text output
+7.04 km 162 bpm 81 rpm
+```
+
+`curve()` gives the best for many durations at once, shortest first. With no
+durations it picks a spread from one second to the length of the section; or
+pass the ones you want:
+
+```ts
+for (const e of ride.power.curve([
+  seconds(5),
+  minutes(1),
+  minutes(5),
+  minutes(20),
+  minutes(60),
+]))
+  console.log(e.duration.format().padStart(7), e.power.format());
+```
+
+```text output
+   0:05 355 W
+   1:00 323 W
+   5:00 309 W
+  20:00 269 W
+1:00:00 221 W
+```
+
+A longer duration never has a higher best than a shorter one. Durations longer
+than the section are left out, and with no power the curve is empty and
+`bestEffort` is `null`.
+
+## Pace
+
+`pace.bestEffort(distance)` is the fastest elapsed time over that distance,
+stops included. `bestEfforts()` takes several, or by default the usual race
+distances (400 m up to the marathon) that fit inside the section:
+
+```ts
+const run = readActivity(readFileSync('interval-run.fit'));
+for (const e of run.pace.bestEfforts())
+  console.log(
+    e.section.label.padEnd(10),
+    e.time.format().padStart(6),
+    e.pace.format(),
+  );
+```
+
+```text output
+Best 400 m   1:31 3:48/km
+Best 0.5 mi   3:05 3:50/km
+Best 1 km    4:10 4:10/km
+Best 1 mi    7:16 4:31/km
+Best 2 mi   15:39 4:52/km
+Best 5 km   24:49 4:58/km
+```
+
+## Inside any section
+
+Best efforts belong to sections, so you can ask inside a lap, a climb or a
+stretch you picked:
+
+```ts
+const secondClimb = ride.section({ distance: { from: km(28), to: km(32) } });
+console.log(secondClimb.power.bestEffort(minutes(5))?.power.format());
+```
+
+```text output
+309 W
+```
+
+## How gaps and pauses count
+
+- **A power meter dropout counts as 0 W.** A best effort is work over time,
+  and a dropout did no measured work. The ride's best 20 minutes contains its
+  15-second dropout; [Power curve and best efforts](./guides/power-curve)
+  shows what changes if you skip it instead.
+- **A pause counts as 10 seconds at most.** Each sample stands for the time
+  since the one before, capped at 10 seconds, at its own power. So after a
+  café pause the first sample stands for 10 seconds at whatever it recorded,
+  and the pause adds nothing else. An effort can run across a stop this way:
+  the riding either side of it makes one 20-minute effort, whose section runs
+  longer than its duration. On the example ride, the best hour is made that
+  way.
+- **Pace efforts are on elapsed time.** The fastest kilometre includes any
+  time stood still inside it, as a race result would.

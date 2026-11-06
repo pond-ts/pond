@@ -6,11 +6,14 @@
 //!
 //!     cargo run --release -p pond-rs --example perf_json
 //!
+//! `from_json object` reads object rows, the form polars reads, for the
+//! polars comparison.
+//!
 //! pond-ts's equivalent is `JSON.stringify(series.toJSON())` and
 //! `TimeSeries.fromJSON(JSON.parse(text))`, and likewise for `toColumns` /
 //! `fromColumns` and `toPoints` / `fromPoints`.
 
-use std::time::Instant;
+mod common;
 
 use pond_rs::{Agg, Column, JsonOptions, KeyOrder, Reducer, RowFormat, Sequence, TimeSeries};
 
@@ -37,24 +40,6 @@ fn make(rows: usize, strings: bool, sparse: bool) -> TimeSeries {
         columns.push(Column::required("symbol", s));
     }
     TimeSeries::new("bench", time, columns).unwrap()
-}
-
-fn median(mut xs: Vec<f64>) -> f64 {
-    xs.sort_by(f64::total_cmp);
-    xs[xs.len() / 2]
-}
-
-fn time<T>(mut f: impl FnMut() -> T) -> f64 {
-    f();
-    median(
-        (0..9)
-            .map(|_| {
-                let t = Instant::now();
-                std::hint::black_box(f());
-                t.elapsed().as_secs_f64() * 1e3
-            })
-            .collect(),
-    )
 }
 
 fn main() -> pond_rs::Result<()> {
@@ -91,23 +76,42 @@ fn main() -> pond_rs::Result<()> {
         ("interval key (1667 x 3)", bucketed),
     ];
     for (label, s) in &cases {
-        let tuple = time(|| s.to_json(RowFormat::Array).unwrap());
-        let object = time(|| s.to_json(RowFormat::Object).unwrap());
+        let time = |op: &str, f: &dyn Fn() -> Box<dyn common::Dump>| {
+            common::time_case(&format!("{label} {op}"), 9, f)
+        };
+        let tuple = time("to_json tuple", &|| {
+            Box::new(s.to_json(RowFormat::Array).unwrap())
+        });
+        let object = time("to_json object", &|| {
+            Box::new(s.to_json(RowFormat::Object).unwrap())
+        });
         let text = s.to_json(RowFormat::Array)?;
-        let read = time(|| TimeSeries::from_json(&text, &JsonOptions::new()).unwrap());
+        let objects = s.to_json(RowFormat::Object)?;
+        let read = time("from_json", &|| {
+            Box::new(TimeSeries::from_json(&text, &JsonOptions::new()).unwrap())
+        });
+        // object rows: the form polars reads, for the polars comparison
+        let read_objects = time("from_json object", &|| {
+            Box::new(TimeSeries::from_json(&objects, &JsonOptions::new()).unwrap())
+        });
         println!(
-            "{label}: to_json tuple {tuple:.2} ms, object {object:.2} ms, from_json {read:.2} ms"
+            "{label}: to_json tuple {tuple:.2} ms, object {object:.2} ms, from_json {read:.2} ms, from_json object {read_objects:.2} ms"
         );
         let columns = s.to_columns_json()?;
-        let to_columns = time(|| s.to_columns_json().unwrap());
-        let from_columns =
-            time(|| TimeSeries::from_columns_json(&columns, KeyOrder::Strict).unwrap());
+        let to_columns = time("to_columns_json", &|| {
+            Box::new(s.to_columns_json().unwrap())
+        });
+        let from_columns = time("from_columns_json", &|| {
+            Box::new(TimeSeries::from_columns_json(&columns, KeyOrder::Strict).unwrap())
+        });
         println!("  to_columns_json {to_columns:.2} ms, from_columns_json {from_columns:.2} ms");
         if s.key().end().is_none() {
             let points = s.to_points_json()?;
             let schema = s.schema();
-            let to_points = time(|| s.to_points_json().unwrap());
-            let from_points = time(|| TimeSeries::from_points_json(&points, "p", &schema).unwrap());
+            let to_points = time("to_points_json", &|| Box::new(s.to_points_json().unwrap()));
+            let from_points = time("from_points_json", &|| {
+                Box::new(TimeSeries::from_points_json(&points, "p", &schema).unwrap())
+            });
             println!("  to_points_json {to_points:.2} ms, from_points_json {from_points:.2} ms");
         }
     }

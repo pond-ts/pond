@@ -292,3 +292,50 @@ fn bad_options_are_errors() {
     let without = rsi.run(&bars, &Map::new()).unwrap();
     assert_eq!(values(&with_null, "rsi"), values(&without, "rsi"));
 }
+
+#[test]
+fn session_times_read_whole_milliseconds_however_spelled() {
+    // Codex review R09: `100.0` or `1e2` (as Python or an agent may write
+    // a whole number) was refused where `100` worked.
+    let f = fixture();
+    let b = bars(&f);
+    let t = b.key().begin();
+    let (open, close) = (t[0], t[t.len() - 1] + 1);
+    let mid = t[t.len() / 2];
+    let spelled = |open: Value, close: Value, start: Value, end: Value| {
+        let mut o = Map::new();
+        o.insert(
+            "sessions".into(),
+            json!([{ "date": "2024-01-08", "open": open, "close": close,
+                     "breaks": [{ "start": start, "end": end }] }]),
+        );
+        o
+    };
+    let ints = spelled(json!(open), json!(close), json!(mid), json!(mid + 60_000));
+    let floats = spelled(
+        json!(open as f64),
+        json!(close as f64),
+        json!(mid as f64),
+        json!((mid + 60_000) as f64),
+    );
+    let exp: Value = serde_json::from_str(&format!(
+        "{{\"sessions\": [{{\"date\": \"2024-01-08\", \"open\": {}e0, \"close\": {}e0, \
+         \"breaks\": [{{\"start\": {}e0, \"end\": {}e0}}]}}]}}",
+        open,
+        close,
+        mid,
+        mid + 60_000
+    ))
+    .unwrap();
+    let exp = exp.as_object().unwrap().clone();
+    for name in ["sessionVwap", "pivotPoints"] {
+        let d = study_descriptor(name).unwrap();
+        let want = d.run(&b, &ints).unwrap();
+        assert_eq!(d.run(&b, &floats).unwrap(), want, "{name} floats");
+        assert_eq!(d.run(&b, &exp).unwrap(), want, "{name} exponent");
+        for bad in [json!(open as f64 + 0.5), json!(1e300), json!("0")] {
+            let o = spelled(bad, json!(close), json!(mid), json!(mid + 60_000));
+            assert!(d.run(&b, &o).is_err(), "{name}");
+        }
+    }
+}

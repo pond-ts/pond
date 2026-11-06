@@ -44,6 +44,7 @@ import type {
   SeriesSchema,
 } from '../schema/index.js';
 import { TimeSeries } from '../batch/time-series.js';
+import { dropFront, removeFront } from './array-front.js';
 
 /**
  * Comparator used to order the live buffer. Delegates to
@@ -215,12 +216,12 @@ export class EventArrayLiveStorage<
 
   evictPrefix(n: number): ReadonlyArray<EventForSchema<S>> {
     if (n <= 0) return [];
-    return this.#events.splice(0, n);
+    return removeFront(this.#events, n);
   }
 
   dropPrefix(n: number): void {
     if (n <= 0) return;
-    this.#events.splice(0, n);
+    dropFront(this.#events, n);
   }
 
   clear(): ReadonlyArray<EventForSchema<S>> {

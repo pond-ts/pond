@@ -105,6 +105,7 @@ impl ValueSeries {
         })
     }
 
+    /// The series' name.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -119,6 +120,7 @@ impl ValueSeries {
         self.axis.len()
     }
 
+    /// `true` when there are no rows.
     pub fn is_empty(&self) -> bool {
         self.axis.is_empty()
     }
@@ -485,7 +487,9 @@ fn read_value_schema(call: &'static str, value: &Json) -> Result<Vec<(String, Co
 /// One axis cell: a finite number.
 fn read_axis(call: &'static str, name: &str, v: &Json, row: usize) -> Result<f64> {
     match v {
-        Json::Number(n) if let Some(x) = n.as_f64().filter(|x| x.is_finite()) => Ok(x),
+        Json::Number(n) if n.as_f64().is_some_and(f64::is_finite) => {
+            Ok(n.as_f64().unwrap_or_default())
+        }
         other => Err(invalid(
             call,
             format!("row {row}: axis '{name}' must be a finite number; got {other}"),

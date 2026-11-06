@@ -54,7 +54,11 @@
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
-import { ArrayColumn } from './array-column.js';
+import {
+  ArrayColumn,
+  arrayColumnFromOwnedCells,
+  copyCell,
+} from './array-column.js';
 import {
   BooleanColumn,
   Float64Column,
@@ -703,50 +707,18 @@ export class ChunkedArrayColumn {
   }
 
   sliceByIndices(indices: Int32Array): ArrayColumn {
+    // Fresh copies of the chunks' (already valid) cells, one per result
+    // row, as the validating constructor would make.
     const outLength = indices.length;
     const out = new Array<ArrayValue | undefined>(outLength);
-    let hasInvalid = false;
     for (let i = 0; i < outLength; i += 1) {
       const globalIdx = indices[i]!;
-      if (globalIdx < 0 || globalIdx >= this.length) {
-        out[i] = undefined;
-        hasInvalid = true;
-        continue;
-      }
-      if (this.validity && !this.validity.isDefined(globalIdx)) {
-        out[i] = undefined;
-        hasInvalid = true;
-        continue;
-      }
+      if (globalIdx < 0 || globalIdx >= this.length) continue;
       const c = findChunkForRow(this.chunkOffsets, globalIdx);
-      const local = globalIdx - this.chunkOffsets[c]!;
-      out[i] = this.chunks[c]!.read(local);
+      const cell = this.chunks[c]!.read(globalIdx - this.chunkOffsets[c]!);
+      if (cell !== undefined) out[i] = copyCell(cell);
     }
-    if (!hasInvalid) {
-      // Every gathered cell is a real ArrayValue.
-      return new ArrayColumn(outLength, {
-        fallback: out as ReadonlyArray<ArrayValue>,
-      });
-    }
-    // Some cells are undefined; let `ArrayColumn`'s constructor derive
-    // the validity bitmap.
-    const bits = new Uint8Array(bitmapByteCount(outLength));
-    let definedCount = 0;
-    for (let i = 0; i < outLength; i += 1) {
-      if (out[i] !== undefined) {
-        bits[i >> 3]! |= 1 << (i & 7);
-        definedCount += 1;
-      }
-    }
-    if (definedCount === outLength) {
-      return new ArrayColumn(outLength, {
-        fallback: out as ReadonlyArray<ArrayValue>,
-      });
-    }
-    return new ArrayColumn(outLength, {
-      fallback: out,
-      validity: validityFromBits(bits, outLength),
-    });
+    return arrayColumnFromOwnedCells(out);
   }
 }
 
@@ -849,39 +821,16 @@ export function materializeChunkedString(
 export function materializeChunkedArray(
   chunked: ChunkedArrayColumn,
 ): ArrayColumn {
-  const length = chunked.length;
-  const out = new Array<ArrayValue | undefined>(length);
-  let hasInvalid = false;
+  const out = new Array<ArrayValue | undefined>(chunked.length);
   let cursor = 0;
   for (let c = 0; c < chunked.chunks.length; c += 1) {
     const chunk = chunked.chunks[c]!;
     for (let j = 0; j < chunk.length; j += 1) {
-      const v = chunk.read(j);
-      out[cursor] = v;
-      if (v === undefined) hasInvalid = true;
+      // Fresh copies of already-valid cells (see `arrayColumnFromOwnedCells`).
+      const cell = chunk.read(j);
+      if (cell !== undefined) out[cursor] = copyCell(cell);
       cursor += 1;
     }
   }
-  if (!hasInvalid) {
-    return new ArrayColumn(length, {
-      fallback: out as ReadonlyArray<ArrayValue>,
-    });
-  }
-  const bits = new Uint8Array(bitmapByteCount(length));
-  let definedCount = 0;
-  for (let i = 0; i < length; i += 1) {
-    if (out[i] !== undefined) {
-      bits[i >> 3]! |= 1 << (i & 7);
-      definedCount += 1;
-    }
-  }
-  if (definedCount === length) {
-    return new ArrayColumn(length, {
-      fallback: out as ReadonlyArray<ArrayValue>,
-    });
-  }
-  return new ArrayColumn(length, {
-    fallback: out,
-    validity: validityFromBits(bits, length),
-  });
+  return arrayColumnFromOwnedCells(out);
 }

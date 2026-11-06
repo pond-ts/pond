@@ -1,5 +1,12 @@
 import type { ColumnValue, ScalarValue } from '../schema/index.js';
 import type { ReducerDef } from './types.js';
+import {
+  SORT_RANGE_MAX,
+  dictStrings,
+  packedNumbers,
+  reduceCellsByRead,
+  sortedFinite,
+} from './cells.js';
 
 const TOP_RE = /^top(\d+)$/;
 
@@ -82,7 +89,14 @@ function topFromCounts(
   counts: Map<ScalarValue, number>,
   n: number,
 ): ScalarValue[] {
-  const entries = Array.from(counts.entries());
+  return topFromEntries(Array.from(counts.entries()), n);
+}
+
+/** {@link topFromCounts} over `[value, count]` pairs with distinct values. */
+function topFromEntries(
+  entries: Array<[ScalarValue, number]>,
+  n: number,
+): ScalarValue[] {
   entries.sort((a, b) => {
     if (a[1] !== b[1]) return b[1] - a[1];
     return compareScalars(a[0], b[0]);
@@ -106,12 +120,72 @@ export function topReducer(n: number): ReducerDef {
   if (!Number.isInteger(n) || n <= 0) {
     throw new TypeError(`top requires a positive integer N, got ${n}`);
   }
+  const reduce = (defined: ReadonlyArray<ColumnValue>): ScalarValue[] => {
+    const counts = new Map<ScalarValue, number>();
+    for (const v of defined) incrementCounts(counts, v);
+    return topFromCounts(counts, n);
+  };
   return {
     outputKind: 'array',
-    reduce(defined) {
-      const counts = new Map<ScalarValue, number>();
-      for (const v of defined) incrementCounts(counts, v);
-      return topFromCounts(counts, n);
+    reduce,
+    reduceCellRange(col, start, end) {
+      const values = packedNumbers(col);
+      if (values !== null && end - start <= SORT_RANGE_MAX) {
+        // Small range: sort, and count each run of equal values (`0` for a
+        // run of signed zeros, as a `Map` key stores it).
+        const sorted = sortedFinite(values, start, end);
+        const entries: Array<[ScalarValue, number]> = [];
+        for (let k = 0; k < sorted.length; ) {
+          const v = sorted[k]!;
+          let j = k + 1;
+          while (j < sorted.length && sorted[j] === v) j += 1;
+          entries.push([v === 0 ? 0 : v, j - k]);
+          k = j;
+        }
+        return topFromEntries(entries, n);
+      }
+      if (values !== null) {
+        // A run of equal values is one map update. Runs merge across
+        // missing cells; `-0` and `0` are one key either way (a `Map`
+        // treats them as equal), so the counts are `reduce`'s exactly.
+        const counts = new Map<ScalarValue, number>();
+        let run = 0;
+        let current = 0;
+        for (let i = start; i < end; i += 1) {
+          const v = values[i]!;
+          if (v - v !== 0) continue;
+          if (run > 0 && v === current) {
+            run += 1;
+            continue;
+          }
+          if (run > 0) counts.set(current, (counts.get(current) ?? 0) + run);
+          current = v;
+          run = 1;
+        }
+        if (run > 0) counts.set(current, (counts.get(current) ?? 0) + run);
+        return topFromCounts(counts, n);
+      }
+      const strings = dictStrings(col);
+      if (strings !== null) {
+        // Count codes, then add each code's count under its string (a
+        // dictionary may hold one string under two codes).
+        const dict = strings.dictionary!;
+        const codes = strings.indices!;
+        const validity = strings.validity;
+        const byCode = new Map<number, number>();
+        for (let i = start; i < end; i += 1) {
+          if (validity !== undefined && !validity.isDefined(i)) continue;
+          const code = codes[i]!;
+          byCode.set(code, (byCode.get(code) ?? 0) + 1);
+        }
+        const counts = new Map<ScalarValue, number>();
+        for (const [code, c] of byCode) {
+          const s = dict[code]!;
+          counts.set(s, (counts.get(s) ?? 0) + c);
+        }
+        return topFromCounts(counts, n);
+      }
+      return reduceCellsByRead(reduce, col, start, end);
     },
     bucketState() {
       const counts = new Map<ScalarValue, number>();

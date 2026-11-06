@@ -2,6 +2,9 @@
 sidebar_position: 11
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Queries
 
 Methods that **interrogate** a `TimeSeries` without changing it. None
@@ -9,6 +12,9 @@ of these mutate; none of them return a new `TimeSeries` (except the
 subseries selectors at the bottom, which still leave the source
 untouched). Reach for these when you need to ask the series for
 something rather than transform it.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const cpu = TimeSeries.fromJSON({ name, schema, rows });
@@ -18,6 +24,34 @@ cpu.column('cpu').mean(); // 0.476 — a whole column, no per-row Events
 cpu.timeRange(); // TimeRange — .begin() / .end() in epoch ms
 cpu.tail('30s').reduce({ cpu: 'avg' }); // current state
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, EventKey, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    assert_eq!(cpu.len(), 5);
+    assert_eq!(cpu.first().unwrap().number("cpu")?, Some(0.31)); // one row
+    assert_eq!(cpu.reduce_number("cpu", Reducer::Avg)?, Some(0.476)); // a whole column
+    assert_eq!(cpu.time_range(), Some(EventKey::time_range(0, 40_000)?));
+    let now = cpu.tail("30s")?.reduce(&[Agg::of("cpu", Reducer::Avg)])?; // current state
+    assert_eq!(now.number("cpu")?, Some(0.5433333333333333));
+    Ok(())
+}
+```
+
+pond-rs columns have no `mean()`; a whole-column answer comes from `reduce_number`, as below under [Reading columns](#reading-columns).
+
+</TabItem>
+</Tabs>
 
 Two ways to read: the **row API** (`Event`s — `first()`, `at(i)`,
 `get('cpu')`, iteration) for per-event logic, and the **column API**
@@ -43,11 +77,45 @@ Overall extent as a `TimeRange`, or `undefined` for an empty series.
 It's a `TimeRange` instance — `.begin()` / `.end()` return the bounds in
 epoch milliseconds (not `.start` / `.end` fields):
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const r = series.timeRange(); // TimeRange | undefined
 r?.begin(); // number (epoch ms)
 r?.end();
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48])],
+    )?;
+
+    assert_eq!(series.len(), 3);
+
+    // The overall span, as an `EventKey`; `None` for an empty series.
+    let r = series.time_range().unwrap();
+    assert_eq!((r.begin(), r.end()), (0, 20_000));
+
+    // `rows()` walks the rows; each `Row` is a view, not a copy.
+    let times: Vec<i64> = series.rows().map(|row| row.begin()).collect();
+    assert_eq!(times, [0, 10_000, 20_000]);
+    Ok(())
+}
+```
+
+`time_range()` gives an `EventKey`. There is no `events` array; `rows()` walks the rows instead.
+
+</TabItem>
+</Tabs>
 
 ### `events`
 
@@ -71,10 +139,45 @@ reduction over a single field, read the column instead — see
 Event at a positional index, or `undefined` if out of bounds.
 Negative indices count from the end (`-1` is the last event).
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.at(0); // first event, or undefined
 series.at(-1); // last event, same as series.last()
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000],
+        vec![Column::required("cpu", vec![0.31, 0.95, 0.48, 0.62])],
+    )?;
+
+    assert_eq!(series.at(0).unwrap().begin(), 0);
+    assert_eq!(series.at(-1).unwrap().begin(), 30_000); // same as last()
+    assert!(series.at(4).is_none()); // past the end
+
+    assert_eq!(series.first().unwrap().number("cpu")?, Some(0.31));
+    assert_eq!(series.last().unwrap().number("cpu")?, Some(0.62));
+
+    // The closure returns a Result, so lookups inside it can use `?`.
+    let spike = series.find(|r| Ok(r.number("cpu")?.unwrap_or(0.0) > 0.9))?;
+    assert_eq!(spike.unwrap().begin(), 10_000);
+    Ok(())
+}
+```
+
+This covers `first()`, `last()` and `find()` below as well.
+
+</TabItem>
+</Tabs>
 
 ### `first()` / `last()`
 
@@ -97,6 +200,9 @@ To read _values_ rather than events, go through a **column** instead of
 materializing an `Event` per row. `series.column(name)` returns a typed,
 read-only view of one field, narrowed by the schema:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const cpu = series.column('cpu'); // Float64Column (number kind)
 cpu.mean(); // number | undefined — one validity-aware pass
@@ -104,6 +210,36 @@ cpu.minMax(); // [min, max] | undefined — the Y-extent, one scan
 cpu.at(5); // number | undefined — the value at row 5
 cpu.toFloat64Array(); // dense Float64Array for a canvas / WebGL loop
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    let cpu = series.column("cpu")?.numbers()?; // fails if not a number column
+    assert_eq!(cpu.get(3), Some(0.62)); // the value at row 3
+    assert_eq!(cpu.values(), &[0.31, 0.44, 0.48, 0.62, 0.53]); // a plain &[f64]
+
+    // Reductions go through the series.
+    assert_eq!(series.reduce_number("cpu", Reducer::Avg)?, Some(0.476));
+    assert_eq!(series.reduce_number("cpu", Reducer::Min)?, Some(0.31));
+    assert_eq!(series.reduce_number("cpu", Reducer::Max)?, Some(0.62));
+    Ok(())
+}
+```
+
+A pond-rs column holds the values but has no reductions (`mean`, `minMax`, `uniqueCount`, `all`, …); reduce through the series with `reduce_number`. `values()` is the raw buffer, where a gap is a non-finite number; `iter()` gives `Option<f64>`s, and `get(i)` panics past the end rather than giving `None`.
+
+</TabItem>
+</Tabs>
 
 Numeric columns carry the scalar reductions (`min` / `max` / `sum` /
 `mean` / `stdev` / `median` / `percentile` / `count` / `minMax`); string
@@ -148,10 +284,44 @@ const i = series.bisect(targetTimestamp);
 The nearest event that doesn't overshoot the key. Common pattern:
 "the most recent reading at or before `t`":
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const previous = series.atOrBefore(Date.now());
 const next = series.atOrAfter(Date.now());
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    assert!(series.includes_key(10_000));
+    assert!(!series.includes_key(15_000));
+    assert_eq!(series.bisect(15_000), 2);
+
+    assert_eq!(series.at_or_before(15_000).unwrap().begin(), 10_000);
+    assert_eq!(series.at_or_after(15_000).unwrap().begin(), 20_000);
+
+    assert_eq!(series.nearest(26_000).unwrap().begin(), 30_000);
+    assert_eq!(series.nearest(25_000).unwrap().begin(), 20_000); // a tie: the earlier row
+    Ok(())
+}
+```
+
+This covers `includes_key`, `bisect` and `nearest` too. A plain `i64` time works as a key; build other keys with `EventKey::time_range` or `EventKey::interval`.
+
+</TabItem>
+</Tabs>
 
 ### `nearest(key)`
 
@@ -169,10 +339,38 @@ series.nearest(Date.now()); // the closest reading to now
 
 `Array`-style predicate scans:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.some((e) => (e.get('cpu') ?? 0) > 0.9); // any spike?
 series.every((e) => e.get('host') !== undefined); // all hosts known?
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000],
+        vec![
+            Column::required("cpu", vec![0.31, 0.95, 0.48]),
+            Column::required("host", vec!["a", "b", "a"]),
+        ],
+    )?;
+
+    assert!(series.some(|r| Ok(r.number("cpu")?.unwrap_or(0.0) > 0.9))?); // any spike?
+    assert!(series.every(|r| Ok(r.string("host")?.is_some()))?); // all hosts known?
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ## Subseries selection
 
@@ -183,20 +381,82 @@ subset of events. The source is untouched.
 
 Positional, like `Array.slice`. Negative indices supported.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const head = series.slice(0, 100); // first 100 events
 const tail = series.slice(-10); // last 10 events
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        (0..200).map(|i| i * 1_000).collect(),
+        vec![Column::required("cpu", vec![0.5; 200])],
+    )?;
+
+    let head = series.slice(0..100); // first 100 rows
+    let tail = series.slice(-10..); // last 10 rows
+    assert_eq!(head.len(), 100);
+    assert_eq!(tail.key().begin()[0], 190_000);
+    Ok(())
+}
+```
+
+`slice` takes a Rust range; negative ends count from the end, as in JavaScript.
+
+</TabItem>
+</Tabs>
 
 ### `tail(duration)`
 
 Trailing time window measured from the last event's `begin()`.
 "The last 30 seconds":
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.tail('30s'); // TimeSeries<S>
 series.tail('5m').reduce({ cpu: 'avg' }); // current state
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    // Rows that start after 40 s - 30 s = 10 s.
+    let last_30s = series.tail("30s")?;
+    assert_eq!(last_30s.key().begin(), &[20_000, 30_000, 40_000]);
+
+    let now = series
+        .tail("30s")?
+        .reduce(&[Agg::of("cpu", Reducer::Avg)])?;
+    assert_eq!(now.number("cpu")?, Some(0.5433333333333333));
+    Ok(())
+}
+```
+
+`tail` takes a duration and returns an error for a bad one; there is no form with no argument.
+
+</TabItem>
+</Tabs>
 
 `tail()` with no argument is the identity.
 
@@ -205,10 +465,35 @@ series.tail('5m').reduce({ cpu: 'avg' }); // current state
 Events strictly before / after a temporal boundary (timestamp or
 event key):
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.before(Date.now() - 60_000); // events older than 1m
 series.after(start); // events newer than `start`
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    assert_eq!(series.before(20_000).key().begin(), &[0, 10_000]);
+    assert_eq!(series.after(20_000).key().begin(), &[30_000, 40_000]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### `overlapping(range)` / `containedBy(range)`
 
@@ -218,10 +503,42 @@ series.after(start); // events newer than `start`
 | `containedBy(range)` | whose key is fully inside the range          |
 | `within(range)`      | same as `containedBy` (alias for ergonomics) |
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const overlapping = series.overlapping(yesterdayRange);
 const fully = series.containedBy(yesterdayRange);
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+    let range = EventKey::time_range(10_000, 30_000)?;
+
+    let overlapping = series.overlapping(range.clone());
+    let fully = series.contained_by(range);
+    let within = series.within(10_000, 30_000)?; // takes the two ends
+    assert_eq!(overlapping.len(), 3); // both ends are included
+    assert_eq!(fully.len(), 3); // the same rows here, since rows are moments
+    assert_eq!(within.len(), 3);
+    Ok(())
+}
+```
+
+`within` takes the two ends rather than a range. Both ends count as inside, for all three.
+
+</TabItem>
+</Tabs>
 
 ### `trim(range)`
 
@@ -230,9 +547,40 @@ their **keys clipped** to the range boundaries. Use this when you
 want a subseries that "fits" inside a window without leaking past
 either edge:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const clipped = series.trim(reportingWindow);
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, EventKey, TimeRangeKeys, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Two jobs, each running from begin to end.
+    let jobs = TimeSeries::from_time_ranges(
+        "jobs",
+        TimeRangeKeys {
+            begin: vec![0, 20_000],
+            end: vec![15_000, 50_000],
+        },
+        vec![Column::required("id", vec!["a", "b"])],
+    )?;
+    let window = EventKey::time_range(10_000, 30_000)?;
+
+    let clipped = jobs.trim(window);
+    assert_eq!(clipped.key().begin(), &[10_000, 20_000]);
+    assert_eq!(clipped.key().end().unwrap(), &[15_000, 30_000]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ## Column projection
 
@@ -245,17 +593,73 @@ zero-copy, source untouched.
 Keep the key column plus the named value columns; drop the rest. The
 result type narrows to just those fields:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.select('cpu', 'healthy'); // TimeSeries with only cpu + healthy
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000],
+        vec![
+            Column::required("cpu", vec![0.31, 0.44]),
+            Column::required("host", vec!["a", "b"]),
+            Column::required("healthy", vec![true, false]),
+        ],
+    )?;
+
+    let picked = series.select(&["cpu", "healthy"])?;
+    let names: Vec<&str> = picked.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "healthy"]);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ### `rename(mapping)`
 
 Relabel columns:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 series.rename({ cpu: 'load' }); // 'cpu' column becomes 'load'
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000],
+        vec![Column::required("cpu", vec![0.31, 0.44])],
+    )?;
+
+    let renamed = series.rename(&[("cpu", "load")])?; // 'cpu' column becomes 'load'
+    assert_eq!(renamed.column("load")?.numbers()?.get(0), Some(0.31));
+    assert!(renamed.column("cpu").is_err());
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 ## Range predicates
 
@@ -265,10 +669,49 @@ These return a `boolean` or a `TimeRange`, not a series.
 
 Does this series's `timeRange()` overlap another?
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 seriesA.overlaps(seriesB); // boolean
 seriesA.overlaps(rangeB); // also accepts a TimeRange directly
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let a = TimeSeries::new(
+        "a",
+        vec![0, 20_000, 40_000],
+        vec![Column::required("v", vec![1.0, 2.0, 3.0])],
+    )?;
+    let b = TimeSeries::new(
+        "b",
+        vec![30_000, 60_000],
+        vec![Column::required("v", vec![4.0, 5.0])],
+    )?;
+    // These take a span, so pass the other series' span.
+    let b_range = b.time_range().unwrap();
+
+    assert!(a.overlaps(b_range.clone()));
+    assert!(!a.contains(b_range.clone()));
+    assert!(a.contains(EventKey::time_range(5_000, 15_000)?));
+    assert_eq!(
+        a.intersection(b_range),
+        Some(EventKey::time_range(30_000, 40_000)?)
+    );
+    Ok(())
+}
+```
+
+In pond-rs `overlaps`, `contains` and `intersection` take a span, not another series; pass the other series' `time_range()`. This covers `contains` and `intersection` below as well.
+
+</TabItem>
+</Tabs>
 
 ### `contains(other)`
 
@@ -291,6 +734,9 @@ day.intersection(meeting); // TimeRange | undefined
 `TimeSeries` is iterable. `for...of` walks events in order; spread
 yields the underlying array:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 for (const event of series) {
   console.log(event.begin(), event.get('cpu'));
@@ -298,6 +744,35 @@ for (const event of series) {
 
 const all = [...series]; // ReadonlyArray<EventForSchema<S>>
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let series = TimeSeries::new(
+        "cpu",
+        vec![0, 10_000, 20_000, 30_000, 40_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48, 0.62, 0.53])],
+    )?;
+
+    let mut total = 0.0;
+    for row in series.rows() {
+        total += row.number("cpu")?.unwrap_or(0.0);
+    }
+
+    // The same result, one pass over the column.
+    assert_eq!(series.reduce_number("cpu", Reducer::Sum)?, Some(total));
+    let plain: f64 = series.column("cpu")?.numbers()?.iter().flatten().sum();
+    assert_eq!(plain, total);
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
 
 For array methods over the `Event` rows, reach for `series.events`. But
 for a reduction over a single column, the column API is the one-pass,
@@ -326,6 +801,10 @@ row-API boundary. For a dense typed array of a single field (the canvas
 / WebGL path), stay columnar with
 `series.column('cpu').toFloat64Array()` — see
 [Reading columns](#reading-columns).
+
+In pond-rs these are `to_json(RowFormat::Array)` (or `RowFormat::Object`),
+`to_columns_json()`, `to_points_json()` and `to_arrow()`. pond-rs has no
+`toRows`, `toObjects` or `toArray`; walk `rows()` instead.
 
 `toPoints` is the chart-bridge — see
 [Charting](../advanced/charting). `toJSON` and friends are the

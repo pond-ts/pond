@@ -21,8 +21,11 @@ use crate::series::TimeSeries;
 /// [`SessionAnchor::column`] names a column.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAnchor<'a> {
+    /// Sessions from a trading calendar.
     Calendar(&'a TradingCalendar),
+    /// A list of sessions.
     Sessions(&'a [Session]),
+    /// A column holding a session id per row.
     Column(String),
 }
 

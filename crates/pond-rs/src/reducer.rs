@@ -22,7 +22,9 @@ pub enum Reducer {
     /// Mean of present values; missing when there are none. `"mean"` parses
     /// to this too.
     Avg,
+    /// Smallest present value.
     Min,
+    /// Largest present value.
     Max,
     /// First present value.
     First,
@@ -199,14 +201,17 @@ impl Agg {
         }
     }
 
+    /// The output column's name.
     pub fn output(&self) -> &str {
         &self.output
     }
 
+    /// The column read.
     pub fn source(&self) -> &str {
         &self.source
     }
 
+    /// The reducer applied.
     pub fn reducer(&self) -> Reducer {
         self.reducer
     }
@@ -231,7 +236,7 @@ fn finite(v: f64) -> bool {
 fn blocked_sum_finite(values: &[f64]) -> f64 {
     let mut a = [0.0f64; 8];
     let lim = values.len() / 8 * 8;
-    for chunk in values[..lim].chunks_exact(8) {
+    for chunk in values.as_chunks::<8>().0 {
         for (lane, &v) in a.iter_mut().zip(chunk) {
             *lane += if finite(v) { v } else { 0.0 };
         }

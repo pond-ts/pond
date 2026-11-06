@@ -1,4 +1,5 @@
 import { onSourceSettle } from './settle.js';
+import { replaySource } from './replay.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -132,7 +133,10 @@ declare function queueMicrotask(callback: () => void): void;
  * bound (no removes ever fire). Today every pond LiveSource that
  * evicts also marks itself with `EMITS_EVICT` (`LiveSeries`,
  * `LiveView` with eviction); future LiveSource implementations
- * must preserve this contract.
+ * must preserve this contract. The one internal eviction that is
+ * silent on `'evict'` — a `window` view trimming itself — reaches a
+ * reduce through the view's internal `_onTrim` channel instead
+ * ([PND-REDUCETRIM]).
  *
  * Public API: constructed via `live.reduce(mapping, opts?)` on
  * `LiveSeries` / `LiveView`. User code doesn't import this class
@@ -172,9 +176,11 @@ export class LiveReduce<
    *    to assign; `#nextEvictIdx` the next to remove on a miss.
    *
    * The frontier is kept monotonically ahead of every resolved index
-   * (`Math.max` on each hit), so the chunked replay→forward transition
-   * — where initially-buffered events are cached (identity hits) but
-   * later forward events miss — lands forward misses on the right index.
+   * (`Math.max` on each hit), so a mix of hits and misses on the chunked
+   * backing (an event the source had already built and cached before this
+   * reduce replayed it hits; every other one misses, since the replay
+   * builds fresh events as pushes do, [PND-LIVEREPLAY]) lands misses on
+   * the right index.
    * For `reorder` the frontier is never read (identity always resolves),
    * so the `Math.max` bookkeeping is inert there.
    *
@@ -206,6 +212,8 @@ export class LiveReduce<
   readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribeEvent: () => void;
   readonly #unsubscribeEvict: (() => void) | undefined;
+  /** [PND-REDUCETRIM] A `window` view's silent trims; `undefined` for other sources. */
+  readonly #unsubscribeTrim: (() => void) | undefined;
   /** [PND-REDUCETICK] Root series' end-of-push hook; `undefined` if the source has none. */
   readonly #unsubscribeSettle: (() => void) | undefined;
   readonly #source: LiveSource<S>;
@@ -268,9 +276,7 @@ export class LiveReduce<
     // Replay existing buffer events through the same ingest path
     // so `LiveReduce` over a non-empty source matches the
     // streaming-from-construction shape.
-    for (let i = 0; i < source.length; i++) {
-      this.#ingest(source.at(i)!);
-    }
+    replaySource(source, (event) => this.#ingest(event));
 
     // Subscribe to source for forward events. The 'event' callback
     // fires per source event (post-insert, pre-retention); 'evict'
@@ -293,6 +299,20 @@ export class LiveReduce<
         },
       );
     }
+
+    // [PND-REDUCETRIM] A `window` view trims itself without `'evict'`;
+    // it tells a reduce through this internal channel, after the event.
+    const trimSource = source as {
+      _onTrim?: (
+        fn: (events: ReadonlyArray<EventForSchema<S>>) => void,
+      ) => () => void;
+    };
+    this.#unsubscribeTrim =
+      typeof trimSource._onTrim === 'function'
+        ? trimSource._onTrim((trimmed) => {
+            for (const ev of trimmed) this.#evictOne(ev);
+          })
+        : undefined;
 
     // [PND-REDUCETICK] Emit at the end of each push, after retention and
     // `'evict'`, through the root series' settle hook. Subscribed after
@@ -353,7 +373,8 @@ export class LiveReduce<
    *   non-empty source — phrased uniformly with sibling classes'
    *   stats() docs. Never decreases.
    * - `evictions`: total events removed from reducer state via
-   *   the source's `'evict'` channel. Events that predated this
+   *   the source's `'evict'` channel, or trimmed by a `window` view
+   *   source ([PND-REDUCETRIM]). Events that predated this
    *   `LiveReduce` (already past the FIFO evict cursor) don't count.
    *   Never decreases.
    * - `emissions`: total output events fired. Never decreases.
@@ -392,6 +413,7 @@ export class LiveReduce<
     this.#disposed = true;
     this.#unsubscribeEvent();
     this.#unsubscribeEvict?.();
+    this.#unsubscribeTrim?.();
     this.#unsubscribeSettle?.();
   }
 
@@ -432,9 +454,15 @@ export class LiveReduce<
     // backstop for events that arrive outside any push: construction
     // replay, an upstream reduce's own replay emission, or a source
     // without the hook. After a settle flush it finds nothing pending.
+    // Only the microtask clears the flag ([PND-REDUCEMICRO]): if a settle
+    // flush cleared it, every push of a synchronous loop would queue one
+    // more microtask, each holding this reduce until the loop ends.
     if (!this.#microtaskScheduled) {
       this.#microtaskScheduled = true;
-      queueMicrotask(() => this.#flushPendingEmit());
+      queueMicrotask(() => {
+        this.#microtaskScheduled = false;
+        this.#flushPendingEmit();
+      });
     }
   }
 
@@ -444,7 +472,6 @@ export class LiveReduce<
    * backstop microtask. Reducer state is post-retention by this point.
    */
   #flushPendingEmit(): void {
-    this.#microtaskScheduled = false;
     const key = this.#pendingEmitKey;
     const ts = this.#pendingEmitTs;
     this.#pendingEmitKey = undefined;

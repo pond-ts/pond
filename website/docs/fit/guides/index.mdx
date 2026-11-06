@@ -1,0 +1,89 @@
+---
+id: guides-index
+title: Analysis guides
+sidebar_position: 1
+description: How the analysis guides are built, the example activities, and setting up Python.
+---
+
+# Analysis guides
+
+Each guide takes one measure athletes use and builds it three times:
+
+1. **The idea**, in plain words, with the formula.
+2. **From scratch**, on the raw samples, with pond's own operations: in
+   TypeScript with `pond-ts`, and in Python with `pond_rs`. The two tabs do
+   the same steps and print the same numbers.
+3. **With fit**, in a line or two, giving the same answer as the hand-built
+   version (or, where it differs, saying exactly why).
+4. **A chart**, drawn with `@pond-ts/charts`.
+5. **Traps**: the gaps, pauses and recording quirks that change the answer.
+
+If you know Python and pandas or polars, the Python tab is the bridge: it
+shows which parts are pond (time windows, buckets, reductions) and which are
+ordinary data-frame work (per-row maths).
+
+| Guide                                                      | What it builds                                      |
+| ---------------------------------------------------------- | --------------------------------------------------- |
+| [Moving time](./moving-time)                               | Distance from GPS, speed, and the time spent moving |
+| [Splits and pace](./splits-and-pace)                       | Kilometre splits, and pace that adds up correctly   |
+| [Normalized power and training stress](./normalized-power) | NP, intensity factor, training stress, variability  |
+| [Power curve and best efforts](./power-curve)              | Best average power for every duration               |
+| [Time in zones](./time-in-zones)                           | Time spent in each heart-rate or power zone         |
+
+Every number on these pages is printed by the code above it: the docs build
+runs each page's code and checks what it prints against what the page shows.
+
+## The example activities
+
+Three made-up activities, so they can be published and changed freely. A
+seeded model in the docs source makes them; it is not anyone's recording, and
+the guides don't pretend it is.
+
+| Activity        | Files                                                                                                                                            | What's in it                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Two climbs loop | [FIT](pathname:///data/fit/hill-ride.fit) · [CSV](pathname:///data/fit/hill-ride.csv) · [laps](pathname:///data/fit/hill-ride-laps.csv)          | 45 km ride, 1 Hz, GPS, height, heart rate, power and cadence. Two climbs, a 45 s stop at a light, a 6 min café pause, two power dropouts |
+| Six by 800 m    | [FIT](pathname:///data/fit/interval-run.fit) · [CSV](pathname:///data/fit/interval-run.csv) · [laps](pathname:///data/fit/interval-run-laps.csv) | 9.7 km run, 1 Hz, GPS, height, heart rate. Warm-up, six 800 m repeats with standing-then-jogging recoveries, cool-down, a lap each       |
+| Pool, 6 × 100   | [FIT](pathname:///data/fit/pool-swim.fit) · [laps](pathname:///data/fit/pool-swim-laps.csv)                                                      | 1,300 m in a 25 m pool: lengths with strokes, rests at the wall, repeats                                                                 |
+
+The CSV files hold the same samples as the FIT files, one row per sample:
+`time` (UTC), `lat`, `lng`, `altitude_m`, `heart_rate`, `power`, `cadence`.
+An empty cell is a sample without that channel; the ride's power column has
+empty cells where its meter dropped out.
+
+## Setting up
+
+TypeScript, in Node 18 or later:
+
+```bash norun
+npm install pond-ts @pond-ts/fit
+```
+
+Python: `pond_rs` is pond's Rust engine with a Python face, and gives the same
+results as pond-ts. It isn't on PyPI yet, so build it from the pond
+repository (it needs a Rust toolchain):
+
+```bash norun
+git clone https://github.com/pond-ts/pond && cd pond/crates/pond-py
+python -m venv .venv && . .venv/bin/activate
+pip install maturin polars pyarrow
+maturin develop --release
+```
+
+The Python examples read the CSV files with polars and hand the frame to
+`pond_rs.TimeSeries`. pandas frames work too.
+
+```python
+import polars as pl
+import pond_rs
+
+ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
+series = pond_rs.TimeSeries(ride, key="time")
+print(series)
+```
+
+```text output
+TimeSeries('series', 5635 rows, [time: time, lat: number?, lng: number?, altitude_m: number?, heart_rate: number?, power: number?, cadence: number?])
+```
+
+`@pond-ts/fit` itself is TypeScript only for now, so in each guide the fit
+step is TypeScript.
