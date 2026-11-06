@@ -158,6 +158,36 @@ describe('fromArrow text columns read from buffers', () => {
     check(makeVector(utf8Data(ascii)).slice(5, 139_000));
   });
 
+  it('ends on dictionary storage when repeats follow a mostly-distinct start', () => {
+    // 66,000 distinct rows pass the row-by-row switch; 200,000 repeats after
+    // them bring the final ratio back under one half, so the column is
+    // dictionary-encoded after all. With 60,000 repeats it stays plain.
+    for (const repeats of [200_000, 60_000]) {
+      const cells = Array.from({ length: 66_000 + repeats }, (_, i) =>
+        enc.encode(i < 66_000 ? `id-${i}` : `r${i % 3}`),
+      );
+      const got = check(makeVector(utf8Data(cells)));
+      expect(got.dictionary !== undefined).toBe(repeats === 200_000);
+    }
+  });
+
+  it('reads Dictionary<Utf8> chunks that each carry their own dictionary', () => {
+    const chunk = (entries: string[], idx: number[]) =>
+      makeData({
+        type: new Dictionary(new Utf8(), new Int32()),
+        length: idx.length,
+        nullCount: 0,
+        data: Int32Array.from(idx),
+        dictionary: makeVector(utf8Data(entries.map((e) => enc.encode(e)))),
+      });
+    const idx = Array.from({ length: 30 }, (_, i) => i % 3);
+    const got = check(
+      new Vector([chunk(['a', 'b', 'c'], idx), chunk(['c', 'd', 'a'], idx)]),
+    );
+    expect(got.dictionary).toEqual(['a', 'b', 'c', 'd']);
+    expect(got.read(30)).toBe('c');
+  });
+
   it('reads Dictionary<Utf8>: repeated and null entries, null rows', () => {
     const dictionary = makeVector(
       utf8Data([enc.encode('b'), null, enc.encode('a'), enc.encode('b')]),

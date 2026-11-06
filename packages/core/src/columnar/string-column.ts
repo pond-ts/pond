@@ -473,11 +473,14 @@ export function stringColumnFromArray(
   const dictionaryIndex = new Map<string, number>();
   const indices = new Int32Array(canWin ? length : 0);
   let tooMany = !canWin;
+  let missing = 0;
+  let i = 0;
 
-  for (let i = 0; i < length && !tooMany; i += 1) {
+  for (; i < length && !tooMany; i += 1) {
     const v = source[i];
     if (typeof v !== 'string') {
       indices[i] = 0; // placeholder; validity bitmap will mark invalid
+      missing += 1;
       continue;
     }
     let dictIdx = dictionaryIndex.get(v);
@@ -490,11 +493,13 @@ export function stringColumnFromArray(
     indices[i] = dictIdx;
   }
 
-  // `undefined` when every slot holds a string.
-  const validity = validityFromPredicate(
-    length,
-    (i) => typeof source[i] === 'string',
-  );
+  // Skip the bitmap pass when the loop saw every row and none was missing;
+  // after an early stop the rest is unchecked, so build it (it comes back
+  // `undefined` when every slot holds a string).
+  const validity =
+    i === length && missing === 0
+      ? undefined
+      : validityFromPredicate(length, (r) => typeof source[r] === 'string');
 
   // Decide encoding mode.
   const dictWins =

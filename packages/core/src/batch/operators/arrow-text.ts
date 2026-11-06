@@ -249,12 +249,12 @@ function readUtf8Plain(
   let first = 0;
   if (offsets.length > len && offsets[from]! >= 0) {
     first = offsets[from]!;
-    let ascii = true;
-    for (let j = from; j < len && ascii; j += 1) {
-      if (offsets[j + 1]! < offsets[j]!) ascii = false;
+    let rising = true;
+    for (let j = from; j < len && rising; j += 1) {
+      if (offsets[j + 1]! < offsets[j]!) rising = false;
     }
     const last = offsets[len]!;
-    if (ascii && last <= bytes.length) {
+    if (rising && last <= bytes.length) {
       let high = 0;
       for (let k = first; k < last; k += 1) high |= bytes[k]!;
       if (high < 0x80) whole = decoder.decode(bytes.subarray(first, last));
