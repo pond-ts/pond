@@ -61,18 +61,18 @@ The composition props, one line each. Full detail on [Axes](./axes/index.mdx),
 
 ### `<ChartContainer>`
 
-| Prop              | Default        | What                                                          |
-| ----------------- | -------------- | ------------------------------------------------------------- |
-| `width`           | — (req)        | Total width in CSS px (plot + gutters). Real pixels, not `%`. |
-| `range`           | auto-fit       | Shared x domain `[begin, end]` or `TimeRange`.                |
-| `theme`           | `defaultTheme` | The one `ChartTheme` — see [Theming](./theming.mdx).          |
-| `calendar`        | —              | Trading-time axis from a `TradingCalendar` (+ `spacing`).     |
-| `sessionDividers` | `'none'`       | Session-seam verticals: `'labeled'` / `'all'` / `'none'`.     |
-| `grid`            | `true`         | Reference gridlines behind the data.                          |
-| `rowGap`          | `0`            | Vertical space between stacked rows (px).                     |
-| `showAxis`        | `true`         | Auto-render the shared x axis under the rows.                 |
-| `timeFormat`      | d3 multi-scale | Time-axis + cursor-time formatting.                           |
-| `panZoom`         | `false`        | Drag-to-pan + wheel-to-zoom.                                  |
+| Prop              | Default        | What                                                            |
+| ----------------- | -------------- | --------------------------------------------------------------- |
+| `width`           | — (req)        | Total width in CSS px (plot + gutters). Real pixels, not `%`.   |
+| `range`           | auto-fit       | Shared x domain `[begin, end]` or `TimeRange`.                  |
+| `theme`           | `defaultTheme` | The one `ChartTheme` — see [Theming](./theming.mdx).            |
+| `calendar`        | —              | Trading-time axis from a `TradingCalendar` (+ `spacing`).       |
+| `sessionDividers` | `'none'`       | Session-seam verticals: `'labeled'` / `'all'` / `'none'`.       |
+| `grid`            | `true`         | Reference gridlines behind the data.                            |
+| `rowGap`          | `0`            | Vertical space between stacked rows (px).                       |
+| `showAxis`        | auto           | Auto-render the shared x axis; a mounted `<XAxis>` replaces it. |
+| `timeFormat`      | d3 multi-scale | Time-axis + cursor-time formatting.                             |
+| `panZoom`         | `false`        | Drag-to-pan + wheel-to-zoom.                                    |
 
 ### `<ChartRow>`
 

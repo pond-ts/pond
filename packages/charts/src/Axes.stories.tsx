@@ -292,7 +292,7 @@ export const SuppressBoundaryLabels: Story = {
 /** X-axis on the bottom (default) with a label. */
 export const XAxisBottom: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
@@ -308,7 +308,7 @@ export const XAxisBottom: Story = {
 /** X-axis on top. */
 export const XAxisTop: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor />
       <XAxis side="top" label="Time" />
       <ChartRow height={180}>
@@ -328,7 +328,7 @@ export const XAxisTop: Story = {
  *  offset flips to the top edge). */
 export const XAxisTopRightAlign: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor />
       <XAxis side="top" align="right" />
       <ChartRow height={180}>
@@ -353,7 +353,7 @@ function AlignExample({ align }: { align: 'auto' | 'center' | 'right' }) {
       >
         align="{align}"
       </div>
-      <ChartContainer range={RANGE} width={W} showAxis={false}>
+      <ChartContainer range={RANGE} width={W}>
         <LineCursor />
         <ChartRow height={120}>
           <YAxis id="pct" format=".0%" />
@@ -567,9 +567,6 @@ const pdChart = (xScale?: 'log') => (
     range={[1, 10800]}
     width={620}
     theme={defaultTheme}
-    // The container auto-renders its own axis strip; an explicit <XAxis> on
-    // top of it draws two. Every other story here does the same.
-    showAxis={false}
     {...(xScale ? { xScale } : {})}
   >
     <LineCursor />

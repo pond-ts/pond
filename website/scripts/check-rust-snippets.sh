@@ -2,6 +2,7 @@
 # Compile and run every ```rust block in the docs pages against the
 # crate in this checkout, so the examples cannot drift from the code.
 # Each block must be a whole program (`fn main`). A failed assert fails it.
+# A block fenced as ```rust ignore is skipped (excerpts from other repos).
 #
 #   website/scripts/check-rust-snippets.sh
 #   POND_RS_DIR=/path/to/crates/pond-rs website/scripts/check-rust-snippets.sh
@@ -29,7 +30,9 @@ src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 n = 0
 for page in sorted(src.rglob("*.mdx")):
     text = page.read_text()
-    for i, block in enumerate(re.findall(r"```rust[^\n]*\n(.*?)```", text, re.S)):
+    for i, (info, block) in enumerate(re.findall(r"```rust([^\n]*)\n(.*?)```", text, re.S)):
+        if "ignore" in info.split():
+            continue
         if "fn main" not in block:
             sys.exit(f"{page.relative_to(src)} block {i + 1}: not a whole program (no fn main)")
         stem = '_'.join(page.relative_to(src).with_suffix('').parts).replace('-', '_')

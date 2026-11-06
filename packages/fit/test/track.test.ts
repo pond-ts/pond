@@ -73,3 +73,34 @@ describe('Track', () => {
     expect(e.slice(Distance.meters(0), Distance.meters(10)).count).toBe(0);
   });
 });
+
+describe('Track.simplify', () => {
+  // A dog-leg: east 3 vertices, then a 50 m-ish kink, then on east.
+  const KINKED: GeoPoint[] = [
+    [0, 0],
+    [0.00001, 0.001], // ~1.1 m off the line — inside a 5 m tolerance
+    [0, 0.002],
+    [0.0005, 0.003], // ~55 m off — outside it
+    [0, 0.004],
+  ];
+
+  it('drops vertices within tolerance and keeps the ones outside it', () => {
+    const thin = Track.of(KINKED).simplify(Distance.meters(5));
+    expect(thin.points).toEqual([
+      [0, 0],
+      [0, 0.002],
+      [0.0005, 0.003],
+      [0, 0.004],
+    ]);
+  });
+
+  it('keeps both endpoints, and is a Track', () => {
+    const thin = Track.of(LINE).simplify(Distance.meters(1000));
+    expect(thin).toBeInstanceOf(Track);
+    expect(thin.points).toEqual([LINE[0], LINE[3]]);
+  });
+
+  it('simplifies an empty track to an empty track', () => {
+    expect(Track.of([]).simplify(Distance.meters(12)).isEmpty).toBe(true);
+  });
+});

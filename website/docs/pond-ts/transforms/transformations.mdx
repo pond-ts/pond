@@ -147,6 +147,10 @@ Same schema in, same schema out; just fewer rows. See
 [Cleaning data](./cleaning) for filter as a "remove bad rows"
 pattern.
 
+`filter` also takes an [expression](./expressions) in place of the
+function, such as `cpu.filter(col('cpu').gt(0.5))`. It runs over whole
+columns and is usually several times faster.
+
 ### `select(...keys)` — keep only some columns \{#select\}
 
 Schema-narrowing — type-level too:

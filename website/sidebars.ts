@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'pond-ts/transforms/queries',
             'pond-ts/transforms/transformations',
+            'pond-ts/transforms/expressions',
             'pond-ts/transforms/alignment',
             'pond-ts/transforms/aggregation',
             'pond-ts/transforms/reshape',
@@ -286,6 +287,7 @@ const sidebars: SidebarsConfig = {
         'pond-rs/finance-studies',
         'pond-rs/live',
         'pond-rs/arrow',
+        'pond-rs/javascript',
         'pond-rs/performance',
         'pond-rs/coming-from-pond-ts',
       ],
