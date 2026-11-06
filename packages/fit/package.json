@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/fit",
-  "version": "0.75.0",
+  "version": "0.76.0",
   "private": false,
   "description": "Fitness & activity domain library on pond-ts: typed quantities, canonical activity series, and analytics and file readers (FIT/GPX/TCX; geo distance/elevation, power NP/IF/TSS, zones, splits)",
   "keywords": [
@@ -79,7 +79,7 @@
     "verify": "npm run format:check && npm run build && npm test"
   },
   "peerDependencies": {
-    "pond-ts": "^0.75.0"
+    "pond-ts": "^0.76.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
