@@ -2424,3 +2424,42 @@ Left: `scan`'s remaining cost is the caller's step function allocating a
 tuple per row, which pond cannot remove; and pond-rs calls back into
 JavaScript for every row, so a `scan` there is about 6× slower than in
 pond-ts. See [PND-SCANDATA].
+
+## `cumulative` increase / decrease — [PND-SCANDATA] (first fold shipped)
+
+**What.** Two new running accumulators for `cumulative`, in pond-ts (batch,
+partitioned, live) and pond-rs (batch, partitioned, live; the wasm and
+Python bridges): `'increase'` is the running total of rises between values,
+`'decrease'` the running total of falls, and `{ using, threshold }` ignores
+changes smaller than the threshold. The rule: the first value sets a
+reference point and the total starts at 0; then `d = value − reference`,
+`d >= threshold` adds `d` to the rises and moves the reference,
+`d <= −threshold` adds `−d` to the falls and moves it. Gaps carry the total.
+
+**Why.** It is the dead-band climb rule (`@pond-ts/fit`'s
+`elevationGainLoss`, the `scan` docs' 3 m example) written as data, so
+pond-rs runs it without calling back into JavaScript per row.
+
+**Naming.** Peter's call (2026-11-05): a general `increase` / `decrease`,
+not a domain-specific `climb`. Meter readings, counters and any noisy level
+use the same rule.
+
+**Shape considered and not taken.** A separate `deadBand` / `hysteresis`
+operator: rejected because it is a running accumulation like `sum`, and
+`cumulative` already owns "running value down a column, gaps carry". The
+threshold rides on an object entry (`{ using, threshold }`), so plain names
+keep working. In pond-rs, `cumulative` became generic over
+`Into<Cumulative>`, so existing `&[("v", Reducer::Sum)]` calls compile
+unchanged (an empty literal, or the method as a function value, now needs
+the type spelled out).
+
+**Parity.** Same operations in the same order in both cores, so the same
+bits. The core parity fixture has seven new cases (both directions, a
+threshold, a change exactly at the threshold, signed zeros, overflow,
+partitioned) plus two refusals, and the live fixture one more node; pond-rs
+native, the wasm bridge and the Python bridge all match.
+
+**Speed** (36,000 rows, 3 m threshold; `scripts/perf-cumulative-change.mjs`
+and the fit bench): plain loop 0.3 ms; pond-ts `cumulative` 0.34–0.42 ms
+(the `scan` step it replaces: 0.9 ms); pond-rs `cumulative` 0.15 ms against
+about 10 ms for the same rule as a `scan` step through the wasm bridge.

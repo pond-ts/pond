@@ -2,8 +2,8 @@
 //! reducer mappings, sequences and the small option words.
 
 use pond_rs::{
-    Agg, Alignment, At, ColumnData, Decimal, EventKey, Label, PondError, Reducer, Scalar, Sequence,
-    Value,
+    Agg, Alignment, At, ColumnData, Cumulative, Decimal, EventKey, Label, PondError, Reducer,
+    Scalar, Sequence, Value,
 };
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -398,13 +398,53 @@ pub fn aggs(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Agg>> {
         .collect()
 }
 
-/// `{column: reducer}` for `cumulative`.
-pub fn column_reducers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Reducer)>> {
+/// `{column: entry}` for `cumulative`: an entry is a reducer name,
+/// `"increase"` / `"decrease"`, or `{"using": "increase" | "decrease",
+/// "threshold": t}`.
+pub fn column_reducers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Cumulative)>> {
     let map = obj
         .cast::<PyDict>()
         .map_err(|_| PyTypeError::new_err("expected a mapping {column: reducer}"))?;
+    let change = |using: &str| match using {
+        "increase" => Some(Cumulative::increase()),
+        "decrease" => Some(Cumulative::decrease()),
+        _ => None,
+    };
     map.iter()
-        .map(|(c, r)| Ok((c.extract()?, reducer(&r.extract::<String>()?)?)))
+        .map(|(c, r)| {
+            let column: String = c.extract()?;
+            let entry = if let Ok(name) = r.extract::<String>() {
+                match change(&name) {
+                    Some(e) => e,
+                    None => reducer(&name)?.into(),
+                }
+            } else if let Ok(d) = r.cast::<PyDict>() {
+                let using = match d.get_item("using")? {
+                    Some(u) => u.extract::<String>()?,
+                    None => String::new(),
+                };
+                let base = change(&using).ok_or_else(|| {
+                    err(PondError::InvalidData {
+                        call: "cumulative",
+                        message: format!(
+                            "column '{column}': {{'using'}} takes 'increase' or 'decrease'"
+                        ),
+                    })
+                })?;
+                // As pond-ts: a missing threshold is 0, `None` is refused
+                // (a NaN threshold, which `cumulative` rejects).
+                match d.get_item("threshold")? {
+                    Some(t) if t.is_none() => base.threshold(f64::NAN),
+                    Some(t) => base.threshold(t.extract::<f64>()?),
+                    None => base,
+                }
+            } else {
+                return Err(PyTypeError::new_err(format!(
+                    "cumulative: column '{column}': expected a reducer name or {{'using', 'threshold'}}"
+                )));
+            };
+            Ok((column, entry))
+        })
         .collect()
 }
 

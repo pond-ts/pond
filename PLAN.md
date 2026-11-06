@@ -1056,14 +1056,14 @@ consumer signal. Plan:
 
 - **[PND-SCANDATA]** — callback-free forms for the common `scan` folds.
   A JS step function costs a tuple per row in pond-ts, and in pond-rs a
-  call back into JavaScript per row (about 6× slower than pond-ts on
-  36,000 rows). `@pond-ts/fit` wants to run its maths on either core, so
-  the folds it needs (first: a dead-band running sum, the 3 m climb rule)
-  should be named operators or expressions. Found with [PND-ROLLTIME].
-  `cumulative` 'increase' / 'decrease' (the climb rule) in #906; maths in
-  expressions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) for haversine
-  and 4th-power averages built 2026-11-05. Detail in
-  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
+  call back into JavaScript per row. `@pond-ts/fit` wants to run its maths
+  on either core, so the folds it needs should be named operators or
+  expressions. Shipped: `cumulative` `'increase'` / `'decrease'` with a
+  threshold (the 3 m climb rule, #906) and maths in expressions (`sqrt`,
+  `sin`, `cos`, `asin`, `atan2`, `pow`, #907; detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md)). Add the next as fit's
+  port to operators finds them (breaks / slow-run detection is the likely
+  next).
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but

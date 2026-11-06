@@ -80,6 +80,20 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`cumulative` takes `'increase'` and `'decrease'`** ([PND-SCANDATA]):
+  the running total of rises (or falls) between values. With
+  `{ using: 'increase', threshold: 3 }` a change counts only once the value
+  has moved at least 3 from the last value that counted, in either
+  direction, so small wiggles are ignored but slow drift still adds up.
+  Elevation gain with a 3 m dead band is
+  `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`, with no
+  step function. On `TimeSeries`, `partitionBy`, `LiveSeries` and live
+  views, and in pond-rs (`Cumulative::increase().threshold(3.0)`; the
+  `@pond-ts/rs` and Python bridges take the same spec as pond-ts). Through
+  `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
+  step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
+  `CumulativeAccumulator` and `CumulativeChange`.
+
 - **`@pond-ts/fit`: series, route, edits, explain and views** ([PND-FITAPI],
   RFC §8–§10, §17). `section.series.heartRate` (also `power`, `cadence`,
   `speed`, `elevation`, `distance`) gives a channel's samples on the
@@ -95,6 +109,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   source, method, coverage and edits behind a number. New entry point
   `@pond-ts/fit/views`: `chartData(section, options)` (a pond series over
   time or distance, for `@pond-ts/charts`) and `mapData(route, options)`.
+
 - **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
   with just the rows that push added, as a `TimeSeries`, so a listener can
   read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
@@ -127,6 +142,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   (`packages/core/scripts/perf-expr-maths.mjs`).
 
 ### Changed
+
+- **`cumulative` refuses an unknown accumulator name** ([PND-SCANDATA]).
+  Batch used to fail with an unhelpful error and live `cumulative` used to
+  pass the column through unchanged; both now throw a `TypeError` naming
+  the column. In pond-rs, `cumulative` is now generic over
+  `Into<Cumulative>`: specs of `Reducer`s compile as before, but an empty
+  literal (`cumulative(&[])`) or the method used as a function value now
+  needs the type spelled out.
 
 - **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A
   duration window (`rolling('30s', …)`, any alignment) with built-in

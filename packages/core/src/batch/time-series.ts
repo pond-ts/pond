@@ -86,7 +86,7 @@ import {
 } from './aggregate-columns.js';
 import {
   cumulativeOp,
-  type CumulativeReducer,
+  type CumulativeAccumulator,
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
@@ -3703,8 +3703,18 @@ export class TimeSeries<S extends SeriesSchema> {
    * Computes running accumulations for the specified numeric columns.
    * Non-accumulated columns pass through unchanged.
    *
-   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`.
-   * Custom accumulators: `(acc: number, value: number) => number`.
+   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`,
+   * `"increase"` and `"decrease"`. Custom accumulators:
+   * `(acc: number, value: number) => number`.
+   *
+   * `"increase"` is the running total of rises between values, and
+   * `"decrease"` the running total of falls (a positive number). With
+   * `{ using: 'increase', threshold: 3 }` a change counts only once the
+   * value has moved at least 3 from the last value that counted, in either
+   * direction; smaller wiggles are ignored, though slow drift still counts
+   * once it adds up. Elevation gain with a 3 m dead band is
+   * `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`. The
+   * first value starts the total at 0; gaps carry it.
    *
    * **Multi-entity series:** the running accumulation interleaves
    * across entities — `host-A`'s next event sums on top of
@@ -3714,12 +3724,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * entity. See {@link TimeSeries.partitionBy}.
    */
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [K in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [K in Targets]: CumulativeAccumulator;
   }): TimeSeries<DiffSchema<S, Targets>> {
     type OutSchema = DiffSchema<S, Targets>;
     // Column-native (Step 4): the running accumulation is computed straight
@@ -3729,7 +3734,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const { store, schema } = cumulativeOp<S, OutSchema>(
       this.#store.store,
       this.schema,
-      spec as unknown as Readonly<Record<string, CumulativeReducer>>,
+      spec as unknown as Readonly<Record<string, CumulativeAccumulator>>,
     );
     return TimeSeries.#fromTrustedStore(
       this.name,

@@ -1,3 +1,4 @@
+import type { CumulativeAccumulator } from '../batch/operators/cumulative.js';
 import { Expr } from '../core/expression.js';
 import { livePredicate } from './expression-predicate.js';
 import { Event } from '../core/event.js';
@@ -1955,12 +1956,7 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [K in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [K in Targets]: CumulativeAccumulator;
   }): LiveView<DiffSchema<S, Targets>> {
     return makeCumulativeView(this, spec);
   }
