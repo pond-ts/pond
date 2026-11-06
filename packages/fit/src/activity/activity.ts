@@ -28,6 +28,15 @@ import { Distance, Duration } from '../quantities.js';
 import { sportOf, type Sport } from './sport.js';
 import { isPoolRecord } from './moving.js';
 import { toStats, type Stats, type StatsOptions } from './stats.js';
+import { seriesOf, type ActivitySeries } from './series.js';
+import { routeOf, type Route } from './route.js';
+import { explainOf, type Explainable, type Explanation } from './explain.js';
+import {
+  editParts,
+  isNoEdit,
+  type ActivityEdit,
+  type EditChange,
+} from './editing.js';
 import {
   Analysis,
   PaceEfforts,
@@ -62,6 +71,14 @@ export type SectionKind =
   | 'recovery'
   | 'effort';
 
+const PREPARED = new WeakMap<Section, PreparedActivity>();
+
+/** The prepared activity a section reads, for `@pond-ts/fit/views`.
+ *  @internal */
+export function preparedOf(section: Section): PreparedActivity {
+  return PREPARED.get(section)!;
+}
+
 /** One continuous stretch of an activity. Its time and distance run between
  *  its own ends; its channel numbers come from the samples inside it (see
  *  {@link sectionStats}). */
@@ -79,6 +96,7 @@ export class Section implements Span {
   #stats = new Map<string, Stats>();
   #power?: PowerEfforts<Section>;
   #pace?: PaceEfforts<Section>;
+  #series?: ActivitySeries;
 
   /** @internal sections are made by an {@link Activity}, not directly */
   constructor(
@@ -89,6 +107,7 @@ export class Section implements Span {
     timerSeconds?: number,
   ) {
     this.prep = prep;
+    PREPARED.set(this, prep);
     this.kind = kind;
     this.label = label;
     this.fromSeconds = span.fromSeconds;
@@ -149,6 +168,12 @@ export class Section implements Span {
     return (this.#pace ??= new PaceEfforts(this.#source(), (span, label) =>
       this.#effort(span, label),
     ));
+  }
+
+  /** The measured values inside this stretch, by channel:
+   *  `run.series.heartRate`. */
+  get series(): ActivitySeries {
+    return (this.#series ??= seriesOf(this.prep, this));
   }
 
   #source(): AnalysisSource {
@@ -261,7 +286,20 @@ export class Sections<T extends Section = Section> implements Iterable<T> {
  *  {@link Section} answers. */
 export class Activity extends Section {
   readonly #record: ImportedActivity;
+  #route?: Route | null;
   #laps?: Sections<LapSection>;
+  /** Set on an edited activity: what it was made from, and how. */
+  #edited?: {
+    original: Activity;
+    edit: ActivityEdit;
+    /** Where this activity's clock starts on the original's. */
+    offset: number;
+    /** The kept stretch, on the original's clock. */
+    from: number;
+    to: number;
+    parts: Activity[];
+    changes: EditChange[];
+  };
   readonly #splits = new Map<number, Sections<Section>>();
 
   protected constructor(prep: PreparedActivity) {
@@ -290,6 +328,100 @@ export class Activity extends Section {
   static from(record: ImportedActivity): Activity {
     const prep = prepareActivity(record);
     return isPoolRecord(record) ? new PoolSwim(prep) : new Activity(prep);
+  }
+
+  /**
+   * The recording edited: cropped, laps split or joined, or split into
+   * several activities. Every position is a duration from the original
+   * recording's start, so editing an edited activity starts again from the
+   * original, and the same edit always means the same thing. Throws a
+   * `RangeError` on a crop that keeps nothing, a part split outside it, or
+   * a crop of a recording with no timestamps.
+   */
+  edit(edit: ActivityEdit): Activity {
+    const original = this.original;
+    if (isNoEdit(edit)) return original;
+    const pieces = editParts(original.#record, edit);
+    const parts = pieces.map((p) => Activity.from(p.record));
+    pieces.forEach((p, i) => {
+      parts[i]!.#edited = {
+        original,
+        edit,
+        offset: p.offset,
+        from: p.from,
+        to: p.to,
+        parts,
+        changes: p.changes,
+      };
+    });
+    return parts[0]!;
+  }
+
+  /** Where one of its numbers comes from: the source, the method, how much
+   *  of the recording backs it, and the edits it went through. */
+  explain(quantity: Explainable): Explanation {
+    return explainOf(this.prep, quantity, this.timerSeconds, this.changes);
+  }
+
+  /** The untouched recording this was edited from; itself when unedited. */
+  get original(): Activity {
+    return this.#edited?.original ?? this;
+  }
+
+  /** The edit that made this activity, in the original's terms; null when
+   *  unedited. */
+  get appliedEdit(): ActivityEdit | null {
+    return this.#edited?.edit ?? null;
+  }
+
+  /** What the edit changed in this activity, in order along the original
+   *  recording: only what took effect (a crop that cut something, a join
+   *  where a lap started), and for one of several parts only what falls in
+   *  it, with the part splits at its ends. */
+  get changes(): EditChange[] {
+    return this.#edited ? [...this.#edited.changes] : [];
+  }
+
+  /** Every activity the edit made, in order; this one is among them. Just
+   *  this one when the edit made no parts, or when unedited. */
+  get parts(): readonly Activity[] {
+    return this.#edited?.parts ?? [this];
+  }
+
+  /** A stretch of this activity, as the same stretch of the original
+   *  recording (held to this activity's ends first). */
+  toOriginal(span: Span): Section {
+    const off = this.#edited?.offset ?? 0;
+    const a = Math.max(span.fromSeconds, this.fromSeconds);
+    const b = Math.min(span.toSeconds, this.toSeconds);
+    if (!(b >= a))
+      throw new RangeError('toOriginal: the stretch is outside this activity');
+    return new Section(this.original.prep, 'section', 'Section', {
+      fromSeconds: a + off,
+      toSeconds: b + off,
+    });
+  }
+
+  /** A stretch saved on the original recording's clock (a mark, a note), on
+   *  this activity's clock: cut to what this activity kept, or null when
+   *  none of it was kept. */
+  fromOriginal(range: { from: Duration; to: Duration }): Section | null {
+    const a = range.from.seconds;
+    const b = range.to.seconds;
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a > b)
+      throw new RangeError('fromOriginal: the end comes before the start');
+    const e = this.#edited;
+    const off = e?.offset ?? 0;
+    const lo = e ? Math.max(a, e.from) : a;
+    const hi = e ? Math.min(b, e.to) : b;
+    const from = Math.max(lo - off, this.fromSeconds);
+    const to = Math.min(hi - off, this.toSeconds);
+    // a stretch with length that only touches what was kept was not kept
+    if (!(to >= from) || hi < lo || (b > a && !(to > from))) return null;
+    return new Section(this.prep, 'section', 'Section', {
+      fromSeconds: from,
+      toSeconds: to,
+    });
   }
 
   /** Where a swim was: `'pool'` or `'open-water'`; null for any other sport,
@@ -330,6 +462,11 @@ export class Activity extends Section {
   /** Whether the recording has GPS positions. */
   get hasRoute(): boolean {
     return this.prep.hasTrack;
+  }
+  /** Where it went: the line and its bounds; null with no GPS. */
+  get route(): Route | null {
+    if (this.#route === undefined) this.#route = routeOf(this.prep);
+    return this.#route;
   }
   /** The plain record behind this activity. */
   get record(): ImportedActivity {

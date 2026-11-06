@@ -42,12 +42,20 @@
       "types": "./dist/files/index.d.ts",
       "import": "./dist/files/index.js",
       "require": "./dist/cjs-fallback.cjs"
+    },
+    "./views": {
+      "types": "./dist/views/index.d.ts",
+      "import": "./dist/views/index.js",
+      "require": "./dist/cjs-fallback.cjs"
     }
   },
   "typesVersions": {
     "*": {
       "files": [
         "dist/files/index.d.ts"
+      ],
+      "views": [
+        "dist/views/index.d.ts"
       ]
     }
   },

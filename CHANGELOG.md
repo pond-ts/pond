@@ -93,6 +93,23 @@ include new features and type-level changes; patch bumps are strictly additive.
   `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
   step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
   `CumulativeAccumulator` and `CumulativeChange`.
+
+- **`@pond-ts/fit`: series, route, edits, explain and views** ([PND-FITAPI],
+  RFC §8–§10, §17). `section.series.heartRate` (also `power`, `cadence`,
+  `speed`, `elevation`, `distance`) gives a channel's samples on the
+  activity's clock as a `Measured` (`at`, `times`, `values`, gaps as
+  `null`), with `toTimeSeries()` as the explicit way down to pond.
+  `activity.route` is the line and its bounds (null with no GPS).
+  `activity.edit({ crop, laps: { splitAt, removeBoundaryAt }, parts })`
+  takes durations on the original recording and returns a new activity
+  with `original`, `appliedEdit`, `changes`, `parts`, and `toOriginal` /
+  `fromOriginal` to move a stretch between the edited clock and the
+  original's; editing an edited activity starts again from the original.
+  `activity.explain('distance' | 'elapsed' | 'moving' | …)` gives the
+  source, method, coverage and edits behind a number. New entry point
+  `@pond-ts/fit/views`: `chartData(section, options)` (a pond series over
+  time or distance, for `@pond-ts/charts`) and `mapData(route, options)`.
+
 - **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
   with just the rows that push added, as a `TimeSeries`, so a listener can
   read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
