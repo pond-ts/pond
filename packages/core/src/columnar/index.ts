@@ -61,7 +61,7 @@ export {
   materializeChunkedString,
 } from './chunked-column.js';
 
-export { concatSorted } from './concat.js';
+export { concatSorted, concatValueColumn } from './concat.js';
 
 export {
   type ColumnarRingBufferOptions,

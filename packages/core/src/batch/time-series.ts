@@ -111,6 +111,7 @@ import { shiftOp } from './operators/shift.js';
 import { joinOp } from './operators/join.js';
 import { alignOp, materializeOp } from './operators/align.js';
 import { dedupeRows } from './operators/dedupe.js';
+import { mergeSortedStores } from './operators/concat-merge.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
 import {
   assertColumnValuesMatchKind,
@@ -1484,11 +1485,6 @@ export class TimeSeries<S extends SeriesSchema> {
         }
       }
     }
-    const allEvents: EventForSchema<S>[] = [];
-    for (const s of series) {
-      for (const event of s.events) allEvents.push(event);
-    }
-    allEvents.sort((a, b) => compareEventKeys(a.key(), b.key()));
     // A column is required only when it is required in every input: one
     // input's gaps would otherwise sit in a column marked required, which
     // `fromJSON` then refuses to reload ([PND-CONCATREQ]).
@@ -1501,6 +1497,34 @@ export class TimeSeries<S extends SeriesSchema> {
           : col,
       ),
     ) as unknown as S;
+    // Column-native: merge the sorted inputs on their key buffers and
+    // gather each column by the merge ([PND-CONCATSORT]); same order as the
+    // stable event sort below. See `mergeSortedStores`.
+    const merged = mergeSortedStores(
+      series.map(
+        (s) => s.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      ),
+      schema as unknown as ColumnSchema,
+    );
+    if (merged !== undefined) {
+      const trustedInput: TrustedStoreInput<S> = {
+        name: head.name,
+        schema,
+        [TRUSTED_STORE_SENTINEL]: SeriesStore._fromGatheredModulePrivate(
+          merged.store as unknown as ColumnarStore<S>,
+          series.map((s) => s.#store),
+          merged.source,
+          merged.row,
+        ),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+    }
+    // No rows, or interval inputs with different label kinds.
+    const allEvents: EventForSchema<S>[] = [];
+    for (const s of series) {
+      for (const event of s.events) allEvents.push(event);
+    }
+    allEvents.sort((a, b) => compareEventKeys(a.key(), b.key()));
     return TimeSeries.#fromTrustedEvents(head.name, schema, allEvents);
   }
 

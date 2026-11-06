@@ -114,7 +114,7 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   /**
    * Row `i`'s event is row `row[i]`'s event of `sources[source[i]]` (or of
    * `sources[0]` when `source` is absent), built there on first use. Set
-   * for stores gathered from other stores' rows (`dedupe`, …) so
+   * for stores gathered from other stores' rows (`dedupe`, `concat`, …) so
    * a result row and its source row share one `Event` whichever is asked
    * for first, as when those ops rebuilt the store from the source events.
    */
@@ -369,6 +369,62 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
           ? undefined
           : composeRows(delegate.source, rows),
       row: composeRows(delegate.row, rows),
+    });
+  }
+
+  /**
+   * A store gathered from several stores' rows (`concat`'s merge): output
+   * row `k` is `sources[source[k]]`'s row `row[k]`, and its event is that
+   * row's event (see `#delegate`). Module-private.
+   */
+  static _fromGatheredModulePrivate<S extends SeriesSchema>(
+    store: ColumnarStore<S>,
+    sources: ReadonlyArray<SeriesStore<S>>,
+    source: Int32Array,
+    row: Int32Array,
+  ): SeriesStore<S> {
+    // A source that itself hands back another store's events (a selection,
+    // a dedupe, an earlier concat) is replaced by the stores it points at,
+    // so chains of gathers stay one step deep instead of growing a link per
+    // call (a long chain would overflow the stack in `eventAt`).
+    if (!sources.some((s) => s.#delegate !== undefined)) {
+      return new SeriesStore<S>(store, new Map(), undefined, {
+        sources,
+        source,
+        row,
+      });
+    }
+    const flat: SeriesStore<S>[] = [];
+    const flatIndex = new Map<SeriesStore<S>, number>();
+    const indexOf = (s: SeriesStore<S>): number => {
+      let k = flatIndex.get(s);
+      if (k === undefined) {
+        k = flat.length;
+        flat.push(s);
+        flatIndex.set(s, k);
+      }
+      return k;
+    };
+    const n = row.length;
+    const nextSource = new Int32Array(n);
+    const nextRow = new Int32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      // Follow the links to the store that owns the event (a loop, not
+      // recursion, so even a long existing chain can't overflow).
+      let from = sources[source[i]!]!;
+      let r = row[i]!;
+      for (let d = from.#delegate; d !== undefined; d = from.#delegate) {
+        from =
+          d.source === undefined ? d.sources[0]! : d.sources[d.source[r]!]!;
+        r = d.row[r]!;
+      }
+      nextSource[i] = indexOf(from);
+      nextRow[i] = r;
+    }
+    return new SeriesStore<S>(store, new Map(), undefined, {
+      sources: flat,
+      source: nextSource,
+      row: nextRow,
     });
   }
 

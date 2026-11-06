@@ -869,18 +869,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
 undefined`, or required only when it has no gaps) changes a public
   type and needs a yes. pond-rs marks it required only when it has no
   gaps. Found 2026-10-21 (pond-rs R1b step 8i).
-- **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
-  500 partitions × 1000 rows back together, and every partitioned
-  operation calls it (`partitionBy('symbol').diff('close').collect()`:
-  ~640 ms, of which `diff` itself is ~4 ms; pond-rs: 45 ms). A CPU profile:
-  30% rebuilding the column store from `Event` objects
-  (`buildSeriesStoreFromEvents`, as in [PND-FILTERTAKE]), ~30% the sort of
-  events and its comparator, 11% `#fromTrustedEvents`, 11% garbage
-  collection. Proposed fix: every input is already sorted, so merge the
-  key columns by row number (a stable merge keeps partition order on
-  ties) and copy each column by those row numbers, as pond-rs does.
-  Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
-  (pond-rs R1b step 4a).
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat

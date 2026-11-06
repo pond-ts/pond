@@ -987,6 +987,17 @@ series)` replaces one source, and only nodes reading it recompute — the
 
 ### Changed
 
+- **`TimeSeries.concat` merges its sorted inputs on the key columns**
+  ([PND-CONCATSORT]) instead of sorting every input's `Event`s and
+  rebuilding the store from them. Every partitioned operation's
+  `collect()` goes through it. Same order (begin, then end, ties in input
+  order; interval labels are not compared, as before), same `Event`
+  identity. `partitionBy('symbol').diff('close').collect()` over 500
+  symbols × 1000 rows: 726 → 151 ms; partitioned `align` over 4 hosts:
+  2.3 s → 82 ms. One case is slower: 100k one-row inputs whose events were
+  already built, 36–53 → ~70 ms. A concat result now keeps its inputs'
+  column storage alive while it lives (it hands back their `Event`s), as
+  `dedupe` and `filter` results already do.
 - **`smooth` (`movingAverage`, `loess`), `baseline`, `outliers` and
   `sample({ stride })` work on columns** ([PND-SMOOTHSLOW]) instead of
   building an `Event` per row and rebuilding the series from rows. Same
