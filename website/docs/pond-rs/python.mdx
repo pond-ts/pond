@@ -2,7 +2,7 @@
 id: python
 title: Python (pond_rs)
 sidebar_position: 1.5
-description: pond-rs from Python. Install from PyPI, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
+description: pond-rs from Python. Install with pip, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
 ---
 
 # Python (pond_rs)
@@ -24,8 +24,8 @@ pip install "pond-rs[polars]"  # plus polars; or [pandas], [pyarrow]
 import pond_rs                 # and imported as pond_rs
 ```
 
-The first release on PyPI is 0.76.0. If pip can't find `pond-rs`, install
-it from the repository instead (needs Rust):
+If pip can't find `pond-rs` (it is not on PyPI yet), install it from the
+repository instead (needs Rust):
 `pip install "git+https://github.com/pond-ts/pond#subdirectory=crates/pond-py"`.
 
 - **Python 3.9 or newer.** There is one wheel per platform for every
