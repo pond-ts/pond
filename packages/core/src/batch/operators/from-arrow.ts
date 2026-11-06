@@ -2,6 +2,7 @@ import {
   bitmapByteCount,
   type Column as ColumnarColumn,
   Float64Column,
+  type StringColumn,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type {
@@ -11,6 +12,7 @@ import type {
 } from '../../schema/index.js';
 import { resolveOrdering } from './out-of-order.js';
 import { assertReadableArrowType, type ArrowTypeLike } from './arrow-types.js';
+import { readArrowText } from './arrow-text.js';
 import { flatKeyNames } from './flat-keys.js';
 import type { RawColumns } from './ingest-columns.js';
 
@@ -52,6 +54,12 @@ export interface ArrowVectorLike {
    * {@link copyNumericWithNulls}.
    */
   readonly data?: ReadonlyArray<ArrowDataLike | null | undefined>;
+  /**
+   * The vector's `DataType`. Optional; when it says `Utf8` or
+   * `Dictionary<Utf8>`, a string column is read straight from its buffers
+   * (see `./arrow-text.ts`) instead of through {@link toArray}.
+   */
+  readonly type?: ArrowTypeLike;
 }
 
 /**
@@ -68,6 +76,12 @@ export interface ArrowDataLike {
   readonly values?: unknown;
   /** Arrow's validity bitmap: LSB-first, one bit per slot, 1 = valid. */
   readonly nullBitmap?: Uint8Array | null;
+  /** Null slots in this chunk. */
+  readonly nullCount?: number;
+  /** A `Utf8` chunk's row offsets into {@link values}. */
+  readonly valueOffsets?: unknown;
+  /** A `Dictionary` chunk's dictionary. */
+  readonly dictionary?: ArrowVectorLike | null;
 }
 
 /** Structural view of an Arrow `Field` (`schema.fields[i]`). */
@@ -358,7 +372,9 @@ type ReadColumn =
    * {@link copyNumericWithNulls}). Handed to the ingest engine as-is rather
    * than through `RawColumns`.
    */
-  | { kind: 'number'; column: Float64Column };
+  | { kind: 'number'; column: Float64Column }
+  /** A text column read straight from its buffers (`./arrow-text.ts`). */
+  | { kind: 'string'; column: StringColumn };
 
 /**
  * Build a number column from a **null-bearing** `Float64` Arrow column by
@@ -505,6 +521,8 @@ function readColumn(
   name: string,
   allowAdopt: boolean,
 ): ReadColumn {
+  const text = readArrowText(vector, allowAdopt);
+  if (text !== undefined) return text;
   const raw = vector.toArray();
   if (isNumberTypedArray(raw)) {
     assertOneWordPerRow(raw, vector.length, name);
@@ -807,7 +825,7 @@ function readLabelField(
   // than anything this function could produce.
   const result = readColumn(vector, name, false);
   return 'column' in result
-    ? result.column._values.subarray(0, result.column.length)
+    ? (result.column as Float64Column)._values.subarray(0, result.column.length)
     : result.values;
 }
 

@@ -845,6 +845,78 @@ old path only had to sort them, while the merge still pays a few
 allocations per input. With fresh pieces (the partitioned version) the
 split dominates and the two are even.
 
+### [PND-ARROWTEXT] — SHIPPED (Arrow text columns read from buffers)
+
+Logged from pond-rs R1b step 8i4, picked up from the Codex PR #810
+investigation. `fromArrow` read a text column with `vector.toArray()`:
+apache-arrow walks every row through `get`, one `TextDecoder` call each
+(~345 ms per 1M rows), then the ingest engine hashed all the strings again
+to dictionary-encode them. Now (`batch/operators/arrow-text.ts`), when the
+vector's `type` says `Utf8` or `Dictionary<Utf8>`:
+
+- `Utf8`: each row's bytes are hashed (FNV-1a) into a table of byte runs
+  already seen, so a value is decoded once. A run decodes with
+  `new TextDecoder('utf-8')`, apache-arrow's decoder (a leading byte-order
+  mark is dropped, bad bytes become U+FFFD); an all-ASCII run uses
+  `String.fromCharCode`, which gives the same string. Two runs that decode
+  to the same text (two different bad bytes) are merged by text.
+- Mostly-distinct columns: after each 65,536 rows, if at least half are
+  distinct the column will be stored plain, so the rest is decoded row by
+  row (an all-ASCII chunk in one call, each row a substring of it) and
+  handed to `stringColumnFromArray`, the old builder.
+- `Dictionary<Utf8>`: the dictionary is decoded once and each index mapped
+  through it, ids given in row order (repeated or null dictionary entries
+  handled as `get` sees them).
+- A row is missing exactly when apache-arrow's `get` returns null: its
+  validity bit at `data.offset + row` is clear (when the chunk has a bitmap
+  and nulls), or its offsets run past the buffer.
+- The column is built as `stringColumnFromArray` would (first-appearance
+  dictionary, same dictionary-or-plain choice); a column with no rows or no
+  strings is still an all-missing number column, as `classifyArray` made it.
+  Under `ordering: 'reorder'` the strings go back to the ingest engine,
+  which sorts them as before.
+- Declined (old `toArray()` path): no `type` or `data` on the vector,
+  `LargeUtf8` / `Utf8View` (other offset / view layouts), 64-bit or
+  out-of-range dictionary indices, anything else unrecognised.
+
+Also `stringColumnFromArray` stops building its dictionary once
+`distinct / length` reaches the ratio (it can only grow from there), unless
+dictionary storage is forced. Exact for every option value, including a
+`NaN` or non-positive ratio (5,000 random inputs and options, identical
+against the previous build).
+
+Checked: 1,500 random apache-arrow tables (0–80 rows and some of 3,000;
+nulls, empty strings, byte-order marks, bad bytes, CJK / emoji, 5,000-byte
+strings, sliced vectors, two-chunk vectors, `Dictionary<Utf8>` with
+repeated and null entries, all-null columns, interval labels,
+`ValueSeries`, `ordering: 'reorder'`) give identical schema, JSON and
+column storage (dictionary, indices, plain cells, validity) against the
+previous build. The row-by-row switch was checked by rerunning with it
+forced after 4 rows. Planted bugs caught: byte-order mark kept (210/400),
+bitmap offset ignored (84/400), no merge by text (81/400), all-null rule
+dropped (88/400), ratio 0.6 (32/400), null dictionary entry kept (63/400),
+ASCII slice short by one (490/1500), non-ASCII taken as ASCII (674/1500),
+first row lost on the switch (1032/1500); table growth or probing broken
+hangs. Not reachable from real Arrow data: the offsets-past-buffer rule.
+
+Bench `scripts/perf-arrow-text.mjs` (real apache-arrow tables, 1M rows,
+median of 7), two runs each:
+
+| Case                              | Before           | After        |
+| --------------------------------- | ---------------- | ------------ |
+| 100 labels                        | 491 / 478 ms     | 52 / 48 ms   |
+| every row distinct                | 1,036 / 1,203 ms | 515 / 486 ms |
+| 100 labels, 10% null              | 449 / 468 ms     | 67 / 65 ms   |
+| 100 non-ASCII labels              | 556 / 601 ms     | 95 / 78 ms   |
+| `Dictionary<Utf8>`, 100 entries   | 125 / 123 ms     | 16 / 28 ms   |
+| 100 labels, `ordering: 'reorder'` | 681 / 644 ms     | 226 / 190 ms |
+| `ValueSeries`, 100 labels         | 426 / 519 ms     | 45 / 55 ms   |
+
+The distinct case is now mostly `stringColumnFromArray`'s `Map` over the
+first half of the rows. The ~60 ms for a nullable number column that the
+original note mentioned was not reproduced here (16 vs 7 ms); left as
+[PND-ARROWNUM].
+
 ### [PND-SMOOTHSLOW] — SHIPPED (smooth / baseline / outliers / sample stride on columns)
 
 Logged from pond-rs R1b step 8h, picked up from the Codex PR #810
