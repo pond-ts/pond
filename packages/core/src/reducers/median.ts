@@ -2,6 +2,7 @@ import type { ReducerDef } from './types.js';
 import { rollingSortedArray } from './rolling.js';
 import {
   percentileOfSorted,
+  sortedNumbers,
   reducePercentileColumn,
   reducePercentileColumnRange,
 } from './percentile.js';
@@ -10,8 +11,7 @@ export const median: ReducerDef = {
   outputKind: 'number',
   reduce(_d, numeric) {
     if (numeric.length === 0) return undefined;
-    const sorted = numeric.slice().sort((a, b) => a - b);
-    return percentileOfSorted(sorted, 50);
+    return percentileOfSorted(sortedNumbers(numeric), 50);
   },
   reduceColumn(col) {
     return reducePercentileColumn(col, 50);
@@ -27,7 +27,7 @@ export const median: ReducerDef = {
       },
       snapshot() {
         if (collected.length === 0) return undefined;
-        const sorted = collected.slice().sort((a, b) => a - b);
+        const sorted = sortedNumbers(collected);
         return percentileOfSorted(sorted, 50);
       },
     };

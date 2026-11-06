@@ -2,6 +2,7 @@ import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
 } from '../batch/aggregate-columns.js';
+import { replaySource } from './replay.js';
 import { Event } from '../core/event.js';
 import { Time } from '../core/time.js';
 import {
@@ -278,9 +279,7 @@ export class LiveFusedRolling<
     // Replay the source's existing events through the same ingest
     // path, so a fused rolling created on a non-empty source matches
     // the streaming-from-construction shape.
-    for (let i = 0; i < source.length; i++) {
-      this.#ingest(source.at(i)!);
-    }
+    replaySource(source, (event) => this.#ingest(event));
 
     this.#unsubscribe = source.on('event', (event) => {
       this.#ingest(event);

@@ -24,6 +24,7 @@
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
     "typecheck": "tsc",
+    "check:fit-guides": "node --experimental-strip-types --no-warnings scripts/check-fit-guides.mts",
     "check:gallery-links": "node scripts/check-gallery-links.mjs",
     "check:llms-txt": "node scripts/check-llms-txt.mjs"
   },

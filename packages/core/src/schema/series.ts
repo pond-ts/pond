@@ -10,6 +10,16 @@ import type { TimeRange } from '../core/time-range.js';
 /** Marker symbol for sources that emit `'evict'` events. @internal */
 export const EMITS_EVICT: unique symbol = Symbol.for('pond-ts:emitsEvict');
 
+/**
+ * Key of the payload-free change signal on `LiveSeries`
+ * ([PND-HOOKSIGNAL]): `source[ON_SIGNAL]('event' | 'evict', fn)` calls `fn`
+ * with no argument once per push in which that channel delivered at least
+ * one row, at the moment of the channel's last call, without building the
+ * rows' `Event`s. A registered symbol, so `@pond-ts/react` reaches it with
+ * `Symbol.for` and no import. @internal
+ */
+export const ON_SIGNAL: unique symbol = Symbol.for('pond-ts:onSignal');
+
 export type ScalarKind = 'number' | 'string' | 'boolean' | 'array';
 export type ScalarValue = number | string | boolean;
 

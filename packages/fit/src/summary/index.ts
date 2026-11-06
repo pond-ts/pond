@@ -4,6 +4,12 @@
  * map polyline, the elevation-vs-distance profile, per-km splits. This is the
  * domain layer over the pond-based geo operators in `../geo`.
  */
+import {
+  movingMask,
+  movingRuleOf,
+  isPoolRecord,
+  type MovingRule,
+} from '../activity/moving.js';
 import { TimeSeries } from 'pond-ts';
 import type { ImportedActivity, ActivityStreams, Lap } from '../types.js';
 import * as geo from '../geo/index.js';
@@ -24,7 +30,8 @@ export type ChannelKey =
  * One resampled point carrying BOTH axes — distance and elapsed time — so the
  * chart can switch x-axis without recomputing. Buckets are even in distance;
  * `timeSeconds` is the elapsed time reached at that distance, so the time axis
- * spans 0 → total elapsed. `value` is native units (m, m/s, bpm, W, rpm, °C).
+ * spans 0 → total elapsed; it is always finite (a bucket with no sample takes
+ * the time before it, or the first time). `value` is native units (m, m/s, bpm, W, rpm, °C).
  */
 export interface ChannelSample {
   distanceMeters: number;
@@ -57,10 +64,15 @@ export interface ChannelProfile {
 export interface ActivitySummary {
   startTimeUtc: string;
   pointCount: number;
+  /** The same totals `activity.stats()` gives: distance on the activity's
+   *  one distance axis (a pool swim's lengths, else the samples). */
   distanceMeters: number;
-  /** Time the clock ran (last sample − first sample). */
+  /** From the activity's start (or an earlier sample) to its last sample,
+   *  or to a pool swim's last length. */
   elapsedTimeSeconds: number;
-  /** Time actually moving (speed above the stopped threshold). */
+  /** By the activity's moving rule: a pool swim's lengths, the time between
+   *  samples at or above `MOVING_SPEED_MPS`, or, for a swim with no GPS and
+   *  nothing else to go by, the watch's swim time. */
   movingTimeSeconds: number;
   elevationGainMeters: number;
   elevationLossMeters: number;
@@ -231,6 +243,39 @@ function bucketCoast(
 }
 
 /**
+ * The time reached at each distance bucket, never NaN: a bucket with no
+ * sample (inside a gap, or before the first one, as in a pool swim whose
+ * first record sits at the end of the first length) takes the time before
+ * it, so the time axis never runs backwards. `before` is the time already
+ * reached where the buckets start (a zoomed window passes the time at its
+ * start distance); without it, buckets ahead of the first known time take
+ * that first time. 0 throughout when there is no time at all.
+ */
+function finiteTimes(
+  timeProf: ProfileSample[],
+  n: number,
+  before?: number,
+): number[] {
+  let prev = 0;
+  if (before !== undefined && Number.isFinite(before)) prev = before;
+  else
+    for (let i = 0; i < n; i++) {
+      const v = timeProf[i]?.value;
+      if (v !== undefined && Number.isFinite(v)) {
+        prev = v;
+        break;
+      }
+    }
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const v = timeProf[i]?.value;
+    if (v !== undefined && Number.isFinite(v)) prev = v;
+    out[i] = prev;
+  }
+  return out;
+}
+
+/**
  * Zip a distance-bucketed profile with the matching time axis (`timeProf`, same
  * bucketing) and the rolling variance spread into a ChannelProfile. The band
  * edges come from `spread` (a fixed-window percentile of the raw samples), NOT
@@ -244,14 +289,16 @@ function zipProfile(
   timeProf: ProfileSample[],
   spread: geo.Spread[],
   coast: boolean[],
+  timeBefore?: number,
 ): ChannelProfile {
+  const times = finiteTimes(timeProf, prof.length, timeBefore);
   return {
     key,
     points: prof.map((p, i) => {
       const isCoast = coast[i] ?? false;
       return {
         distanceMeters: p.distanceMeters,
-        timeSeconds: timeProf[i]?.value ?? 0,
+        timeSeconds: times[i]!,
         value: isCoast ? NaN : p.value,
         bandLo: isCoast ? NaN : (spread[i]?.bandLo ?? NaN),
         bandHi: isCoast ? NaN : (spread[i]?.bandHi ?? NaN),
@@ -293,6 +340,7 @@ function windowChannelProfile(
   endMeters: number,
   bucketMeters: number,
   timeProf: ProfileSample[],
+  timeBefore: number | undefined,
 ): ChannelProfile | null {
   const arr = cleanColumn(values);
   if (!arr) return null;
@@ -309,7 +357,24 @@ function windowChannelProfile(
   // the window's ends still see their ±radius of raw samples / surrounding runs.
   const spread = geo.rollingSpread(cum, arr, dists, SPREAD_RADIUS_M);
   const coast = bucketCoast(dists, bucketMeters, cum, mask ?? []);
-  return zipProfile(key, prof, timeProf, spread, coast);
+  return zipProfile(key, prof, timeProf, spread, coast, timeBefore);
+}
+
+/**
+ * The elapsed time already reached at `meters`: the time of the last sample at
+ * or before that distance, or undefined when the distance comes before every
+ * sample. Lets a zoomed window's empty buckets carry the same time the
+ * whole-activity profile gives those distances.
+ */
+function timeAtDistance(
+  cum: Float64Array,
+  timeRel: Float64Array,
+  meters: number,
+): number | undefined {
+  let t: number | undefined;
+  for (let i = 0; i < cum.length && cum[i]! <= meters; i++)
+    if (Number.isFinite(timeRel[i]!)) t = timeRel[i]!;
+  return t;
 }
 
 /**
@@ -388,34 +453,45 @@ export function buildTrackFromStreams(
     cadence?.length ?? 0,
     temperatureC?.length ?? 0,
   );
-  // Missing/non-finite → `undefined` (NOT 0, a valid reading). pond rejects
-  // null/NaN but accepts undefined for required:false columns and records it in
-  // the validity bitmap, so the gap stays a gap — lossless; readColumns reads it
-  // back as NaN.
-  const cell = (a: number[] | undefined, i: number): number | undefined => {
-    const v = a?.[i];
-    return v != null && Number.isFinite(v) ? v : undefined;
+  // Each channel goes to pond as one column. A missing or non-finite reading
+  // (or one past a shorter channel's end) is NaN, which pond keeps as a
+  // missing cell (NOT 0, a valid reading); readColumns reads it back as NaN.
+  const column = (a: number[] | undefined): Float64Array => {
+    const out = new Float64Array(n).fill(NaN);
+    if (a)
+      for (let i = 0; i < n; i++) {
+        const v = a[i];
+        if (v != null && Number.isFinite(v)) out[i] = v;
+      }
+    return out;
   };
-  const points: geo.TrackPoint[] = new Array(n);
+  const time = new Float64Array(n);
+  const lat = new Float64Array(n).fill(NaN);
+  const lng = new Float64Array(n).fill(NaN);
   for (let i = 0; i < n; i++) {
-    const ms = startMs + (timeSeconds?.[i] ?? i) * 1000;
+    time[i] = startMs + (timeSeconds?.[i] ?? i) * 1000;
     // A sample with no fix (null, or a non-finite pair) is a missing cell.
     const pos = latlng[i];
-    const fix =
-      pos != null && Number.isFinite(pos[0]) && Number.isFinite(pos[1]);
-    points[i] = [
-      ms,
-      fix ? pos[0] : undefined,
-      fix ? pos[1] : undefined,
-      cell(altitudeMeters, i),
-      cell(heartrate, i),
-      cell(watts, i),
-      cell(cadence, i),
-      cell(temperatureC, i),
-      cell(distanceMeters, i),
-    ];
+    if (pos != null && Number.isFinite(pos[0]) && Number.isFinite(pos[1])) {
+      lat[i] = pos[0];
+      lng[i] = pos[1];
+    }
   }
-  return geo.buildTrack(name, points);
+  return TimeSeries.fromColumns({
+    name,
+    schema: geo.TRACK_SCHEMA,
+    columns: {
+      time,
+      lat,
+      lng,
+      ele: column(altitudeMeters),
+      hr: column(heartrate),
+      power: column(watts),
+      cadence: column(cadence),
+      temp: column(temperatureC),
+      distance: column(distanceMeters),
+    },
+  });
 }
 
 /**
@@ -440,17 +516,258 @@ export interface PreparedActivity {
   /** Elapsed seconds since the first sample. */
   timeRel: Float64Array;
   n: number;
-  /** Whether the source carried timestamps (so speed is meaningful). */
+  /** Whether the samples carry timestamps (so speed is meaningful and a
+   *  sample has a place on the time axis). */
   hasTime: boolean;
+  /** Where the distance axis comes from: a pool swim's lengths, the GPS
+   *  line, the device's own distance, or nothing. */
+  distanceSource: 'pool-lengths' | 'gps' | 'device' | 'none';
+  /** Whether the activity has a time axis at all: its samples' timestamps,
+   *  or a pool swim's timed lengths and rests (which need no pool size and
+   *  no samples). Elapsed, moving and swimming time need it. */
+  hasClock: boolean;
   /** Whether the activity has a GPS track. False for GPS-less sources (indoor /
    *  GPS-off head units): no map, distance comes from the device stream. */
   hasTrack: boolean;
   /** Some samples of a GPS track have no fix (NaN in `cols.lat`). */
   positionGaps: boolean;
+  /** How moving is decided for this activity (see `activity/moving.ts`). */
+  movingRule: MovingRule;
+  /** For a rule other than speed: per sample i ≥ 1, whether the time before
+   *  it counts as moving. */
+  movingMask?: Uint8Array;
+  /** For a rule other than speed: the stretches that count as moving, in
+   *  seconds from the start. Moving time is the overlap with them, so a
+   *  sample gap that is half swimming counts half. */
+  movingSpans?: ReadonlyArray<readonly [number, number]>;
+  /** For a pool swim with a known pool length: each swum length, in seconds
+   *  from the start, and its distance. A section's distance is then the
+   *  lengths inside it (a length cut in two counts its share). */
+  poolLengths?: ReadonlyArray<{ from: number; to: number; meters: number }>;
+  /** Where the recording starts and ends on the time axis: the activity's
+   *  start (or an earlier first sample) to the last sample, widened to a
+   *  pool swim's recorded lengths. With no timestamps, the sample count. */
+  extent: { from: number; to: number };
   /** Per-sample sustained-coast mask per output channel (speed/power/cadence),
    *  computed ONCE here (it's window-independent and the pond-fill pass is the
    *  expensive part) and reused by every channel build / zoom. */
   coastMasks: Partial<Record<ChannelKey, boolean[]>>;
+}
+
+type PoolLengths = NonNullable<PreparedActivity['poolLengths']>;
+
+function extentOf(
+  timeRel: Float64Array,
+  hasTime: boolean,
+  segments: { from: number; to: number } | undefined,
+): { from: number; to: number } {
+  // samples with no timestamps sit on a count, not on the swim's clock
+  if (!hasTime && segments) return { ...segments };
+  const n = timeRel.length;
+  let from = n ? timeRel[0]! : 0;
+  let to = n ? timeRel[n - 1]! : 0;
+  if (hasTime) from = Math.min(0, from);
+  if (segments) {
+    from = Math.min(from, segments.from);
+    to = Math.max(to, segments.to);
+  }
+  return { from, to };
+}
+
+/** Where a pool swim's timed lengths and rests start and end, in seconds
+ *  from the start: clock evidence of their own, whatever the pool size. */
+function swimSegmentsSpan(
+  imported: ImportedActivity,
+): { from: number; to: number } | undefined {
+  if (!isPoolRecord(imported)) return undefined;
+  const start = Date.parse(imported.activity.startTimeUtc);
+  let from = Infinity;
+  let to = -Infinity;
+  for (const l of imported.swim?.lengths ?? []) {
+    const a = (Date.parse(l.startTimeUtc) - start) / 1000;
+    if (!Number.isFinite(a) || !(l.seconds > 0)) continue;
+    from = Math.min(from, a);
+    to = Math.max(to, a + l.seconds);
+  }
+  return to > from ? { from, to } : undefined;
+}
+
+/** Metres swum by `sec`: whole lengths before it, and the share of one it
+ *  falls inside. */
+function lengthsDistanceAt(lengths: PoolLengths, sec: number): number {
+  let m = 0;
+  for (const l of lengths) {
+    if (sec >= l.to) m += l.meters;
+    else if (sec > l.from) m += (l.meters * (sec - l.from)) / (l.to - l.from);
+  }
+  return m;
+}
+
+/** Metres from the start at `sec` (seconds from the start), on the
+ *  activity's one distance axis: a pool swim's lengths, else the samples'
+ *  distance drawn straight between them. @internal */
+export function distanceAtSeconds(prep: PreparedActivity, sec: number): number {
+  if (prep.poolLengths) return lengthsDistanceAt(prep.poolLengths, sec);
+  const { cum, timeRel } = prep;
+  const n = timeRel.length;
+  if (n === 0) return 0;
+  if (sec <= timeRel[0]!) return cum[0]!;
+  if (sec >= timeRel[n - 1]!) return cum[n - 1]!;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timeRel[mid]! < sec) lo = mid + 1;
+    else hi = mid;
+  }
+  const t0 = timeRel[lo - 1]!;
+  const t1 = timeRel[lo]!;
+  const c0 = cum[lo - 1]!;
+  const c1 = cum[lo]!;
+  return t1 > t0 ? c0 + ((sec - t0) / (t1 - t0)) * (c1 - c0) : c1;
+}
+
+/** Seconds from the start when the activity first reaches `meters`, on the
+ *  same axis as {@link distanceAtSeconds}. @internal */
+export function secondsAtDistance(
+  prep: PreparedActivity,
+  meters: number,
+): number {
+  const lengths = prep.poolLengths;
+  if (lengths) {
+    let m = 0;
+    for (const l of lengths) {
+      if (meters <= m + l.meters)
+        return l.from + (Math.max(0, meters - m) / l.meters) * (l.to - l.from);
+      m += l.meters;
+    }
+    return lengths[lengths.length - 1]!.to;
+  }
+  const { cum, timeRel } = prep;
+  const n = cum.length;
+  if (n === 0) return 0;
+  if (meters <= cum[0]!) return timeRel[0]!;
+  if (meters >= cum[n - 1]!) return timeRel[n - 1]!;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid]! < meters) lo = mid + 1;
+    else hi = mid;
+  }
+  const c0 = cum[lo - 1]!;
+  const c1 = cum[lo]!;
+  const t0 = timeRel[lo - 1]!;
+  const t1 = timeRel[lo]!;
+  return c1 > c0 ? t0 + ((meters - c0) / (c1 - c0)) * (t1 - t0) : t1;
+}
+
+/** The activity's whole distance on its one axis. @internal */
+export function totalDistance(prep: PreparedActivity): number {
+  if (prep.poolLengths)
+    return prep.poolLengths.reduce((m, l) => m + l.meters, 0);
+  return prep.cum.length ? prep.cum[prep.cum.length - 1]! : 0;
+}
+
+/** Whether an activity has a distance: GPS, a distance channel, or a pool
+ *  swim's lengths of a known pool. @internal */
+export function hasDistance(prep: PreparedActivity): boolean {
+  return (
+    prep.hasTrack ||
+    !!prep.imported.streams.distanceMeters?.length ||
+    !!prep.poolLengths
+  );
+}
+
+/** Whether the time just before sample i (i ≥ 1) was moving, by the
+ *  activity's rule: a pool swim's swum stretches, else the speed rule.
+ *  @internal */
+export function movingBeforeSample(prep: PreparedActivity, i: number): boolean {
+  const { timeRel: t } = prep;
+  if (!prep.hasTime || !(t[i]! - t[i - 1]! > 0)) return false;
+  if (prep.movingMask) return prep.movingMask[i] === 1;
+  const v = prep.speed[i]!;
+  return Number.isFinite(v) && v >= geo.MOVING_SPEED_MPS;
+}
+
+/** Seconds of [a, b] inside the given stretches. @internal */
+export function overlapSeconds(
+  spans: ReadonlyArray<readonly [number, number]>,
+  a: number,
+  b: number,
+): number {
+  let sum = 0;
+  for (const [x, y] of spans) {
+    const ov = Math.min(b, y) - Math.max(a, x);
+    if (ov > 0) sum += ov;
+  }
+  return sum;
+}
+
+/** Moving seconds in [a, b] (seconds from the start). By the sport's
+ *  stretches when it has them; else each sample gap judged moving counts
+ *  for its part inside [a, b]. @internal */
+export function movingSecondsIn(
+  prep: PreparedActivity,
+  a: number,
+  b: number,
+): number {
+  if (!prep.hasClock) return 0;
+  if (prep.movingSpans) return overlapSeconds(prep.movingSpans, a, b);
+  if (!prep.hasTime) return 0;
+  const t = prep.timeRel;
+  // start at the first sample after a
+  let lo = 1;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t[mid]! <= a) lo = mid + 1;
+    else hi = mid;
+  }
+  let moving = 0;
+  for (let i = lo; i < t.length; i++) {
+    if (t[i - 1]! >= b) break;
+    const ov = Math.min(t[i]!, b) - Math.max(t[i - 1]!, a);
+    if (ov > 0 && movingBeforeSample(prep, i)) moving += ov;
+  }
+  return moving;
+}
+
+/** The whole activity's elapsed seconds, moving seconds and distance, as
+ *  `activity.stats()` measures them: over the activity's extent (its start,
+ *  or an earlier sample, to its last sample or pool length), on its one
+ *  distance axis. @internal */
+export function wholeTotals(prep: PreparedActivity): {
+  elapsed: number;
+  moving: number;
+  meters: number;
+} {
+  const { from, to } = prep.extent;
+  const elapsed = prep.hasClock ? to - from : 0;
+  const meters = distanceAtSeconds(prep, to) - distanceAtSeconds(prep, from);
+  const moving =
+    prep.movingRule === 'swim-time'
+      ? (swimMoving(prep.imported, elapsed) ?? 0)
+      : movingSecondsIn(prep, from, to);
+  return { elapsed, moving, meters: Number.isFinite(meters) ? meters : 0 };
+}
+
+/** The swum lengths of a pool swim whose pool length is known. */
+function poolLengthsOf(
+  imported: ImportedActivity,
+): Pick<PreparedActivity, 'poolLengths'> {
+  const { swim, activity } = imported;
+  const meters = swim?.pool?.lengthMeters;
+  if (!isPoolRecord(imported) || !meters || !(meters > 0)) return {};
+  const start = Date.parse(activity.startTimeUtc);
+  const out = (swim?.lengths ?? [])
+    .filter((l) => l.active)
+    .map((l) => {
+      const from = (Date.parse(l.startTimeUtc) - start) / 1000;
+      return { from, to: from + l.seconds, meters };
+    })
+    .filter((l) => Number.isFinite(l.from) && l.to > l.from);
+  return out.length ? { poolLengths: out } : {};
 }
 
 /** Cumulative distance from the device's `distance` column (clamped
@@ -498,6 +815,21 @@ function neverDecreases(distance: Float64Array | undefined): boolean {
   return true;
 }
 
+/** The swim watch's swim time, when the import carries a usable one (finite
+ *  and above 0), held to `elapsedSeconds` when that is known: moving time
+ *  can't be longer than the clock ran. Internal: not re-exported from the
+ *  package. */
+export function swimMoving(
+  imported: ImportedActivity,
+  elapsedSeconds?: number,
+): number | undefined {
+  const v = imported.swim?.movingSeconds;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return undefined;
+  return elapsedSeconds != null && elapsedSeconds > 0
+    ? Math.min(v, elapsedSeconds)
+    : v;
+}
+
 /** Decode an activity's streams into the shared per-sample arrays. ONE path now:
  *  build the canonical series, read its columns; distance comes from haversine
  *  when there are positions, else the device `distance` column (GPS-less, or
@@ -509,6 +841,23 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   const cols = geo.readColumns(track);
   const n = cols.timeSec.length;
   const hasTrack = cols.lat.length > 0;
+
+  // Seconds from the activity's start, the axis laps, lengths and sections
+  // are given on. Usually the first sample is at the start; when it comes
+  // later, the axis still starts at the start (and a sample before the
+  // start sits below 0). With no timestamps the first sample is 0.
+  const startSec = startMs / 1000;
+  const origin =
+    streams.timeSeconds && n && Number.isFinite(startSec)
+      ? startSec
+      : (cols.timeSec[0] ?? 0);
+  const timeRel = new Float64Array(n);
+  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - origin;
+
+  // A pool swim of a known pool length measures by its lengths: every
+  // distance query (stats, bounds, splits, efforts, speed) reads this one
+  // axis. See `distanceAtSeconds`.
+  const pool = poolLengthsOf(imported);
 
   let step: Float64Array;
   let cum: Float64Array;
@@ -524,7 +873,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     (positionGaps &&
       usableDistance(cols.distance) &&
       neverDecreases(cols.distance));
-  if (hasTrack && !deviceDistance) {
+  if (pool.poolLengths) {
+    cum = new Float64Array(n);
+    for (let i = 0; i < n; i++)
+      cum[i] = lengthsDistanceAt(pool.poolLengths, timeRel[i]!);
+    step = new Float64Array(n);
+    for (let i = 1; i < n; i++) step[i] = cum[i]! - cum[i - 1]!;
+  } else if (hasTrack && !deviceDistance) {
     step = geo.stepDistances(cols.lat, cols.lng);
     cum = geo.cumulative(step);
   } else {
@@ -542,9 +897,6 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     speed[i] = dt > 0 ? step[i]! / dt : NaN;
   }
 
-  const timeRel = new Float64Array(n);
-  for (let i = 0; i < n; i++) timeRel[i] = cols.timeSec[i]! - cols.timeSec[0]!;
-
   // sustained-coast masks for the output channels — once, not per zoom. Power /
   // cadence from the canonical `cols`; speed is the derived track speed.
   const coastMasks: Partial<Record<ChannelKey, boolean[]>> = {};
@@ -558,6 +910,10 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     if (a) coastMasks[k] = sustainedCoastMask(k, a, cols.timeSec);
   }
 
+  const moving = movingRuleOf(imported);
+  const hasTime = !!streams.timeSeconds;
+  // a pool swim's timed lengths and rests are a clock of their own
+  const segments = swimSegmentsSpan(imported);
   return {
     imported,
     track,
@@ -567,9 +923,26 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     speed,
     timeRel,
     n,
-    hasTime: !!streams.timeSeconds,
+    hasTime,
+    hasClock: hasTime || !!segments,
+    distanceSource: pool.poolLengths
+      ? 'pool-lengths'
+      : hasTrack && !deviceDistance
+        ? 'gps'
+        : n && cum[n - 1]! > 0
+          ? 'device'
+          : 'none',
     hasTrack,
     positionGaps,
+    movingRule: moving.rule,
+    ...(moving.spans
+      ? {
+          movingMask: movingMask(timeRel, moving.spans),
+          movingSpans: moving.spans,
+        }
+      : {}),
+    ...pool,
+    extent: extentOf(timeRel, hasTime, segments),
     coastMasks,
   };
 }
@@ -659,6 +1032,7 @@ export function windowChannels(
     endMeters,
     bucket,
   );
+  const timeBefore = timeAtDistance(prep.cum, prep.timeRel, startMeters);
   return channelInputs(prep)
     .map((c) =>
       windowChannelProfile(
@@ -670,6 +1044,7 @@ export function windowChannels(
         endMeters,
         bucket,
         timeProf,
+        timeBefore,
       ),
     )
     .filter((c): c is ChannelProfile => c != null);
@@ -692,11 +1067,7 @@ export function summaryFromPrepared(
 
   // map outputs only exist for a GPS activity; GPS-less ⇒ no polyline / bounds.
   // Only the fixes: a sample with no fix has no place on the map.
-  const latlng: Array<[number, number]> = [];
-  if (prep.hasTrack)
-    for (let i = 0; i < n; i++)
-      if (Number.isFinite(cols.lat[i]!) && Number.isFinite(cols.lng[i]!))
-        latlng.push([cols.lat[i]!, cols.lng[i]!]);
+  const latlng = trackLine(prep);
 
   const channels = buildChannels(prep, profileBucketMeters);
 
@@ -718,12 +1089,14 @@ export function summaryFromPrepared(
     speed: prep.hasTime ? prep.speed : undefined,
   };
 
+  // the same totals as activity.stats(), so the two never disagree
+  const totals = wholeTotals(prep);
   return {
     startTimeUtc: activity.startTimeUtc,
     pointCount: n,
-    distanceMeters: cum[n - 1] ?? 0,
-    elapsedTimeSeconds: n > 1 ? cols.timeSec[n - 1]! - cols.timeSec[0]! : 0,
-    movingTimeSeconds: geo.movingTimeSeconds(step, cols.timeSec),
+    distanceMeters: totals.meters,
+    elapsedTimeSeconds: totals.elapsed,
+    movingTimeSeconds: totals.moving,
     elevationGainMeters: gainMeters,
     elevationLossMeters: lossMeters,
     bounds: prep.hasTrack && track ? geo.boundsViaPond(track) : null,
@@ -758,14 +1131,16 @@ export function computeActivitySummary(
     !(s.distanceMeters?.length ?? 0) &&
     !(s.timeSeconds?.length ?? 0) &&
     !(s.heartrate?.length ?? 0) &&
-    !(s.watts?.length ?? 0);
+    !(s.watts?.length ?? 0) &&
+    // a pool swim's timed lengths and rests are a record of their own
+    !swimSegmentsSpan(imported);
   if (empty) {
     return {
       startTimeUtc: imported.activity.startTimeUtc,
       pointCount: 0,
       distanceMeters: 0,
       elapsedTimeSeconds: 0,
-      movingTimeSeconds: 0,
+      movingTimeSeconds: swimMoving(imported) ?? 0,
       elevationGainMeters: 0,
       elevationLossMeters: 0,
       bounds: null,
@@ -776,4 +1151,24 @@ export function computeActivitySummary(
     };
   }
   return summaryFromPrepared(prepareActivity(imported), options);
+}
+
+/**
+ * The line to draw for an activity, at full resolution: its fixes in order
+ * (samples with no fix left out), except an open water swim's, whose raw
+ * fixes zigzag; that one gets the cleaned line the summary draws with. Empty
+ * for an activity with no GPS.
+ *
+ * The points don't line up with samples by index: a normal track skips
+ * samples with no fix, while an open water swim's cleaned line has a point
+ * for every sample (its gaps are filled in).
+ */
+export function trackLine(prep: PreparedActivity): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (!prep.hasTrack) return out;
+  const { lat, lng } = prep.cols;
+  for (let i = 0; i < lat.length; i++)
+    if (Number.isFinite(lat[i]!) && Number.isFinite(lng[i]!))
+      out.push([lat[i]!, lng[i]!]);
+  return out;
 }

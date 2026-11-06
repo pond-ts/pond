@@ -1,0 +1,236 @@
+---
+title: Time in zones
+sidebar_position: 6
+description: How long a run spent in each heart-rate zone, from the samples in pond and Python, then with fit.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import ChartExample from '@site/src/components/ChartExample';
+import FitTimeInZones from '@site/src/examples/fit-time-in-zones';
+
+# Time in zones
+
+**Zones split effort into a few bands, from easy to flat out, and count how
+long the activity spent in each.** "40 minutes easy and 12 at threshold" says
+more about a session than one average heart rate.
+
+## The idea
+
+A zone scheme is a list of edges. Five heart-rate zones from a maximum heart
+rate of 186 bpm, at 65, 81, 89 and 97 % of it, are:
+
+| Zone | Name      | Heart rate     |
+| ---- | --------- | -------------- |
+| 1    | Recovery  | up to 121 bpm  |
+| 2    | Endurance | 122 to 151 bpm |
+| 3    | Tempo     | 152 to 166 bpm |
+| 4    | Threshold | 167 to 180 bpm |
+| 5    | Anaerobic | above 180 bpm  |
+
+For each sample, find its zone, then add up the time each sample stands for:
+the seconds since the sample before. Two details:
+
+- **A sample on an edge goes in the lower zone.** 151 bpm is zone 2, not
+  zone 3. That is the usual convention for training zones.
+- **A gap in the recording is not time in a zone.** If the watch stopped for
+  five minutes, the sample after the stop doesn't stand for five minutes at
+  its heart rate. Cap each sample's time (fit uses 10 seconds).
+
+This guide uses the interval run, with a maximum heart rate of 186 bpm.
+
+## From scratch
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+The edges, and each sample's seconds since the one before, capped at 10:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const MAX_HR = 186;
+const run = readActivity(readFileSync('interval-run.fit'));
+const track = run.toSeries();
+
+const bounds = [0.65, 0.81, 0.89, 0.97].map((f) => Math.round(f * MAX_HR));
+const edges = [0, ...bounds, 1e9]; // 1e9: the top zone has no ceiling
+
+const times = track.keyColumn().begin;
+const dt = Float64Array.from(times, (ms, i) =>
+  i ? Math.min((ms - times[i - 1]!) / 1000, 10) : 0,
+);
+console.log(edges.slice(1, -1).join(' '));
+```
+
+```text output
+121 151 166 180
+```
+
+`byColumn` buckets rows by a value, here heart rate, between the edges given.
+`inclusive: '(]'` puts a value on an edge in the bin below. Summing `dt` in
+each bin is the time in that zone:
+
+```ts
+const labels = ['Recovery', 'Endurance', 'Tempo', 'Threshold', 'Anaerobic'];
+const bins = track
+  .withColumn('dt', dt)
+  .byColumn(
+    'hr',
+    { edges, inclusive: '(]' },
+    { seconds: { from: 'dt', using: 'sum' } },
+  );
+
+const mmss = (s: number) =>
+  `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+bins.forEach((bin, i) =>
+  console.log(
+    `Z${i + 1}`,
+    labels[i]!.padEnd(9),
+    mmss(Number(bin.seconds ?? 0)),
+  ),
+);
+```
+
+```text output
+Z1 Recovery  6:14
+Z2 Endurance 28:40
+Z3 Tempo     15:28
+Z4 Threshold 1:01
+Z5 Anaerobic 0:00
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+The capped seconds per sample in polars, then pond's `by_column` with the
+zone edges. `upper_inclusive=True` puts a value on an edge in the bin below:
+
+```python
+import polars as pl
+import pond_rs
+
+MAX_HR = 186
+run = pl.read_csv("interval-run.csv", try_parse_dates=True)
+run = run.with_columns(
+    dt=(pl.col("time").diff().dt.total_milliseconds() / 1000).clip(upper_bound=10).fill_null(0.0)
+)
+
+bounds = [round(f * MAX_HR) for f in (0.65, 0.81, 0.89, 0.97)]
+edges = [0, *bounds, 1e9]  # 1e9: the top zone has no ceiling
+
+bins = pond_rs.TimeSeries(run, key="time").by_column(
+    "heart_rate", {"seconds": ("dt", "sum")}, edges=edges, upper_inclusive=True
+)
+labels = ["Recovery", "Endurance", "Tempo", "Threshold", "Anaerobic"]
+for i, (label, s) in enumerate(zip(labels, bins["seconds"])):
+    s = int(s or 0)
+    print(f"Z{i + 1}", f"{label:<9}", f"{s // 60}:{s % 60:02d}")
+```
+
+```text output
+Z1 Recovery  6:14
+Z2 Endurance 28:40
+Z3 Tempo     15:28
+Z4 Threshold 1:01
+Z5 Anaerobic 0:00
+```
+
+</TabItem>
+</Tabs>
+
+## With fit
+
+The zones come from `analyze`, given the athlete's maximum heart rate. Each
+zone has its edges, its seconds, and its share of the total:
+
+```ts
+const { zones } = run.analyze({
+  athlete: { hrZone: [{ at: '2026-01-01', maxHr: MAX_HR }] },
+});
+for (const z of zones.heartRate!)
+  console.log(
+    `Z${z.zone}`,
+    z.label.padEnd(9),
+    mmss(z.seconds),
+    `${(z.fraction * 100).toFixed(0)} %`.padStart(4),
+    z.openEnded ? `${z.start}+` : `${z.start}-${z.end}`,
+  );
+```
+
+```text output
+Z1 Recovery  6:14 12 % 0-121
+Z2 Endurance 28:40 56 % 121-151
+Z3 Tempo     15:28 30 % 151-166
+Z4 Threshold 1:01  2 % 166-180
+Z5 Anaerobic 0:00  0 % 180+
+```
+
+The same times. `start` and `end` are the edges themselves, so a zone's
+`start` is the edge it sits above: zone 3 is "over 151, up to 166".
+
+A zone scheme of your own replaces the percentages with four boundaries:
+
+```ts
+const own = run.analyze({
+  athlete: { hrZone: [{ at: '2026-01-01', bounds: [130, 150, 165, 175] }] },
+});
+console.log(own.zones.heartRate!.map((z) => mmss(z.seconds)).join('  '));
+```
+
+```text output
+7:51  26:45  12:34  4:13  0:00
+```
+
+Any section has zones too. The six 800 m repeats are laps 2, 4, … 12 (the
+laps between are the recoveries):
+
+```ts
+const repeats = [1, 3, 5, 7, 9, 11].map((i) => run.laps.at(i)!);
+let inZone4 = 0;
+for (const lap of repeats)
+  inZone4 += lap.analyze({
+    athlete: { hrZone: [{ at: '2026-01-01', maxHr: MAX_HR }] },
+  }).zones.heartRate![3]!.seconds;
+console.log('repeats', repeats.length, 'in Z4', mmss(inZone4));
+```
+
+```text output
+repeats 6 in Z4 1:01
+```
+
+All of the run's time in zone 4 is in the repeats, but even there most of
+each repeat is in zone 3: each one peaks at 167 or 168 bpm, just over the
+edge, near its end.
+
+Power zones (seven, from FTP) and pace zones (six, from a 5 km time) come
+back the same way, as `zones.power` and `zones.pace`. See
+[Analysis and the athlete](../analysis).
+
+## Chart it
+
+Heart rate through the run, with lines at the zone edges, and the time in
+each zone as bars, below it, laid out along heart rate (bpm across the
+bottom). The bars are the zone array as fit returns it: each zone already
+has the `start` and `end` a `<BarChart>` needs.
+
+<ChartExample name="fit-time-in-zones" height={380}>
+  {(width) => <FitTimeInZones width={width} />}
+</ChartExample>
+
+## Traps
+
+- **Heart rate lags.** It takes a minute or more to rise at the start of a
+  hard repeat, and falls slowly after. A short repeat can finish before heart
+  rate reaches its zone, so time in zones under-counts short, hard efforts.
+  Power or pace zones answer straight away.
+- **The top zone has no ceiling.** fit's top zone carries an `end` so it can
+  be drawn (`openEnded` is `true`), but that end isn't a real limit. Label it
+  "180+".
+- **Zones need the athlete's numbers.** Without `hrZone`, `zones.heartRate`
+  is `null`. With settings that change over the year, each activity uses the
+  values in force on its own date.
+- **Stops count.** A standing recovery is time in a low zone. That is what
+  happened, but if you want zones for the running only, use the laps you
+  want, as in the repeats example.

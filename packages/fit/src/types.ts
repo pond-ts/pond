@@ -10,13 +10,19 @@
 /** A geographic point as [latitude, longitude]. Matches Leaflet + tracks.json. */
 export type GeoPoint = [number, number];
 
-/** Where an activity came from. Extensible; Strava is the only source for now. */
-export type ActivitySource = 'strava' | 'manual';
+/** Where an activity came from: the Strava API, a file the readers in
+ *  `@pond-ts/fit/files` read (FIT, GPX, TCX), or entered by hand. */
+export type ActivitySource = 'strava' | 'file' | 'manual';
 
 /**
  * The time-series channels recorded during an activity. `latlng` is the track;
  * everything else is optional and present only if the source provided it.
  * Channels are parallel arrays — index i of each is the same sample.
+ *
+ * A sample a channel is missing is `NaN`, or `null` as an activity read back
+ * from JSON has it (JSON has no `NaN`): every reading in this package treats
+ * the two the same, as a gap, never as 0. `timeSeconds` is the exception: it
+ * must be finite at every sample.
  */
 export interface ActivityStreams {
   /** The position at each sample; `null` for a sample the device recorded
@@ -89,8 +95,14 @@ export interface Lap {
   distanceMeters: number;
   /** Wall-clock for the lap (total_elapsed_time). */
   elapsedSeconds: number;
-  /** Timer time, i.e. moving time (total_timer_time). */
+  /** The lap's moving time as the reader estimates it. FIT fills it from
+   *  `total_timer_time` (else elapsed), TCX from elapsed, so today it is
+   *  timer time under another name; {@link timerSeconds} is the file's own
+   *  timer, and the clocks work will untangle the two. */
   movingSeconds: number;
+  /** Time the recording timer ran over the lap (FIT `total_timer_time`).
+   *  Absent when the file doesn't record it — never filled from elapsed. */
+  timerSeconds?: number;
   avgSpeedMps?: number;
   maxSpeedMps?: number;
   avgWatts?: number;
@@ -104,10 +116,79 @@ export interface Lap {
   elevationGainMeters?: number;
 }
 
+/** One pool length as the watch logged it: a swum length, or a rest at the
+ *  wall (`active: false`, no strokes). */
+export interface SwimLength {
+  /** ISO 8601, UTC — when the length (or rest) began. */
+  startTimeUtc: string;
+  seconds: number;
+  active: boolean;
+  /** Strokes taken over the length. */
+  strokes?: number;
+  /** The stroke the watch recognised (FIT's names: freestyle, breaststroke,
+   *  backstroke, butterfly, drill, mixed). */
+  stroke?: string;
+}
+
+/**
+ * What a swim watch records beyond the streams.
+ *
+ * `movingSeconds` is the time spent swimming. When present (finite and above
+ * 0) the summary takes it as the activity's moving time, held to the elapsed
+ * time, without checking it further. Readers fill it with the summed timer
+ * time of the laps that covered distance (`swimMovingSeconds`), which leaves
+ * out the rests between sets; on 20 real FIT swims (pool and open water) that
+ * matched Strava's moving time to within a second. Working it out from the
+ * samples instead (as for a run or ride) comes out far too low on a pool
+ * swim, which logs one sample per length: a length timed together with its
+ * rest at the wall reads as too slow to be moving.
+ *
+ * Only the whole-activity moving time uses it: a lap, split or `range()`
+ * inside a swim still works its moving time out from the samples.
+ */
+export interface SwimData {
+  movingSeconds: number;
+  /** Pool swims only (open water has neither). */
+  pool?: { lengthMeters: number; unit: 'm' | 'yd' };
+  lengths?: SwimLength[];
+}
+
 /** An activity together with its streams — the shape an import yields. Laps are
  *  present only for sources that record them (FIT); GPX/manual omit them. */
 export interface ImportedActivity {
   activity: ActivityMeta;
   streams: ActivityStreams;
   laps?: Lap[] | undefined;
+  /** A swim watch's own record (pool, lengths, swim time), when it has one. */
+  swim?: SwimData | undefined;
+  /** Time the recording timer ran over the whole activity, as the file
+   *  states it (FIT session `total_timer_time`). Absent when it doesn't. */
+  timerSeconds?: number | undefined;
+  /** What the file says made it: a FIT `file_id`'s maker (FIT's name, e.g.
+   *  `"garmin"`, or its number) and product number, and a product or
+   *  creator name (FIT `product_name`, TCX `<Creator><Name>`, GPX
+   *  `creator`). As stated; turning a Garmin product number into a model
+   *  name is left to the app. */
+  creator?: FileCreator | undefined;
+  /** Heart rate after the stop, when the file has it (a Garmin watch's
+   *  two-minute `recovery_hr` reading). */
+  recovery?: HeartRateRecovery | undefined;
+}
+
+/** What an activity file says made it (see {@link ImportedActivity.creator}). */
+export interface FileCreator {
+  /** FIT maker: FIT's name for it (`"garmin"`) or its number. */
+  manufacturer?: string | number | undefined;
+  /** FIT product number. */
+  product?: number | undefined;
+  /** Product or creator name as the file states it. */
+  name?: string | undefined;
+}
+
+/** Heart rate after the activity stopped. */
+export interface HeartRateRecovery {
+  /** Heart rate when the activity stopped, bpm. */
+  atStopBpm?: number | undefined;
+  /** Readings after the stop, oldest first: seconds after the stop, bpm. */
+  after: { sec: number; bpm: number }[];
 }

@@ -1,0 +1,112 @@
+---
+title: Under the hood
+sidebar_position: 10
+description: The activity as a pond TimeSeries, for anything fit doesn't answer directly.
+---
+
+# Under the hood
+
+An activity is a pond `TimeSeries` underneath. `toSeries()` hands it to you,
+so anything fit doesn't answer directly is a pond-ts call away: rolling
+windows, buckets of time, joins, your own measures.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { Sequence } from 'pond-ts';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const track = ride.toSeries();
+console.log(track.length, 'samples');
+console.log(track.schema.map((c) => c.name).join(', '));
+```
+
+```text output
+5635 samples
+time, lat, lng, ele, hr, power, cadence, temp, distance
+```
+
+| Column     | Unit                                                           |
+| ---------- | -------------------------------------------------------------- |
+| `time`     | the sample's time (milliseconds since 1970)                    |
+| `lat`      | degrees, missing without a GPS fix                             |
+| `lng`      | degrees                                                        |
+| `ele`      | metres above sea level                                         |
+| `hr`       | beats per minute                                               |
+| `power`    | watts                                                          |
+| `cadence`  | per minute (for a run, as the device records it)               |
+| `temp`     | °C                                                             |
+| `distance` | the device's own distance in metres, when the activity uses it |
+
+Every channel is optional: a column the device didn't record is all missing,
+and a dropout is a missing cell, never a zero.
+
+## Doing it in pond
+
+Average heart rate and power for each five minutes of the ride, with pond's
+`aggregate`:
+
+```ts
+const fiveMinutes = track.aggregate(Sequence.every('5m'), {
+  hr: 'avg',
+  power: 'avg',
+});
+// the ride starts on the hour's grid (07:30), so bucket i is minutes 5i to 5i + 5
+fiveMinutes
+  .toObjects()
+  .slice(4, 9)
+  .forEach((row, i) =>
+    console.log(
+      `from ${(i + 4) * 5} min`,
+      Math.round(Number(row.hr)),
+      'bpm',
+      Math.round(Number(row.power)),
+      'W',
+    ),
+  );
+```
+
+```text output
+from 20 min 155 bpm 257 W
+from 25 min 155 bpm 251 W
+from 30 min 155 bpm 256 W
+from 35 min 124 bpm 100 W
+from 40 min 82 bpm 92 W
+```
+
+The [analysis guides](./guides/) build each of fit's measures this way, from
+the samples up, in TypeScript and in Python.
+
+## The functional layer
+
+The object model sits on plain functions, exported for when you have arrays
+rather than an activity: `normalizedPower(seconds, watts)`,
+`haversineMeters(lat1, lng1, lat2, lng2)`,
+`elevationGainLoss(heights)`, `movingTimeSeconds(steps, seconds)`,
+`bestEffortsByDistance(...)`, the zone builders (`hrZonesFrom`,
+`powerZonesFrom`, `paceZonesFrom`) and the rules they use
+(`MOVING_SPEED_MPS`, `CLIMB_THRESHOLD_METERS`). See the
+[API reference](pathname:///generated-api/fit/).
+
+```ts
+import {
+  normalizedPower,
+  elevationGainLoss,
+  MOVING_SPEED_MPS,
+} from '@pond-ts/fit';
+
+const seconds = Float64Array.from({ length: 600 }, (_, i) => i);
+const watts = seconds.map((s) => (Math.floor(s / 60) % 2 ? 300 : 100));
+console.log(normalizedPower(seconds, watts).toFixed(1), MOVING_SPEED_MPS);
+console.log(
+  elevationGainLoss(Float64Array.from([100, 101, 103, 102, 108, 104])),
+);
+```
+
+```text output
+236.9 0.5
+{ gainMeters: 8, lossMeters: 4 }
+```
+
+The surges matter: a ride alternating a minute at 100 W and a minute at 300 W
+averages 200 W but has a normalized power of 236.9 W.

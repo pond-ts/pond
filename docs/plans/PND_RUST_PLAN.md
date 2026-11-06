@@ -537,6 +537,36 @@ The first two are logged as [PND-RUSTOUT] below.
 The one result short of a clean win is one-core B: polars is faster
 (22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
+## Cross-library comparison, all steps re-run (2026-10-21)
+
+Every speed table from R1a and R1b steps 2a–8i4 re-run in one session on one
+machine (3 repeats each), with polars added where it has a matching call:
+[`crates/pond-rs/bench/COMPARISON.md`](../../crates/pond-rs/bench/COMPARISON.md).
+Outcome: pond-rs is faster than pond-ts in 171 of 174 cases (median 5.7×;
+slower on the 1M × 1M outer join and wide-table JSON in); against polars it
+is about even overall (faster in 61 cases, slower in 64 on 4 cores). The
+R1a "≥2× pond-ts single-core" target holds on A but not on B's compute
+(1.8×; 2.2× on total time). R1a A is now a tie with polars on 4 cores
+(compute 128–139 vs 134–166 ms) rather than a pond-rs lead. Two earlier
+numbers did not reproduce: pond-ts `shift` / `fill` (fixed since, #776) and
+pond-rs `from_json` dense (45 ms in step 8d2's table; 75–91 ms at that
+step's own commit on this machine, so not a regression).
+
+**Revised 2026-10-22 after a Codex review** found polars runners doing
+different work or giving different answers (gap handling in cumulative
+sum, an off-by-one centred window, a missing reducer, dropped buckets, tie
+rules, missing time / interval columns, different JSON formats). Every
+pond-rs and polars runner now writes each case's answer (`BENCH_DUMP`) and
+`bench/check_outputs.py` / `check_all.sh` compare them cell by cell; all
+147 compared cases match. Polars cases were added where polars has a
+counterpart the first run missed (leading / centred time windows, minimum
+row counts, rolling list reducers). Re-timed on main with #811: pond-rs vs
+pond-ts faster in 170 of 173 (median 7.5×); vs polars on 4 cores faster in
+73, slower in 59, same in 9 (median 1.08). R1a A compute 117–120 vs polars
+142–177 ms on 4 cores; B's ≥2× single-core target still missed (1.9×).
+Decision: an answer check is now part of the benchmark, so a polars
+"equivalent" that is not equivalent fails rather than reads as a number.
+
 ## [PND-CHAIN] — chain-friendly options, both libraries (2026-10-22)
 
 Peter asked what a fluent chain looks like (study → operators → a final fold
@@ -4185,6 +4215,51 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         `retention: { maxAge }` costs ~25 us an event (100k events 2.4 s),
         so the bench runs without retention. Size 7.5 MB raw, 1.39 MB
         brotli (+0.6 MB, +130 KB). Next J3.
+      - toJSON speed (2026-10-31): `toJSON()` built each row cell by
+        cell across the boundary (1M rows: 227-627 ms, 1.2-2.8x slower
+        than pond-ts, much of it GC). Now `series_columns` sends whole
+        columns once (key times as `Float64Array`, numbers as their raw
+        `Float64Array` with a non-finite value a gap, text as a table of
+        distinct strings + `Uint32Array` places, booleans as `Uint8Array`
+        0/1/2, lists and decimals as cells) and JS builds the rows in one
+        loop, written out per schema with `new Function` so each row is
+        one literal (cached per schema + format). Rejected by numbers
+        (1M rows, no gc between samples, ms for 1 / 4 number columns /
+        number+text+bool): Rust writing JSON text + one `JSON.parse`
+        569 / 1421 / 644 (the old path 171 / 576 / 547; the text writer
+        also drops `-0`); a generic per-cell loop over the columns 738 /
+        428 / 492; column-by-column `push` 170 / 300 / 861; the written-out
+        loop 71 / 181 / 127. Freezing rows as pond-ts does would cost
+        ~2x, so rows stay unfrozen (a known difference). `rowFormat:
+        'object'` now works (it was ignored). Check (`test/tojson.mjs`,
+        CI `js-bridge`, which now builds pond-ts): 300 random series x 3
+        formats deep-equal (Object.is per cell) to pond-ts's `toJSON` and
+        the same JSON text; a planted -0 to 0 and a boolean gap as
+        `undefined` each fail it. Speed (`scripts/perf-tojson.mjs`,
+        `--expose-gc`, bridge before / after / pond-ts): 1 number column
+        227 / 37 / 220 ms, 4 columns 430 / 56 / 216, number + text +
+        boolean 593 / 74 / 235, time-range keys 627 / 64 / 224, object
+        rows of number + text + boolean - / 73 / 200. Size +5 KB.
+        Still differs: the constructor names the key by its kind
+        (`time`, `timeRange`, `interval`) whatever the schema says, so a
+        renamed key comes back under the default name.
+        Review (PR #871) fixes: a column named `__proto__` set an object
+        row's prototype (the literal `"__proto__": v`); now written as a
+        computed key, an own field like any name (pond-ts refuses
+        `__proto__` / `constructor` at construction; the bridge takes
+        them, a known difference). Where `new Function` is refused
+        (`--disallow-code-generation-from-strings`, Workers, strict CSP)
+        toJSON fell over with EvalError; now it checks once and falls back
+        to a cell-by-cell loop with the same output (1M rows: 171 / 149 /
+        181 / 201 ms, object rows 263; pond-ts ~175-220). The test now
+        also runs itself in a child with code generation off, uses names
+        that need escaping (quotes, backslash, newline, U+2028, keywords,
+        the loop's own variable names), repeated and empty interval
+        labels, the reserved names, a decimal column from Arrow and an
+        unknown rowFormat. Planted: a plain `"__proto__"` key, -0 to 0 in
+        the fallback and `__proto__` by assignment in the fallback each
+        fail it. Speed after: 37.7 / 48.7 / 75.8 / 62.1 / 69.1 ms
+        (unchanged).
     - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where

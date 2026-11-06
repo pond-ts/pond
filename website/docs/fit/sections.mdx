@@ -1,0 +1,173 @@
+---
+title: Sections
+sidebar_position: 6
+description: Any stretch of an activity by time or distance, laps, splits, and collections of them.
+---
+
+# Sections
+
+A `Section` is one continuous stretch of an activity, and it answers the same
+questions as the whole activity: `stats()`, `analyze()`, best efforts. You get
+one by picking a stretch, from the recorded laps, or from even splits.
+
+## A stretch you pick
+
+By elapsed time from the start, or by distance from the start:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { km, minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
+
+const run = readActivity(readFileSync('interval-run.fit'));
+
+const firstTen = run.section({
+  elapsed: { from: minutes(0), to: minutes(10) },
+});
+console.log(
+  firstTen.stats().distance?.format('km'),
+  firstTen.stats().heartRate.average?.format(),
+);
+
+const third = run.section({ distance: { from: km(2), to: km(3) } }, 'Third km');
+console.log(
+  third.label,
+  third.stats().time.elapsed?.format(),
+  third.stats().pace.average?.format(),
+);
+console.log(
+  third.bounds.elapsed?.from.format(),
+  '→',
+  third.bounds.elapsed?.to.format(),
+);
+```
+
+```text output
+1.79 km 133 bpm
+Third km 4:31 4:31/km
+11:10 → 15:41
+```
+
+A stretch is held to the recording: one that runs past the end stops at the
+end. One that lies wholly outside it, or ends before it starts, throws a
+`RangeError`.
+
+## Laps
+
+`laps` holds the laps the device recorded, from the lap button or an
+auto-lap. Each is a `LapSection`: a section, plus its number (`id`) and what
+the file recorded for it (`recorded`).
+
+```ts
+for (const lap of run.laps.toArray().slice(0, 4)) {
+  const s = lap.stats();
+  console.log(
+    lap.id,
+    s.distance?.format('km'),
+    s.time.elapsed?.format(),
+    s.pace.average?.format(),
+  );
+}
+console.log(run.laps.length, 'laps');
+```
+
+```text output
+1 2.40 km 13:23 5:35/km
+2 0.80 km 3:03 3:49/km
+3 0.10 km 1:29 14:49/km
+4 0.80 km 3:06 3:52/km
+13 laps
+```
+
+## Splits
+
+`splits(interval)` cuts the activity into even stretches by distance. The last
+one is whatever is left:
+
+```ts
+const splits = run.splits(km(1));
+for (const split of splits)
+  console.log(
+    split.label,
+    split.stats().time.elapsed?.format(),
+    split.stats().pace.average?.format(),
+  );
+```
+
+```text output
+Split 1 5:36 5:36/km
+Split 2 5:33 5:33/km
+Split 3 4:31 4:31/km
+Split 4 4:57 4:57/km
+Split 5 4:59 4:59/km
+Split 6 6:07 6:07/km
+Split 7 5:03 5:03/km
+Split 8 4:30 4:30/km
+Split 9 5:56 5:56/km
+Split 10 4:10 5:56/km
+```
+
+[Splits and pace](./guides/splits-and-pace) builds these from scratch and
+shows why each split measures exactly one kilometre.
+
+## Collections
+
+Laps and splits come as `Sections`: a list of sections with `length`, `at()`,
+`filter()`, `map()`, `toArray()` and iteration. A collection is **not** a
+section, because the stretches in it aren't continuous: six repeats with
+recoveries between them are not one stretch. Its `stats()` adds up its
+members only:
+
+- distance and time are the members' totals;
+- pace is total distance over total time, not the mean of the lap paces;
+- heart rate and power are over the members' samples, the recoveries left
+  out.
+
+FIT laps carry no names. Name them yourself and group by the name with
+`groupBy`, which gives a `Map` from each name to its laps, in the order the
+names first appear:
+
+```ts
+const names = [
+  'Warm-up',
+  ...Array.from({ length: 11 }, (_, i) => (i % 2 ? 'Recovery' : 'Repeat')),
+  'Cool-down',
+];
+const groups = run.laps.groupBy((lap) => names[lap.id - 1]!);
+
+for (const [name, laps] of groups) {
+  const s = laps.stats();
+  console.log(
+    name.padEnd(9),
+    String(laps.length).padStart(2),
+    s.distance?.format('km').padStart(8),
+    s.time.elapsed?.format().padStart(6),
+    s.pace.average?.format() ?? '',
+    s.heartRate.average?.format(),
+  );
+}
+```
+
+```text output
+Warm-up    1  2.40 km  13:23 5:35/km 134 bpm
+Repeat     6  4.81 km  18:43 3:54/km 158 bpm
+Recovery   5  0.50 km   7:25 14:56/km 121 bpm
+Cool-down  1  2.00 km  11:52 5:56/km 136 bpm
+```
+
+The repeats' pace is their 4.8 km over their total time. Here the repeats
+are all 800 m, so that equals the mean of their lap paces; for laps of
+different lengths (the 2.4 km warm-up beside a 0.8 km repeat) the mean of the
+paces would be wrong, and total distance over total time is still right.
+
+`filter` makes a smaller collection with the same rules:
+
+```ts
+const repeats = groups.get('Repeat')!;
+const lastThree = repeats.filter((_, i) => i >= 3);
+console.log(lastThree.length, lastThree.stats().pace.average?.format());
+```
+
+```text output
+3 3:56/km
+```

@@ -222,6 +222,194 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
+### [PND-LSNAP] — Columnar `toTimeSeries()`
+
+**Source:** the offscreen-stream spike (2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3), which streamed ticks into a `LiveSeries` in a worker and drew them at
+120 fps.
+
+`toTimeSeries()` rebuilds row by row. The chunked store already holds
+columns, but `snapshot()` (`live-chunked-storage.ts:366-390`) makes one
+array per row, then a `TimeSeries` that validates every row again. Its own
+comment calls the columnar version "a deferred follow-up; snapshot isn't
+the hot path." For a live chart it is. Node, snapshot plus reading the
+price column out: 60 ms at 60k rows, 542 ms at 600k, 3.9 s at 3M, against
+1.7 / 16 / 91 ms to copy the same stored chunks' columns (spike
+`results/node.txt` section 1). In the browser (cloud) the `snapshot`
+pipeline spent 4 ms a frame reading at 10k points and 27 ms at 60k, so it
+runs out of a 120 fps frame's 8.3 ms somewhere between. This is the data
+side of the 31.6 fps SciChart-suite finding under
+[PND-LIVELYR](PND_CHARTS_PLAN.md).
+
+Shape to consider: concat the stored chunks into a trusted `TimeSeries`
+(the comment already names `concatSorted(chunks)`). Check it against the
+dashboard A/B that promoted `LiveView.column()` (Decisions, 2026-10-10): a
+fast snapshot may change which path live charts should use.
+
+Scope: cheaper, not free. A snapshot still copies the whole window (the
+spike's plain column copy took 16 ms at 600k rows, twice a 120 fps
+frame), and the chart side's `fromTimeSeries` reads one value at a time
+until [PND-COLAPI] lands. So this serves throttled snapshots (React's
+`useSnapshot` refreshes every 100 ms) and modest windows; a chart reading
+a large window every frame needs the appended-columns route below.
+
+The spike's other need, a public "just appended, as columns" event, is the
+existing [PND-COLOUT](PND_COLUMNAR_PLAN.md). The spike used the internal
+`_onChunk` in its place, because the public `'batch'` / `'event'`
+listeners make an `Event` per tick (`#commitChunk`,
+`live-series.ts:759-762`).
+
+### [PND-LVWIN] — `live.window()` evicts by head index — SHIPPED (#761)
+
+**Outcome.** A window view keeps a start marker (`#head`) into its
+`Event[]`. Eviction advances the marker and clears the evicted slots, so
+their Events can be collected at once. The array is spliced only when the
+evicted prefix outgrows the live window (`#head > length / 2`), so each
+evicted event costs O(1) amortized instead of an O(window) `splice` on
+every arriving event; the push that triggers the splice costs O(batch +
+window). Every reader indexes from the marker. Built-in windows pass an
+internal `keep: { count } | { ms }` option (`@internal`, so stripped from
+the `.d.ts`). The older `evict` callback option still works: it is called
+on a compacted array (same cost as before), and a fractional return is
+truncated, as `splice` did.
+
+Node 22, ms per push once the window is full
+(`packages/core/scripts/perf-live-window.mjs`, as of 5ecbd26: a warm-up
+pass, at least 2.2 compaction cycles, GC tracked per push). "Before" is
+two runs of the same script against the pre-fix build, 30 pushes a row
+(the old code has no cycle); "after" is three runs. Ranges are min–max
+across runs, both window kinds (time and count):
+
+| Window, push size  | Before (median) | After (median) | Compacting pushes | After (max) | After (max without GC) |
+| ------------------ | --------------- | -------------- | ----------------- | ----------- | ---------------------- |
+| 50k events, 160    | 45–53           | 0.07–0.12      | 0.7–1.1           | 8–11        | 1.0–1.7                |
+| 100k events, 160   | 53–75           | 0.08–0.09      | 1.2–5.0           | 8–48        | 1.8–7.1                |
+| 50k events, 1,600  | 478–507         | 0.8–1.9        | 1.4–3.0 (\*)      | 8–14        | 1.6–3.0                |
+| 100k events, 1,600 | 503–680         | 0.8–1.7        | 1.9–3.6           | 9–63        | 2.6–4.9                |
+| 1M events, 1,600   | —               | 0.8–1.3        | 11–19 (†)         | —           | —                      |
+
+(\*) Plus two compacting pushes a GC pause overlapped, 7.6 and 7.8 ms.
+(†) A scratch probe, not the script: 16 of 18 compacting pushes over nine
+runs took 11–19 ms, the other two 27 and 30 ms. At 1M events GC pauses
+are far bigger than that (one run's max was 394 ms, 393 of it GC). Seven
+of the nine runs, and the `splice`/loop/`copyWithin` comparison below,
+used builds from around 5e78882 whose push and compaction code matches
+5ecbd26's (checked by diffing the built `live-view.js`: only `dispose()`,
+the internal buffer getter, comments and one unused local differ).
+
+"Max without GC" is the slowest push that no GC pause overlapped
+(`PerformanceObserver` on `'gc'`); every slower push in those rows
+overlapped a GC pause. A view creates an `Event` per arriving row and keeps a
+window of them, which is what the collector walks; the old code allocated
+the same Events. Smaller windows got faster too: at 10k events, 4.4–5.3 →
+0.8–0.9 ms a 1,600-row push into a time window; 1k-event windows are
+within noise. The 50k column read measured 4.6–5.5 ms before and 2.5–3.3
+after; the read walks the same events either way, and I have not looked
+into why it measured faster, so read it only as "not slower".
+
+**Why this shape.** It is the `#frontIdx` pattern already used by
+`LiveRollingAggregation` and the fused rolling paths, so no new vocabulary.
+Alternatives set aside:
+
+- Evict once per push (listen to `'batch'`) instead of per event. Cheaper
+  still, but a view's `'event'` listeners would then see it over-full in
+  the middle of a batch, which changes what they observe.
+- Trim before every read instead of indexing from the marker. Fewer lines
+  touched, but a frame's `column()` read would then pay an O(window)
+  `splice` on top of its O(window) gather.
+- Compact with `copyWithin` or a copy loop instead of `splice`. On a
+  compacting push at 100k events `splice` won every paired run; medians
+  2.1 ms vs 4.1 for a copy loop and 8.3 for `copyWithin` (20, 20 and 18
+  pushes over two probes).
+
+**Trade-offs kept.** The array holds up to 2× the window's slots between
+compactions, but only the window's Events stay alive: a 100k-event view
+holds 20.5 MB vs 19.3 MB before (`node --expose-gc` probe). The first
+version (239977b) left evicted Events in their slots until the next
+compaction, 21–39 MB for the same view; the Layer 2 review caught it.
+`dispose()` leaves the buffer as it is: compacting there would shift the
+array under a `find` predicate that disposes mid-scan (it did, briefly, in
+5e78882), and the slots it would free are already empty. The compacting
+push is O(window), about one 16 ms frame at a 1M-event window, once per
+million events. Reads (`keyColumn()`
+/ `column()` / `toTimeSeries()`) still walk every event: 64 ms at 600k rows
+in Node, 4 ms a frame at 60k points in the browser. That cost is
+[PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's. A view on a
+retention-capped source also pays [PND-LVMIRROR], found while
+benchmarking this.
+
+**Source:** offscreen-stream spike §4 (#760). Before the fix, evicting with
+`this.#events.splice(0, count)` on every arriving event took 98% of a
+50k-event window's profile, and one 16 ms push cost 24–34 ms at 10k
+ticks/s and 271–326 ms at 100k (spike `results/node.txt` section 3,
+`results/node-window-reruns.txt`). In the browser (cloud) the `view`
+pipeline at 10k ticks/s with a 100k-point window took in 1,846 of 10,000
+ticks a second and drew no frame.
+
+### [PND-LVCHAIN] — Views chained after a window view never evict
+
+**Source:** found while building the [PND-LVWIN] fix (2026-10-15). A
+`LiveView` mirrors its source's evictions by listening to the source's
+`'evict'` event (`live-view.ts:200-214`). A window view drops events in
+`#applyEviction` (`live-view.ts:730-736`), which never emits `'evict'`; it
+emits only when mirroring its own source. So a child of a window view
+(`live.window('1m').filter(p)`, `.map(f)`, `.select(…)`) hears nothing
+when events leave the window, and keeps every event it was ever given. A
+retention-capped source doesn't help: by the time the source evicts an
+event, the window has already dropped it, so the window view finds
+nothing to mirror and emits nothing either.
+
+Checked against `dist` built from `main` (f5d09ef, and again on dd4443b
+2026-10-31 with the same numbers): a `LiveSeries` with
+`retention: { maxAge: '1m' }`, `w = live.window('1s')`,
+`f = w.filter(() => true)`, 10,000 events 10 ms apart: `w.length` 101,
+`f.length` 10,000; `w.eventRate()` 101, `f.eventRate()` 10,000. The
+pattern is meant to work (`LiveView.window-count-rate.test.ts:164-188`
+tests `window('1m').filter(…).eventRate()`), but that test pushes three
+events, none old enough to leave the window.
+
+Fix to consider: have window eviction emit `'evict'` with the dropped
+events (a slice only when a listener is attached). That changes what a
+window view's `'evict'` listeners see (today they fire only for mirrored
+source evictions), so it needs a CHANGELOG `Changed` line. The other
+option, documenting `filter().window()` as the only safe order, leaves the
+existing test's pattern broken.
+
+### [PND-LVMIRROR] — A view makes its source build Events for every retention eviction
+
+**Source:** found while benchmarking [PND-LVWIN] (#761, 2026-10-15). Every
+`LiveView` subscribes to its source's `'evict'` so it can mirror retention
+(`live-view.ts`, the `EMITS_EVICT` block in the constructor). It reads only
+`evicted[evicted.length - 1].begin()`. But `LiveSeries.#applyRetention`
+skips building Events only when no `'evict'` listener is attached
+(`#onEvict.size === 0` → `dropPrefix`); with one, it calls `evictPrefix`,
+which builds an `Event` per dropped row from the chunked columns.
+
+Measured in Node (median ms per push; scratch probe on the 5ecbd26 build,
+filled to 2.2× the window so retention is dropping rows; three runs of two
+reps):
+
+| Setup                                      | 50k window, 1,600 a push | 100k window, 160 a push |
+| ------------------------------------------ | ------------------------ | ----------------------- |
+| no view, retention 2× the window           | 0.28–0.51                | 0.033–0.063             |
+| same + a bare `live.on('evict', () => {})` | 0.88–1.83                | 0.094–0.12              |
+| time window view, no retention             | 0.81–1.26                | 0.083–0.18              |
+| time window view, retention 2× the window  | 1.62–1.94                | 0.16–0.19               |
+
+Paired within a rep, retention adds 0.7–1.0 ms a push to a window view at
+1,600 a push (0.01–0.1 at 160), and a bare listener on a source with no
+view adds 0.4–1.6 (0.03–0.07): the same order, as expected if the cost is
+the listener rather than the window. An earlier probe on an interim build
+(`copyWithin` compaction) put the view's share at 1.8–2.3 ms; superseded.
+
+So a windowed chart over a retention-capped source pays about as much for
+the mirror as for the window itself at 100k ticks/s. Fix to consider: let a
+view hear just the cutoff timestamp (an internal channel next to
+`'evict'`), so the source builds Events only for listeners that want them.
+Relates to [PND-CHANGE]'s eviction channel and [PND-LVCHAIN] (same
+listener).
+
 ### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits — **fixed 2026-10-25**
 
 Found 2026-10-25 by a review of the pond-rs R3 plan, reproduced on main
@@ -309,6 +497,335 @@ column of a `map` view is optional. Chosen over refusing the gap at push
 time, which would throw inside a push after the root stored the row.
 Tests: `test/live/livelabel.test.ts`, `test/live/mapgap.test.ts`, pond-rs
 `live/tests.rs`.
+
+### [PND-LPUSHCOL] — Column push into `LiveSeries`: `pushSeries` — **shipped 2026-11-01**
+
+**Source:** the offscreen-stream spike (PR #760): `pushMany` takes rows only,
+and its per-row check made 100k ticks cost 17-23 ms where
+`TimeSeries.fromColumns` takes about 1 ms. Peter approved starting the work
+2026-10-31.
+
+**What shipped.** `live.pushSeries(ts: TimeSeries<S>)`. Column data comes in
+through the existing door: `live.pushSeries(TimeSeries.fromColumns({...}))`.
+Follows `pushMany`'s rules for the batch's rows. On the chunked backing
+(top-level `strict` + `time` key) the batch's own key and value columns are
+re-wrapped against the live schema (`ColumnarStore.fromTrustedStore`, O(C), no
+row read) and committed through `#commitChunk`; on the per-row backings the
+store becomes `Event`s (`materializeEventsFromStore`, which now builds
+`Interval` keys too) and runs pushMany's row loop, moved unchanged into
+`#commitPerRow`. Matching follows pond-rs `push_series`: same key kind (key
+name may differ), value columns by name in any order with the same kind, no
+missing or extra column, `required` judged by the live schema (the batch's own
+flag proves nothing: `fromColumns` doesn't enforce it, [PND-COLSREQ]), shape
+checked even on an empty batch.
+
+**Measured** (`scripts/perf-live-push-series.mjs`, 100k rows, ms, 4-core
+Linux, Node 22.22, 2026-11-01, final build; median of six runs alternating
+with bb4aeade, the build the Codex pass reviewed; `pushSeries` includes
+`fromColumns`; "Faster" is the median of the six runs' own ratios):
+
+| Case                                        | pushMany | pushSeries | fromColumns alone | Faster |
+| ------------------------------------------- | -------- | ---------- | ----------------- | ------ |
+| 1,600 rows/push                             | 18.1     | 1.76       | 1.14              | 10.5×  |
+| one 100k push                               | 15.0     | 0.92       | 0.85              | 16.3×  |
+| 1,600/push, maxEvents 10k                   | 15.1     | 1.21       | 0.86              | 12.8×  |
+| 16/push, maxEvents 10k                      | 84.4     | 25.6       | 14.6              | 3.3×   |
+| 1,600/push, maxAge                          | 19.6     | 3.61       | 0.89              | 5.4×   |
+| 16 rows/push                                | 57.1     | 23.3       | 12.6              | 2.4×   |
+| 1 row/push                                  | 389      | 601        | 189               | 0.7×   |
+| 'event' listener, 1,600/push                | 50.0     | 34.3       | 0.90              | 1.4×   |
+| window(1000) view, 1,600/push               | 69.1     | 53.9       | 0.87              | 1.3×   |
+| partitionBy host (100), 1,600/push          | 85.9     | 60.6       | 4.18              | 1.4×   |
+| partitionBy host, drop partitions           | 125      | 126        | 4.30              | 1.0×   |
+| drop, 1,600/push                            | 80.5     | 73.6       | 1.15              | 1.1×   |
+| drop, every row late, 1,600/push            | 39.5     | 35.8       | 1.17              | 1.1×   |
+| reorder grace 5s, 1,600/push                | 72.7     | 68.0       | 1.17              | 1.1×   |
+| timeRange key, 1,600/push                   | 78.5     | 84.7       | 1.54              | 0.9×   |
+| + host string column, 1,600/push            | 21.4     | 4.58       | 4.33              | 4.6×   |
+| `number[]` columns (`fromColumns` copies)   | 16.2     | 16.1       | 15.8              | 1.0×   |
+| `.slice()` each column first, 1,600         | 14.8     | 2.48       | 2.34              | 6.1×   |
+| `.slice()` each column first, 16/push       | 50.1     | 54.5       | — (\*)            | 0.9×   |
+| slices of one 100k series, 1,600 (copied)   | 17.6     | 1.73       | —                 | 9.9×   |
+| slices of a 100k hosts series, 1,600        | 23.6     | 3.35       | —                 | 7.2×   |
+| slices of a 100k hosts series, 16 (trimmed) | 63.9     | 61.9       | —                 | 1.0×   |
+| 100k empty `pushSeries` calls               | —        | 24.6       | —                 | —      |
+
+(\*) 68 ms, more than the `pushSeries` time that includes it: garbage left by
+the scenario before it, since the script doesn't force a collection between
+samples. Not a real floor.
+
+In the eight rows the docs table shows, most runs' ratios sat within a fifth
+of the median, the widest single runs 23× for one push, 3.2× for batches of
+16 and 6.5× for the text column. Other rows swung further: one run each at
++83% (hosts slices at 16), +71% (`.slice()` first at 16), +60%
+(`number[]` columns) and −44% (maxAge). A second session, with both builds
+loaded from identically laid-out folders, gave ratios within 13% of these on
+18 rows; the other four moved more: partitionBy 1.43× → 1.20×, slices of one
+series 9.9× → 11.6×, hosts slices at 1,600 7.2× → 5.3×, and at 16 1.03× →
+0.83× (`pushMany` the faster call there). Against bb4aeade (`pushSeries`
+time, median of the six pairs' ratios, both sessions) every row was level
+(0.86–1.10) except: one row a push, 1.34× and 1.37× slower (the batch is now
+copied; see the decision below); `.slice()` first at 16 rows, 1.26× and
+1.11× (pair ratios 0.95–1.92, the row whose garbage the footnote describes);
+slices of one series, 0.72× and 1.01× (bb4aeade's samples 1.7–6.3 ms, noisy);
+and slices of the hosts series, 1.12–1.27× at 16 rows and 1.15–1.24× at
+1,600. A focused probe running both builds in one process, alternated 15
+times, put the 1,600-row hosts slices at 0.99–1.05× (level). The 16-row ones
+are typically ~1.3× slower: of 13 such probe runs (three here, ten in the
+Layer 2 review of #878), 11 sat at 1.15–1.70× and two at 0.92. That is ~2–3 µs
+a push over bb4aeade; the dictionary trim each such copy now does measures
+~1.3 µs alone, and the rest wasn't broken down.
+Earlier, the Layer 2 fix had moved 1,600-row slices of one series from
+0.33–0.51 ms (kept) to 1.5–1.7 ms (copied).
+
+Three cases added after the Layer 2 review of #878, so the script reaches
+both paths of the dictionary trim (see the copy, below). Slices of a 100k
+series whose text column has 10,000 hosts; every slice's dictionary is past
+twice its rows, so every copy trims it. Final build, median of three runs, not
+run against bb4aeade:
+
+| Case                                          | pushMany | pushSeries | Faster |
+| --------------------------------------------- | -------- | ---------- | ------ |
+| 1,600-row slices, 1,600 hosts each (table)    | 34.7     | 9.85       | 3.5×   |
+| 1,600-row slices, 160 hosts, each ×10 (table) | 24.3     | 4.95       | 4.7×   |
+| 16-row slices (`Map`)                         | 59.3     | 63.3       | 0.9×   |
+
+Retained memory. A full 100k window holds the same both ways (8.4 MB heap,
+2.3 MB array buffers); views into a buffer twice the batch's size double the
+array buffers held (4.6 MB), as documented. Batches that would keep a bigger
+parent alive (`--heap=` modes of the script): `history.slice(-100)` of a
+1M-row history held 22.9 MB of array buffers before the Layer 2 fix, 0.1 MB
+after; the same slice re-keyed with `asTime({ at: 'center' })` held 15.3 MB
+at bb4aeade, 0.1 MB now (Codex finding 1); the last 100 rows of a 200k-row
+history whose text column has 50k distinct values held the whole dictionary,
+13.5 MB of heap against 8.2 MB now, 8.1 MB being the empty baseline (Codex
+finding 2). Tails of fresh parents (1,000 pushes, each the last 5 rows of a
+new 1,000-row series holding 256 strings of 200 characters): `pushSeries`
+keeps 2.9 MB of heap, `pushMany` 2.7; 20-row tails 6.2 and 5.9. Small
+batches of fresh arrays (100k rows, three number columns; resident memory
+growth, three runs each, both builds loaded from identically laid-out
+folders): 1 row a push 160–163 MB against 175–176 at bb4aeade (`pushMany`
+158–160), 4 rows 60–61 against 64–66, 8 rows 45–46 against 46–47; from 9
+rows level with bb4aeade and with `pushMany`. (A first measurement loaded the
+two builds from differently laid-out folders and read ~5 MB apart at 16
+rows; an unchanged copy of one build moved by the same amount when its
+folder changed, so memory comparisons now load both builds from identically
+laid-out folders.) `perf-live-columnar.mjs` before/after (main a363dc63 vs
+branch, three runs each) moved by no more than run-to-run noise (chunked
+with an `'event'` listener: 160-164 vs 157-172 ms).
+
+**Decisions and why.**
+
+- **A `TimeSeries`, not raw columns** (`pushColumns` rejected). `fromColumns`
+  stays the one door that turns typed arrays into a series, so adoption, gap
+  and ordering rules live in one place; pond-rs has the same shape
+  (`push_series`, and it turned down `push_columns`); the most a raw-columns
+  method could save over `pushSeries(fromColumns(...))` is `fromColumns`' own
+  cost, ~2 µs per call (`fromColumns` alone at one row per push, 172–212 ms
+  per 100k calls across both builds' alternating runs). Shipping both would be two verbs for one thing.
+- **Share the batch's buffers, don't copy.** Pond never writes a column
+  buffer; the caller is the only possible writer, which is the contract
+  `fromColumns` already documents. A defensive copy (the `.slice()` rows
+  above) costs 1.4× the shared path at 1,600/push and 2.3× at 16/push. Callers
+  who pool buffers push `buf.slice(0, n)`; the JSDoc and docs say so.
+- **Except a batch that would keep much more memory alive than its rows
+  need, and any batch of 8 rows or fewer** (Layer 2 review, widened after
+  the Codex pass and two internal reviews of that fix). `TimeSeries.slice()`
+  returns views into its parent's buffers, and a text column's slice or
+  gather shares the parent's whole dictionary, so keeping a slice kept the
+  whole parent. The Layer 2 fix looked only at the key's buffer; Codex
+  showed it missed `asTime({ at: 'center' })` on a slice (a new compact key
+  over the parent's number columns) and that a copied text column still
+  carried the whole dictionary. The rule now, on the chunked backing only:
+  - **8 rows or fewer: copy without checking** (`ALWAYS_COPY_ROWS`). V8
+    keeps a typed array of 64 bytes or less (8 numbers) inside its own heap
+    and gives it a separate buffer only when `.buffer` is first read:
+    0.70–1.0 µs and ~175 bytes more per array for as long as the array lives
+    (against 0.05–0.06 µs to make the array without the read; from 9 numbers
+    up the buffer exists from the start and a read costs ~0.1 µs). A check
+    reads every column's buffer. For arrays made for the push, copying took
+    about what the Layer 2 key-only check (one read) took (100k rows from
+    fresh arrays, four processes per build alternating, ranges overlap at 1,
+    2, 4, 8, 9 and 16 rows a push; e.g. 1 row 590–661 ms against 597–673), and
+    keeps less memory (above). Reading every column's buffer instead, at
+    e9cd6440, had measured slower than the key-only check (1 row 578–642
+    against 533–582, alternating, one session). Arrays whose buffer was
+    already read pay the copy where a check would cost ~0.1–0.4 µs: the full
+    script's one-row case, which pushes the same arrays into each new
+    series, is 1.34–1.37× slower.
+  - **Otherwise copy when the batch holds more than twice what its rows
+    use** (`batchHoldsExtra`): the buffers behind every array the batch
+    holds (key, number values, text indices, boolean bits, validity bits,
+    each chunk of a chunked column) total more than twice the bytes its rows
+    use, or a text column's dictionary has more than twice as many entries
+    as the column has rows (`dictionaryOutgrows`). A buffer counts once
+    while it matches the last partial view counted: O(1) per array. One
+    worker message laying its columns out one after another counts once and
+    is kept; a buffer seen again after another partial view counts again,
+    which can only cause an extra copy, never a missed one. A bit array of 64
+    bytes or less that fills its own buffer at offset 0 is counted without
+    reading `.buffer` (no code path builds a bit array as a view; a bit
+    array partway into a buffer is still read and counted).
+  - **The copy** (`copyBatch`): number columns and the key with one `slice`
+    each, other kinds by gather (a per-row gather for everything measured
+    7.4 ms against 2.0–2.8 for this per 100k rows, in a scratch probe). A
+    text column whose dictionary outgrows its rows then keeps only the
+    entries its rows use (`compactDictionary`: a lookup table over the
+    dictionary when the column has 256 rows or more and the dictionary is
+    at most 8 times the rows, a `Map` otherwise). In a copy of the loop
+    (20k calls, three rounds, both orders) the table was 2–4× faster than
+    a `Map` when most rows hold distinct values, and 1.1–1.6× slower, a few
+    µs a call, when the rows repeat a few dozen values or fewer, since the
+    `Map` then stays small. Which case applies isn't known before the loop
+    and the table's win is the bigger one, so it stays. End to end, one
+    build with and without the table (15 alternating pairs, three runs;
+    slices of a 100k series with 10,000 hosts): 1,600-row slices of mostly
+    distinct hosts took 0.42–0.48× the time, slices repeating each host ten
+    rows 0.88–0.90×, and 300-row slices using ~10 hosts each 0.89–1.13×
+    (level). Outside the limits the table loses badly: 16 rows of a
+    50,000-entry dictionary ~60 µs against ~1 µs. The 16-row slices row
+    above would catch that: in that case, one process alternating, a build
+    without the limits took 239–248 ms against 71–73.
+
+  Cost: level with bb4aeade apart from the rows named under **Measured**.
+  The walk costs ~0.1 µs a call when the same batch is checked again and
+  again, and 0.2–0.4 µs across many distinct small batches (Layer 2 timing on
+  #878). Its first version (a `Set` and two closures per call) took 0.375 µs and showed as 13% at 16 rows a push; the plain
+  list that replaced it was O(C²) on wide batches; the last-buffer rule is
+  O(C). `fromArrow` of a 1,000-column builder-built table: +87 µs a push.
+
+  Rejected:
+  - **Don't trim dictionaries of 256 entries or fewer.** Saved ~1.2 µs a
+    push and ~11 bytes a row on 16-row slices of one 100-host series, but each batch
+    from a different parent then kept that parent's whole dictionary: 1,000
+    five-row tails of fresh series holding 256 strings of 200 characters
+    kept 60 MB, against 2.9 MB trimmed. That has no bound, so trim.
+  - **Skip the `.buffer` read for any array of 64 bytes or less at offset 0.** It misses `history.slice(0, k)` and a pooled buffer holding a few
+    rows at its start. Moot for number columns now that batches of 8 rows or
+    fewer are copied; kept only for bit arrays that fill their own buffer.
+  - **One count object shared by every call** instead of one per call.
+    Looked like ~5 MB less resident memory at 16 rows, but the gap came from
+    the folder the build was loaded from (above), not the code.
+
+- **Per-row backings accept the batch** rather than refusing it: the method
+  then works in every ordering mode and key kind (as pond-rs's does), at
+  `pushMany`'s speed.
+- **Required-gap errors name the first bad row**, scanning the required
+  columns in row order as `pushMany` does (review finding; the message now
+  matches `pushMany`'s on the chunked backing, `pushMany`'s per-row backings
+  word it differently).
+- **No order re-scan of the batch on the chunked path.** A `TimeSeries` is
+  sorted (checked when built); a scan only guards against a caller writing an
+  adopted key buffer between `fromColumns` and the push, and no scan can catch
+  a write after it. It was measured at ~0.18 ms per 100k, about a tenth of the
+  fast path. Left as a question for Peter.
+- **Noted, not built:** [PND-ONCHUNKISO] (a partition router error skips the
+  source's retention on the chunked backing; `pushSeries` matches `pushMany`
+  there, pinned by a test that will keep passing either way it is fixed),
+  [PND-AGESCAN] (the maxAge row above), [PND-RSPUSHSERIES], [PND-PUSHTIME],
+  [PND-COLSTYPED], [PND-LIVEFASTDROP], [PND-CLAMPHINT]; see PLAN.md.
+
+Supersedes the 2026-06 columnar-arc assessment's "keep `pushColumns` dead (no
+wire-batching producer yet)" (`docs/notes/columnar-arc-assessment-2026-06.md`).
+Tests: `test/live/LiveSeries.pushSeries.test.ts` (differential vs `pushMany`
+over 8 configurations × 3 retentions × with/without listeners, 40 seeds each,
+plus targeted cases; 12 of 12 planted bugs caught, 6 of 6 more for the
+review fixes, 45 of 45 on the final copy rule after the Codex pass and
+the two reviews of its fix, and 4 of 4 more from the Layer 2 review of #878),
+`test/columnar/StringColumn.test.ts`
+(`compactDictionary`, both lookup paths),
+`test-d/live-push-series.test-d.ts`, `live-chunked-storage.test.ts`.
+
+### [PND-ONCHUNKISO] — A partition error on a default series skips the source's own push steps
+
+**Found** 2026-10-31 designing [PND-LPUSHCOL]. On the chunked backing,
+`#commitChunk` calls its `_onChunk` consumers (the partition router) with no
+`try`, after the chunk is stored and counted. A router throw (a row for a
+group a typed `partitionBy` doesn't declare, or a partition listener's error
+that `_stageRowsClose` rethrows) escapes there, so the source skips its own
+`'event'`, retention, `'batch'` and `'evict'`: 5 rows pushed into a
+`maxEvents: 2` source are all kept, with no `'batch'` or `'evict'`. The
+per-row backing, where the router is an ordinary `'event'` listener, finishes
+the push and then throws. `pushSeries` and `pushMany` behave the same here
+(pinned by a test that keeps passing whichever fix lands).
+
+**Two fixes.** (a) Finish, then throw: isolate each `_onChunk` call like a
+listener and rethrow the first error at the end, as the per-row backing does
+(about 15 lines in `#commitChunk`; drafted in the authoring session, not
+committed). (b) Refuse the whole batch before storing anything, as pond-rs's
+`check_partitions` does. Either changes what the live parity fixture
+(`packages/core/scripts/parity/live.mjs`) records, and three bridge harnesses
+read that fixture, so the fix lands with their updates. Waiting on Peter's
+pick.
+
+### [PND-LATCACHE] — Reading every row with `at()` slows later pushes until retention drops those rows
+
+**Found** 2026-11-01 while re-measuring [PND-LVWIN]. On the chunked backing
+`at(i)` builds an `Event` and caches it in a `Map` keyed by row index, so
+`at(i) === at(i)`. Each retention eviction remaps that cache by building a
+new `Map` of every cached entry (`#shiftCacheBy` in
+`live-chunked-storage.ts`), so with a full cache every push pays for the
+whole cache until retention has dropped the cached rows. A new `LiveView`
+fills itself by calling `source.at(i)` for every row the source holds, so
+building a view over a big series is enough to set it off.
+
+Measured on main (a363dc63, Node 22, one run; `maxEvents: 200_000`, 130
+pushes of 1,600 first, then every row read with `at()`): pushes before the
+read 0.29 ms (median); the next 50 pushes 47 ms; the 50 after 19 ms; the 100
+after that 0.22 ms. With no retention the read leaves pushes at 0.28 ms, and
+with no read they stay at 0.21–0.23 ms. Building a `window(1)` view
+mid-stream on a 200k-row series with no other view put the next 100 pushes
+at 21–23 ms (median) on both main and the [PND-LVWIN] build, and the 100
+after at 1.6 ms. Fix to consider: remap only the entries that
+survive (most are dropped, oldest first), drop the cache on eviction, or let
+a view fill itself without going through the cache.
+
+Hover lookups set it off too (2026-11-01, off-main-thread chart guide,
+`apps/worker-chart/bench/lookups.mjs`, five runs): at 10,000 ticks a second
+with a 60 s `maxAge`, one 160-row push every 16 ms, a `pushSeries` took
+0.005–0.007 ms (median) with no lookups, 0.13–0.18 ms with one
+`atOrBefore` mid-window after each push and 0.27–0.32 ms with two. (A first
+run, which also timed `fromColumns`, gave 0.008–0.014, 0.14–0.16 and
+0.28–0.30 ms.) The guide
+looks up on pointer move only for this reason.
+
+### [PND-LIVECLEAR] — `clear()` builds every row's `Event`
+
+**Found** 2026-11-01 while writing the off-main-thread chart guide (its
+reconnect advice). `LiveSeries.clear()` calls the chunked storage's
+`clear()`, which runs `all[i] = this.at(i)!` for every row so it can hand
+the rows to `'evict'` listeners. It does so even when no listener exists,
+and each `at(i)` both caches the `Event` and finds the row with `#locate`,
+which walks the chunk list (from the nearer end).
+
+Measured (`apps/worker-chart/bench/clear.mjs`, Node 22, main 607c4648, one
+push of fresh columns every 16 ms of data, `maxAge` = the window, two
+runs): 3.1–3.2 s at 600k rows (10k ticks/s, 60 s), 10.4–11.4 s at 3M
+(100k/s, 30 s), 12.4–15.4 s at 5M (1M/s, 5 s). A new `LiveSeries` took
+0.1–0.2 ms. The guide tells readers to
+make a new series on reconnect instead.
+
+Fix to consider: when `#onEvict` is empty, drop the chunks without building
+anything (as `#applyRetention` already does with `dropPrefix`); when there
+are listeners, build the rows by walking chunks in order rather than
+`at(i)` per row. Count `stats().evicted` either way.
+
+### [PND-LIVELOCATE] — Mid-window lookups walk the chunk list
+
+**Found** 2026-11-01 while measuring hover for the off-main-thread chart
+guide. `bisect` calls `storage.keyAt(mid)` about log₂(rows) times, and each
+`keyAt` (like `at` and `beginAt`) finds its chunk with `#locate`, which
+walks the chunk list from the nearer end. The ends are cheap since
+[PND-LIVEPUSHSCAN]; the middle costs O(chunks) per probe, so a lookup costs
+O(log rows × chunks).
+
+Measured (`apps/worker-chart/bench/lookups.mjs`, five runs, median of 400
+lookups spread over the window; two such runs): `atOrBefore` on 600k rows
+took 4–5 µs in one chunk, 5–8 µs in 40 chunks, 11–23 µs in 375, and
+72–131 µs in 3,750, which is what a 60 s window fed every 16 ms holds.
+
+Fix to consider: keep a running array of chunk start indices (rebuilt or
+shifted on eviction, appended on push) and binary-search it in `#locate`.
 
 ## Decisions
 

@@ -91,6 +91,7 @@ export {
   ArrayColumn,
   EMPTY_ARRAY_SENTINEL,
   arrayColumnFromArray,
+  arrayColumnFromOwnedCells,
 } from './array-column.js';
 
 export {

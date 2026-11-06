@@ -14,9 +14,10 @@ mod live_js;
 pub mod study;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use dispatch::{Outcome, Res};
-use js_sys::{Array, Float64Array, Object, Reflect};
+use js_sys::{Array, Float64Array, Object, Reflect, Uint8Array, Uint32Array};
 use pond_rs::Value as Literal;
 use pond_rs::{
     ArrowKey, Column, ColumnData, ColumnKind, IntervalKeys, JsonOptions, Key, Labels, RowFormat,
@@ -340,23 +341,73 @@ pub(crate) fn literal(v: &Option<Literal>) -> JsValue {
     }
 }
 
-/// The series as a pond-ts `toJSON()` object, numbers kept as numbers
-/// (so `-0` and `NaN` survive, unlike JSON text).
+/// The series as whole columns, for `toJSON()` to build its rows from in
+/// JavaScript: `[name, begin, end, labels, ...cells]`. Building the rows
+/// here cost a call across the boundary per cell; a column costs one copy.
+///
+/// `begin` and `end` are `Float64Array`s of ms (`end` is `null` for a
+/// point-in-time key); `labels` is an interval key's labels, else `null`.
+/// Each value column (and `labels`) is one of
+/// - a `Float64Array` (numbers; a non-finite value is a gap, `-0` kept),
+/// - `[table, Uint32Array]` (text: each distinct text once, then each row's
+///   place in it, `0xFFFFFFFF` for a gap),
+/// - a `Uint8Array` (booleans: `0` false, `1` true, `2` a gap),
+/// - an `Array` of cells as `literal` writes them (lists, decimals).
 #[wasm_bindgen]
-pub fn series_to_object(id: u32) -> Result<JsValue, JsError> {
-    with(id, |s| Ok(to_object(s))).map_err(err)
+pub fn series_columns(id: u32) -> Result<Array, JsError> {
+    with(id, |s| Ok(columns_js(s))).map_err(err)
 }
 
-fn to_object(s: &TimeSeries) -> JsValue {
-    let o = Object::new();
-    set(&o, "name", &JsValue::from_str(s.name()));
-    set(&o, "schema", &schema(s));
-    let rows = Array::new_with_length(s.len() as u32);
-    for i in 0..s.len() {
-        rows.set(i as u32, row(s, i).into());
+const TEXT_GAP: u32 = u32::MAX;
+
+fn columns_js(s: &TimeSeries) -> Array {
+    let times = |t: &[i64]| -> JsValue {
+        let v: Vec<f64> = t.iter().map(|&t| t as f64).collect();
+        Float64Array::from(&v[..]).into()
+    };
+    let out = Array::new();
+    out.push(&JsValue::from_str(s.name()));
+    out.push(&times(s.key().begin()));
+    out.push(&s.key().end().map_or(JsValue::NULL, times));
+    out.push(&match s.key() {
+        Key::Interval(k) => match &k.label {
+            Labels::Number(v) => Float64Array::from(&v[..]).into(),
+            Labels::String(c) => text_js(c.len(), |i| c.get(i)),
+        },
+        _ => JsValue::NULL,
+    });
+    for c in s.columns() {
+        out.push(&match c.data() {
+            ColumnData::Number(n) => Float64Array::from(n.values()).into(),
+            ColumnData::String(t) => text_js(t.len(), |i| t.get(i)),
+            ColumnData::Boolean(b) => {
+                let v: Vec<u8> = b.iter().map(|v| v.map_or(2, u8::from)).collect();
+                Uint8Array::from(&v[..]).into()
+            }
+            data => (0..s.len())
+                .map(|i| literal(&dispatch::cell(data, i)))
+                .collect::<Array>()
+                .into(),
+        });
     }
-    set(&o, "rows", &rows);
-    o.into()
+    out
+}
+
+/// Text cells as `[table, places]`: each distinct text once, in first-seen
+/// order, and each row's place in the table (`TEXT_GAP` for a gap).
+fn text_js<'a>(len: usize, get: impl Fn(usize) -> Option<&'a str>) -> JsValue {
+    let mut seen: HashMap<&str, u32> = HashMap::new();
+    let table = Array::new();
+    let places: Vec<u32> = (0..len)
+        .map(|i| match get(i) {
+            None => TEXT_GAP,
+            Some(t) => *seen.entry(t).or_insert_with(|| {
+                table.push(&JsValue::from_str(t));
+                table.length() - 1
+            }),
+        })
+        .collect();
+    Array::of2(&table, &Uint32Array::from(&places[..])).into()
 }
 
 fn schema(s: &TimeSeries) -> Array {

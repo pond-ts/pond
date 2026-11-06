@@ -16,9 +16,11 @@ use crate::convert::err;
 /// `col`, `lit` and `when`, then pass it where a function would go.
 ///
 /// Operators: `== != > >= < <=`, `&` (and), `|` (or), `~` (not),
-/// `+ - * /`, unary `-`, `abs()`. The same as methods: `eq`, `ne`, `gt`,
+/// `+ - * / **`, unary `-`, `abs()`. The same as methods: `eq`, `ne`, `gt`,
 /// `ge`, `lt`, `le`, `and_`, `or_`, `not_`, `add`, `sub`, `mul`, `div`,
-/// `neg`, `abs`, plus `is_in(values)`, `is_missing()` and `fill(value)`.
+/// `neg`, `abs`, `pow`, plus `sqrt`, `sin`, `cos`, `asin`, `atan2(x)`,
+/// `is_in(values)`, `is_missing()` and `fill(value)`. The maths functions
+/// are Rust's, which can differ from JavaScript's in the last digit.
 ///
 /// Gaps: a comparison with a gap is false (so `!=` is true), arithmetic
 /// with a gap gives a gap, a non-finite result (`x / 0`) is a gap, and
@@ -116,6 +118,31 @@ impl PyExpr {
     fn abs(&self) -> Self {
         wrap(self.inner.clone().abs())
     }
+    /// Square root (a negative value gives a gap).
+    fn sqrt(&self) -> Self {
+        wrap(self.inner.clone().sqrt())
+    }
+    /// Sine, of an angle in radians.
+    fn sin(&self) -> Self {
+        wrap(self.inner.clone().sin())
+    }
+    /// Cosine, of an angle in radians.
+    fn cos(&self) -> Self {
+        wrap(self.inner.clone().cos())
+    }
+    /// Arcsine, in radians (a value outside -1..1 gives a gap).
+    fn asin(&self) -> Self {
+        wrap(self.inner.clone().asin())
+    }
+    /// The angle of the point (`x`, self) in radians: self is `y`, as in
+    /// `math.atan2(y, x)`.
+    fn atan2(&self, x: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(wrap(self.inner.clone().atan2(operand(x)?)))
+    }
+    /// Raised to the power `exponent` (also `**`).
+    fn pow(&self, exponent: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(wrap(self.inner.clone().pow(operand(exponent)?)))
+    }
     /// True where the value is a gap.
     fn is_missing(&self) -> Self {
         wrap(self.inner.clone().is_missing())
@@ -188,6 +215,18 @@ impl PyExpr {
     }
     fn __abs__(&self) -> Self {
         self.abs()
+    }
+    fn __pow__(&self, o: &Bound<'_, PyAny>, modulo: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        if modulo.is_some_and(|m| !m.is_none()) {
+            return Err(PyTypeError::new_err("an Expr power takes no modulus"));
+        }
+        self.pow(o)
+    }
+    fn __rpow__(&self, o: &Bound<'_, PyAny>, modulo: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        if modulo.is_some_and(|m| !m.is_none()) {
+            return Err(PyTypeError::new_err("an Expr power takes no modulus"));
+        }
+        Ok(wrap(operand(o)?.pow(self.inner.clone())))
     }
     /// An `Expr` is a rule, not a truth value: `and` / `or` / `not` and
     /// `if` cannot read it. Use `&`, `|` and `~`.

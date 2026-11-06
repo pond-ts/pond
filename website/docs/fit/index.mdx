@@ -2,77 +2,145 @@
 id: fit-index
 title: '@pond-ts/fit'
 sidebar_position: 1
+description: Read activity files, explore any stretch of them, and analyse them for the athlete.
 ---
 
 # @pond-ts/fit
 
-A **fitness / activity domain library** on pond-ts. The name reads _fitness_
-(with the happy bonus that it parses `.fit` files); it is **not** a FIT-_format_
-parser — file parsing is just one input. Its job is "Strava as an API": free,
-ergonomic tools to work with **your own** activity data — parse it, analyze it,
-slice it, convert units — with a fluent object model over pond's generic
-`TimeSeries`.
+**Read your own activity files, look at any part of them, and work out what
+they mean for the athlete who did them.** `@pond-ts/fit` is the fitness layer
+on pond-ts: FIT, GPX and TCX files in; distances, times, paces, heart rate,
+power, laps, splits, best efforts and training load out, with every number in
+a type that knows its unit.
 
-**Install** — `npm install pond-ts @pond-ts/fit`. Peer-depends on `pond-ts`.
+> An activity records what happened. Sections let you explore any part of it.
+> Analysis explains what it means for the athlete.
+
+```bash norun
+npm install pond-ts @pond-ts/fit
+```
+
+## A first look
+
+Every example on these pages reads one of three made-up activities. Download
+them to follow along: [`hill-ride.fit`](pathname:///data/fit/hill-ride.fit)
+(a 46 km ride with a power meter),
+[`interval-run.fit`](pathname:///data/fit/interval-run.fit) (six 800 m
+repeats) and [`pool-swim.fit`](pathname:///data/fit/pool-swim.fit) (a set in a
+25 m pool). They are modelled, not anyone's real recording;
+[the guides' introduction](./guides/) says how they were made.
 
 ```ts
-import { Activity, Distance, Duration } from '@pond-ts/fit';
+import { readFileSync } from 'node:fs';
+import { km, minutes } from '@pond-ts/fit';
+import { readActivity } from '@pond-ts/fit/files';
 
-const activity = Activity.fromStreams(imported); // .fromFit / .fromGpx land with ingest
+const ride = readActivity(readFileSync('hill-ride.fit'), {
+  name: 'Two climbs loop',
+});
 
-activity.meta.sportType; // "Ride"
-activity.distance().miles; // Distance — .miles / .km / .meters
-activity.movingTime().format(); // "7:00:54"
-
-const splits = activity.splits(Distance.miles(1)); // Section[]
-splits[3].normalizedPower()?.watts; // 291
-splits[3].avgSpeed()?.pace().asMinsPerMile(); // "10:31/mi"
-
-const window = activity.range(Duration.minutes(20), Duration.minutes(40));
-window.elevationGain().feet;
-
-activity.power(ftp); // PowerSummary | undefined (no power recorded)
-activity.bestEfforts({ weightKg }); // PowerEffort[] (+ W/kg)
-activity.at(Duration.minutes(20)); // interpolated channel Sample
+const stats = ride.stats();
+console.log(ride.name, '·', ride.sport, '·', ride.startedAt.toISOString());
+console.log(stats.distance?.format('km', 1), stats.time.elapsed?.format());
+console.log('moving', stats.time.moving?.format());
+console.log('heart rate', stats.heartRate.average?.format());
+console.log(
+  'power',
+  stats.power.average?.format(),
+  'normalized',
+  stats.power.normalized?.format(),
+);
+console.log('climbing', stats.elevation.gain?.format('m'));
 ```
 
-## The stack (three layers)
-
-```
-pond-ts            generic TimeSeries + operators (rolling, byColumn, fill, validity)
-  └─ @pond-ts/fit  the FITNESS domain:
-        • quantity types     Distance, Duration, Speed/Pace, Power, HeartRate, Cadence, Elevation
-        • canonical series   the activity TimeSeries schema (one SI-normalized column vocabulary)
-        • operators (pure)   geo (track/splits/profiles/best-efforts), power (NP/curve/zones), zones
-        • Activity / Section a thin ERGONOMIC façade over the operators + quantities
+```text output
+Two climbs loop · ride · 2026-06-14T07:30:00.000Z
+45.0 km 1:39:54
+moving 1:33:11
+heart rate 133 bpm
+power 190 W normalized 228 W
+climbing 597 m
 ```
 
-**The OO façade is a thin skin over a functional core.** `activity.powerCurve()`
-delegates to a pure `powerCurve(series, …)`; `section.normalizedPower()` to
-`normalizedPower(series)`. Logic lives in composable, tested functions;
-`Activity`/`Section` add ergonomics + memoization. Drop to the functional layer
-(`activity.timeSeries()`) or stay fluent — both first-class.
+The same questions work on any stretch of the ride: a lap, a split, or a
+window you pick by time or by distance.
 
-## Design tenets
+```ts
+const climb = ride.section({ distance: { from: km(28), to: km(32) } });
+console.log('second climb', climb.stats().power.average?.format());
 
-- **Profile-agnostic.** Anything needing FTP / body weight / zone definitions
-  takes them as **arguments** (the caller resolves them from the athlete
-  profile as-of the activity date). `Activity` wraps only the activity's own
-  evidence.
-- **Gap-honest.** Sustained coasts/dropouts break the line (NaN), never
-  interpolate across a hole; missing channels are absent, not zero.
-- **Ingest membrane.** Messy formats in (Strava exports, `.fit`/`.gpx`/`.tcx`,
-  dropped samples, `-1`/`255` sentinels, unit quirks), **one clean canonical
-  activity** out — wrangled once, here, at ingest.
+const second5k = ride.splits(km(5)).at(1)!;
+console.log(second5k.label, second5k.stats().time.elapsed?.format());
 
-## Where to start
+const lap = ride.laps.at(2)!;
+console.log(lap.label, lap.stats().distance?.format('km', 1));
+```
 
-- [**API reference**](pathname:///generated-api/fit/) — the generated full-width
-  reference: every quantity, `Activity`/`Section`, and the `geo` / `power` /
-  `zones` / `profile` / `summary` operator surfaces.
+```text output
+second climb 303 W
+Split 2 11:50
+Lap 3 10.0 km
+```
 
-:::note
-This package is young — the docs here are an introduction plus the generated
-type reference. Guides (quantities, the canonical series, the operator core)
-follow as the API settles.
-:::
+Anything that depends on the athlete (their FTP, their heart-rate zones) goes
+through `analyze`, and anything the settings can't answer comes back `null`
+rather than as a made-up number.
+
+```ts
+const athlete = { ftpWatts: [{ at: '2026-01-01', value: 250 }] };
+const analysis = ride.analyze({ athlete });
+console.log('IF', analysis.power.intensityFactor?.toFixed(2));
+console.log('TSS', analysis.load?.value.toFixed(0));
+console.log('best 20 min', ride.power.bestEffort(minutes(20))?.power.format());
+```
+
+```text output
+IF 0.91
+TSS 139
+best 20 min 269 W
+```
+
+## The four objects
+
+| Object     | What it is                                                    |
+| ---------- | ------------------------------------------------------------- |
+| `Activity` | The whole recording, with its name, sport, start and device   |
+| `Section`  | One continuous stretch of an activity                         |
+| `Sections` | A collection of stretches: the laps, the splits, a lap group  |
+| `Analysis` | Results that need the athlete's settings (FTP, zones, weight) |
+
+An `Activity` is itself a `Section` (the stretch from start to finish), so
+everything a section answers, the whole activity answers too. Properties say
+what the recording holds (`name`, `sport`, `laps`); methods select, calculate
+or transform (`stats()`, `section()`, `splits()`, `analyze()`).
+
+## Rules that hold everywhere
+
+- **Missing is `null`; a real zero stays zero.** A ride with no power meter has
+  `stats.power.average === null`, not `0 W`. A second spent coasting is a real
+  0 W.
+- **Time is never ambiguous.** Elapsed, timer, moving and swimming time are
+  separate clocks, and every `stats()` result says which one it used. See
+  [Clocks](./clocks).
+- **Numbers carry units.** A `Distance` formats as km or miles, a `Pace` per
+  km or per mile, and nothing takes a bare number of metres where it could be
+  misread. See [Quantities](./quantities).
+- **Gaps stay gaps.** A dropout in the heart-rate strap or the power meter is
+  missing data, not something to draw a line through.
+
+## Where to go next
+
+- **Using the API:** [Reading activities](./reading) ·
+  [Quantities](./quantities) · [Stats](./stats) · [Clocks](./clocks) ·
+  [Sections](./sections) · [Analysis](./analysis) ·
+  [Best efforts](./best-efforts) · [Pool swims](./pool-swims) ·
+  [Under the hood](./under-the-hood) · [Charting an activity](./charting)
+- **Analysis guides**, each technique built three ways (pond core in
+  TypeScript, pond in Python, then fit) and charted:
+  [Moving time](./guides/moving-time) ·
+  [Splits and pace](./guides/splits-and-pace) ·
+  [Normalized power and training stress](./guides/normalized-power) ·
+  [Power curve and best efforts](./guides/power-curve) ·
+  [Time in zones](./guides/time-in-zones)
+- [**API reference**](pathname:///generated-api/fit/): every export, generated
+  from the source.

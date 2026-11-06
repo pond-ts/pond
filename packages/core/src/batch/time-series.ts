@@ -81,10 +81,12 @@ import {
   normalizeAggregateColumns,
   tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
+  tryRollingTimeColumnarNumeric,
+  rollingWindowBoundsByTime,
 } from './aggregate-columns.js';
 import {
   cumulativeOp,
-  type CumulativeReducer,
+  type CumulativeAccumulator,
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
@@ -107,6 +109,8 @@ import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
 import { joinOp } from './operators/join.js';
+import { alignOp, materializeOp } from './operators/align.js';
+import { dedupeRows } from './operators/dedupe.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
 import {
   assertColumnValuesMatchKind,
@@ -124,7 +128,7 @@ import {
 } from '../core/calendar.js';
 import { Interval } from '../core/interval.js';
 import { Time } from '../core/time.js';
-import { TimeRange } from '../core/time-range.js';
+import { TimeRange, toTimeRange } from '../core/time-range.js';
 import type {
   EventKey,
   IntervalInput,
@@ -142,6 +146,7 @@ import type { SequenceCoverage } from '../sequence/sequence.js';
 import {
   type Column as ColumnarColumn,
   ColumnarStore,
+  type KeyColumn as ColumnarKeyColumn,
   type ColumnSchema,
   Float64Column,
   IntervalKeyColumn,
@@ -154,6 +159,7 @@ import {
   withColumnReplaced,
   withColumnsRenamed,
   withColumnsSelected,
+  arrayColumnFromOwnedCells,
   withKeyColumn,
   withRowRange,
   withRowSelection,
@@ -167,7 +173,7 @@ import {
 } from './operators/expression.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
-import { validateAndNormalize } from './validate.js';
+import { assertCellKind, validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
 import {
@@ -207,7 +213,6 @@ type PrefixJoinOptions<Prefixes extends readonly string[]> = {
   onConflict: 'prefix';
   prefixes: Prefixes;
 };
-type AlignCursor = { index: number };
 type JoinOptions = ErrorJoinOptions | PrefixJoinOptions<readonly string[]>;
 type PivotByGroupOptions = { aggregate?: AggregateReducer };
 type PivotByGroupOptionsTyped<Groups extends readonly string[]> =
@@ -260,39 +265,57 @@ function parseOffset(by: number | string): number {
   return negative ? -ms : ms;
 }
 
+/**
+ * [PND-ROWSOUT] The JSON form of row `i`'s key, read from the key column.
+ * Same output as `serializeJsonKey` on the key `materializeKey` would
+ * build for that row (whose `begin` / `end` / `value` are these buffers).
+ */
+function jsonKeyFromColumn(
+  keys: ColumnarKeyColumn,
+  i: number,
+  rowFormat: JsonRowFormat,
+): unknown {
+  if (keys.kind === 'time') return keys.beginAt(i);
+  if (keys.kind === 'timeRange') {
+    return rowFormat === 'object'
+      ? { start: keys.beginAt(i), end: keys.endAt(i) }
+      : [keys.beginAt(i), keys.endAt(i)];
+  }
+  const label = (keys as IntervalKeyColumn).labelAt(i);
+  return rowFormat === 'object'
+    ? { value: label, start: keys.beginAt(i), end: keys.endAt(i) }
+    : [label, keys.beginAt(i), keys.endAt(i)];
+}
+
+function toRow<S extends SeriesSchema>(
+  schema: S,
+  event: EventForSchema<S>,
+): TimeSeriesInput<S>['rows'][number] {
+  const data = event.data();
+  return Object.freeze([
+    event.key(),
+    ...schema.slice(1).map((column) => data[column.name as keyof typeof data]),
+  ]) as TimeSeriesInput<S>['rows'][number];
+}
+
 function toRows<S extends SeriesSchema>(
   schema: S,
   events: ReadonlyArray<EventForSchema<S>>,
 ): TimeSeriesInput<S>['rows'] {
-  return events.map((event) => {
-    const data = event.data();
-    return Object.freeze([
-      event.key(),
-      ...schema
-        .slice(1)
-        .map((column) => data[column.name as keyof typeof data]),
-    ]) as TimeSeriesInput<S>['rows'][number];
-  }) as TimeSeriesInput<S>['rows'];
+  return events.map((event) =>
+    toRow(schema, event),
+  ) as TimeSeriesInput<S>['rows'];
 }
 
-function toObjects<S extends SeriesSchema>(
-  schema: S,
-  events: ReadonlyArray<EventForSchema<S>>,
-): ReadonlyArray<NormalizedObjectRow> {
-  const keyColumn = schema[0]!;
-  const dataColumns = schema.slice(1);
-  return events.map((event) => {
-    const row: Record<string, unknown> = {
-      [keyColumn.name]: event.key(),
-    };
-    const data = event.data();
-
-    for (const column of dataColumns) {
-      row[column.name] = data[column.name as keyof typeof data];
-    }
-
-    return Object.freeze(row) as NormalizedObjectRowForSchema<S>;
-  }) as ReadonlyArray<NormalizedObjectRow>;
+function toObject<S extends SeriesSchema>(
+  keyName: string,
+  names: ReadonlyArray<string>,
+  event: EventForSchema<S>,
+): NormalizedObjectRow {
+  const row: Record<string, unknown> = { [keyName]: event.key() };
+  const data = event.data() as Record<string, unknown>;
+  for (const name of names) row[name] = data[name];
+  return Object.freeze(row) as NormalizedObjectRow;
 }
 
 function isEventKey(value: unknown): value is EventKey {
@@ -641,6 +664,65 @@ function toBoundedSequence(
     : sequence.bounded(range, { sample, coverage });
 }
 
+/**
+ * The buckets `align` / `materialize` sample, as an interval key column plus
+ * each bucket's sample time. A fixed-step `Sequence` is laid out straight
+ * into buffers ([PND-ALIGNHOLD]): building one `Interval` per bucket was most
+ * of a 1M-bucket call once the per-bucket `Event`s were gone. Everything
+ * else — a calendar sequence, a `BoundedSequence`, an empty grid, or a grid
+ * `bounded` would reject — goes through `bounded(...).intervals()` as
+ * before, so its keys and errors are unchanged.
+ */
+function sampledGrid(
+  sequence: SequenceLike,
+  range: TemporalLike,
+  sample: AlignSample,
+): {
+  begin: Float64Array;
+  end: Float64Array;
+  times: Float64Array;
+  /** Interval keys, built on demand: `materialize` never needs them. */
+  keys: () => IntervalKeyColumn;
+} {
+  const fixed =
+    sequence instanceof Sequence
+      ? Sequence._fixedGridModulePrivate(sequence, range, sample, 'sample')
+      : undefined;
+  if (fixed !== undefined && fixed.begin.length > 0) {
+    const { begin, end } = fixed;
+    const len = begin.length;
+    let times = begin;
+    if (sample === 'end') times = end;
+    if (sample === 'center') {
+      times = new Float64Array(len);
+      for (let i = 0; i < len; i += 1) {
+        times[i] = begin[i]! + (end[i]! - begin[i]!) / 2;
+      }
+    }
+    // Each bucket's label is its start, as `bounded` sets it.
+    const keys = () =>
+      new IntervalKeyColumn(
+        begin,
+        end,
+        new Float64Column(begin.slice(), len),
+        len,
+      );
+    return { begin, end, times, keys };
+  }
+  const intervals = toBoundedSequence(sequence, range, sample).intervals();
+  const len = intervals.length;
+  const begin = new Float64Array(len);
+  const end = new Float64Array(len);
+  const times = new Float64Array(len);
+  for (let i = 0; i < len; i += 1) {
+    const interval = intervals[i]!;
+    begin[i] = interval.begin();
+    end[i] = interval.end();
+    times[i] = sampleTime(interval, sample);
+  }
+  return { begin, end, times, keys: () => intervalKeysForBuckets(intervals) };
+}
+
 function isTimeKeyed<S extends SeriesSchema>(series: TimeSeries<S>): boolean {
   return series.firstColumnKind === 'time';
 }
@@ -681,10 +763,11 @@ function aggregateValues(
  * reducer)`. When the reducer defines `reduceColumn` and the column
  * is a packed `Float64Column`, skip `series.events` materialization
  * + the row-API `defined` / `numeric` filter passes; walk the
- * underlying typed array directly. Falls back to `null` for the
- * caller to take the row-API path otherwise (mixed kinds, chunked
- * storage, reducers that don't have a column fast path like
- * `first` / `last`).
+ * underlying typed array directly; `keep` / `difference` / `unique` /
+ * `top${N}` / `samples` use their `reduceCellRange` kernel on any column.
+ * Otherwise `{ ok: false }`: the caller reads the column's cells
+ * (`columnCells`) and runs the reducer over them, still without building
+ * `Event`s.
  */
 function tryReduceColumnFastPath(
   reducer: AggregateReducer,
@@ -692,12 +775,36 @@ function tryReduceColumnFastPath(
 ): { ok: true; value: ColumnValue | undefined } | { ok: false } {
   if (!isBuiltInAggregateReducer(reducer)) return { ok: false };
   if (column === undefined) return { ok: false };
+  const def = resolveReducer(reducer);
+  // `keep` / `difference` / `unique` / `top${N}` / `samples`: a range
+  // kernel over any column kind or storage.
+  if (def.reduceCellRange !== undefined) {
+    return {
+      ok: true,
+      value: finiteOrMissing(def.reduceCellRange(column, 0, column.length)),
+    };
+  }
   if (column.kind !== 'number' || column.storage !== 'packed') {
     return { ok: false };
   }
-  const def = resolveReducer(reducer);
   if (def.reduceColumn === undefined) return { ok: false };
   return { ok: true, value: finiteOrMissing(def.reduceColumn(column)) };
+}
+
+/**
+ * Every cell of `column` in row order — the values `series.events`' data
+ * would give (an `Event`'s data reads the same column), without building
+ * the `Event`s.
+ */
+function columnCells(
+  column: import('../columnar/index.js').Column,
+): Array<ColumnValue | undefined> {
+  const length = column.length;
+  const values = new Array<ColumnValue | undefined>(length);
+  for (let i = 0; i < length; i += 1) {
+    values[i] = column.read(i) as ColumnValue | undefined;
+  }
+  return values;
 }
 
 function isBuiltInAggregateReducer(
@@ -912,13 +1019,22 @@ type TrustedStoreInput<S extends SeriesSchema> = {
  * Callers must have produced the store from data that already satisfies
  * the intake invariants: keys non-decreasing, column kinds matching the
  * schema, non-finite numerics rejected.
+ *
+ * @internal Exported for `LiveSeries`' `'columns'` listener, not from the
+ * package index. `schemaIsFrozenCopy` says `schema` is already a frozen
+ * array nobody else can change, so it is used as is.
  */
-function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+export function timeSeriesFromTrustedStore<S extends SeriesSchema>(
   name: string,
   schema: S,
   columnarStore: ColumnarStore<ColumnSchema>,
+  schemaIsFrozenCopy = false,
 ): TimeSeries<S> {
-  const frozenSchema = Object.freeze(schema.slice()) as S;
+  // A caller that already holds a frozen copy (a `LiveSeries` wrapping each
+  // push) can skip the copy: freezing a fresh array costs ~0.5 µs.
+  const frozenSchema = schemaIsFrozenCopy
+    ? schema
+    : (Object.freeze(schema.slice()) as S);
   const store = SeriesStore.fromTrustedStore(
     columnarStore as unknown as ColumnarStore<S>,
   ) as SeriesStore<S>;
@@ -1077,12 +1193,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * aligned length).
    *
    * **`Float64Array` inputs are adopted, not copied** (zero-copy — the point of
-   * the fast path): the resulting series' columns alias the caller's buffers.
-   * Mutating an adopted buffer after construction mutates the series. Pass a
-   * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied. (**`ordering: 'reorder'` disables the
-   * adoption** — a reorder needs its own buffers, so every column is copied
-   * when sorting.)
+   * the fast path): the resulting series' columns alias the caller's buffers,
+   * the key column's included. Mutating an adopted buffer after construction
+   * mutates the series. Pass a fresh buffer (e.g. straight off a decode) if
+   * this matters; `number[]` columns are always copied. (**`ordering:
+   * 'reorder'` disables the adoption** — a reorder needs its own buffers, so
+   * every column is copied when sorting.) {@link LiveSeries.pushSeries} keeps
+   * the same buffers on a default live series, so the rule lasts as long as
+   * the rows stay in that series.
    *
    * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
    * `atTime`, range queries) rely on it — so an out-of-order columnar input
@@ -1470,8 +1588,14 @@ export class TimeSeries<S extends SeriesSchema> {
     const dataColumns = this.schema.slice(1);
     const width = dataColumns.length;
 
-    if (rowFormat === 'object') {
-      const rows = this.events.map((event) => {
+    // The event-based row writer: rows whose `Event` already exists, and
+    // the whole export when `#rowsFromColumns` declines. Array rows push
+    // cells in place; the earlier shape built a second throwaway array per
+    // row and spread it into the first, which made tuple rows measurably
+    // slower than object rows — see `scripts/perf-to-json.mjs`.
+    const fromEvent = (event: EventForSchema<S>): unknown => {
+      const data = event.data();
+      if (rowFormat === 'object') {
         const row: Record<string, unknown> = {
           [keyColumn.name]: serializeJsonKey(
             keyColumn.kind,
@@ -1479,30 +1603,13 @@ export class TimeSeries<S extends SeriesSchema> {
             rowFormat,
           ),
         };
-        const data = event.data();
-
         for (const column of dataColumns) {
           row[column.name] = serializeJsonValue(
             data[column.name as keyof typeof data],
           );
         }
-
-        return Object.freeze(row) as JsonObjectRowForSchema<SeriesSchema>;
-      });
-
-      return {
-        name: this.name,
-        schema: this.schema as SeriesSchema,
-        rows,
-      };
-    }
-
-    // One array per row, cells pushed in place. The earlier shape built a
-    // second throwaway array per row (`dataColumns.map(...)`) and spread it
-    // into the first, which made tuple rows measurably slower than object
-    // rows — see `scripts/perf-to-json.mjs`.
-    const rows = this.events.map((event) => {
-      const data = event.data();
+        return Object.freeze(row);
+      }
       const row: unknown[] = [
         serializeJsonKey(keyColumn.kind, event.key(), rowFormat),
       ];
@@ -1511,15 +1618,41 @@ export class TimeSeries<S extends SeriesSchema> {
           serializeJsonValue(data[dataColumns[c]!.name as keyof typeof data]),
         );
       }
-      return Object.freeze(row) as unknown as JsonRowForSchema<SeriesSchema>;
-    });
+      return Object.freeze(row);
+    };
+
+    // [PND-ROWSOUT] Write rows from the columns, no per-row `Event`.
+    const rows =
+      this.#rowsFromColumns<unknown>(
+        rowFormat === 'object'
+          ? (key, cells, i) => {
+              const row: Record<string, unknown> = {
+                [keyColumn.name]: jsonKeyFromColumn(key, i, rowFormat),
+              };
+              for (let c = 0; c < width; c += 1) {
+                row[dataColumns[c]!.name] = serializeJsonValue(
+                  cells[c]!.read(i),
+                );
+              }
+              return Object.freeze(row);
+            }
+          : (key, cells, i) => {
+              const row: unknown[] = new Array(width + 1);
+              row[0] = jsonKeyFromColumn(key, i, rowFormat);
+              for (let c = 0; c < width; c += 1) {
+                row[c + 1] = serializeJsonValue(cells[c]!.read(i));
+              }
+              return Object.freeze(row);
+            },
+        fromEvent,
+      ) ?? this.events.map(fromEvent);
 
     // Annotated local rather than a bare literal: the implementation
-    // signature's `<any>` instantiation doesn't accept the tuple rows directly.
+    // signature's `<any>` instantiation doesn't accept the rows directly.
     const out: TimeSeriesJsonOutputArray<SeriesSchema> = {
       name: this.name,
       schema: this.schema as SeriesSchema,
-      rows,
+      rows: rows as unknown as TimeSeriesJsonOutputArray<SeriesSchema>['rows'],
     };
     return out;
   }
@@ -1900,14 +2033,71 @@ export class TimeSeries<S extends SeriesSchema> {
     // for missing cells); the double cast is the existing trust point — the
     // `RowForSchema`→`NormalizedRowForSchema` conditional types no longer overlap
     // structurally for a direct cast now that both honor `required: false`.
-    return toRows(this.schema, this.events) as unknown as ReadonlyArray<
-      NormalizedRowForSchema<S>
-    >;
+    // [PND-ROWSOUT]: rows come from the columns when no event exists yet.
+    // Keys are the ones the events have or will have, so `rows[i][0]` stays
+    // `===` to `at(i).key()`.
+    const seriesStore = this.#store;
+    const width = this.schema.length;
+    const fromEvent = (event: EventForSchema<S>) => toRow(this.schema, event);
+    const rows =
+      this.#rowsFromColumns((_keys, cells, i) => {
+        const row = new Array<unknown>(width);
+        row[0] = seriesStore._eventKeyAtModulePrivate(i);
+        for (let c = 1; c < width; c += 1) row[c] = cells[c - 1]!.read(i);
+        return Object.freeze(row) as TimeSeriesInput<S>['rows'][number];
+      }, fromEvent) ?? this.events.map(fromEvent);
+    return rows as unknown as ReadonlyArray<NormalizedRowForSchema<S>>;
   }
 
   /** Example: `series.toRows()`. Returns normalized row arrays using `Time`/`TimeRange`/`Interval` keys and `undefined` for missing payload values. */
   toRows(): ReadonlyArray<NormalizedRowForSchema<S>> {
     return this.rows;
+  }
+
+  /**
+   * [PND-ROWSOUT] Build one output row per series row without making the
+   * rows' `Event`s. A row whose `Event` already exists goes through
+   * `fromEvent` (its values are what the old event-based export used); any
+   * other row goes through `fromColumns`, which reads exactly what
+   * `eventAt` would have built that row from. Returns `undefined` when the
+   * schema has an array column (left on the event path: array cells are
+   * shared objects, and [PND-ARRAYSLOW] owns that storage), or when every
+   * row's `Event` already exists (reading them is cheaper).
+   */
+  #rowsFromColumns<R>(
+    fromColumns: (
+      keys: ColumnarKeyColumn,
+      cells: ReadonlyArray<ColumnarColumn>,
+      i: number,
+    ) => R,
+    fromEvent: (event: EventForSchema<S>) => R,
+  ): R[] | undefined {
+    for (let c = 1; c < this.schema.length; c += 1) {
+      if (this.schema[c]!.kind === 'array') return undefined;
+    }
+    const seriesStore = this.#store;
+    // Every event exists already: the event path is the cheaper one.
+    if (seriesStore._hasAllEventsModulePrivate()) return undefined;
+    const store = seriesStore.store;
+    const keys = store.keys;
+    const cells: ColumnarColumn[] = [];
+    for (let c = 1; c < this.schema.length; c += 1) {
+      cells.push(store.columns.get(this.schema[c]!.name)! as ColumnarColumn);
+    }
+    const n = store.length;
+    const out = new Array<R>(n);
+    if (!seriesStore._hasBuiltEventsModulePrivate()) {
+      for (let i = 0; i < n; i += 1) out[i] = fromColumns(keys, cells, i);
+      return out;
+    }
+    for (let i = 0; i < n; i += 1) {
+      const event = seriesStore._builtEventAtModulePrivate(i);
+      out[i] =
+        event !== undefined
+          ? fromEvent(event as unknown as EventForSchema<S>)
+          : fromColumns(keys, cells, i);
+    }
+    return out;
   }
 
   /**
@@ -2030,7 +2220,24 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */
   toObjects(): ReadonlyArray<NormalizedObjectRow> {
-    return toObjects(this.schema, this.events);
+    // [PND-ROWSOUT]: as `rows`, objects come from the columns when no event
+    // exists yet, with the events' key objects.
+    const seriesStore = this.#store;
+    const keyName = this.schema[0]!.name;
+    const names = this.schema.slice(1).map((column) => column.name);
+    const fromEvent = (event: EventForSchema<S>) =>
+      toObject(keyName, names, event);
+    return (
+      this.#rowsFromColumns((_keys, cells, i) => {
+        const row: Record<string, unknown> = {
+          [keyName]: seriesStore._eventKeyAtModulePrivate(i),
+        };
+        for (let c = 0; c < names.length; c += 1) {
+          row[names[c]!] = cells[c]!.read(i);
+        }
+        return Object.freeze(row) as NormalizedObjectRow;
+      }, fromEvent) ?? this.events.map(fromEvent)
+    );
   }
 
   /**
@@ -2501,49 +2708,20 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     }
 
-    const intervals = toBoundedSequence(sequence, range, sample).intervals();
-    const valueColumns = this.schema.slice(1) as ValueColumnsForSchema<S>;
-    const resultColumns = resultSchema.slice(1);
-
-    const alignedRows =
-      method === 'linear'
-        ? (() => {
-            const cursor: AlignCursor = { index: 0 };
-            const rows = new Array(intervals.length);
-
-            for (let i = 0; i < intervals.length; i += 1) {
-              const interval = intervals[i]!;
-              const t = sampleTime(interval, sample);
-              const data = alignLinearAt(this, t, valueColumns, cursor);
-              const row = new Array(resultColumns.length + 1);
-              row[0] = interval;
-
-              for (let j = 0; j < resultColumns.length; j += 1) {
-                const column = resultColumns[j]!;
-                row[j + 1] = data[column.name as keyof typeof data];
-              }
-
-              rows[i] = Object.freeze(row);
-            }
-
-            return rows;
-          })()
-        : intervals.map((interval) => {
-            const t = sampleTime(interval, sample);
-            const data = alignHoldAt(this, t);
-
-            return Object.freeze([
-              interval,
-              ...resultSchema
-                .slice(1)
-                .map((column) => data[column.name as keyof typeof data]),
-            ]);
-          });
-
-    return timeSeriesFromComputedRows(
+    const grid = sampledGrid(sequence, range, sample);
+    // Column-native: pick a source row per bucket, gather each column by
+    // those row numbers ([PND-ALIGNHOLD]). See `alignOp`.
+    const store = alignOp(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      resultSchema as unknown as ColumnSchema,
+      grid.keys(),
+      grid.times,
+      method,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      alignedRows,
+      store,
     ) as unknown as TimeSeries<AlignSchema<S>>;
   }
 
@@ -2619,87 +2797,24 @@ export class TimeSeries<S extends SeriesSchema> {
       }) as unknown as TimeSeries<MaterializeSchema<S>>;
     }
 
-    const intervals = toBoundedSequence(sequence, range, sample).intervals();
-    const valueColumnNames = this.schema.slice(1).map((c) => c.name);
-    const sourceEvents = this.events;
-    const sourceLen = sourceEvents.length;
-    const colCount = valueColumnNames.length;
-
-    // Single forward cursor over source events. Each bucket advances
-    // it past events whose begin() < bucket.begin(); within the
-    // bucket, scan inline to find the chosen event without buffering
-    // the bucket's event indexes in a temporary array.
-    let cursor = 0;
-    const rows: unknown[][] = new Array(intervals.length);
-
-    for (let i = 0; i < intervals.length; i += 1) {
-      const interval = intervals[i]!;
-      const bStart = interval.begin();
-      const bEnd = interval.end();
-      const sampleAt = sampleTime(interval, sample);
-
-      // Skip events before this bucket's start.
-      while (cursor < sourceLen && sourceEvents[cursor]!.begin() < bStart) {
-        cursor += 1;
-      }
-
-      // Find the chosen event index in [bStart, bEnd) inline. -1 means
-      // empty bucket. Per-mode logic:
-      // - 'first': early-exit at the first in-bucket event — O(1)
-      // - 'last': walk forward, last index in-bucket wins — O(K_i)
-      // - 'nearest': walk forward, track min distance with strict `<`
-      //   so the earliest tied event wins — O(K_i)
-      let pick = -1;
-      if (select === 'first') {
-        if (cursor < sourceLen && sourceEvents[cursor]!.begin() < bEnd) {
-          pick = cursor;
-        }
-      } else if (select === 'last') {
-        let scan = cursor;
-        while (scan < sourceLen && sourceEvents[scan]!.begin() < bEnd) {
-          pick = scan;
-          scan += 1;
-        }
-      } else {
-        let scan = cursor;
-        let bestDist = Infinity;
-        while (scan < sourceLen && sourceEvents[scan]!.begin() < bEnd) {
-          const d = Math.abs(sourceEvents[scan]!.begin() - sampleAt);
-          if (d < bestDist) {
-            pick = scan;
-            bestDist = d;
-          }
-          scan += 1;
-        }
-      }
-
-      const row = new Array(colCount + 1);
-      row[0] = new Time(sampleAt);
-
-      if (pick === -1) {
-        // Empty bucket — every value column is undefined.
-        for (let j = 0; j < colCount; j += 1) {
-          row[j + 1] = undefined;
-        }
-      } else {
-        const data = sourceEvents[pick]!.data() as Record<string, unknown>;
-        for (let j = 0; j < colCount; j += 1) {
-          row[j + 1] = data[valueColumnNames[j]!];
-        }
-      }
-
-      rows[i] = row;
-      // Cursor stays at the first event of (or just past) the current
-      // bucket; the next iteration's skip-loop advances it past events
-      // < bStart_{i+1}. Half-open membership ensures an event at
-      // begin() === bEnd belongs to the next bucket, not this one.
-    }
-
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: rows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<MaterializeSchema<S>>;
+    const grid = sampledGrid(sequence, range, sample);
+    // Column-native: one forward cursor over the source `begin` buffer
+    // picks a row per bucket (half-open `[begin, end)` membership), then
+    // each column is gathered by those row numbers ([PND-DEDUPEMAP]). See
+    // `materializeOp`.
+    const store = materializeOp(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      resultSchema as unknown as ColumnSchema,
+      grid.begin,
+      grid.end,
+      grid.times,
+      select,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      store,
+    ) as unknown as TimeSeries<MaterializeSchema<S>>;
   }
 
   /**
@@ -2820,10 +2935,14 @@ export class TimeSeries<S extends SeriesSchema> {
         this.column(columnOrMapping),
       );
       if (fastPath.ok) return fastPath.value;
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[columnOrMapping as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(columnOrMapping);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[columnOrMapping as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       return applyAggregateReducer(reducer!, values);
     }
 
@@ -2840,10 +2959,14 @@ export class TimeSeries<S extends SeriesSchema> {
         result[col.output] = fastPath.value;
         continue;
       }
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[col.source as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(col.source);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[col.source as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       result[col.output] = applyAggregateReducer(col.reducer, values);
     }
     return result;
@@ -2992,6 +3115,78 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
+   * [PND-GROUPEVENTS] `groupBy`'s groups gathered straight off the columns.
+   * Same keys (`String(value)`, `'undefined'` for a gap), same first-seen
+   * order, same rows as the event path, which rebuilds each group from its
+   * events' rows through full validation. Returns `undefined`, so the
+   * caller takes that path, wherever the two could differ:
+   * - the events may hold values the columns don't (a dense event array);
+   * - an array column (validation checks array cells; the column does not);
+   * - a required column holding a gap (validation throws on it);
+   * - `column` is not a value column (read off `event.data()` as before).
+   */
+  #groupByColumns(column: string): Map<string, TimeSeries<S>> | undefined {
+    const seriesStore = this.#store;
+    if (seriesStore._eventsMayDifferFromColumnsModulePrivate())
+      return undefined;
+    const store = seriesStore.store;
+    const n = store.length;
+    for (let c = 1; c < this.schema.length; c += 1) {
+      const def = this.schema[c]!;
+      if (def.kind === 'array') return undefined;
+      if (def.required !== false) {
+        const col = store.columns.get(def.name)!;
+        for (let i = 0; i < n; i += 1) {
+          if (col.read(i) === undefined) return undefined;
+        }
+      }
+    }
+    // A name that is not a value column (the key column, an unknown name,
+    // or one `Object.prototype` answers, like 'constructor') goes to the
+    // event path, which reads it off `event.data()` as it always did.
+    const col = store.columns.get(column);
+    if (col === undefined) return undefined;
+    const index = new Map<string, number>();
+    const keys: string[] = [];
+    const counts: number[] = [];
+    const slotOf = new Int32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const raw = col.read(i);
+      const key = raw === undefined ? 'undefined' : String(raw);
+      let at = index.get(key);
+      if (at === undefined) {
+        at = keys.length;
+        index.set(key, at);
+        keys.push(key);
+        counts.push(0);
+      }
+      slotOf[i] = at;
+      counts[at]! += 1;
+    }
+    const members = counts.map((count) => new Int32Array(count));
+    const fill = new Int32Array(keys.length);
+    for (let i = 0; i < n; i += 1) {
+      const at = slotOf[i]!;
+      members[at]![fill[at]!++] = i;
+    }
+    const result = new Map<string, TimeSeries<S>>();
+    for (let g = 0; g < keys.length; g += 1) {
+      result.set(
+        keys[g]!,
+        TimeSeries.#fromTrustedStore(
+          this.name,
+          this.schema,
+          withRowSelection(
+            store,
+            members[g]!,
+          ) as unknown as ColumnarStore<ColumnSchema>,
+        ),
+      );
+    }
+    return result;
+  }
+
+  /**
    * Example: `series.groupBy("host")`.
    * Partitions the series into groups keyed by the distinct values of a payload column.
    * Each group is a `TimeSeries` with the same schema, preserving event order.
@@ -3011,6 +3206,19 @@ export class TimeSeries<S extends SeriesSchema> {
     column: keyof EventDataForSchema<S> & string,
     transform?: (group: TimeSeries<S>, key: string) => R,
   ): Map<string, TimeSeries<S>> | Map<string, R> {
+    // [PND-GROUPEVENTS] Group row numbers off the column and gather each
+    // group's columns, no per-row `Event`.
+    const gathered = this.#groupByColumns(column);
+    if (gathered !== undefined) {
+      if (transform) {
+        const out = new Map<string, R>();
+        for (const [key, group] of gathered)
+          out.set(key, transform(group, key));
+        return out;
+      }
+      return gathered;
+    }
+
     const buckets = new Map<string, EventForSchema<S>[]>();
 
     for (const event of this.events) {
@@ -3241,12 +3449,32 @@ export class TimeSeries<S extends SeriesSchema> {
     const groupSeen = new Set<string>();
     const byTs = new Map<number, Map<string, Cell[]>>();
 
-    for (const event of this.events) {
-      const ts = event.begin();
-      const data = event.data() as Record<string, ColumnValue | undefined>;
-      const rawGroup = data[groupCol];
+    // [PND-GROUPEVENTS] Read the key, group and value off the columns
+    // unless the events may hold values the columns don't. (The key
+    // column's own name reads as a gap either way: it is not in
+    // `event.data()` and not in `store.columns`.)
+    const seriesStore = this.#store;
+    const store = seriesStore.store;
+    const fromColumns = !seriesStore._eventsMayDifferFromColumnsModulePrivate();
+    const groupColumn = store.columns.get(groupCol);
+    const valueColumn = store.columns.get(valueCol);
+    const n = store.length;
+    for (let i = 0; i < n; i += 1) {
+      let ts: number;
+      let rawGroup: ColumnValue | undefined;
+      let value: ColumnValue | undefined;
+      if (fromColumns) {
+        ts = store.keys.beginAt(i);
+        rawGroup = groupColumn?.read(i) as ColumnValue | undefined;
+        value = valueColumn?.read(i) as ColumnValue | undefined;
+      } else {
+        const event = seriesStore.eventAt(i);
+        const data = event.data() as Record<string, ColumnValue | undefined>;
+        ts = event.begin();
+        rawGroup = data[groupCol];
+        value = data[valueCol];
+      }
       const groupKey = rawGroup === undefined ? 'undefined' : String(rawGroup);
-      const value = data[valueCol];
 
       if (declaredSet !== undefined && !declaredSet.has(groupKey)) {
         throw new TypeError(
@@ -3475,8 +3703,18 @@ export class TimeSeries<S extends SeriesSchema> {
    * Computes running accumulations for the specified numeric columns.
    * Non-accumulated columns pass through unchanged.
    *
-   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`.
-   * Custom accumulators: `(acc: number, value: number) => number`.
+   * Built-in accumulators: `"sum"`, `"max"`, `"min"`, `"count"`,
+   * `"increase"` and `"decrease"`. Custom accumulators:
+   * `(acc: number, value: number) => number`.
+   *
+   * `"increase"` is the running total of rises between values, and
+   * `"decrease"` the running total of falls (a positive number). With
+   * `{ using: 'increase', threshold: 3 }` a change counts only once the
+   * value has moved at least 3 from the last value that counted, in either
+   * direction; smaller wiggles are ignored, though slow drift still counts
+   * once it adds up. Elevation gain with a 3 m dead band is
+   * `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`. The
+   * first value starts the total at 0; gaps carry it.
    *
    * **Multi-entity series:** the running accumulation interleaves
    * across entities — `host-A`'s next event sums on top of
@@ -3486,12 +3724,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * entity. See {@link TimeSeries.partitionBy}.
    */
   cumulative<const Targets extends NumericColumnNameForSchema<S>>(spec: {
-    [K in Targets]:
-      | 'sum'
-      | 'max'
-      | 'min'
-      | 'count'
-      | ((acc: number, value: number) => number);
+    [K in Targets]: CumulativeAccumulator;
   }): TimeSeries<DiffSchema<S, Targets>> {
     type OutSchema = DiffSchema<S, Targets>;
     // Column-native (Step 4): the running accumulation is computed straight
@@ -3501,7 +3734,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const { store, schema } = cumulativeOp<S, OutSchema>(
       this.#store.store,
       this.schema,
-      spec as unknown as Readonly<Record<string, CumulativeReducer>>,
+      spec as unknown as Readonly<Record<string, CumulativeAccumulator>>,
     );
     return TimeSeries.#fromTrustedStore(
       this.name,
@@ -3754,6 +3987,34 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
+   * @internal Fills every missing cell of each named column with a literal
+   * value — `fill({ col: value })` without the strategy-name lookup, so a
+   * string value such as `'hold'` is written as text. Used by partitioned
+   * `materialize` to stamp a partition's own value on its empty buckets.
+   */
+  _fillLiteralModulePrivate(
+    values: ReadonlyArray<readonly [string, ScalarValue]>,
+  ): TimeSeries<S> {
+    if (this.#store.store.length === 0 || values.length === 0) return this;
+    const specs: Map<string, ResolvedFillSpec> = new Map();
+    for (const [name, value] of values) {
+      specs.set(name, { mode: 'literal', value });
+    }
+    const { store, schema } = fillOp<S>(
+      this.#store.store,
+      this.schema,
+      specs,
+      undefined,
+      undefined,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
+  }
+
+  /**
    * Example: `series.dedupe()`.
    * Collapses events that share a key. The default key is the full
    * event key — `begin()` for time-keyed series, `begin()`+`end()` for
@@ -3811,8 +4072,25 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   dedupe(options: { keep?: DedupeKeep<S> } = {}): TimeSeries<S> {
     const keep = options.keep ?? 'last';
-    if (this.events.length === 0) {
+    if (this.#store.length === 0) {
       return this;
+    }
+
+    // Built-in policies: walk runs of equal keys over the key buffers and
+    // gather the kept rows ([PND-DEDUPEMAP]); kept events keep their
+    // identity. A custom resolver still needs the events, below.
+    if (typeof keep !== 'function') {
+      const rows = dedupeRows(
+        this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+        keep,
+      );
+      const frozenSchema = Object.freeze(this.schema.slice()) as S;
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: frozenSchema,
+        [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(rows),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
     }
 
     // Bucket key encoder. For time-keyed series, `begin()` alone fully
@@ -3849,64 +4127,8 @@ export class TimeSeries<S extends SeriesSchema> {
     }
 
     const resolved: EventForSchema<S>[] = [];
-    for (const [keyStr, bucket] of buckets) {
-      if (bucket.length === 1) {
-        resolved.push(bucket[0]!);
-        continue;
-      }
-
-      // Multiple events sharing the same key — apply the policy.
-      if (typeof keep === 'function') {
-        resolved.push(keep(bucket));
-        continue;
-      }
-      if (keep === 'first') {
-        resolved.push(bucket[0]!);
-        continue;
-      }
-      if (keep === 'last') {
-        resolved.push(bucket[bucket.length - 1]!);
-        continue;
-      }
-      if (keep === 'error') {
-        // Use the first event's begin() for the human-readable timestamp.
-        // For interval/timeRange-keyed series, also include the full
-        // encoded key so the failure mode names the exact collision.
-        const t = bucket[0]!.begin();
-        const detail =
-          firstKind === 'time'
-            ? `${new Date(t).toISOString()} (${t})`
-            : `key "${keyStr}"`;
-        throw new Error(
-          `dedupe: ${bucket.length} events at ${detail}. ` +
-            `Specify a different 'keep' policy or fix upstream.`,
-        );
-      }
-      if (keep === 'drop') {
-        continue;
-      }
-      if ('min' in keep || 'max' in keep) {
-        const isMin = 'min' in keep;
-        const col = (isMin ? keep.min : keep.max) as string;
-        let best = bucket[0]!;
-        let bestVal = best.get(col) as number | undefined;
-        for (let i = 1; i < bucket.length; i += 1) {
-          const candidate = bucket[i]!;
-          const v = candidate.get(col) as number | undefined;
-          if (v === undefined) continue;
-          if (bestVal === undefined || (isMin ? v < bestVal : v > bestVal)) {
-            best = candidate;
-            bestVal = v;
-          }
-        }
-        resolved.push(best);
-        continue;
-      }
-      // Defensive fallthrough: unrecognized keep shape.
-      throw new TypeError(
-        `dedupe: invalid keep option ${JSON.stringify(keep)}. ` +
-          `Expected 'first' | 'last' | 'error' | 'drop' | { min: col } | { max: col } | (events) => Event.`,
-      );
+    for (const bucket of buckets.values()) {
+      resolved.push(bucket.length === 1 ? bucket[0]! : keep(bucket));
     }
 
     return TimeSeries.#fromTrustedEvents<S>(this.name, this.schema, resolved);
@@ -4321,6 +4543,37 @@ export class TimeSeries<S extends SeriesSchema> {
           fastOutColumns,
         );
         return TimeSeries.#fromTrustedStore(this.name, resultSchema, fastStore);
+      }
+    }
+    // Duration-window numeric fast path: the same per-column sweep, over
+    // windows found once from the keys (`rollingWindowBoundsByTime`, which
+    // follows the three alignment loops below row for row).
+    if (countWindow === null) {
+      const timeColumns = tryRollingTimeColumnarNumeric(
+        (name) => store.columns.get(name),
+        rowCount,
+        columnSpecs,
+        () =>
+          rollingWindowBoundsByTime(
+            store.keys.begin,
+            rowCount,
+            windowMs,
+            alignment,
+          ),
+        alignment,
+        minSamples,
+      );
+      if (timeColumns !== null) {
+        const timeOutColumns = new Map<string, ColumnarColumn>();
+        for (let c = 0; c < columnSpecs.length; c += 1) {
+          timeOutColumns.set(columnSpecs[c]!.output, timeColumns[c]!);
+        }
+        const timeStore = ColumnarStore.fromTrustedStore(
+          resultSchema as unknown as ColumnSchema,
+          store.keys,
+          timeOutColumns,
+        );
+        return TimeSeries.#fromTrustedStore(this.name, resultSchema, timeStore);
       }
     }
     const sourceCols = columnSpecs.map(
@@ -4816,13 +5069,104 @@ export class TimeSeries<S extends SeriesSchema> {
     // Anchor times + source values for the window-based methods
     // (movingAverage / loess). Materialized here — below the ema branch —
     // because ema never reads either (its fast path stays event-free).
-    const anchors = this.events.map((event) => eventAnchorTime(event.key()));
-    const sourceValues: ReadonlyArray<number | undefined> = this.events.map(
-      (event) => {
+    //
+    // A number target column is read straight off the store: anchors from
+    // the key buffers (a time key's timestamp, else `begin + (end − begin)
+    // / 2`, which is `timeRange().midpoint()`), values by `read`, and the
+    // result written as one number column ([PND-SMOOTHSLOW]). A missing or
+    // non-number target keeps the event path (its odd results are
+    // [PND-SMOOTHCHECK]).
+    const smoothStore = this.#store.store;
+    const targetCol = smoothStore.columns.get(column as string);
+    // The event path also stays when the events may hold values the columns
+    // don't (a dense event array, e.g. from `fromEvents`), and when `output`
+    // names the key column, so that error keeps row intake's text.
+    const columnar =
+      targetCol !== undefined &&
+      targetCol.kind === 'number' &&
+      !this.#store._eventsMayDifferFromColumnsModulePrivate() &&
+      output !== this.schema[0].name;
+    const rowCount = smoothStore.length;
+    let anchors: number[];
+    let sourceValues: ReadonlyArray<number | undefined>;
+    if (columnar) {
+      const keys = smoothStore.keys;
+      const kb = keys.begin;
+      const ke = keys.end;
+      anchors = new Array<number>(rowCount);
+      const values = new Array<number | undefined>(rowCount);
+      const isTime = keys.kind === 'time';
+      for (let i = 0; i < rowCount; i += 1) {
+        anchors[i] = isTime ? kb[i]! : kb[i]! + (ke[i]! - kb[i]!) / 2;
+        values[i] = targetCol.read(i) as number | undefined;
+      }
+      sourceValues = values;
+    } else {
+      anchors = this.events.map((event) => eventAnchorTime(event.key()));
+      sourceValues = this.events.map((event) => {
         const raw = event.get(column);
         return typeof raw === 'number' ? raw : undefined;
-      },
-    );
+      });
+    }
+    // Writes the smoothed values as the result: one number column replacing
+    // the target or appended as `output`; every other column and the key
+    // pass through. The event path rebuilds rows instead.
+    const finish = (
+      smoothedAt: (index: number) => number | undefined,
+    ): TimeSeries<
+      Output extends string
+        ? SmoothAppendSchema<S, Output>
+        : SmoothSchema<S, Target>
+    > => {
+      if (columnar) {
+        const out = new Float64Array(rowCount);
+        let allFinite = true;
+        for (let i = 0; i < rowCount; i += 1) {
+          const v = smoothedAt(i);
+          // Missing, or non-finite (an overflow): stored as missing, as row
+          // intake did ([PND-NANREP]).
+          if (v === undefined || v - v !== 0) {
+            out[i] = NaN;
+            allFinite = false;
+          } else {
+            out[i] = v;
+          }
+        }
+        const outColumn = new Float64Column(out, rowCount, allFinite);
+        const reshaped =
+          output === undefined || output === (column as string)
+            ? withColumnReplaced(smoothStore, column as string, outColumn)
+            : withColumnAppended(smoothStore, output, outColumn);
+        return TimeSeries.#fromTrustedStore(
+          this.name,
+          resultSchema as unknown as SeriesSchema,
+          reshaped,
+        ) as never;
+      }
+      const resultRows = this.events.map((event, index) => {
+        const smoothed = smoothedAt(index);
+        const nextEvent =
+          output === undefined
+            ? event.set(column, smoothed as EventDataForSchema<S>[Target])
+            : event.merge({ [output]: smoothed });
+        return Object.freeze([
+          nextEvent.key(),
+          ...resultSchema
+            .slice(1)
+            .map(
+              (nextColumn) =>
+                nextEvent.data()[
+                  nextColumn.name as keyof ReturnType<typeof nextEvent.data>
+                ],
+            ),
+        ]);
+      });
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as never;
+    };
     // Rows in anchor order. Time-range and interval keys sort by begin, so
     // their midpoints can run backwards (a long range before a short one);
     // the window sweep and the loess neighbour search both need anchors in
@@ -4859,37 +5203,11 @@ export class TimeSeries<S extends SeriesSchema> {
       // (don't fit a fabricated value across the hole from its present
       // neighbours). Default `'bridge'` is the prior behaviour (fit everywhere).
       const skipMissing = 'missing' in options && options.missing === 'skip';
-      const resultRows = this.events.map((event, index) => {
-        const smoothed =
-          skipMissing && sourceValues[index] === undefined
-            ? undefined
-            : loessAt(anchors[index]!, loessAnchors, loessValues, span);
-        const nextEvent =
-          output === undefined
-            ? event.set(column, smoothed as EventDataForSchema<S>[Target])
-            : event.merge({ [output]: smoothed });
-        return Object.freeze([
-          nextEvent.key(),
-          ...resultSchema
-            .slice(1)
-            .map(
-              (nextColumn) =>
-                nextEvent.data()[
-                  nextColumn.name as keyof ReturnType<typeof nextEvent.data>
-                ],
-            ),
-        ]);
-      });
-
-      return timeSeriesFromComputedRows(
-        this.name,
-        resultSchema as unknown as SeriesSchema,
-        resultRows,
-      ) as unknown as TimeSeries<
-        Output extends string
-          ? SmoothAppendSchema<S, Output>
-          : SmoothSchema<S, Target>
-      >;
+      return finish((index) =>
+        skipMissing && sourceValues[index] === undefined
+          ? undefined
+          : loessAt(anchors[index]!, loessAnchors, loessValues, span),
+      );
     }
 
     if (!('window' in options)) {
@@ -4899,7 +5217,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const windowMs = parseDuration(window!);
     const alignment = options.alignment ?? 'trailing';
     const skipMissing = options.missing === 'skip';
-    const resultValues = new Array<number | undefined>(this.events.length);
+    const resultValues = new Array<number | undefined>(rowCount);
     // Anchors and values in anchor order; positions below index these.
     const sorted =
       byAnchor === undefined
@@ -4935,15 +5253,15 @@ export class TimeSeries<S extends SeriesSchema> {
     const snapshot = (): number | undefined =>
       numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
-    for (let groupStart = 0; groupStart < this.events.length; ) {
+    for (let groupStart = 0; groupStart < rowCount; ) {
       const anchor = sorted[groupStart]!;
       let groupEnd = groupStart + 1;
-      while (groupEnd < this.events.length && sorted[groupEnd] === anchor) {
+      while (groupEnd < rowCount && sorted[groupEnd] === anchor) {
         groupEnd += 1;
       }
 
       if (alignment === 'trailing') {
-        while (windowEnd < this.events.length && sorted[windowEnd]! <= anchor) {
+        while (windowEnd < rowCount && sorted[windowEnd]! <= anchor) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -4970,10 +5288,7 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + windowMs;
-        while (
-          windowEnd < this.events.length &&
-          sorted[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && sorted[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -4998,10 +5313,7 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + halfWindow;
-        while (
-          windowEnd < this.events.length &&
-          sorted[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && sorted[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -5019,34 +5331,7 @@ export class TimeSeries<S extends SeriesSchema> {
       groupStart = groupEnd;
     }
 
-    const resultRows = this.events.map((event, index) => {
-      const smoothed = resultValues[index];
-      const nextEvent =
-        output === undefined
-          ? event.set(column, smoothed as EventDataForSchema<S>[Target])
-          : event.merge({ [output]: smoothed });
-      return Object.freeze([
-        nextEvent.key(),
-        ...resultSchema
-          .slice(1)
-          .map(
-            (nextColumn) =>
-              nextEvent.data()[
-                nextColumn.name as keyof ReturnType<typeof nextEvent.data>
-              ],
-          ),
-      ]);
-    });
-
-    return timeSeriesFromComputedRows(
-      this.name,
-      resultSchema as unknown as SeriesSchema,
-      resultRows,
-    ) as unknown as TimeSeries<
-      Output extends string
-        ? SmoothAppendSchema<S, Output>
-        : SmoothSchema<S, Target>
-    >;
+    return finish((index) => resultValues[index]);
   }
 
   /** Example: `series.slice(0, 10)`. Returns a positional half-open slice of the series. */
@@ -5214,11 +5499,20 @@ export class TimeSeries<S extends SeriesSchema> {
           `sample({ stride }): stride must be a positive integer (got ${String(stride)})`,
         );
       }
-      const sampled: EventForSchema<S>[] = [];
-      for (let i = stride - 1; i < this.events.length; i += stride) {
-        sampled.push(this.events[i]!);
-      }
-      return TimeSeries.#fromTrustedEvents(this.name, this.schema, sampled);
+      // Gather every `stride`-th row off the columns ([PND-SMOOTHSLOW]);
+      // events built before the call are carried into the result.
+      const n = this.#store.length;
+      const rows = new Int32Array(Math.max(0, Math.floor(n / stride)));
+      let k = 0;
+      for (let i = stride - 1; i < n; i += stride) rows[k++] = i;
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: Object.freeze(this.schema.slice()) as S,
+        [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+          rows.subarray(0, k),
+        ),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
     }
     const k = strategy.reservoir.size;
     if (!Number.isInteger(k) || k < 1) {
@@ -5456,7 +5750,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * Use `trim(...)` when you want those overlapping keys clipped to the supplied range.
    */
   overlapping(range: RangeLike): TimeSeries<S> {
-    return this.filter((event) => event.overlaps(range));
+    // An empty series never reads `range`, so a bad one does not throw.
+    if (this.#store.length === 0) return this.#selectByKey(() => false);
+    // `event.overlaps(range)` for every key kind is this test on the
+    // range `toTimeRange` gives (it throws the same error on a bad range).
+    const r = toTimeRange(range);
+    const rb = r.begin();
+    const re = r.end();
+    return this.#selectByKey((b, e) => b <= re && rb <= e);
   }
 
   /**
@@ -5469,7 +5770,9 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   containedBy(range: RangeLike): TimeSeries<S> {
     const selectionRange = toSelectionRange(range);
-    return this.filter((event) => selectionRange.contains(event));
+    const sb = selectionRange.begin();
+    const se = selectionRange.end();
+    return this.#selectByKey((b, e) => b >= sb && e <= se);
   }
 
   /**
@@ -5483,6 +5786,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * re-sorted (stably) by key, so its rows may come back in a different order than the input's.
    */
   trim(range: RangeLike): TimeSeries<S> {
+    const fromColumns = this.#trimColumns(range);
+    if (fromColumns !== undefined) return fromColumns;
     const trimmedEvents = this.events
       .map((event) => event.trim(range))
       .filter((event): event is EventForSchema<S> => event !== undefined);
@@ -5504,16 +5809,113 @@ export class TimeSeries<S extends SeriesSchema> {
     return TimeSeries.#fromTrustedEvents(this.name, this.schema, trimmedEvents);
   }
 
+  /**
+   * [PND-TRIMCOL] `trim` on the key buffers: keep the rows whose key
+   * overlaps the range, clip `timeRange` / `interval` edges with the same
+   * `Math.max` / `Math.min` as `TimeRange.intersection`, re-sort (stably,
+   * by begin then end, as `compareEventKeys`) only if clipping broke the
+   * order, and gather the value columns. `time` keys are not clipped
+   * (`Time.trim` returns the key itself), so their rows keep the source's
+   * key objects. Returns `undefined` where the event path must run: an
+   * empty series (it never reads `range`), a store whose events may differ
+   * from its columns, or an array column (old events shared array cells).
+   */
+  #trimColumns(range: RangeLike): TimeSeries<S> | undefined {
+    const seriesStore = this.#store;
+    const n = seriesStore.length;
+    if (n === 0 || seriesStore._eventsMayDifferFromColumnsModulePrivate()) {
+      return undefined;
+    }
+    for (let c = 1; c < this.schema.length; c += 1) {
+      if (this.schema[c]!.kind === 'array') return undefined;
+    }
+    // Every key kind's `trim` reads the range through `toTimeRange`, so
+    // a bad range throws the same error here.
+    const r = toTimeRange(range);
+    const rb = r.begin();
+    const re = r.end();
+    const store = seriesStore.store;
+    const keys = store.keys;
+    const begins = keys.begin;
+    const ends = keys.end;
+    const kept = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      if (begins[i]! <= re && rb <= ends[i]!) kept[k++] = i;
+    }
+    let rows = k === n ? kept : kept.slice(0, k);
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    if (keys.kind === 'time') {
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: frozenSchema,
+        [TRUSTED_STORE_SENTINEL]:
+          seriesStore._selectRowsSharingKeysModulePrivate(rows),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+    }
+    let newBegin = new Float64Array(k);
+    let newEnd = new Float64Array(k);
+    let sorted = true;
+    for (let j = 0; j < k; j += 1) {
+      const i = rows[j]!;
+      newBegin[j] = Math.max(begins[i]!, rb);
+      newEnd[j] = Math.min(ends[i]!, re);
+      if (
+        j > 0 &&
+        (newBegin[j - 1]! > newBegin[j]! ||
+          (newBegin[j - 1] === newBegin[j] && newEnd[j - 1]! > newEnd[j]!))
+      ) {
+        sorted = false;
+      }
+    }
+    if (!sorted) {
+      const order = Array.from({ length: k }, (_, j) => j);
+      const b0 = newBegin;
+      const e0 = newEnd;
+      order.sort((a, b) => b0[a]! - b0[b]! || e0[a]! - e0[b]!);
+      const sortedRows = new Int32Array(k);
+      newBegin = new Float64Array(k);
+      newEnd = new Float64Array(k);
+      for (let j = 0; j < k; j += 1) {
+        const o = order[j]!;
+        sortedRows[j] = rows[o]!;
+        newBegin[j] = b0[o]!;
+        newEnd[j] = e0[o]!;
+      }
+      rows = sortedRows;
+    }
+    const gathered = withRowSelection(store, rows);
+    const newKeys =
+      keys.kind === 'timeRange'
+        ? new TimeRangeKeyColumn(newBegin, newEnd, k)
+        : new IntervalKeyColumn(
+            newBegin,
+            newEnd,
+            (gathered.keys as IntervalKeyColumn).labels,
+            k,
+          );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      frozenSchema,
+      ColumnarStore.fromTrustedStore(
+        store.schema,
+        newKeys,
+        gathered.columns,
+      ) as unknown as ColumnarStore<ColumnSchema>,
+    );
+  }
+
   /** Example: `series.before(Date.now())`. Returns the events ending strictly before the supplied temporal boundary. */
   before(boundary: BoundaryLike): TimeSeries<S> {
     const limit = toBoundaryTimestamp(boundary);
-    return this.filter((event) => event.end() < limit);
+    return this.#selectByKey((_b, e) => e < limit);
   }
 
   /** Example: `series.after(Date.now())`. Returns the events beginning strictly after the supplied temporal boundary. */
   after(boundary: BoundaryLike): TimeSeries<S> {
     const limit = toBoundaryTimestamp(boundary);
-    return this.filter((event) => event.begin() > limit);
+    return this.#selectByKey((b) => b > limit);
   }
 
   /**
@@ -5534,11 +5936,38 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   tail(duration?: DurationInput): TimeSeries<S> {
     if (duration === undefined) return this;
-    if (this.events.length === 0) return this;
+    const n = this.#store.length;
+    if (n === 0) return this;
     const durationMs = parseDuration(duration);
-    const lastBegin = this.events[this.events.length - 1]!.begin();
+    const lastBegin = this.#store.store.keys.begin[n - 1]!;
     const cutoff = lastBegin - durationMs;
-    return this.filter((event) => event.begin() > cutoff);
+    return this.#selectByKey((b) => b > cutoff);
+  }
+
+  /**
+   * [PND-SPANFILTER] The rows whose key passes `test(begin, end)`, read off
+   * the key buffers instead of building an `Event` per row. As with
+   * `filter`, a kept row's `Event` is the source row's own (the result
+   * store asks this store for it), so `result.at(j) === this.at(i)`.
+   */
+  #selectByKey(test: (begin: number, end: number) => boolean): TimeSeries<S> {
+    const keys = this.#store.store.keys;
+    const begins = keys.begin;
+    const ends = keys.end;
+    const n = this.#store.length;
+    const rows = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      if (test(begins[i]!, ends[i]!)) rows[k++] = i;
+    }
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: Object.freeze(this.schema.slice()) as S,
+      [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+        k === n ? rows : rows.slice(0, k),
+      ),
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**
@@ -5564,9 +5993,9 @@ export class TimeSeries<S extends SeriesSchema> {
       end === undefined
         ? toSelectionRange(beginOrRange as RangeLike)
         : new TimeRange({ start: beginOrRange as TimestampInput, end });
-    return this.filter(
-      (event) => event.begin() >= range.begin() && event.end() <= range.end(),
-    );
+    const rb = range.begin();
+    const re = range.end();
+    return this.#selectByKey((b, e) => b >= rb && e <= re);
   }
 
   /**
@@ -5947,6 +6376,86 @@ export class TimeSeries<S extends SeriesSchema> {
           ),
     ) as unknown as SeriesSchema;
 
+    // [PND-ARRAYSLOW] Walk the array column directly and build only the
+    // output column; the key and every other column are shared as they are.
+    const store = this.#store.store;
+    const source = store.columns.get(col);
+    // An `as` that names an existing column keeps the row path, so its
+    // error stays the one row intake gives.
+    const nameTaken =
+      appendMode && this.schema.some((c) => c.name === outputName);
+    if (source !== undefined && !nameTaken) {
+      const n = store.length;
+      const out = new Array<ColumnValue | undefined>(n);
+      const def = isBuiltInAggregateReducer(reducer)
+        ? resolveReducer(reducer)
+        : null;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (!Array.isArray(arr)) {
+          out[i] = undefined;
+        } else if (def !== null) {
+          // An array cell holds only finite numbers, strings and booleans,
+          // so `aggregateValues`' filtering leaves `defined` = the cell and
+          // `numeric` = its numbers. Reducers copy before sorting.
+          const cell = arr as ReadonlyArray<ColumnValue>;
+          let allNumbers = true;
+          for (let j = 0; j < cell.length; j += 1) {
+            if (typeof cell[j] !== 'number') {
+              allNumbers = false;
+              break;
+            }
+          }
+          const numeric = allNumbers
+            ? (cell as ReadonlyArray<number>)
+            : (cell.filter((v) => typeof v === 'number') as number[]);
+          const result = finiteOrMissing(def.reduce(cell, numeric));
+          // The array-output built-ins (unique / samples / top) build a new
+          // array today; if one ever handed back its input, the output
+          // column would share the source's array, so copy it here.
+          out[i] =
+            result === cell || result === numeric
+              ? ((result as ArrayValue).slice() as unknown as ArrayValue)
+              : result;
+        } else {
+          out[i] = applyAggregateReducer(
+            reducer,
+            arr as ReadonlyArray<ColumnValue>,
+          );
+        }
+      }
+      // Same kind check, and the same error, as the row intake this used
+      // before (only the output column can be wrong).
+      const outputIndex = resultSchema.findIndex((c) => c.name === outputName);
+      for (let i = 0; i < n; i += 1) {
+        assertCellKind(outputKind, out[i], i, outputIndex);
+      }
+      // A built-in reducer's array result is a fresh array nobody else
+      // holds; a custom reducer's may not be, so it is copied.
+      const outColumn =
+        outputKind === 'array' && def !== null
+          ? arrayColumnFromOwnedCells(out as Array<ArrayValue | undefined>)
+          : columnFromValuesByKind(outputKind, out);
+      const columns = new Map<string, ColumnarColumn>();
+      for (let c = 1; c < resultSchema.length; c += 1) {
+        const name = resultSchema[c]!.name;
+        columns.set(
+          name,
+          name === outputName ? outColumn : store.columns.get(name)!,
+        );
+      }
+      const outStore = ColumnarStore.fromTrustedStore(
+        resultSchema as unknown as ColumnSchema,
+        store.keys,
+        columns,
+      );
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        resultSchema,
+        outStore as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
+
     const resultRows = this.events.map((event) => {
       const data = event.data();
       const arr = data[col as keyof typeof data] as ArrayValue | undefined;
@@ -6017,6 +6526,73 @@ export class TimeSeries<S extends SeriesSchema> {
             column.name === col ? outputColumn : column,
           ),
     ) as unknown as SeriesSchema;
+
+    // [PND-ARRAYSLOW] One pass to number the output rows, one gather of the
+    // key and the other columns, and the element column built directly —
+    // no `Event`s and no row intake.
+    const store = this.#store.store;
+    const source = store.columns.get(col);
+    // An `as` that names an existing column keeps the row path, so its
+    // error stays the one row intake gives.
+    const nameTaken =
+      appendMode && this.schema.some((c) => c.name === outputName);
+    if (source !== undefined && !nameTaken) {
+      const n = store.length;
+      let total = 0;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (Array.isArray(arr)) total += arr.length;
+      }
+      const rowOf = new Int32Array(total);
+      const elements = new Array<ColumnValue>(total);
+      let k = 0;
+      for (let i = 0; i < n; i += 1) {
+        const arr = source.read(i);
+        if (!Array.isArray(arr)) continue;
+        for (let j = 0; j < arr.length; j += 1) {
+          rowOf[k] = i;
+          elements[k] = arr[j]!;
+          k += 1;
+        }
+      }
+      // The row intake this used before rejected an element that doesn't
+      // fit `kind`; so does this, with the same error.
+      const outputIndex = resultSchema.findIndex((c) => c.name === outputName);
+      for (let i = 0; i < total; i += 1) {
+        assertCellKind(outputKind, elements[i], i, outputIndex);
+      }
+      const elementColumn = columnFromValuesByKind(outputKind, elements);
+      // Replace mode drops the array column before the gather (no copying
+      // of arrays that are about to be thrown away).
+      const kept = appendMode
+        ? store
+        : withColumnsSelected(
+            store,
+            store.schema
+              .slice(1)
+              .map((c) => c.name)
+              .filter((name) => name !== col),
+          );
+      const gathered = withRowSelection(kept, rowOf);
+      const columns = new Map<string, ColumnarColumn>();
+      for (let c = 1; c < resultSchema.length; c += 1) {
+        const name = resultSchema[c]!.name;
+        columns.set(
+          name,
+          name === outputName ? elementColumn : gathered.columns.get(name)!,
+        );
+      }
+      const outStore = ColumnarStore.fromTrustedStore(
+        resultSchema as unknown as ColumnSchema,
+        gathered.keys,
+        columns,
+      );
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        resultSchema,
+        outStore as unknown as ColumnarStore<ColumnSchema>,
+      );
+    }
 
     const resultRows: unknown[][] = [];
     for (const event of this.events) {
@@ -6103,16 +6679,25 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   toPoints(): ReadonlyArray<PointRowForSchema<S>> {
     const valueCols = this.schema.slice(1) as ReadonlyArray<{ name: string }>;
-    return Object.freeze(
-      this.events.map((event) => {
-        const row: Record<string, unknown> = { ts: event.begin() };
-        const data = event.data() as Record<string, unknown>;
-        for (const col of valueCols) {
-          row[col.name] = data[col.name];
+    const width = valueCols.length;
+    const fromEvent = (event: EventForSchema<S>): PointRowForSchema<S> => {
+      const row: Record<string, unknown> = { ts: event.begin() };
+      const data = event.data() as Record<string, unknown>;
+      for (const col of valueCols) {
+        row[col.name] = data[col.name];
+      }
+      return Object.freeze(row) as PointRowForSchema<S>;
+    };
+    // [PND-ROWSOUT] Write rows from the columns, no per-row `Event`.
+    const rows =
+      this.#rowsFromColumns((keys, cells, i) => {
+        const row: Record<string, unknown> = { ts: keys.beginAt(i) };
+        for (let c = 0; c < width; c += 1) {
+          row[valueCols[c]!.name] = cells[c]!.read(i);
         }
         return Object.freeze(row) as PointRowForSchema<S>;
-      }),
-    );
+      }, fromEvent) ?? this.events.map(fromEvent);
+    return Object.freeze(rows);
   }
 
   /**
@@ -6246,36 +6831,94 @@ export class TimeSeries<S extends SeriesSchema> {
       { name: lowerName, kind: 'number' as const, required: false as const },
     ]) as unknown as BaselineSchema<S, AvgName, SdName, UpperName, LowerName>;
 
-    const resultRows = this.events.map((event, index) => {
-      const data = event.data() as Record<string, unknown>;
-      const rollEvent = rolling.at(index);
-      const rollData = (rollEvent?.data() ?? {}) as Record<string, unknown>;
-      const avg = rollData[avgName];
-      const sd = rollData[sdName];
-      const avgNum = typeof avg === 'number' ? avg : undefined;
-      const sdNum = typeof sd === 'number' ? sd : undefined;
+    // Events that may hold values their columns don't (a dense event array,
+    // e.g. from `fromEvents`) keep the row path, which rebuilds rows from
+    // `event.data()` through validation, so output and errors stay as before.
+    if (this.#store._eventsMayDifferFromColumnsModulePrivate()) {
+      const resultRows = this.events.map((event, index) => {
+        const data = event.data() as Record<string, unknown>;
+        const rollEvent = rolling.at(index);
+        const rollData = (rollEvent?.data() ?? {}) as Record<string, unknown>;
+        const avg = rollData[avgName];
+        const sd = rollData[sdName];
+        const avgNum = typeof avg === 'number' ? avg : undefined;
+        const sdNum = typeof sd === 'number' ? sd : undefined;
+        // sd === 0 means a flat rolling window — there is no meaningful
+        // deviation against it. Matching outliers(), we emit undefined
+        // bands so `value > upper || value < lower` doesn't flag every
+        // non-equal point as anomalous.
+        const bandValid =
+          avgNum !== undefined && sdNum !== undefined && sdNum > 0;
+        const upperNum = bandValid ? avgNum + sigma * sdNum : undefined;
+        const lowerNum = bandValid ? avgNum - sigma * sdNum : undefined;
+        return Object.freeze([
+          event.key(),
+          ...this.schema.slice(1).map((c) => data[c.name]),
+          avgNum,
+          sdNum,
+          upperNum,
+          lowerNum,
+        ]);
+      });
+
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as unknown as TimeSeries<
+        BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
+      >;
+    }
+
+    // Column-native ([PND-SMOOTHSLOW]): the rolling result has one row per
+    // source row, so its `avg` / `sd` columns are appended as they are and
+    // the bands are computed from them; the key and source columns pass
+    // through.
+    const store = this.#store.store;
+    const rollStore = rolling.#store.store;
+    const n = store.length;
+    const avgCol = rollStore.columns.get(avgName)!;
+    const sdCol = rollStore.columns.get(sdName)!;
+    const upper = new Float64Array(n);
+    const lower = new Float64Array(n);
+    let bandsFinite = true;
+    for (let i = 0; i < n; i += 1) {
+      const avg = avgCol.read(i);
+      const sd = sdCol.read(i);
       // sd === 0 means a flat rolling window — there is no meaningful
       // deviation against it. Matching outliers(), we emit undefined
       // bands so `value > upper || value < lower` doesn't flag every
       // non-equal point as anomalous.
-      const bandValid =
-        avgNum !== undefined && sdNum !== undefined && sdNum > 0;
-      const upperNum = bandValid ? avgNum + sigma * sdNum : undefined;
-      const lowerNum = bandValid ? avgNum - sigma * sdNum : undefined;
-      return Object.freeze([
-        event.key(),
-        ...this.schema.slice(1).map((c) => data[c.name]),
-        avgNum,
-        sdNum,
-        upperNum,
-        lowerNum,
-      ]);
-    });
-
-    return timeSeriesFromComputedRows(
+      if (typeof avg === 'number' && typeof sd === 'number' && sd > 0) {
+        const u = avg + sigma * sd;
+        const l = avg - sigma * sd;
+        // Non-finite (an overflow) is missing ([PND-NANREP]).
+        upper[i] = u - u === 0 ? u : NaN;
+        lower[i] = l - l === 0 ? l : NaN;
+        if (u - u !== 0 || l - l !== 0) bandsFinite = false;
+      } else {
+        upper[i] = NaN;
+        lower[i] = NaN;
+        bandsFinite = false;
+      }
+    }
+    // Built in one go against the result schema, so a repeated output name
+    // (`names: { avg: 'x', lower: 'x' }`) fails with the store's own
+    // duplicate-name error, as row intake did.
+    const columns = new Map(store.columns);
+    columns.set(avgName, avgCol);
+    columns.set(sdName, sdCol);
+    columns.set(upperName, new Float64Column(upper, n, bandsFinite));
+    columns.set(lowerName, new Float64Column(lower, n, bandsFinite));
+    const out = ColumnarStore.fromTrustedStore(
+      resultSchema as unknown as ColumnSchema,
+      store.keys,
+      columns,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      resultRows,
+      out as unknown as ColumnarStore<ColumnSchema>,
     ) as unknown as TimeSeries<
       BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
     >;
@@ -6351,23 +6994,38 @@ export class TimeSeries<S extends SeriesSchema> {
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
-    const kept: EventForSchema<S>[] = [];
-    for (let i = 0; i < this.events.length; i += 1) {
-      const src = this.events[i]!;
-      const rollEvent = rolling.at(i);
-      if (!rollEvent) continue;
-      const data = rollEvent.data() as Record<string, unknown>;
-      const avg = data[ROLL_AVG];
-      const sd = data[ROLL_SD];
+    // Column-native ([PND-SMOOTHSLOW]): compare column cells, keep row
+    // numbers, gather the kept rows. Events built before the call are
+    // carried into the result, as `dedupe` does.
+    const store = this.#store.store;
+    const rollStore = rolling.#store.store;
+    const avgCol = rollStore.columns.get(ROLL_AVG)!;
+    const sdCol = rollStore.columns.get(ROLL_SD)!;
+    const valueCol = store.columns.get(col as string);
+    const n = store.length;
+    const rows = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      const avg = avgCol.read(i);
+      const sd = sdCol.read(i);
       if (typeof avg !== 'number' || typeof sd !== 'number') continue;
       if (sd === 0) continue; // flat window — nothing to deviate from
-      const raw = src.get(col);
+      const raw = valueCol?.read(i);
       if (typeof raw !== 'number') continue;
       if (Math.abs(raw - avg) > sigma * sd) {
-        kept.push(src);
+        rows[k] = i;
+        k += 1;
       }
     }
-    return TimeSeries.#fromTrustedEvents(this.name, this.schema, kept);
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: frozenSchema,
+      [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+        rows.subarray(0, k),
+      ),
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**
@@ -6567,70 +7225,6 @@ function aggregateInternal<S extends SeriesSchema>(
   });
 
   return timeSeriesFromComputedRows(series.name, resultSchema, resultRows);
-}
-
-function alignHoldAt<S extends SeriesSchema>(
-  series: TimeSeries<S>,
-  t: number,
-): EventDataForSchema<S> {
-  const event = series.atOrBefore(new Time(t));
-  return (event?.data() ?? {}) as EventDataForSchema<S>;
-}
-
-function alignLinearAt<S extends SeriesSchema>(
-  series: TimeSeries<S>,
-  t: number,
-  valueColumns: ValueColumnsForSchema<S>,
-  cursor?: AlignCursor,
-): EventDataForSchema<S> {
-  const events = series.events;
-  const hasCursor = cursor !== undefined;
-  let index = hasCursor ? cursor.index : series.bisect(t);
-
-  if (hasCursor) {
-    while (index < events.length && events[index]!.begin() < t) {
-      index += 1;
-    }
-    cursor.index = index;
-  }
-
-  if (index < events.length && events[index]!.begin() === t) {
-    return events[index]!.data() as EventDataForSchema<S>;
-  }
-
-  if (index === 0) {
-    return {} as EventDataForSchema<S>;
-  }
-
-  const previous = events[index - 1]!;
-  const next = events[index];
-  if (!next || previous.begin() === next.begin()) {
-    return previous.data() as EventDataForSchema<S>;
-  }
-
-  const ratio = (t - previous.begin()) / (next.begin() - previous.begin());
-  const result: Record<string, unknown> = {};
-  const previousData = previous.data();
-  const nextData = next.data();
-
-  for (const column of valueColumns) {
-    const previousValue =
-      previousData[column.name as keyof typeof previousData];
-    const nextValue = nextData[column.name as keyof typeof nextData];
-
-    if (
-      column.kind === 'number' &&
-      typeof previousValue === 'number' &&
-      typeof nextValue === 'number'
-    ) {
-      result[column.name] = previousValue + (nextValue - previousValue) * ratio;
-      continue;
-    }
-
-    result[column.name] = previousValue;
-  }
-
-  return result as EventDataForSchema<S>;
 }
 
 /**

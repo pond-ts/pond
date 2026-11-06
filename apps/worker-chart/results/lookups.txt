@@ -1,0 +1,12 @@
+# node bench/lookups.mjs — 2026-11-01, Node v22.22.0, 4-core cloud container (Linux), pond-ts built from main at 607c4648
+
+1. atOrBefore, 600,000 rows (median of 400 lookups; 5 runs)
+   3750 batch(es) of 160: 73.5–80.0 µs
+    375 batch(es) of 1600: 11.0–14.6 µs
+     40 batch(es) of 15000: 4.9–5.4 µs
+      1 batch(es) of 600000: 3.9–4.2 µs
+
+2. pushSeries cost with lookups, 10k ticks/s, 60 s window (medians; 5 runs)
+  0 lookup(s) per push: pushSeries 0.005–0.007 ms
+  1 lookup(s) per push: pushSeries 0.128–0.184 ms, lookup 95–172 µs
+  2 lookup(s) per push: pushSeries 0.271–0.324 ms, lookup 110–141 µs
