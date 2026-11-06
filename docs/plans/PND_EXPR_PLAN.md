@@ -95,3 +95,33 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
   vs 9.7 ms, `map` 162 vs 2.3 ms.
 - Not in the JS bridge: live `filter` (the bridge has no `LiveSeries` until
   J2).
+
+## Maths in expressions (2026-11-05, for `@pond-ts/fit`)
+
+- Added `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow` (pond-ts, pond-rs, both
+  bridges, Python `**`). Wanted so fit can write haversine distance and the
+  normalized power 4th power as expressions, with no per-row callback, and
+  so run on pond-rs ([PND-SCANDATA]).
+- Gap rule unchanged: gap in, gap out; a non-finite result is a gap. `pow`
+  checks both sides first, because `NaN ** 0` (JS) and `powf(NaN, 0)` /
+  `powf(1, NaN)` (Rust) are 1.
+- **Decision (pjm17971, 2026-11-05): no bit-for-bit parity for these.**
+  pond-rs uses Rust std (`f64::sin` …, the system libm); V8 uses its own
+  fdlibm port, and the two can differ in the last digit. Documented in the
+  builders and the CHANGELOG; the parity cases carry a tolerance (1e-9 for
+  a hypotenuse, 1e-12 for trig). The fdlibm ports in pond-rs
+  `financial/kernels.rs` (log, log10, atan) were the alternative and were
+  not extended. Measured on a haversine over 1M rows: 99.6% identical,
+  largest relative difference 3.9e-16.
+- Considered and not done: compiling a whole tree into one JS function so it
+  runs as one loop. The column-at-a-time design costs one pass and one
+  array per step; a haversine (about 22 steps) over 36,000 rows takes about 6 ms
+  in pond-ts, 4 ms in `@pond-ts/rs` (wasm), 1 ms as a hand loop. Fine for
+  fit today; revisit if a consumer needs it.
+- Speed notes: the maths loops sit in their own functions (`math1`,
+  `math2`, `math2Scalar`) so each only sees a `Float64Array`; inside `walk`
+  they were slower (haversine at 3,600 rows 2.4 → 1.0 ms). `pow(x, 2)` runs
+  as `x * x`: same bits (V8's pow returns `x * x` for exponent 2; checked on
+  2M random values and pinned in a test) and cheaper: `sin().pow(2)` over
+  36,000 rows went 1.4 → 0.5 ms.
+  Other exponents pay V8's pow, about 48 ns a call.

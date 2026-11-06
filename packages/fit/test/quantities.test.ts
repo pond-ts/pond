@@ -8,6 +8,13 @@ import {
   Power,
   HeartRate,
   Cadence,
+  meters,
+  km,
+  miles,
+  yards,
+  seconds,
+  minutes,
+  hours,
 } from '../src/index.js';
 
 describe('Distance', () => {
@@ -102,5 +109,17 @@ describe('Power / HeartRate / Cadence', () => {
   it('HeartRate / Cadence are thin bpm / rpm wrappers', () => {
     expect(HeartRate.bpm(154).bpm).toBe(154);
     expect(Cadence.rpm(90).rpm).toBe(90);
+  });
+});
+
+describe('shorthands', () => {
+  it('are exported from the package', () => {
+    expect(meters(400).meters).toBe(400);
+    expect(km(5).meters).toBe(5000);
+    expect(miles(1).meters).toBeCloseTo(1609.344, 6);
+    expect(yards(25).meters).toBeCloseTo(22.86, 9);
+    expect(seconds(90).seconds).toBe(90);
+    expect(minutes(20).seconds).toBe(1200);
+    expect(hours(1).seconds).toBe(3600);
   });
 });

@@ -52,6 +52,10 @@ export type {
   ToArrowOptions,
 } from './batch/operators/to-arrow.js';
 export type { JsonColumn } from './batch/operators/to-columns.js';
+export type {
+  CumulativeAccumulator,
+  CumulativeChange,
+} from './batch/operators/cumulative.js';
 export { ValueSeries } from './batch/value-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';

@@ -114,6 +114,29 @@ Definition of done:
 
 ---
 
+## [PND-FITCLEAN] — stream gaps, channel times, the line to draw (part of [PND-FITESTELA])
+
+**Built.** From Estela's 2026-11-04 review, items 5–7. `null` samples: already
+read as gaps everywhere (`Number.isFinite(null)` is false), so this only
+documents and tests it; Estela's `withNaNGaps` copies can go. Channel
+`timeSeconds` filled where a bucket had no sample (Estela's
+`finiteChannelTimes`). `trackLine` hands out the open water swim's cleaned
+line (Estela read `prepared.cols.lat/lng` for it). Peter's direction the same
+day: `@pond-ts/fit` should be the API version of Estela's activity analysis;
+next in that wave are track outlines, stops and walk breaks with heart rate
+recovery, and lap groups by type and name.
+
+## [PND-FITOUTLINE] — track outlines (part of [PND-FITESTELA])
+
+**Built.** Estela's `packages/core/src/shape` moved as it was (same algorithm,
+same tests), so outlines Estela has already stored stay valid: an outline of
+at most N points (thin by index to 2,000, then Ramer–Douglas–Peucker with a
+searched tolerance), detail levels by metres, the encoded polyline format,
+and the usable-fix rule (finite, on the globe, not 0,0). The summary's own
+`polyline` keeps using the private metres-based `simplify` in the geo module,
+so summary output is unchanged; folding the two together is left for later.
+Estela keeps the 100-point size choice and storing the shape on its docs.
+
 ## [PND-FITPUB] — `@pond-ts/fit` first-publish pass
 
 **Status 2026-09-23:** `@pond-ts/fit` is now `private: false` and publishes
@@ -143,3 +166,176 @@ Context: [docs/rfcs/fit.md](../rfcs/fit.md),
 [docs/rfcs/geo.md](../rfcs/geo.md) §10–§13, estela's `docs/pond-friction.md`,
 and the estela section of
 [docs/archive/experiments-2026.md](../archive/experiments-2026.md).
+
+## [PND-FITCUT] — cutting a recording (part of [PND-FITESTELA])
+
+**Built.** `editRecording` (crop, split laps, join laps) with `RecordingEdit`,
+`isEmptyEdit`, `recordingSeconds`, `lapStartSeconds`, `editedLapStarts`, in
+`packages/fit/src/edit`. Lifted from Estela's `applyVersion`
+(`packages/core/src/version/index.ts`); Estela keeps what is its own: splitting
+an activity into several, the totals it stores with an edit, reading a stored
+edit back, and moving stretches between the two clocks. New here: cropping a
+swim keeps the lengths in the kept part and works the swim time out again from
+the new laps (the note under [PND-FITSWIM]). Not done: the edit works on the
+imported activity, not on an `Activity`; a split that falls inside a pool
+length is not moved to the length's edge.
+
+## [PND-FITSWIM] — swims (part of [PND-FITESTELA])
+
+**Shipped.** `ImportedActivity.swim` (`SwimData`, `SwimLength`), `activity.swim`,
+`swimMovingSeconds(laps)`; the summary's moving time is the swim time when an
+import carries one (finite and above 0), else the sample estimate. Lifted from
+Estela's `packages/core/src/swim/index.ts` and the general half of `fitSwim`
+(`packages/ingest/src/fit.ts`). Reading the pool and lengths from a FIT file
+comes with the readers. Not done: a range or lap inside a swim still takes its
+moving time from samples; per-length sections. Cropping a swim (the cutting
+step) will have to share the swim time out too.
+
+## [PND-FITFILES] — file readers (part of [PND-FITESTELA])
+
+**Shipped.** `@pond-ts/fit/files`: `parseFit` / `parseGpx` / `parseTcx` and
+the FIT helpers, from Estela's `packages/ingest` (fit.ts, gpx.ts, tcx.ts,
+recovery.ts). Decisions:
+
+- **A subpath entry, not `Activity.fromFit`.** The `fromStreams` comment
+  promised `fromFit` etc.; putting them on `Activity` would load the FIT
+  decoder for every consumer of the façade. `Activity.fromStreams(parseFit(b))`
+  is one line.
+- **`fit-file-parser` as a dependency** (MIT; pulls `buffer` for browsers).
+  Typed locally (`fitParser.ts`) so the published types don't lean on the
+  parser's `any`-typed ones or an ambient module declaration.
+- **Device names stay with the app.** The readers report what the file says
+  (`creator`: FIT maker + product number + product name; TCX / GPX creator
+  string). Estela's Garmin product → model-name table comes from the Garmin
+  FIT SDK profile under the FIT Protocol License, which is not MIT; keeping it
+  out of a public MIT package avoids the question. Estela keeps
+  `device.ts` + `fitProfile.data.ts` and names devices from `creator`.
+- **`'file'` source.** Estela stamped files `source: 'manual'`, the same as
+  hand-entered activities (its 2026-10 review flagged the double meaning).
+  The readers default to `'file'`; `options.source` keeps old behaviour.
+- **GPS lock included.** A FIT file keeps records with no fix as `null`
+  positions plus the watch's distance — Peter's call (2026-10-21), pairing
+  with #801. On Estela's real fixtures this is the only output change (27–45
+  records on three Garmin files).
+- **Fixtures are synthetic.** Estela's test files are real people's
+  activities and this repo is public, so the tests use FIT files written with
+  the Garmin FIT SDK (`test/fixtures/make-fit-fixtures.mjs`) and inline
+  GPX / TCX. The real-file checks stay in Estela, run against these readers.
+
+Not moved: Estela's Strava-export and RunningAhead readers, its ids, its
+device naming.
+
+## [PND-FITBREAKS] — stops, walk breaks, heart rate recovery (part of [PND-FITESTELA])
+
+**Built.** Estela's `recovery/breaks.ts` and the generic half of
+`recovery/index.ts`, ported to `packages/fit/src/recovery`. Same algorithm and
+constants; output identical to Estela's on its three real test runs (city
+stops, two run/walk runs), checked locally against Estela's copy and not
+committed (personal recordings). Pond's tests use made-up runs, including a
+run/walk with wavering walking pace in place of Estela's canal fixture.
+
+Changes from Estela's copy: `null` samples and fixes are accepted, and a
+sample with no distance (or no fix) is passed over, so a stretch of them is
+treated like a watch pause (unknown past 10 s) instead of reading as a stop
+(Estela's NaN case drew nothing; the first port read a 45 s gap as a 43 s
+stop, caught in review). `BREAKS_VERSION` is 3 so Estela finds stored breaks
+again. `breakTrend` sorts its input. GPS distance
+uses pond's `haversineMeters` (Earth radius 6,371,008.8 m vs Estela's
+6,371,000, about 1 part in a million). The Apple Watch record reader
+(`recoveryFromWatch`) stays in Estela since its record format is Estela's;
+its core is `recoveryFromReadings`. `recoverySummary` keeps any extra fields
+(Estela adds Apple's one-minute figure) and no longer returns undefined.
+`looksForBreaks` and `pastRecoveries` stay in Estela: both depend on its
+sport-family table. `RECOVERY_MAX_SECONDS` now lives here and the FIT reader
+imports it.
+
+## [PND-FITESTELA] — take Estela's general activity code into fit
+
+Estela's 2026-11-04 code review (estela-app/estela, project file
+`code-review/estela-review-2026-11-04.md`, §2–§3) found that the newest Estela
+features had grown a second copy of fit: the moving rule (0.5 m/s) written in
+four places, the 3 m climb rule, normalized power, haversine, and Estela's
+lap/segment stats reading `PreparedActivity`'s private columns. The work, in
+the review's order of value, one PR each:
+
+1. **[PND-FITSTATS] — section stats + public rules. Shipped** (this entry's
+   first PR). `Activity.stats` / `groupStats` / `bestAveragePower` /
+   `movingClock` (`src/stats/`), lifted from Estela's
+   `packages/core/src/interval/stats.ts`; `MOVING_SPEED_MPS`,
+   `CLIMB_THRESHOLD_METERS`, `movingTimeSeconds`, `elevationGainLoss`,
+   `normalizedPower`, `haversineMeters` exported; recorded laps carry NP.
+   Decisions: the stats live on `Activity`, not `Section` — a `Section` is a
+   metric bundle with no reference to the samples, and giving it one would
+   make every split and lap hold the whole activity. Any `{ fromSeconds,
+toSeconds }` is a span, so `activity.stats(lap)` takes a `Section` as it
+   is. Numbers are raw SI, not quantities: a stats bundle is ~40 numbers read
+   by tables, and wrapping each would cost more than it gives. Normalized
+   power reuses `normalizedPower` (pond rolling) on a moving clock; checked
+   bit-identical to Estela's own sample-window NP on its fixtures, so the
+   numbers on Estela's page don't move. The 5-sample running median on speed
+   (for first / last / min / max only) came across as is: one wide GPS fix
+   showed 188 mph on a real ride.
+2. **Swims** — pool length, every length with strokes and stroke type, and
+   moving time from the swum laps, so the summary's moving time is right for
+   a pool swim (Estela overrides it in three places today).
+3. **File readers** — FIT / GPX / TCX (`Activity.fromFit` etc., promised in
+   the `fromStreams` comment), FIT sport names, local start time, laps,
+   device names, Garmin's after-stop heart rate. Estela keeps its ids and the
+   Strava-export / RunningAhead readers.
+4. **Cutting a recording** — crop to `[from, to]`, split a lap at a second,
+   join two laps (Estela `packages/core/src/version/index.ts`; also copied
+   in Swift on its iPhone app).
+
+Not moving: `null` as a missing sample. The review thought pond read a JSON
+`null` as 0; `buildTrackFromStreams` already treats it as a gap, and NP,
+averages, zones, best efforts and channels came out identical with `null`
+and with `NaN` on 0.74 and on main. Estela can delete its two converters.
+moving time from samples; per-length sections. Cropping a swim is done in
+[PND-FITCUT].
+
+## [PND-FITLAPGROUPS] — lap groups by type and name (part of [PND-FITESTELA])
+
+**Built.** The grouping half of Estela's `ui/lapSummaryData.ts`: which laps go
+together and in what order (`groupLaps`), the lap-average combination for laps
+with no samples behind them (`summarizeLaps`), and a group's highest and
+lowest lap (`lapExtremes`). For laps with samples, `sectionGroupStats` (#883)
+gives the group numbers from the recording. Tests are Estela's, renamed.
+
+Changed on the way: a lap's type is a plain string (undefined or `''` for
+none), so the caller maps its own type list first (Estela reads a deleted or
+"default" type as none); group keys are JSON of type and name, so no type
+or name can make two groups share a key (Estela's `default` and `type/name`
+keys could, once types are free strings); repeated lap ids throw;
+`lapExtremes` returns `lowest`/`highest` + the lap, like `sectionGroupStats`; the summary fields are named for what they are
+(`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
+Estela: the column sets, narrowing steps and chart-channel mapping (display),
+and the user's interval type list with its colours.
+
+## [PND-FITAPI] — records, sections, analysis
+
+Design direction from pjm17971 (2026-11-04), recorded with a mapping to the
+code in [docs/rfcs/fit-api.md](../rfcs/fit-api.md). Written in reply to a
+walk-through of the API after the Estela extraction wave, which showed the
+newer pieces (stats, breaks, edits, outlines, swims) arriving as free
+functions rather than on the façade. Rather than adding them all as `Activity`
+methods (the walk-through's proposal), the direction splits the surface:
+`Activity` (the recording) and `Section` (any stretch) share one `stats()`
+contract, `Sections` aggregate laps and groups, `Analysis` applies athlete
+settings, and presentation moves to `@pond-ts/fit/views`.
+
+Next release: `readActivity`, `stats()` + sections, explicit clocks, typed
+pool swims. Decision taken with it: the current `Activity` methods are
+replaced, not deprecated beside the new ones (pre-1.0; Estela is the only
+known user and is switching). Open: moving rules per sport (RFC §12).
+
+**Built** (2026-11-05, PRs #892–#895, gathered on one integration branch for
+review): `readActivity`, `Activity` / `Section` / `Sections` with `stats()`,
+the clocks (timer from the file only; moving by sport rule; swimming and rest
+for swims), the typed pool swim (`PoolSwim`, lengths, rests, repeats,
+recoveries), and `section.analyze({ athlete })` with best efforts under
+`section.power` / `section.pace`. Decisions from review: cycling TSS for rides
+only (running and swimming load need their own models); pace zones from a
+5 km time for runs, walks and hikes only; TSS keeps elapsed seconds, as
+`computePower` did, until checked against real numbers. Not yet: `edit` in
+durations with parts (RFC §17), `views`, `explain`, and the sport depth in RFC
+§14–§16.

@@ -238,10 +238,9 @@ export function profileAsOf(
 
 /**
  * An athlete's settings resolved to a single activity date — the value object
- * an {@link import('../activity/index.js').Activity} is read against via
- * `activity.usingProfile(bob)`. Wraps the as-of resolution ({@link profileAsOf})
+ * an activity is read against. Wraps the as-of resolution ({@link profileAsOf})
  * and exposes the zone *ranges* (the per-channel {@link ZoneDef}s); the
- * per-activity *data* (time-in-zone) is the profiled activity's `by…Zone()`.
+ * per-activity *data* (time-in-zone) comes from the zones functions.
  *
  * Immutable; carries only athlete data, never an activity's evidence — so one
  * `Profile` is reused across every activity on its date.

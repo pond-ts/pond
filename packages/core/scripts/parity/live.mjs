@@ -530,6 +530,10 @@ const CASES = [
       node('m', 'fill', 'root', { cpu: 'hold', mem: 7 }, { limit: 1 }),
       node('c', 'cumulative', 'root', { cpu: 'sum', mem: 'max' }),
       node('c2', 'cumulative', 'root', { cpu: 'count', mem: 'min' }),
+      node('c3', 'cumulative', 'root', {
+        cpu: 'increase',
+        mem: { using: 'decrease', threshold: 2 },
+      }),
       ...each(ROWS),
     ],
   },

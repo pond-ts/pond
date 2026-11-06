@@ -298,7 +298,10 @@ impl PartitionedSeries {
     }
 
     /// [`TimeSeries::cumulative`] on each partition.
-    pub fn cumulative(&self, spec: &[(&str, Reducer)]) -> Result<PartitionedSeries> {
+    pub fn cumulative<C: Into<crate::Cumulative> + Copy + Sync>(
+        &self,
+        spec: &[(&str, C)],
+    ) -> Result<PartitionedSeries> {
         self.map(|g| g.cumulative(spec))
     }
 

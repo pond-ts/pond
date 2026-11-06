@@ -1,0 +1,176 @@
+---
+title: Stats
+sidebar_position: 4
+description: The one stats() answer every activity, lap, split and stretch gives, and what null means in it.
+---
+
+# Stats
+
+`stats()` is the one question every activity, lap, split and stretch answers,
+and the answer always has the same shape. Related numbers sit together:
+`stats.heartRate.average` and `stats.heartRate.max`, `stats.time.elapsed` and
+`stats.time.moving`.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const s = ride.stats();
+
+console.log('basis   ', s.basis);
+console.log('distance', s.distance?.format('km'));
+console.log(
+  'time    ',
+  s.time.elapsed?.format(),
+  s.time.moving?.format(),
+  s.time.timer?.format(),
+);
+console.log(
+  'speed   ',
+  s.speed.average?.format('metric'),
+  'max',
+  s.speed.max?.format('metric'),
+);
+console.log(
+  'heart   ',
+  s.heartRate.average?.format(),
+  s.heartRate.min?.format(),
+  s.heartRate.max?.format(),
+);
+console.log(
+  'power   ',
+  s.power.average?.format(),
+  s.power.max?.format(),
+  s.power.normalized?.format(),
+);
+console.log('cadence ', s.cadence.average?.format(), s.cadence.max?.format());
+console.log(
+  'climbing',
+  s.elevation.gain?.format('m'),
+  s.elevation.loss?.format('m'),
+);
+console.log(
+  'height  ',
+  s.elevation.min?.format('m'),
+  s.elevation.max?.format('m'),
+);
+```
+
+```text output
+basis    elapsed
+distance 44.96 km
+time     1:39:54 1:33:11 1:33:54
+speed    27.0 km/h max 54.5 km/h
+heart    133 bpm 65 bpm 181 bpm
+power    190 W 379 W 228 W
+cadence  74 rpm 96 rpm
+climbing 597 m 595 m
+height   416 m 719 m
+```
+
+The full shape:
+
+```ts norun
+interface Stats {
+  basis: 'elapsed' | 'moving' | 'timer' | 'swimming';
+  distance: Distance | null;
+  time: { elapsed; moving; timer; swimming; rest }; // each Duration | null
+  pace: { average: Pace | null };
+  speed: { average: Speed | null; max: Speed | null };
+  heartRate: { average; min; max }; // HeartRate | null
+  power: { average; max; normalized }; // Power | null
+  cadence: { average; max }; // Cadence | null
+  elevation: { gain; loss; min; max }; // Elevation | null
+}
+```
+
+## Null means "not known"; zero means zero
+
+A number is `null` when the recording can't tell it: the channel wasn't
+recorded, or the clock it needs isn't known. The run has no power meter, so
+its power is `null`; it isn't a swim, so it has no swimming time:
+
+```ts
+const run = readActivity(readFileSync('interval-run.fit'));
+const r = run.stats();
+console.log(r.power.average, r.power.normalized, r.cadence.average);
+console.log(r.time.swimming, r.time.rest);
+```
+
+```text output
+null null null
+null null
+```
+
+A real zero stays a zero. The ride coasts down both descents, and those
+seconds count as 0 W in its average power. Its 15-second power meter dropout,
+on the other hand, is missing, and isn't counted at all.
+
+## How each number is made
+
+- **Distance and time** run between the stretch's own ends. A split from 1 km
+  to 2 km measures exactly 1 km, even though no sample falls exactly on either
+  end.
+- **Average speed and pace** are distance over time, not a mean of the
+  per-second speeds.
+- **Heart rate, power and cadence** come from the samples inside the stretch.
+  Their averages are means of the samples recorded, gaps left out.
+- **Max speed** ignores a single wild GPS fix: it is taken from speed with
+  one- and two-sample jumps smoothed out.
+- **Normalized power** is the usual 30-second method; see
+  [Normalized power and training stress](./guides/normalized-power).
+- **Climbing** counts a rise only once it reaches 3 m, so GPS and barometer
+  wobble don't add up to hills that aren't there.
+
+## Another clock
+
+`stats()` uses elapsed time unless you ask for another clock. On the moving
+clock, the time and the numbers that depend on it (pace, speed, the channel
+averages) leave out the time stopped:
+
+```ts
+const moving = ride.stats({ time: 'moving' });
+console.log(moving.basis, moving.time.moving?.format());
+console.log(
+  s.speed.average?.format('metric'),
+  '→',
+  moving.speed.average?.format('metric'),
+);
+console.log(s.power.average?.format(), '→', moving.power.average?.format());
+```
+
+```text output
+moving 1:33:11
+27.0 km/h → 29.0 km/h
+190 W → 192 W
+```
+
+The `time` clocks are all there whichever basis you pick; the basis says which
+one the rest of the answer was worked out on. [Clocks](./clocks) has the
+details.
+
+## Laps, splits and stretches
+
+Each answers the same `stats()`:
+
+```ts
+for (const lap of ride.laps)
+  console.log(
+    lap.label,
+    lap.stats().distance?.format('km', 1),
+    lap.stats().time.elapsed?.format(),
+    lap.stats().power.average?.format(),
+  );
+```
+
+```text output
+Lap 1 10.0 km 21:46 181 W
+Lap 2 10.0 km 22:02 186 W
+Lap 3 10.0 km 27:50 227 W
+Lap 4 10.0 km 18:35 179 W
+Lap 5 5.0 km 9:41 158 W
+```
+
+A collection of them (`ride.laps`, a lap group) has `stats()` too, worked out
+over its members only. See [Sections](./sections).

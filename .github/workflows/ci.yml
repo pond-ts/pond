@@ -177,7 +177,8 @@ jobs:
   # one abi3 wheel for Python 3.9+, tested on the oldest and newest Python,
   # through the same core parity fixture the Rust crate passes.
   python:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is now 26.04, where setup-python has no 3.9.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ['3.9', '3.13']
@@ -246,6 +247,13 @@ jobs:
       - name: Install website dependencies
         working-directory: website
         run: npm ci
+
+      - name: Check the fit guide examples
+        # Runs every TypeScript example on the @pond-ts/fit pages and checks
+        # it prints what the page shows. The Python examples need a pond_rs
+        # build, so they're checked by hand (see scripts/check-fit-guides.mts).
+        working-directory: website
+        run: npm run check:fit-guides -- --no-python
 
       - name: Build website
         # `prebuild` runs the TypeDoc API passes — the step that actually

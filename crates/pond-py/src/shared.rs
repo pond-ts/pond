@@ -4,7 +4,7 @@
 
 use pond_rs::{
     Agg, Align, AlignMethod, Change, Fill, FillLimits, FirstRow, Keep, Materialize,
-    PartitionedSeries, Pick, Reducer, Rolling, RollingOver, Sample, Sequence, Smooth, TimeSeries,
+    PartitionedSeries, Pick, Rolling, RollingOver, Sample, Sequence, Smooth, TimeSeries,
 };
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -29,7 +29,7 @@ pub trait Ops: Sized + Sync {
     fn rate_with(&self, c: &[&str], o: Change) -> pond_rs::Result<Self>;
     fn pct_change_with(&self, c: &[&str], o: Change) -> pond_rs::Result<Self>;
     fn shift(&self, c: &[&str], n: i64) -> pond_rs::Result<Self>;
-    fn cumulative(&self, spec: &[(&str, Reducer)]) -> pond_rs::Result<Self>;
+    fn cumulative(&self, spec: &[(&str, pond_rs::Cumulative)]) -> pond_rs::Result<Self>;
     fn fill_with(&self, spec: &[(&str, Fill)], l: &FillLimits) -> pond_rs::Result<Self>;
     fn fill_all_with(&self, f: Fill, l: &FillLimits) -> pond_rs::Result<Self>;
     fn align(&self, s: &Sequence, o: Align) -> pond_rs::Result<Self>;
@@ -90,7 +90,7 @@ macro_rules! impl_ops {
             fn shift(&self, c: &[&str], n: i64) -> pond_rs::Result<Self> {
                 <$t>::shift(self, c, n)
             }
-            fn cumulative(&self, spec: &[(&str, Reducer)]) -> pond_rs::Result<Self> {
+            fn cumulative(&self, spec: &[(&str, pond_rs::Cumulative)]) -> pond_rs::Result<Self> {
                 <$t>::cumulative(self, spec)
             }
             fn fill_with(&self, spec: &[(&str, Fill)], l: &FillLimits) -> pond_rs::Result<Self> {
@@ -512,10 +512,11 @@ macro_rules! shared_methods {
                     .map(Self::wrap).map_err(crate::convert::err)
             }
 
-            /// Running reductions: `{"cpu": "sum"}`.
+            /// Running reductions: `{"cpu": "sum"}`, `{"ele": "increase"}`,
+            /// `{"ele": {"using": "increase", "threshold": 3}}`.
             fn cumulative(&self, py: Python<'_>, spec: &Bound<'_, PyAny>) -> PyResult<Self> {
                 let spec = crate::convert::column_reducers(spec)?;
-                let spec: Vec<(&str, pond_rs::Reducer)> = spec.iter().map(|(c, r)| (c.as_str(), *r)).collect();
+                let spec: Vec<(&str, pond_rs::Cumulative)> = spec.iter().map(|(c, r)| (c.as_str(), *r)).collect();
                 let inner = &*self.inner;
                 py.detach(|| crate::shared::Ops::cumulative(inner, &spec))
                     .map(Self::wrap).map_err(crate::convert::err)
