@@ -640,7 +640,9 @@ values, as `map` does.
 `slice(range)` picks rows by position, with negative positions counting
 from the end, as JavaScript's `slice` does. `filter(closure)` keeps the rows
 for which the closure returns `Ok(true)`; the closure gets a `Row` and can
-use `?` on its lookups.
+use `?` on its lookups. `filter_expr(&col("load").gt(0.5))` does the same
+with an [expression](../pond-ts/transforms/expressions), the rule written
+as data, as pond-ts writes it.
 
 ```rust
 use pond_rs::{Column, TimeSeries};

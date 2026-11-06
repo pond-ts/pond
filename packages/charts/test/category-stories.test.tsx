@@ -28,6 +28,7 @@ describe('CategoryAxis stories render', () => {
       'CrowdedLabels',
       'HighCardinality',
       'HorizontalFunnel',
+      'KeyedLabels',
       'MaxBandWidth',
       'NineAccountNames',
       'Select',

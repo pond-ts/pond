@@ -136,7 +136,7 @@ class Sequence:
     def every(step: Duration, *, anchor: Optional[Time] = None) -> Sequence: ...
     @staticmethod
     def calendar(
-        unit: Literal["minute", "hour", "day", "week", "month", "quarter", "year"],
+        unit: Literal["day", "week", "month", "quarter", "year"],
         time_zone: str = "UTC",
         *,
         week_starts_on: Optional[int] = None,

@@ -468,3 +468,29 @@ function concatArrayColumns<S extends ColumnSchema>(
   }
   return new ChunkedArrayColumn(chunks);
 }
+
+/**
+ * One value column of every store, end to end, as a zero-copy chunked
+ * column (no disjointness check — the caller only reads it by row number,
+ * e.g. to gather a merge of the stores). Requires at least one row overall.
+ */
+export function concatValueColumn<S extends ColumnSchema>(
+  stores: ReadonlyArray<ColumnarStore<S>>,
+  name: string,
+  kind: string,
+): Column {
+  switch (kind) {
+    case 'number':
+      return concatNumberColumns(stores, name);
+    case 'boolean':
+      return concatBooleanColumns(stores, name);
+    case 'string':
+      return concatStringColumns(stores, name);
+    case 'array':
+      return concatArrayColumns(stores, name);
+    default:
+      throw new TypeError(
+        `concatValueColumn: column '${name}' has unsupported kind '${kind}'`,
+      );
+  }
+}

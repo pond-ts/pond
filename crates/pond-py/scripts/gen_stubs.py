@@ -107,7 +107,7 @@ def block() -> str:
 
 
 def main() -> int:
-    stub = STUB.read_text()
+    stub = STUB.read_text(encoding="utf-8")
     a = stub.index(BEGIN) + len(BEGIN)
     b = stub.index(END)
     new = stub[:a] + block() + stub[b:]
@@ -116,7 +116,7 @@ def main() -> int:
             print("pond_rs.pyi study methods are out of date: run python scripts/gen_stubs.py")
             return 1
         return 0
-    STUB.write_text(new)
+    STUB.write_text(new, encoding="utf-8")
     return 0
 
 

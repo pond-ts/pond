@@ -86,6 +86,8 @@ assert.doesNotMatch(
 assert.match(index, /^## Optional$/m);
 assert.match(index, /docs\/agents\/USING_POND\.md/);
 assert.match(index, /API\.md/);
+assert.match(index, /TypeScript or Rust/);
+assert.match(index, /docs\.rs\/pond-rs/);
 
 // Fallback path — no docs plugin content → bare route list, build still succeeds.
 const fallback = collectDocs(
@@ -110,6 +112,11 @@ assert.equal(
   'Typed time-series primitives.',
 );
 assert.equal(oneLine('<Hero />\nA line.'), 'A line.');
+assert.equal(
+  oneLine('Split with _partition_by_ or partition_by.'),
+  'Split with partition_by or partition_by.',
+  'emphasis underscores go, underscores inside a name stay',
+);
 assert.match(oneLine('word '.repeat(80)), /…$/);
 const src = `---
 title: Rolling

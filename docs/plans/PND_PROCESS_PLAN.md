@@ -724,6 +724,47 @@ columnar path regardless.
 **Done when:** a cross-source spec resolves, caches, and explains like any
 other, with the join policy visible in its id.
 
+**Outcome (shipped, wave "Path to 1.0").** `bind({ KEY: series, … },
+{ registry, join })` — n source nodes feed **one join node** (a real
+`derive`, so it memoizes and `Graph.from` finds it), which emits one aligned
+series with `KEY:column` columns. Everything above it is the ordinary
+single-series `BoundGraph`, which is why no op, fold, `run` or slot code
+changed. Decisions, with the reasoning:
+
+- **The policy lives on the binding, and its id is the join's id**
+  (`p1:join(AAPL+MSFT;how=inner)`, `graph.join.id`), not inside every spec
+  id. The aligned row base is a property of the binding, not of one spec —
+  under inner, even `sma(AAPL:close)` changes when MSFT gains a session —
+  and spec ids were already scoped to their binding. Folding the policy into
+  each spec id would have suggested two policies could coexist in one
+  graph, which would need two row bases. The prototype's
+  `ratio(…;how=inner)` sketch was rejected for that reason.
+- **No default policy.** `inner` or `asof` + an explicit `base`; omitting
+  either throws. A defaulted `base` (first record key) was rejected for the
+  same reason as a defaulted `how`.
+- **Inner rejects a repeated timestamp** rather than picking a partner.
+  As-of is row-wise (pandas `merge_asof`): the latest row at or before the
+  base key, missing before a source's first row.
+- **Per-source invalidation (Tidal's ask)** without an engine change: the
+  join stamps each source when its aligned columns moved (its own data, or
+  the shared key base), and a node whose raw-input stamps and nested inputs
+  are all unchanged hands back its previous output objects, which the
+  outlets' `Object.is` sees as no change. Measured (`scripts/perf-join.mjs`,
+  2 legs × 5 SMAs, 100k rows, compare-leg tick): joined inner 22.3 ms vs the
+  hand-joined single-binding workaround 31.9 ms; as-of 17.5 vs 31.8. The
+  join alone re-aligns in 6.2 ms (O(Σ rows) pointer walk + gather; the key
+  read is zero-copy off `TimeKeyColumn.begin`).
+- **Binding keys are host names** (`primary`, `compare`), never data
+  identities — Tidal's §6 holds as long as callers keep it that way.
+
+**Not done, deliberately:** `setSourceFrom` on a joined binding throws
+(a source row is not an aligned row; translating the claim is its own
+ticket). `Host`/`Envelope.from` does not accept a joined binding yet — the
+array-`from` widening the host comment anticipates is the next step. The
+multi-input **unit rule** Tidal raised (§2: `'inherit'` reads input 0, so
+`diff` of mismatched units silently carries one) is untouched and wants its
+own ticket.
+
 ---
 
 ### [PND-PROCHIST] — `requiredHistory(plan)`

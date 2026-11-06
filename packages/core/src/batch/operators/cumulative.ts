@@ -17,10 +17,117 @@ export type CumulativeReducer =
   | 'max'
   | 'min'
   | 'count'
+  | 'increase'
+  | 'decrease'
   | ((acc: number, value: number) => number);
 
+/**
+ * `increase` / `decrease` with a threshold: a change counts only once the
+ * value has moved at least `threshold` from the last value that counted
+ * (in either direction). `threshold: 0`, the default, counts every rise
+ * (or every fall) between consecutive values.
+ */
+export type CumulativeChange = {
+  readonly using: 'increase' | 'decrease';
+  readonly threshold?: number;
+};
+
+/** One column's entry in a `cumulative` spec. */
+export type CumulativeAccumulator = CumulativeReducer | CumulativeChange;
+
+/**
+ * The running rises (`increase`) or falls (`decrease`) of a column, as a
+ * stateful step: feed each defined value, read the running total.
+ *
+ * The first value sets the reference point and the total starts at 0.
+ * After that, `d = value − reference`: when `d >= threshold` the rise `d`
+ * is added to the increase total and the reference moves to `value`; when
+ * `d <= −threshold` the fall `−d` is added to the decrease total and the
+ * reference moves. A smaller change leaves both alone, so slow drift is
+ * still counted once it adds up to the threshold. Both directions share
+ * one reference point, so `increase − decrease` is always the last
+ * reference minus the first value.
+ */
+export class ChangeFold {
+  #ref = NaN;
+  #up = 0;
+  #down = 0;
+  readonly #threshold: number;
+  readonly #increase: boolean;
+
+  constructor(direction: 'increase' | 'decrease', threshold: number) {
+    this.#increase = direction === 'increase';
+    this.#threshold = threshold;
+  }
+
+  /** Feed one defined (finite) value; returns the running total. */
+  step(v: number): number {
+    const ref = this.#ref;
+    if (ref !== ref) {
+      this.#ref = v;
+    } else {
+      const d = v - ref;
+      if (d >= this.#threshold) {
+        this.#up += d;
+        this.#ref = v;
+      } else if (d <= -this.#threshold) {
+        this.#down -= d;
+        this.#ref = v;
+      }
+    }
+    return this.#increase ? this.#up : this.#down;
+  }
+}
+
+/**
+ * Normalize a `cumulative` spec value: an `increase` / `decrease` entry
+ * (either form) becomes `{ change, threshold }`, anything else is
+ * returned as the plain reducer. Throws on an unknown name or a bad
+ * threshold.
+ */
+export function resolveCumulative(
+  column: string,
+  spec: CumulativeAccumulator,
+):
+  | { readonly change: 'increase' | 'decrease'; readonly threshold: number }
+  | { readonly change: null; readonly reducer: CumulativeReducer } {
+  if (spec === 'increase' || spec === 'decrease') {
+    return { change: spec, threshold: 0 };
+  }
+  if (typeof spec === 'object' && spec !== null) {
+    const { using, threshold = 0 } = spec;
+    if (using !== 'increase' && using !== 'decrease') {
+      throw new TypeError(
+        `cumulative: column '${column}': { using } takes 'increase' or 'decrease', got ${String(using)}`,
+      );
+    }
+    if (
+      typeof threshold !== 'number' ||
+      !Number.isFinite(threshold) ||
+      threshold < 0
+    ) {
+      throw new RangeError(
+        `cumulative: column '${column}': threshold must be a finite number >= 0, got ${String(threshold)}`,
+      );
+    }
+    return { change: using, threshold };
+  }
+  if (
+    typeof spec !== 'function' &&
+    spec !== 'sum' &&
+    spec !== 'max' &&
+    spec !== 'min' &&
+    spec !== 'count'
+  ) {
+    throw new TypeError(
+      `cumulative: column '${column}': unknown accumulator ${JSON.stringify(spec)}`,
+    );
+  }
+  return { change: null, reducer: spec };
+}
+
 function buildApply(
-  reducer: CumulativeReducer,
+  reducer: Exclude<CumulativeReducer, 'increase' | 'decrease'>,
 ): (acc: number | undefined, value: number) => number {
   if (typeof reducer === 'function') {
     return (acc, v) => (acc === undefined ? v : reducer(acc, v));
@@ -79,7 +186,7 @@ export function cumulativeOp<
 >(
   store: ColumnarStore<S>,
   schema: S,
-  spec: Readonly<Record<string, CumulativeReducer>>,
+  spec: Readonly<Record<string, CumulativeAccumulator>>,
 ): { store: ColumnarStore<OutSchema>; schema: OutSchema } {
   const entries = Object.entries(spec);
   if (entries.length === 0) {
@@ -96,8 +203,52 @@ export function cumulativeOp<
 
   const n = store.length;
   let result = store as unknown as ColumnarStore<ColumnSchema>;
-  for (const [name, reducer] of entries) {
+  for (const [name, entry] of entries) {
     const col: Column = store.columns.get(name)!;
+    const resolved = resolveCumulative(name, entry);
+
+    if (resolved.change !== null) {
+      // `increase` / `decrease`: one loop over the values (a missing cell
+      // is `NaN` — [PND-NANREP]), carrying the total over gaps.
+      const packed = packedNumericSource(col);
+      const values =
+        packed !== null
+          ? packed.values
+          : Float64Array.from({ length: n }, (_, i) => {
+              const raw = col.read(i);
+              return typeof raw === 'number' ? raw : NaN;
+            });
+      const out = new NumericOutput(n);
+      const up = resolved.change === 'increase';
+      const threshold = resolved.threshold;
+      let ref = NaN;
+      let total = 0;
+      for (let i = 0; i < n; i += 1) {
+        const v = values[i]!;
+        if (v - v === 0) {
+          // Inlined `ChangeFold.step`, keeping only this direction's total.
+          if (ref !== ref) ref = v;
+          else {
+            const d = v - ref;
+            if (d >= threshold) {
+              if (up) total += d;
+              ref = v;
+            } else if (d <= -threshold) {
+              if (!up) total -= d;
+              ref = v;
+            }
+          }
+        }
+        if (ref === ref) out.set(i, total);
+      }
+      result = withColumnReplaced(result, name, out.finish());
+      continue;
+    }
+
+    const reducer = resolved.reducer as Exclude<
+      CumulativeReducer,
+      'increase' | 'decrease'
+    >;
     const apply = buildApply(reducer);
 
     // Unboxed path — [PND-BOXFREE]. Walks the source's `Float64Array`

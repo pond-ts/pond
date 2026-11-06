@@ -80,6 +80,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`cumulative` takes `'increase'` and `'decrease'`** ([PND-SCANDATA]):
+  the running total of rises (or falls) between values. With
+  `{ using: 'increase', threshold: 3 }` a change counts only once the value
+  has moved at least 3 from the last value that counted, in either
+  direction, so small wiggles are ignored but slow drift still adds up.
+  Elevation gain with a 3 m dead band is
+  `track.cumulative({ ele: { using: 'increase', threshold: 3 } })`, with no
+  step function. On `TimeSeries`, `partitionBy`, `LiveSeries` and live
+  views, and in pond-rs (`Cumulative::increase().threshold(3.0)`; the
+  `@pond-ts/rs` and Python bridges take the same spec as pond-ts). Through
+  `@pond-ts/rs` it runs about 65× faster than the same rule as a `scan`
+  step (0.15 against 10 ms on 36,000 rows). The spec types are exported as
+  `CumulativeAccumulator` and `CumulativeChange`.
+
+- **`@pond-ts/fit`: series, route, edits, explain and views** ([PND-FITAPI],
+  RFC §8–§10, §17). `section.series.heartRate` (also `power`, `cadence`,
+  `speed`, `elevation`, `distance`) gives a channel's samples on the
+  activity's clock as a `Measured` (`at`, `times`, `values`, gaps as
+  `null`), with `toTimeSeries()` as the explicit way down to pond.
+  `activity.route` is the line and its bounds (null with no GPS).
+  `activity.edit({ crop, laps: { splitAt, removeBoundaryAt }, parts })`
+  takes durations on the original recording and returns a new activity
+  with `original`, `appliedEdit`, `changes`, `parts`, and `toOriginal` /
+  `fromOriginal` to move a stretch between the edited clock and the
+  original's; editing an edited activity starts again from the original.
+  `activity.explain('distance' | 'elapsed' | 'moving' | …)` gives the
+  source, method, coverage and edits behind a number. New entry point
+  `@pond-ts/fit/views`: `chartData(section, options)` (a pond series over
+  time or distance, for `@pond-ts/charts`) and `mapData(route, options)`.
+
 - **`live.on('columns', (batch) => …)`** ([PND-COLOUT]): fires once per push
   with just the rows that push added, as a `TimeSeries`, so a listener can
   read whole columns (`batch.column('cpu')`, `keyColumn()`, `toColumns()`)
@@ -122,6 +152,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   (`packages/core/scripts/perf-expr-maths.mjs`).
 
 ### Changed
+
+- **`cumulative` refuses an unknown accumulator name** ([PND-SCANDATA]).
+  Batch used to fail with an unhelpful error and live `cumulative` used to
+  pass the column through unchanged; both now throw a `TypeError` naming
+  the column. In pond-rs, `cumulative` is now generic over
+  `Into<Cumulative>`: specs of `Reducer`s compile as before, but an empty
+  literal (`cumulative(&[])`) or the method used as a function value now
+  needs the type spelled out.
 
 - **`rolling` by duration is 2–7× faster** ([PND-ROLLTIME]). A
   duration window (`rolling('30s', …)`, any alignment) with built-in
@@ -381,6 +419,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   `null`, since JSON has no `NaN`). It already read that way; nothing
   changes but the guarantee.
 
+- **pond_rs type hints:** `Sequence.calendar` no longer lists `"minute"` /
+  `"hour"`, which it refuses; use a step such as `"1h"`.
 - **`live.window()` no longer slows down as the window grows.** A window view
   (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
   aggregations) dropped its oldest event by shifting its whole list of events,
@@ -516,6 +556,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   are safe and wait with Python's lock released. Checked by pytest against
   pond-ts's live parity fixture (all 70 cases, every output and final
   state).
+- **pond-rs for Python on PyPI** (bridge step P3). Every `v*` tag now
+  publishes `pond-rs` to PyPI with pond-ts's version (`pip install pond-rs`,
+  `import pond_rs`): abi3 wheels for Linux x86-64 and aarch64 (manylinux
+  2014), macOS x86-64 and arm64 and Windows x86-64, plus an sdist. Each
+  wheel is tested with the pytest parity suite on its own platform before
+  upload. New docs page [Python (pond_rs)](https://pond-ts.org/docs/pond-rs/python):
+  install, frames in and out with polars / pandas / pyarrow, rolling,
+  `partition_by`, calendar buckets, studies and `LiveSeries`.
 - **pond-rs: `LiveSeries::push_series`** pushes a batch `TimeSeries` as one
   batch, for data that already comes in columns (an Arrow chunk, a JSON
   read). Same rules and outputs as `push_many` of the same rows: the series
@@ -632,6 +680,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   of 1,000) 39 vs 111, `push` into a 1-minute rolling average plus
   1-minute buckets 570 vs 2943, the same with a listener on every rolling
   update 1338 vs 2647.
+- **`@pond-ts/rs` is published, for Node and browsers** ([PND-RUST-R4]
+  step J3). `npm install @pond-ts/rs`: pond-rs compiled to WebAssembly with
+  pond-ts's method names, released with pond-ts on every `v*` tag at the
+  same version. One import for both: Node (20+) reads the `.wasm` file
+  synchronously; browsers and bundlers fetch it with a top-level `await`
+  (picked by the `node` export condition), so the API is the same and
+  nothing has to be initialised. Vite needs `build.target: 'es2022'` and
+  `optimizeDeps.exclude: ['@pond-ts/rs']`; esbuild users copy the `.wasm`
+  next to the bundle. Under a CSP of `script-src 'self'
+'wasm-unsafe-eval'` everything works, `toJSON()` through its plain-loop
+  fallback. Checked in headless Chromium against the Node build, with and
+  without that CSP. 7.5 MB `.wasm`, 1.39 MB with brotli. Docs: a
+  JavaScript tab on the pond-rs pages, a "From JavaScript" page and a
+  speed table against pond-ts. Needs Node 20.19 or newer. No TypeScript
+  declarations yet (planned); `declare module '@pond-ts/rs'` meanwhile.
 
 ### Changed
 
@@ -816,6 +879,45 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/charts`: category key, separate from its label** ([PND-CATID]).
+  `CategoryDatum` / `CategoryStackDatum` take an optional `key` (default:
+  `label`). The key is the category's identity: it is the slot, the bar's
+  `mark` and `SelectInfo.mark`, and it is what the controlled `selected` echo
+  matches. The axis, readouts and `SelectInfo.label` show the `label`. Two
+  categories that render the same string no longer merge into one mark, and
+  shortening or localizing a label no longer changes what a selection means.
+  `<ChartContainer categories>` also accepts `{ key, label }` entries
+  (`CategoryEntry`). Agreement with a category layer is checked on keys. An
+  entry's label wins over the layer's; a bare-string entry keeps the layer's
+  label. `ScaleBand` gains `key(v)`,
+  and `useChartFrame().bands` gains `keys` / `ChartBand.key`. Lists without
+  keys build the exact same series as before. **Semantics shift for keyed
+  lists only:** `SelectInfo.label` on a keyed categorical bar is now the
+  display label, where it used to equal `mark`.
+
+- **`@pond-ts/fit`: `Track.simplify(tolerance)`** ([PND-FITPUB]). The
+  Douglas–Peucker thinning behind `summary().polyline`, now reachable for a
+  bare polyline: `Track.of(points).simplify(Distance.meters(12))` returns a
+  `Track`. This settles fit's first-publish export pass: `elevationProfile`,
+  `profileByDistance` and `rollingSpread` stay internal (their output is
+  `summary().channels` / `activity.windowChannels()`), and the unit-preference
+  system (`UnitPreferences`, `DEFAULT_UNITS`, `*UnitLabel`) stays in fit rather
+  than moving onto `Profile`.
+
+- **`@pond-ts/process`: join several sources in one graph** ([PND-PROCJOIN]).
+  `bind({ AAPL: a, MSFT: b }, { registry, join: { how: 'inner' } })` puts n
+  sources behind one join node and exposes one aligned series whose columns
+  are `KEY:column`, so a spread or ratio is an ordinary spec —
+  `{ op: 'ratio', inputs: ['AAPL:close', 'MSFT:close'] }` — with an id, a
+  cache and `explain`. The policy is required (`inner`, or `asof` onto a
+  named `base`) because the two give different answers; it is in the join's
+  id, `graph.join.id` (`p1:join(AAPL+MSFT;how=inner)`). `setSource(key,
+series)` replaces one source, and only nodes reading it recompute — the
+  other leg's nodes hand back their previous columns unchanged (unless an
+  inner join's shared timestamps moved). Sources must be `time`-keyed with
+  number/string columns; `setSourceFrom` is not supported on a joined
+  binding; `Host` does not take joined bindings yet.
+
 - **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
   annotation draws at 0.4 alpha, which was too loud for a focus tint behind
   data and too quiet for a mark that carries the chart's point, so consumers
@@ -854,6 +956,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   1000 hosts with a fused rolling attached: 19-29% faster
   (`scripts/perf-partition-rolling.mjs`).
 
+- **`@pond-ts/charts`: a mounted `<XAxis>` replaces the container's implicit
+  x-axis strip** ([PND-XAXISOWN]). `<ChartContainer>` used to draw its own
+  strip whatever the declaration said, so mounting an `<XAxis>` (or
+  `<TimeAxis>` / `<CategoryAxis>`) drew two unless you also passed
+  `showAxis={false}`. A declared axis now stands the implicit one down.
+  `showAxis` still overrides: `false` hides the implicit strip, and `true`
+  keeps it alongside a declared axis, with a dev warning. Charts already
+  passing `showAxis={false}` are unchanged. A chart that relied on the default
+  to draw a second strip next to its own `<XAxis>` must now pass `showAxis`.
+
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
   to emit from a microtask, so several `push()` calls with no `await` between
   them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output
@@ -885,6 +997,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`TimeSeries.concat` merges its sorted inputs on the key columns**
+  ([PND-CONCATSORT]) instead of sorting every input's `Event`s and
+  rebuilding the store from them. Every partitioned operation's
+  `collect()` goes through it. Same order (begin, then end, ties in input
+  order; interval labels are not compared, as before), same `Event`
+  identity. `partitionBy('symbol').diff('close').collect()` over 500
+  symbols × 1000 rows: 726 → 151 ms; partitioned `align` over 4 hosts:
+  2.3 s → 82 ms. One case is slower: 100k one-row inputs whose events were
+  already built, 36–53 → ~70 ms. A concat result now keeps its inputs'
+  column storage alive while it lives (it hands back their `Event`s), as
+  `dedupe` and `filter` results already do.
 - **`smooth` (`movingAverage`, `loess`), `baseline`, `outliers` and
   `sample({ stride })` work on columns** ([PND-SMOOTHSLOW]) instead of
   building an `Event` per row and rebuilding the series from rows. Same

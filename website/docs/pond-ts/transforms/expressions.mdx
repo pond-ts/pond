@@ -1,0 +1,594 @@
+---
+sidebar_position: 10
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Expressions
+
+Many methods take a function that runs once per row:
+`filter((e) => e.get('cpu') > 0.5)`. An **expression** says the same
+thing as data instead: `col('cpu').gt(0.5)`. Because pond can read an
+expression, it runs it over whole columns at once rather than calling a
+function for every row. That is usually faster, and an expression can be
+saved or sent as plain JSON, which a function can't.
+
+Functions still work everywhere they did. Use an expression when the rule
+is simple (compare, combine, do arithmetic, pick between two values), and
+a function for anything else.
+
+:::note Coming in the next release
+Expressions are on `main` but not yet in a published package: pond-ts
+0.75.0 and pond-rs 0.1.0 don't have them. The Python package (`pond_rs`,
+built from `crates/pond-py`) isn't on PyPI yet.
+:::
+
+## Building an expression
+
+Three functions start one:
+
+- `col('cpu')`: the value of column `cpu` in each row.
+- `lit(1)`: a fixed value. Plain values are wrapped for you
+  (`col('cpu').gt(0.5)`), so you only need `lit` when the fixed value comes
+  first: `lit(1).sub(col('cpu'))`.
+- `when(condition, then, otherwise)`: `then` where the condition is true,
+  `otherwise` where it isn't.
+
+Then chain methods onto it:
+
+| group      | methods                                         | gives         |
+| ---------- | ----------------------------------------------- | ------------- |
+| compare    | `eq`, `ne`, `gt`, `ge`, `lt`, `le`, `in([...])` | true/false    |
+| combine    | `and`, `or`, `not`                              | true/false    |
+| arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `abs`        | a number      |
+| gaps       | `isMissing()`, `fill(value)`                    | as named      |
+| choice     | `when(condition, then, otherwise)`              | `then`'s kind |
+
+There are no text functions, rounding or time-of-day functions yet, and
+an expression can't look at other rows (use `shift`, `diff` or `rolling`
+for that) or add up many rows (use `aggregate` or `reduce`).
+
+In Rust the names are the same except `is_in` for `in` and `is_missing`
+for `isMissing`. Python has methods too (`and_`, `or_`, `not_`, `is_in`,
+`is_missing`, since `and`, `or`, `not` and `in` are Python keywords), but
+operators read better there:
+
+| Python            | TypeScript / Rust       |
+| ----------------- | ----------------------- |
+| `==` `!=`         | `eq` `ne`               |
+| `>` `>=` `<` `<=` | `gt` `ge` `lt` `le`     |
+| `&` `\|` `~`      | `and` `or` `not`        |
+| `+` `-` `*` `/`   | `add` `sub` `mul` `div` |
+| `-x`, `abs(x)`    | `neg` `abs`             |
+
+Put brackets around each comparison when you combine them,
+`(col("cpu") > 0.5) & (col("host") == "a")`, because `&` binds tighter
+than `>` in Python. Python's own `and`, `or` and `not` don't work on
+expressions: they raise a `TypeError` rather than quietly dropping one
+side.
+
+## Where you can use one
+
+These methods take an expression wherever they take a function:
+
+| method                            | the expression must give                |
+| --------------------------------- | --------------------------------------- |
+| `filter`, `find`, `some`, `every` | true/false                              |
+| `mapColumns({ column: expr })`    | the column's own kind                   |
+| `withColumn(name, expr)`          | anything; the new column takes its kind |
+| live `filter`                     | true/false                              |
+
+### filter, find, some, every
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { TimeSeries, col } from 'pond-ts';
+
+const cpu = new TimeSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number', required: false },
+    { name: 'cores', kind: 'number' },
+    { name: 'host', kind: 'string' },
+  ],
+  rows: [
+    [0, 0.2, 2, 'a'],
+    [60_000, undefined, 4, 'b'],
+    [120_000, 0.9, 4, 'a'],
+    [180_000, 0.6, 0, 'c'],
+    [240_000, 0.4, 2, 'b'],
+  ],
+});
+
+const busy = cpu.filter(col('cpu').gt(0.5).and(col('host').eq('a')));
+busy.length; // 1 (the row at 120_000)
+
+cpu.find(col('cpu').gt(0.5))?.get('host'); // 'a'
+cpu.some(col('host').in(['c', 'd'])); // true
+cpu.every(col('cpu').isMissing().not()); // false: one row has a gap
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries, col};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 120_000, 180_000, 240_000],
+        vec![
+            Column::optional(
+                "cpu",
+                vec![Some(0.2), None, Some(0.9), Some(0.6), Some(0.4)],
+            ),
+            Column::required("cores", vec![2.0, 4.0, 4.0, 0.0, 2.0]),
+            Column::required("host", vec!["a", "b", "a", "c", "b"]),
+        ],
+    )?;
+
+    let busy = cpu.filter_expr(&col("cpu").gt(0.5).and(col("host").eq("a")))?;
+    assert_eq!(busy.key().begin(), &[120_000]);
+
+    let first_busy = cpu.find_expr(&col("cpu").gt(0.5))?.unwrap();
+    assert_eq!(first_busy.string("host")?, Some("a"));
+
+    assert!(cpu.some_expr(&col("host").is_in(["c", "d"]))?);
+    assert!(!cpu.every_expr(&col("cpu").is_missing().not())?); // one gap
+    Ok(())
+}
+```
+
+pond-rs keeps the closure methods (`filter`, `find`, …) and adds
+`filter_expr`, `find_expr`, `some_expr` and `every_expr`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond_rs
+from pond_rs import col
+
+cpu = pond_rs.TimeSeries({
+    "time": [0, 60_000, 120_000, 180_000, 240_000],
+    "cpu": [0.2, None, 0.9, 0.6, 0.4],
+    "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
+    "host": ["a", "b", "a", "c", "b"],
+})
+
+busy = cpu.filter((col("cpu") > 0.5) & (col("host") == "a"))
+assert len(busy) == 1
+
+assert cpu.find(col("cpu") > 0.5).get("host") == "a"
+assert cpu.some(col("host").is_in(["c", "d"]))
+assert not cpu.every(~col("cpu").is_missing())
+```
+
+</TabItem>
+</Tabs>
+
+`find`, `some` and `every` still stop early: they check a small stretch
+of rows first, then bigger ones, so a match near the start costs little.
+
+### mapColumns and withColumn
+
+`withColumn(name, expr)` adds a column. `mapColumns({ column: expr })`
+replaces one; the expression may read other columns, and with several
+entries every expression reads the columns as they were before any of
+them changed.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { col, lit, when } from 'pond-ts';
+
+// A new column from two others. 0.6 / 0 gives a gap.
+cpu.withColumn('load', col('cpu').div(col('cores')));
+// load: 0.1, gap, 0.225, gap, 0.2
+
+// Replace a column in place.
+cpu.mapColumns({ cpu: col('cpu').mul(100) });
+// cpu: 20, gap, 90, 60, 40
+
+// Pick between two values. The gap row gets 'low'.
+cpu.withColumn('level', when(col('cpu').gt(0.5), 'high', 'low'));
+// level: 'low', 'low', 'high', 'high', 'low'
+
+// lit() when the fixed value comes first.
+cpu.withColumn('idle', lit(1).sub(col('cpu')));
+// idle: 0.8, gap, 0.09999999999999998, 0.4, 0.6
+```
+
+The new column from `withColumn` is optional (it may have gaps) and takes
+the expression's kind: number, text or true/false.
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries, col, lit, when};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 120_000, 180_000, 240_000],
+        vec![
+            Column::optional(
+                "cpu",
+                vec![Some(0.2), None, Some(0.9), Some(0.6), Some(0.4)],
+            ),
+            Column::required("cores", vec![2.0, 4.0, 4.0, 0.0, 2.0]),
+            Column::required("host", vec!["a", "b", "a", "c", "b"]),
+        ],
+    )?;
+
+    // A new column from other columns. 0.6 / 0 is a gap.
+    let with_load = cpu.with_column_expr("load", &col("cpu").div(col("cores")))?;
+    let load: Vec<_> = with_load.column("load")?.numbers()?.iter().collect();
+    assert_eq!(load, [Some(0.1), None, Some(0.225), None, Some(0.2)]);
+
+    // Replace a column in place (pond-ts mapColumns).
+    let pct = cpu.map_expr("cpu", &col("cpu").mul(100))?;
+    let pct: Vec<_> = pct.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(pct, [Some(20.0), None, Some(90.0), Some(60.0), Some(40.0)]);
+
+    // Pick between two values. The gap row gets "low".
+    let level = cpu.with_column_expr("level", &when(col("cpu").gt(0.5), "high", "low"))?;
+    let level: Vec<_> = level.column("level")?.strings()?.iter().collect();
+    assert_eq!(
+        level,
+        [
+            Some("low"),
+            Some("low"),
+            Some("high"),
+            Some("high"),
+            Some("low")
+        ]
+    );
+
+    // lit() when the fixed value comes first.
+    let idle = cpu.with_column_expr("idle", &lit(1).sub(col("cpu")))?;
+    assert_eq!(
+        idle.column("idle")?.numbers()?.get(2),
+        Some(0.09999999999999998)
+    );
+    Ok(())
+}
+```
+
+`map_expr(column, expr)` replaces one column; `map_exprs(&[(column,
+&expr), …])` replaces several, each reading the columns as they were
+before.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+from pond_rs import col, when
+
+def values(s, column):
+    return s.to_pyarrow()[column].to_pylist()
+
+load = cpu.with_column("load", col("cpu") / col("cores"))
+assert values(load, "load") == [0.1, None, 0.225, None, 0.2]
+
+pct = cpu.map_columns({"cpu": col("cpu") * 100})
+assert values(pct, "cpu") == [20.0, None, 90.0, 60.0, 40.0]
+
+level = cpu.with_column("level", when(col("cpu") > 0.5, "high", "low"))
+assert values(level, "level") == ["low", "low", "high", "high", "low"]
+
+# A plain number on the left works too.
+idle = cpu.with_column("idle", 1 - col("cpu"))
+assert values(idle, "idle")[2] == 0.09999999999999998
+```
+
+`map(column, expr)` replaces one column, `map_columns({...})` several.
+
+</TabItem>
+</Tabs>
+
+A simple `mapColumns` like `col('cpu').mul(100)` is **slower** as an
+expression than as a function in pond-ts (see [Speed](#speed)). There the
+gain is reading other columns, not speed; `(x) => x * 100` is still the
+quicker way to scale one column.
+
+### Live filter
+
+A live `filter` takes an expression too. It is checked against the
+columns when you build the view, then run on each event as it arrives.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { LiveSeries, col } from 'pond-ts';
+
+const live = new LiveSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number', required: false },
+    { name: 'host', kind: 'string' },
+  ],
+});
+const hot = live.filter(col('cpu').gt(0.5));
+
+live.push(
+  [0, 0.9, 'a'],
+  [1000, undefined, 'b'],
+  [2000, 0.3, 'a'],
+  [3000, 0.7, 'b'],
+);
+hot.length; // 2: the gap row is left out
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::LiveSeries;
+use pond_rs::{ColumnDef, ColumnKind, col};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::required("host", ColumnKind::String),
+        ],
+    )?;
+    let hot = live.filter_expr(live.root(), &col("cpu").gt(0.5))?;
+
+    live.push_many([
+        (0, [Some(0.9.into()), Some("a".into())]),
+        (1_000, [None, Some("b".into())]),
+        (2_000, [Some(0.3.into()), Some("a".into())]),
+        (3_000, [Some(0.7.into()), Some("b".into())]),
+    ])?;
+
+    assert_eq!(live[hot].len(), 2);
+    assert_eq!(live[hot].last().unwrap().string("host")?, Some("b"));
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond_rs
+from pond_rs import col
+
+live = pond_rs.LiveSeries({"time": "time", "cpu": "number", "host": "string"})
+hot = live.filter(col("cpu") > 0.5)
+
+live.push(0, cpu=0.9, host="a")
+live.push(1_000, cpu=None, host="b")
+live.push(2_000, cpu=0.3, host="a")
+live.push(3_000, cpu=0.7, host="b")
+assert len(hot) == 2
+```
+
+</TabItem>
+</Tabs>
+
+## Gaps
+
+An expression gives the same answer as the plain function it replaces,
+where a gap reads as `undefined`:
+
+- **A gap fails every comparison.** `col('cpu').gt(0.5)` and
+  `col('cpu').le(0.5)` are both false for a gap row, just as
+  `undefined > 0.5` and `undefined <= 0.5` are.
+- **`not` flips the result**, so `col('cpu').gt(0.5).not()` is _true_ for
+  a gap row. "Not above 0.5" keeps gaps; "at most 0.5" doesn't. If you
+  come from SQL, where a gap stays unknown through `NOT`, this is the
+  surprise. Ask for gaps by name with `isMissing()`.
+- **`eq` is false when either side is a gap**, so `ne` is true there.
+- **Arithmetic on a gap gives a gap**, and so does a result that isn't a
+  finite number, such as dividing by zero.
+- **`and`, `or` and `when` read a gap as false.**
+- **In `mapColumns` a gap stays a gap**, whatever the expression says, so
+  `fill` changes nothing there. Use `withColumn` to fill.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+// cpu: 0.2, gap, 0.9, 0.6, 0.4
+cpu.filter(col('cpu').gt(0.5)).length; // 2
+cpu.filter(col('cpu').le(0.5)).length; // 2: the gap fails this too
+cpu.filter(col('cpu').gt(0.5).not()).length; // 3: not() brings the gap back
+
+cpu.filter(col('cpu').eq(0.2)).length; // 1
+cpu.filter(col('cpu').ne(0.2)).length; // 4, including the gap
+cpu.filter(col('cpu').isMissing()).length; // 1
+
+cpu.mapColumns({ cpu: col('cpu').fill(0) }); // cpu: 0.2, gap, 0.9, 0.6, 0.4
+cpu.withColumn('cpu0', col('cpu').fill(0)); // cpu0: 0.2, 0, 0.9, 0.6, 0.4
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries, col};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000, 120_000, 180_000, 240_000],
+        vec![Column::optional(
+            "cpu",
+            vec![Some(0.2), None, Some(0.9), Some(0.6), Some(0.4)],
+        )],
+    )?;
+
+    // A gap fails every comparison...
+    assert_eq!(cpu.filter_expr(&col("cpu").gt(0.5))?.len(), 2);
+    assert_eq!(cpu.filter_expr(&col("cpu").le(0.5))?.len(), 2);
+    // ...and not() flips that, so the gap row comes back.
+    assert_eq!(cpu.filter_expr(&col("cpu").gt(0.5).not())?.len(), 3);
+
+    // eq is false for a gap, so ne is true for it. Ask for gaps by name.
+    assert_eq!(cpu.filter_expr(&col("cpu").eq(0.2))?.len(), 1);
+    assert_eq!(cpu.filter_expr(&col("cpu").ne(0.2))?.len(), 4);
+    assert_eq!(cpu.filter_expr(&col("cpu").is_missing())?.len(), 1);
+
+    // fill does nothing in map_expr (a gap stays a gap)...
+    let mapped = cpu.map_expr("cpu", &col("cpu").fill(0))?;
+    assert_eq!(mapped.column("cpu")?.numbers()?.get(1), None);
+    // ...and fills in with_column_expr.
+    let filled = cpu.with_column_expr("cpu0", &col("cpu").fill(0))?;
+    assert_eq!(filled.column("cpu0")?.numbers()?.get(1), Some(0.0));
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+# cpu: 0.2, None, 0.9, 0.6, 0.4
+assert len(cpu.filter(col("cpu") > 0.5)) == 2
+assert len(cpu.filter(col("cpu") <= 0.5)) == 2  # the gap fails this too
+assert len(cpu.filter(~(col("cpu") > 0.5))) == 3  # ~ brings the gap back
+
+assert len(cpu.filter(col("cpu") != 0.2)) == 4  # including the gap
+assert len(cpu.filter(col("cpu").is_missing())) == 1
+
+assert values(cpu.map("cpu", col("cpu").fill(0)), "cpu")[1] is None
+assert values(cpu.with_column("cpu0", col("cpu").fill(0)), "cpu0")[1] == 0.0
+```
+
+</TabItem>
+</Tabs>
+
+## Checks
+
+An expression is checked against the series' columns when a method
+receives it, before any row runs. You get an error for:
+
+- a column that doesn't exist (the message lists the ones that do);
+- values of the wrong kind, such as comparing a text column with a number
+  or adding text;
+- `filter`, `find`, `some`, `every` or live `filter` given something that
+  isn't true/false;
+- `in([...])` values that don't match the column's kind.
+
+`col('name')` takes a plain string, so TypeScript doesn't check the name
+while you type; the check happens when the code runs.
+
+**One difference:** `mapColumns` in pond-ts skips a column name that
+doesn't exist (`mapColumns({ nope: col('cpu') })` returns the series
+unchanged), as it does for functions. pond-rs (and Python) give an error
+instead.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+cpu.filter(col('nope').gt(0));
+// TypeError: filter: unknown column 'nope' (columns: cpu, cores, host)
+cpu.filter(col('host').gt(0));
+// TypeError: filter: gt needs two values of the same kind, got string and number
+cpu.filter(col('cpu').mul(2));
+// TypeError: filter: needs a true/false expression, got number
+
+cpu.mapColumns({ nope: col('cpu') }); // no error: unknown names are skipped
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Expr, TimeSeries, col};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 60_000],
+        vec![
+            Column::optional("cpu", vec![Some(0.2), None]),
+            Column::required("host", vec!["a", "b"]),
+        ],
+    )?;
+
+    // Checked before any row runs.
+    assert!(cpu.filter_expr(&col("nope").gt(0)).is_err()); // unknown column
+    assert!(cpu.filter_expr(&col("host").gt(0)).is_err()); // text vs number
+    assert!(cpu.filter_expr(&col("cpu").mul(2)).is_err()); // not true/false
+    // pond-ts mapColumns skips an unknown column; pond-rs refuses it.
+    assert!(cpu.map_expr("nope", &col("cpu")).is_err());
+
+    // Reads the JSON tree pond-ts toJSON() writes.
+    let from_ts = Expr::from_json(
+        r#"{"op":"and","args":[{"op":"gt","args":[{"col":"cpu"},{"lit":0.5}]},{"op":"eq","args":[{"col":"host"},{"lit":"a"}]}]}"#,
+    )?;
+    let busy = col("cpu").gt(0.5).and(col("host").eq("a"));
+    assert_eq!(from_ts.to_json(), busy.to_json());
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+try:
+    cpu.map_columns({"nope": col("cpu")})
+except pond_rs.PondError as e:
+    print(e)
+    # TimeSeries::map_exprs: no column named 'nope' (columns: cpu, cores, host)
+```
+
+</TabItem>
+</Tabs>
+
+## Saving an expression as JSON
+
+`expr.toJSON()` gives a plain tree, and `JSON.stringify` uses it:
+
+```ts
+JSON.stringify(col('cpu').gt(0.5).and(col('host').eq('a')));
+// {"op":"and","args":[{"op":"gt","args":[{"col":"cpu"},{"lit":0.5}]},
+//  {"op":"eq","args":[{"col":"host"},{"lit":"a"}]}]}
+```
+
+pond-rs reads and writes the same tree (`Expr::to_json`,
+`Expr::from_json`, shown in the Rust tab above), and so does Python
+(`expr.to_json()`, `pond_rs.Expr.from_json(text)`). So a rule saved by one
+can run in another, or be written by a tool that never runs code.
+
+## Speed
+
+Measured on 1M rows when expressions were built (milliseconds, lower is
+better):
+
+| case (pond-ts)               | function | expression |
+| ---------------------------- | -------: | ---------: |
+| filter `v > 0`               |       52 |         17 |
+| filter `v / w > 10` and text |       47 |         19 |
+| some, no match               |      123 |          4 |
+| withColumn `v / w`           |       37 |        4.1 |
+| mapColumns `v * 1.8 + 32`    |      4.7 |    **8.6** |
+
+`mapColumns` is the one place an expression is slower in pond-ts: a
+function there already works straight on the column in one pass, while
+the expression takes one pass per operation (four here).
+
+In Rust a closure is already compiled code, so an expression is a little
+slower (filter `v > 0`: 8 to 13 ms with a closure, 9.7 ms as an
+expression; replacing a column: 0.7 against 2.8 ms). Use one in Rust when
+the rule arrives as data, or to match a pond-ts rule exactly. In Python
+the gap is large the other way, because a function means a call into
+Python for every row: filter took 360 ms with a function and 9.7 ms as an
+expression, `map` 162 against 2.3 ms.

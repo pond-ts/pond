@@ -781,6 +781,71 @@ amortised O(1) whatever the window.
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
 
+### [PND-CONCATSORT] — SHIPPED (concat as a merge of sorted inputs)
+
+Logged from pond-rs R1b step 4a, picked up from the Codex PR #810
+investigation. `TimeSeries.concat` pushed every input's `Event`s into one
+array, sorted it with `compareEventKeys`, and rebuilt the store from the
+events; every partitioned operation ends in it (`collect`). Now
+(`batch/operators/concat-merge.ts`):
+
+- Each input is already sorted, so the stable sort is a merge in which a
+  tie goes to the earlier input. The keys of every input are laid end to
+  end; inputs that already follow on from the previous one join its run;
+  runs are merged two neighbours at a time (left wins ties) until one is
+  left. O(N log K) for N rows over K runs, all on typed buffers. A heap
+  over the inputs came first and was ~2x slower (closure compares, 500
+  inputs → 9 levels per row).
+- `compareEventKeys` compares begin, then end, then the key kind's name,
+  never an interval label, so neither does the merge: a later input's
+  `z` label stays after an earlier input's `a` on the same span, as before.
+- Columns: with up to 64 inputs, each column is one gather from a chunked
+  view of the inputs' columns; with more, cells are read one by one (a
+  chunk lookup per row and per-input chunk set-up cost more there).
+- Interval inputs with different label kinds keep the event path, which
+  throws its row-intake error as before. So does a call with no rows.
+- **Event identity is kept** (`test/TimeSeries.concat-fromEvents.test.ts`
+  pins `concat([a]).at(0) === a.at(0)`): the result's `SeriesStore` hands
+  out each row's event from the input store it came from (`#delegate`, the
+  same mechanism `dedupe` / `outliers` / `sample` use), so the event is
+  built once whichever side asks first. Trade-off: a concat result keeps
+  every input's column storage alive while it lives (before, it held only
+  their events), as `dedupe` / `filter` results already do. This matters
+  most when collecting over many partitions. Chains of concats are
+  flattened to the store that owns each event, so they stay one step
+  deep (10,000 chained concats overflowed the stack before).
+
+Checked: 400 random lists of 1–6 inputs (time / time-range / interval
+keys, ties within and across inputs, `-0`, empty inputs, number / text /
+both `é` labels, mixed label kinds, required and optional columns, every
+column kind) give identical JSON against the previous build for `concat`,
+its `dedupe` and `slice`, single-input `concat`, and partitioned `diff` /
+`fill` / `rolling` / `toMap`; identity is compared with the result's events
+built first. Planted bugs caught: right run wins ties (128/150), end not
+compared (86/150), every pair treated as in order (134/150).
+
+Bench `scripts/perf-concat.mjs`, two runs each (median of 7 after 3
+warm-ups; old build 5 after 2). The old build's inputs had their events
+cached after the first warm-up, so its standalone `concat` numbers leave
+out building them; the partitioned rows build fresh pieces each time:
+
+| Case                                      | Before        | After        |
+| ----------------------------------------- | ------------- | ------------ |
+| partitioned diff, 500 symbols × 1000      | 726 / 821 ms  | 177 / 151 ms |
+| concat 500 × 1000, interleaved            | 292 / 348 ms  | 111 / 82 ms  |
+| concat 2 × 500k, interleaved              | 252 / 232 ms  | 81 / 78 ms   |
+| concat 10 × 100k, end to end              | 154 / 178 ms  | 76 / 90 ms   |
+| concat 100k one-row inputs                | 53 / 36 ms    | 71 / 69 ms   |
+| partitioned fill, 100k one-row partitions | 1.03 / 1.04 s | 958 / 912 ms |
+| partitioned align, 4 × 100k               | 2.31 s        | 82 ms        |
+| partitioned dedupe + materialize, 4×100k  | 2.83 s        | 165 ms       |
+| partitioned baseline, 4 × 250k            | 9.58 s        | 1.08 s       |
+
+The one slower case is many one-row inputs whose events already exist: the
+old path only had to sort them, while the merge still pays a few
+allocations per input. With fresh pieces (the partitioned version) the
+split dominates and the two are even.
+
 ### [PND-SMOOTHSLOW] — SHIPPED (smooth / baseline / outliers / sample stride on columns)
 
 Logged from pond-rs R1b step 8h, picked up from the Codex PR #810
@@ -2425,3 +2490,42 @@ Left: `scan`'s remaining cost is the caller's step function allocating a
 tuple per row, which pond cannot remove; and pond-rs calls back into
 JavaScript for every row, so a `scan` there is about 6× slower than in
 pond-ts. See [PND-SCANDATA].
+
+## `cumulative` increase / decrease — [PND-SCANDATA] (first fold shipped)
+
+**What.** Two new running accumulators for `cumulative`, in pond-ts (batch,
+partitioned, live) and pond-rs (batch, partitioned, live; the wasm and
+Python bridges): `'increase'` is the running total of rises between values,
+`'decrease'` the running total of falls, and `{ using, threshold }` ignores
+changes smaller than the threshold. The rule: the first value sets a
+reference point and the total starts at 0; then `d = value − reference`,
+`d >= threshold` adds `d` to the rises and moves the reference,
+`d <= −threshold` adds `−d` to the falls and moves it. Gaps carry the total.
+
+**Why.** It is the dead-band climb rule (`@pond-ts/fit`'s
+`elevationGainLoss`, the `scan` docs' 3 m example) written as data, so
+pond-rs runs it without calling back into JavaScript per row.
+
+**Naming.** Peter's call (2026-11-05): a general `increase` / `decrease`,
+not a domain-specific `climb`. Meter readings, counters and any noisy level
+use the same rule.
+
+**Shape considered and not taken.** A separate `deadBand` / `hysteresis`
+operator: rejected because it is a running accumulation like `sum`, and
+`cumulative` already owns "running value down a column, gaps carry". The
+threshold rides on an object entry (`{ using, threshold }`), so plain names
+keep working. In pond-rs, `cumulative` became generic over
+`Into<Cumulative>`, so existing `&[("v", Reducer::Sum)]` calls compile
+unchanged (an empty literal, or the method as a function value, now needs
+the type spelled out).
+
+**Parity.** Same operations in the same order in both cores, so the same
+bits. The core parity fixture has seven new cases (both directions, a
+threshold, a change exactly at the threshold, signed zeros, overflow,
+partitioned) plus two refusals, and the live fixture one more node; pond-rs
+native, the wasm bridge and the Python bridge all match.
+
+**Speed** (36,000 rows, 3 m threshold; `scripts/perf-cumulative-change.mjs`
+and the fit bench): plain loop 0.3 ms; pond-ts `cumulative` 0.34–0.42 ms
+(the `scan` step it replaces: 0.9 ms); pond-rs `cumulative` 0.15 ms against
+about 10 ms for the same rule as a `scan` step through the wasm bridge.

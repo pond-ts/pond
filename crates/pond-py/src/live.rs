@@ -22,8 +22,8 @@ use pond_rs::live::{
     SubSeries, Trigger,
 };
 use pond_rs::{
-    Agg, ColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, PondError, Reducer, Sample,
-    Sequence, TimeSeries, Value,
+    Agg, ColumnDef, ColumnKind, EventKey, Fill, FirstRow, Label, PondError, Sample, Sequence,
+    TimeSeries, Value,
 };
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
@@ -700,7 +700,7 @@ enum Step {
         all: Option<Fill>,
         limit: Option<usize>,
     },
-    Cumulative(Vec<(String, Reducer)>),
+    Cumulative(Vec<(String, pond_rs::Cumulative)>),
     CumulativeWith(String, Callable),
     Aggregate(Sequence, Vec<Agg>, Option<String>),
     Rolling(String, Vec<Agg>, RollingOptions),
@@ -857,7 +857,8 @@ fn build(
             }
         }
         Step::Cumulative(spec) => {
-            let spec: Vec<(&str, Reducer)> = spec.iter().map(|(c, r)| (c.as_str(), *r)).collect();
+            let spec: Vec<(&str, pond_rs::Cumulative)> =
+                spec.iter().map(|(c, r)| (c.as_str(), *r)).collect();
             live.cumulative(from, &spec)?.id()
         }
         Step::CumulativeWith(c, f) => live

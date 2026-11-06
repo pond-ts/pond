@@ -1050,11 +1050,30 @@ mod runner {
                 }
             }
             "cumulative" => {
-                let spec: Vec<(&str, Reducer)> = args[0]
+                let spec: Vec<(&str, pond_rs::Cumulative)> = args[0]
                     .as_object()
                     .unwrap()
                     .iter()
-                    .map(|(k, v)| (k.as_str(), Reducer::parse(v.as_str().unwrap()).unwrap()))
+                    .map(|(k, v)| {
+                        let entry = match v {
+                            Value::Object(o) => {
+                                let base = match o["using"].as_str().unwrap() {
+                                    "increase" => pond_rs::Cumulative::increase(),
+                                    _ => pond_rs::Cumulative::decrease(),
+                                };
+                                match o.get("threshold").and_then(Value::as_f64) {
+                                    Some(t) => base.threshold(t),
+                                    None => base,
+                                }
+                            }
+                            _ => match v.as_str().unwrap() {
+                                "increase" => pond_rs::Cumulative::increase(),
+                                "decrease" => pond_rs::Cumulative::decrease(),
+                                r => Reducer::parse(r).unwrap().into(),
+                            },
+                        };
+                        (k.as_str(), entry)
+                    })
                     .collect();
                 live.cumulative(from, &spec)
             }

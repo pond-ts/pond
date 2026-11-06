@@ -640,10 +640,23 @@ the study oracle) is done.
   docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
   pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
   P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
-  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. Next P3.
-  J2 split the same way: J2a studies + trading calendars built 2026-10-31;
+  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. ~~P3 (wheels
+  in CI, PyPI on `v*`, docs page, agent trial)~~ — built 2026-11-02
+  (`python-wheels.yml`); the first upload needs PyPI's trusted publisher set
+  up by the owner. The Python steps are complete. J2 split the same way: J2a studies + trading calendars built 2026-10-31;
   J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
-  columns across, rows built in JS). Next J3. Detail in the breakout plan.
+  columns across, rows built in JS). J3 built 2026-10-31: one glue for Node
+  and browsers (top-level await in browsers), browser test in headless
+  Chromium incl. a strict CSP, `release.yml` publishes `@pond-ts/rs` after
+  the workspaces; first publish needs Peter on npmjs.com (trusted
+  publishing needs the package to exist). Next P3. Detail in the breakout
+  plan.
+
+- **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
+  no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
+  give the `declare module` workaround). Write an `index.d.ts` from
+  pond-ts's types where the shapes match, and check it in CI against the
+  parity tests' calls. Detail in the breakout plan ([PND-RUST-R4]).
 
 - **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
   2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
@@ -692,7 +705,10 @@ the study oracle) is done.
   (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
   snippets in all, each checked against pond-ts output. Install lines now say
   `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
-  snippets also pass against the published 0.1.0. Open: run the script in
+  snippets also pass against the published 0.1.0. Expressions page
+  (`pond-ts/transforms/expressions`, 2026-10-31): `col` / `lit` / `when` with
+  TypeScript, Rust and Python tabs, all checked against pond-ts; `rust ignore`
+  fences are skipped by the script (excerpts from other repos). Open: run the script in
   CI.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
@@ -849,18 +865,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
 undefined`, or required only when it has no gaps) changes a public
   type and needs a yes. pond-rs marks it required only when it has no
   gaps. Found 2026-10-21 (pond-rs R1b step 8i).
-- **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
-  500 partitions × 1000 rows back together, and every partitioned
-  operation calls it (`partitionBy('symbol').diff('close').collect()`:
-  ~640 ms, of which `diff` itself is ~4 ms; pond-rs: 45 ms). A CPU profile:
-  30% rebuilding the column store from `Event` objects
-  (`buildSeriesStoreFromEvents`, as in [PND-FILTERTAKE]), ~30% the sort of
-  events and its comparator, 11% `#fromTrustedEvents`, 11% garbage
-  collection. Proposed fix: every input is already sorted, so merge the
-  key columns by row number (a stable merge keeps partition order on
-  ties) and copy each column by those row numbers, as pond-rs does.
-  Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
-  (pond-rs R1b step 4a).
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
@@ -1052,14 +1056,14 @@ consumer signal. Plan:
 
 - **[PND-SCANDATA]** — callback-free forms for the common `scan` folds.
   A JS step function costs a tuple per row in pond-ts, and in pond-rs a
-  call back into JavaScript per row (about 6× slower than pond-ts on
-  36,000 rows). `@pond-ts/fit` wants to run its maths on either core, so
-  the folds it needs (first: a dead-band running sum, the 3 m climb rule)
-  should be named operators or expressions. Found with [PND-ROLLTIME].
-  `cumulative` 'increase' / 'decrease' (the climb rule) in #906; maths in
-  expressions (`sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`) for haversine
-  and 4th-power averages built 2026-11-05. Detail in
-  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
+  call back into JavaScript per row. `@pond-ts/fit` wants to run its maths
+  on either core, so the folds it needs should be named operators or
+  expressions. Shipped: `cumulative` `'increase'` / `'decrease'` with a
+  threshold (the 3 m climb rule, #906) and maths in expressions (`sqrt`,
+  `sin`, `cos`, `asin`, `atan2`, `pow`, #907; detail in
+  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md)). Add the next as fit's
+  port to operators finds them (breaks / slow-run detection is the likely
+  next).
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but

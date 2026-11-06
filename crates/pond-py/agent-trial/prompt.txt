@@ -1,0 +1,60 @@
+You are writing a small Python program. Work only inside {DIR}.
+
+`{DIR}/cpu.csv` holds CPU readings from three hosts (a, b, c), one every 5
+minutes from 2026-03-06 to 2026-03-10. The header is `time,host,cpu`:
+`time` is when the reading was taken, as UTC text
+("2026-03-08T07:05:00Z"); `cpu` is a number, or empty when the reading is
+missing. The rows are NOT in time order.
+
+`{DIR}/bars.csv` holds one-minute price bars for two symbols (AAA, BBB):
+header `time,symbol,open,high,low,close,volume`, time as UTC text, sorted
+by time then symbol, no missing values.
+
+Write `{DIR}/solution.py` that reads those two files and writes four CSV
+files into {DIR}:
+
+1. `rolling.csv`, header `time,host,cpu_avg`: one row per reading of
+   cpu.csv, sorted by time then host. `cpu_avg` is the average of that
+   host's cpu values with a time in the 15 minutes up to and including
+   this reading's time (so a reading 15 minutes earlier is not included),
+   missing values skipped; empty if there are none. `time` as UTC text.
+
+2. `daily.csv`, header `day,host,max,count`: one row per host per calendar
+   day in New York (America/New_York; note the clocks go forward on
+   2026-03-08), for every day that has readings, sorted by day then host.
+   `day` as YYYY-MM-DD (the New York date), `max` the highest cpu that day,
+   `count` the number of readings with a cpu value, written as a whole
+   number (287, not 287.0).
+
+3. `studies.csv`, header `symbol,rsi,bb_upper,bb_lower`: one row per
+   symbol (sorted by symbol) with the values at that symbol's LAST bar of
+   the 14-bar RSI (Wilder's smoothing, as TA-Lib) and the 20-bar Bollinger
+   bands at 2 standard deviations (population standard deviation), each
+   computed over that symbol's own bars only.
+
+4. `live.csv`, header `host,start,max,closed_by`: treat the readings as a
+   live feed. Sort them by time, then host, and feed them ONE AT A TIME, in
+   that order, into a live series, as a live system would. Keep 30-minute
+   buckets per host (minutes aligned to UTC). Each time a host's bucket
+   closes (it closes when that host's next reading at or after the
+   bucket's end arrives), write a row: the host, the bucket's start (epoch
+   milliseconds), the highest cpu in the bucket (empty if it has no
+   values), and `closed_by`, the 0-based position in the sorted feed of
+   the reading that closed it. Rows in the order the buckets closed.
+   Buckets still open after the last reading are not written.
+
+Use the `pond_rs` package for the time series work (it is installed, with
+pandas, polars and pyarrow). Its documentation is `{DIR}/docs.md`.
+
+Rules for this exercise:
+- Run your program ONLY with `{DIR}/attempt.sh` (it runs
+  `python solution.py` in {DIR} and logs the run). Do not run Python any
+  other way: no `python -c`, no REPL, no `help()`.
+- Read only the files in {DIR}. Do not read the pond_rs package's files
+  (its type hints or source), anything else on this machine, or the web.
+- When you believe the four files are right, stop. You can inspect your
+  output only by having your program print things.
+
+When finished, reply with: whether you think each output is right, any
+problems you hit with pond_rs or its documentation (be specific: what you
+expected, what happened), and anything you were unsure about.

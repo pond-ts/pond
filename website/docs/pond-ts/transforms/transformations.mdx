@@ -147,6 +147,10 @@ Same schema in, same schema out; just fewer rows. See
 [Cleaning data](./cleaning) for filter as a "remove bad rows"
 pattern.
 
+`filter` also takes an [expression](./expressions) in place of the
+function, such as `cpu.filter(col('cpu').gt(0.5))`. It runs over whole
+columns and is usually several times faster.
+
 ### `select(...keys)` — keep only some columns \{#select\}
 
 Schema-narrowing — type-level too:
@@ -473,7 +477,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 </TabItem>
 </Tabs>
 
-### `cumulative(spec)` — running total / max / min / count
+### `cumulative(spec)` — running total / max / min / count / rises / falls
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
@@ -528,6 +532,75 @@ A fold of your own is `cumulative_with`, one column at a time.
 When a source value is `undefined`, the accumulator carries forward
 its previous value — no NaN propagation.
 
+#### Rises and falls: `'increase'` / `'decrease'`
+
+`'increase'` is the running total of rises between values, `'decrease'`
+the running total of falls (a positive number). Give a `threshold` to
+ignore small wiggles: a change counts only once the value has moved at
+least that far from the last value that counted, in either direction, so
+slow drift still adds up. That is elevation gain with a dead band, or the
+use of a noisy meter or level.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+// ele: 100, 101, 104, (gap), 102, 99, 103, 108
+const gain = track.cumulative({ ele: { using: 'increase', threshold: 3 } });
+// → 0, 0, 4, 4, 4, 4, 8, 13
+const loss = track.cumulative({ ele: { using: 'decrease', threshold: 3 } });
+// → 0, 0, 0, 0, 0, 5, 5, 5
+const everyRise = track.cumulative({ ele: 'increase' });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Cumulative, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let track = TimeSeries::new(
+        "track",
+        (0..8).map(|i| i * 1_000).collect(),
+        vec![Column::optional(
+            "ele",
+            vec![
+                Some(100.0),
+                Some(101.0),
+                Some(104.0),
+                None,
+                Some(102.0),
+                Some(99.0),
+                Some(103.0),
+                Some(108.0),
+            ],
+        )],
+    )?;
+
+    let gain = track.cumulative(&[("ele", Cumulative::increase().threshold(3.0))])?;
+    let got: Vec<_> = gain.column("ele")?.numbers()?.iter().collect();
+    let want = [0.0, 0.0, 4.0, 4.0, 4.0, 4.0, 8.0, 13.0];
+    assert_eq!(got, want.map(Some));
+
+    let loss = track.cumulative(&[("ele", Cumulative::decrease().threshold(3.0))])?;
+    let got: Vec<_> = loss.column("ele")?.numbers()?.iter().collect();
+    let want = [0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0];
+    assert_eq!(got, want.map(Some));
+    Ok(())
+}
+```
+
+A `Reducer` mixes in with `.into()`:
+`&[("ele", Cumulative::increase()), ("work", Reducer::Sum.into())]`.
+
+</TabItem>
+</Tabs>
+
+The first value starts the total at 0, and both directions share one
+reference point. Because it is a named accumulator rather than a step
+function, `@pond-ts/rs` runs it without calling back into JavaScript.
+
 ### `scan(source, step, init, options?)` — typed-accumulator running fold \{#scan\}
 
 `scan` is the general form of `cumulative` — the classic `mapAccumL`.
@@ -545,7 +618,9 @@ series.scan('work', (acc, v) => [acc + v, acc + v], 0);
 //   ≡ series.cumulative({ work: 'sum' })
 
 // typed accumulator into a NEW column: hysteresis elevation gain
-// carries (ref, gain) but emits only the gain.
+// carries (ref, gain) but emits only the gain. (This exact rule is built
+// in as cumulative({ ele: { using: 'increase', threshold: 3 } }); the scan
+// form shows how to write your own.)
 const T = 3; // ±3 m deadband
 const withGain = track.scan<'cumGain', { ref: number | null; gain: number }>(
   'ele',

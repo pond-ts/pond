@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'pond-ts/transforms/queries',
             'pond-ts/transforms/transformations',
+            'pond-ts/transforms/expressions',
             'pond-ts/transforms/alignment',
             'pond-ts/transforms/aggregation',
             'pond-ts/transforms/reshape',
@@ -100,6 +101,8 @@ const sidebars: SidebarsConfig = {
         'fit/analysis',
         'fit/best-efforts',
         'fit/pool-swims',
+        'fit/series-and-views',
+        'fit/editing',
         'fit/under-the-hood',
         'fit/charting',
         {
@@ -277,12 +280,14 @@ const sidebars: SidebarsConfig = {
       link: { type: 'doc', id: 'pond-rs/pond-rs-index' },
       items: [
         'pond-rs/getting-started',
+        'pond-rs/python',
         'pond-rs/series-and-columns',
         'pond-rs/operations',
         'pond-rs/partitions',
         'pond-rs/finance-studies',
         'pond-rs/live',
         'pond-rs/arrow',
+        'pond-rs/javascript',
         'pond-rs/performance',
         'pond-rs/coming-from-pond-ts',
       ],

@@ -24,7 +24,7 @@ import pond_rs
 from pond_rs import TimeSeries
 
 REPO = Path(__file__).resolve().parents[3]
-FIXTURE = json.loads((REPO / "packages/core/test/fixtures/parity.json").read_text())
+FIXTURE = json.loads((REPO / "packages/core/test/fixtures/parity.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
