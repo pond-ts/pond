@@ -507,6 +507,14 @@ export interface ContainerFrame {
    */
   registerCursor(key: symbol, entry: CursorEntry): void;
   unregisterCursor(key: symbol): void;
+  /**
+   * A mounted, caller-declared `<XAxis>` announces itself here
+   * ([PND-XAXISOWN]), so the container's implicit strip can stand down — a
+   * declared axis is what the caller meant, and two was never the intent.
+   * The container's own implicit strip does not register.
+   */
+  registerXAxis(key: symbol): void;
+  unregisterXAxis(key: symbol): void;
   /** Every registered cursor, in mount order (see {@link registerCursor}). */
   readonly cursors: readonly CursorEntry[];
   /**
@@ -780,6 +788,13 @@ export interface RowLayer {
    * must agree on this list (a mix is an error), the same way {@link xKind} must.
    */
   xCategories?(): readonly string[] | null;
+  /**
+   * Display labels index-aligned with {@link xCategories} — whose entries are
+   * category **keys**, the identity — when the two differ ([PND-CATID]). The
+   * axis draws these; the slots and selection key on the keys. Absent ⇒ each
+   * key is its own label.
+   */
+  xCategoryLabels?(): readonly string[] | null;
   /**
    * A **horizontal** categorical source's ordered category names — the same
    * list {@link xCategories} carries for a vertical one, but for the axis it
@@ -1143,6 +1158,13 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /**
+   * Display labels index-aligned with {@link xCategories} — whose entries are
+   * category **keys**, the identity — when the two differ ([PND-CATID]). The
+   * axis draws these; the slots and selection key on the keys. Absent ⇒ each
+   * key is its own label.
+   */
+  xCategoryLabels?(): readonly string[] | null;
   /**
    * A **horizontal** categorical source's ordered category names — the same
    * list {@link xCategories} carries for a vertical one, but for the axis it
@@ -1957,3 +1979,10 @@ export interface LayerRegistry {
 }
 
 export const LayersContext = createContext<LayerRegistry | null>(null);
+
+/**
+ * `true` only around the container's own implicit x-axis strip, so that
+ * `<XAxis>` can tell it is the implicit one and not register as declared
+ * ([PND-XAXISOWN]). Internal; not exported from the package.
+ */
+export const ImplicitXAxisContext = createContext(false);

@@ -142,3 +142,24 @@ export const Coincident: Story = {
     </Chart>
   ),
 };
+
+/** **Role: argument** ([PND-ANNROLE]) — the shipped `argument` role: a dated
+ *  event that carries the chart's claim (the measles card's vaccine dates)
+ *  rests at 0.85, legible without a hover. */
+export const RoleArgument: Story = {
+  render: () => (
+    <Chart>
+      <Marker at={at(45)} label="vaccine" role="argument" />
+    </Chart>
+  ),
+};
+
+/** **Role: wash** — the same marker in the quiet `wash` role, for context that
+ *  should recede behind the data. Compare with {@link RoleArgument}. */
+export const RoleWash: Story = {
+  render: () => (
+    <Chart>
+      <Marker at={at(45)} label="context" role="wash" />
+    </Chart>
+  ),
+};
