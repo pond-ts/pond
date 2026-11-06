@@ -796,6 +796,7 @@ impl Live {
             "evict" => OutputKind::Evict,
             "bucket" => OutputKind::Bucket,
             "update" => OutputKind::Update,
+            "columns" => OutputKind::Columns,
             other => return Err(format!("no output kind '{other}'")),
         };
         pond(if on {

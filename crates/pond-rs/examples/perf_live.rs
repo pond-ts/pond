@@ -135,6 +135,44 @@ fn main() -> pond_rs::Result<()> {
             live.push_many(batch).unwrap();
         }
     });
+    // [PND-RUSTCOLS] A reader that sums cpu per push: from the `Batch`
+    // events, or from the `Columns` batch series (no event per row).
+    let gap_sum = |v: &[f64]| v.iter().filter(|x| !x.is_nan()).sum::<f64>();
+    for (size, label) in [
+        (1000, "batches of 1000"),
+        (100, "batches of 100"),
+        (10, "batches of 10"),
+        (1, "one at a time"),
+    ] {
+        for kind in [OutputKind::Batch, OutputKind::Columns] {
+            let name = format!("push_many {label}, sum cpu from {kind:?}");
+            run(&name, &rows, &mut |rows| {
+                let mut live = LiveSeries::new("live", schema()).unwrap();
+                live.watch(live.root(), kind).unwrap();
+                let mut total = 0.0;
+                let mut rows = rows.into_iter();
+                loop {
+                    let batch: Vec<Row> = rows.by_ref().take(size).collect();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    for o in live.push_many(batch).unwrap() {
+                        total += match o {
+                            pond_rs::live::Output::Batch { events, .. } => events
+                                .iter()
+                                .filter_map(|e| e.number("cpu").ok().flatten())
+                                .sum::<f64>(),
+                            pond_rs::live::Output::Columns { series, .. } => {
+                                gap_sum(series.column("cpu").unwrap().numbers().unwrap().values())
+                            }
+                            _ => 0.0,
+                        };
+                    }
+                }
+                assert!(total > 0.0);
+            });
+        }
+    }
     run("push one at a time, max_events 10k", &rows, &mut |rows| {
         let opts = LiveOptions::new().max_events(10_000);
         let mut live = LiveSeries::with_options("live", schema(), opts).unwrap();
