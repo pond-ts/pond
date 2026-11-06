@@ -99,7 +99,7 @@ jobs:
             runner: macos-15-intel
             target: x86_64
           - name: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64
           - name: windows-x86_64
             runner: windows-latest

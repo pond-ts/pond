@@ -4460,7 +4460,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         builds five abi3 wheels with maturin-action (Linux x86-64 and
         aarch64 in the manylinux2014 container, each on a runner of its own
         CPU, `ubuntu-24.04-arm` for ARM; macOS on `macos-15-intel` and
-        `macos-14`; Windows x64) and the sdist, and runs the full pytest
+        `macos-15`; Windows x64) and the sdist, and runs the full pytest
         suite against each built wheel on its own platform (the sdist is
         built into a wheel and tested too, so a file missing from it
         fails). `check-dist` then checks what PyPI would get: five wheels
