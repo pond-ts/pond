@@ -81,6 +81,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: distributions and coasting on any section** (RFC
+  §14.1). `analysis.distribution(channel, { binWidth, time })` gives the time
+  at each level of `'power'`, `'heartRate'`, `'cadence'`, `'speed'` or
+  `'pace'` (s/km, or s/100 m in open water; stops left out, slow paces held
+  in one bin), binned with pond's `byColumn`, every bin
+  in between kept; power and cadence start at 0. `analysis.coasting` is a
+  ride's moving time with zero cadence (or zero power without cadence), with
+  its share of moving time.
+
 - **`@pond-ts/fit`: aerobic efficiency and decoupling on any section**
   (RFC §14.1, §15.2). `section.analyze({ athlete }).aerobic` has
   `efficiency({ output })` (normalized power ÷ average heart rate on a ride

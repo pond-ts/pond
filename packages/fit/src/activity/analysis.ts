@@ -27,6 +27,14 @@ import { Profile, type AthleteProfileJson } from '../profile/index.js';
 import { Distance, Duration, Pace, Power } from '../quantities.js';
 import type { Stats } from './stats.js';
 import { Aerobic } from './aerobic.js';
+import {
+  coastingOf,
+  distributionOf,
+  type Coasting,
+  type Distribution,
+  type DistributionChannel,
+  type DistributionOptions,
+} from './distribution.js';
 import { sportOf } from './sport.js';
 
 /** The athlete to analyse for: a {@link Profile} already resolved to a date,
@@ -153,6 +161,7 @@ export class Analysis {
   #load?: Load | null;
   #zones?: ZoneAnalysis;
   #aerobic?: Aerobic;
+  #coasting?: Coasting | null;
 
   /** @internal */
   constructor(src: AnalysisSource, athlete: Profile) {
@@ -180,6 +189,24 @@ export class Analysis {
    *  settings; it sits here with the other readings of the section. */
   get aerobic(): Aerobic {
     return (this.#aerobic ??= new Aerobic(this.#src));
+  }
+
+  /** Time at each level of a channel:
+   *  `a.distribution('power', { binWidth: 25 })`. Null when the channel
+   *  wasn't recorded here or the samples have no timestamps. */
+  distribution(
+    channel: DistributionChannel,
+    options?: DistributionOptions,
+  ): Distribution | null {
+    return distributionOf(this.#src.prep, this.#src.span, channel, options);
+  }
+
+  /** Moving time with the pedals still, on a ride; null for other sports
+   *  or with neither cadence nor power recorded. */
+  get coasting(): Coasting | null {
+    if (this.#coasting === undefined)
+      this.#coasting = coastingOf(this.#src.prep, this.#src.span);
+    return this.#coasting;
   }
 
   /** Null for any sport but cycling, and without FTP, power or
