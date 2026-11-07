@@ -382,6 +382,7 @@ function projectLaps(raw: FitLap[]): Lap[] {
         totalWorkKj: workJ != null ? workJ / 1000 : undefined,
         calories: num(l.total_calories),
         elevationGainMeters: num(l.total_ascent),
+        intensity: typeof l.intensity === 'string' ? l.intensity : undefined,
       }),
     );
     startDistanceMeters += distanceMeters;

@@ -81,6 +81,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
+  `analysis.efforts.fromLaps()` reads the recorded laps (the device's
+  work/rest marks, a pool swim's laps with distance, or laps split into
+  faster and slower when they take turns), `efforts.detect({ powerAbove:
+Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
+  stretches above a threshold. Each effort is a section with the recovery
+  after it; warm-up and cool-down apart; `source` says where they came from.
+  `compare()` gives each metric's values, highest, lowest, typical, spread
+  and first-to-last change (best and worst for pace and power), and the
+  recoveries. The FIT reader keeps each lap's `intensity`.
+
 - **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
   `section.analyze().technique` over the pool lengths whose middle is in a
   section (drills and lengths counted as 0 left out, `uncounted` says how
