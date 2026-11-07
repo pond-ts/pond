@@ -518,3 +518,80 @@ describe('aerobic', () => {
     expect(pool.analyze({ athlete: NONE }).aerobic.decoupling()).toBeNull();
   });
 });
+
+describe('distribution', () => {
+  const NONE = Profile.of({});
+
+  it('spreads power over bins from 0, every bin kept', () => {
+    const d = ride().analyze({ athlete: NONE }).distribution('power')!;
+    expect(d.unit).toBe('W');
+    expect(d.binWidth).toBe(25);
+    expect(d.bins[0]!.start).toBe(0);
+    const at = (w: number) => d.bins.find((b) => b.start === w)!.seconds;
+    // 200 W for 40 minutes, 300 W for 20
+    expect(at(200)).toBeCloseTo(2400, 0);
+    expect(at(300)).toBeCloseTo(1200, 0);
+    expect(at(100)).toBe(0);
+    expect(d.seconds).toBeCloseTo(3600, 0);
+  });
+
+  it('starts heart rate at its lowest bin, with a width asked for', () => {
+    const d = ride()
+      .analyze({ athlete: NONE })
+      .distribution('heartRate', { binWidth: 10 })!;
+    expect(d.bins).toEqual([{ start: 140, end: 150, seconds: 3600 }]);
+  });
+
+  it('leaves stops out of pace, and out of anything on moving time', () => {
+    const n = 1201;
+    const run = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (i > 600 ? 0 : 4)),
+        { heartrate: Array(n).fill(150) },
+        'Run',
+      ),
+    );
+    const a = run.analyze({ athlete: NONE });
+    const pace = a.distribution('pace')!;
+    // 4 m/s is 250 s/km, in the 240-255 bin
+    expect(pace.bins).toEqual([{ start: 240, end: 255, seconds: 600 }]);
+    expect(a.distribution('heartRate')!.seconds).toBeCloseTo(1200, 0);
+    expect(
+      a.distribution('heartRate', { time: 'moving' })!.seconds,
+    ).toBeCloseTo(600, 0);
+  });
+
+  it('is null for a channel not recorded, and rejects a bad width', () => {
+    const a = ride().analyze({ athlete: NONE });
+    expect(a.distribution('cadence')).toBeNull();
+    expect(() => a.distribution('power', { binWidth: 0 })).toThrow(RangeError);
+  });
+
+  it('measures coasting from cadence, else power', () => {
+    const n = 3601;
+    const cadence = Array.from({ length: n }, (_, i) =>
+      i % 10 === 0 ? 0 : 90,
+    );
+    const withCadence = Activity.from(
+      fromSpeeds(Array(n).fill(10), { cadence, watts: Array(n).fill(200) }),
+    );
+    const c = withCadence.analyze({ athlete: NONE }).coasting!;
+    expect(c.source).toBe('cadence');
+    expect(c.duration.seconds).toBeCloseTo(360, 0);
+    expect(c.share).toBeCloseTo(0.1, 3);
+
+    const watts = Array.from({ length: n }, (_, i) => (i <= 900 ? 0 : 200));
+    const powerOnly = Activity.from(fromSpeeds(Array(n).fill(10), { watts }));
+    const p = powerOnly.analyze({ athlete: NONE }).coasting!;
+    expect(p.source).toBe('power');
+    expect(p.share).toBeCloseTo(0.25, 2);
+  });
+
+  it('has no coasting off the bike', () => {
+    const n = 600;
+    const run = Activity.from(
+      fromSpeeds(Array(n).fill(3), { cadence: Array(n).fill(0) }, 'Run'),
+    );
+    expect(run.analyze({ athlete: NONE }).coasting).toBeNull();
+  });
+});
