@@ -81,6 +81,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: running dynamics** (RFC §15.7). `section.dynamics` has
+  `cadence` in steps per minute (a new `StepRate` quantity; on-foot cadence
+  is recorded per leg, so it is doubled unless the new `cadenceUnit: 'steps'`
+  stream flag or a median above 120 says it's already steps), `stepLength` and `verticalRatio` (worked out), and
+  `groundContactTime` and `verticalOscillation` (as recorded), each with its
+  `source`, plus `stats()` (time-weighted over moving time). The FIT reader
+  reads `stance_time` and `vertical_oscillation` into the new streams
+  `groundContactMs` and `verticalOscillationMm`.
+
+### Changed
+
+- **`@pond-ts/fit`: the FIT reader adds `fractional_cadence` to `cadence`.**
+  A run recorded as 85 plus half a cycle now reads 85.5, not 85. Average
+  cadence on files that record the fraction goes up by up to one cycle per
+  minute.
+
 - **`@pond-ts/fit`: distributions and coasting on any section** (RFC
   §14.1). `analysis.distribution(channel, { binWidth, time })` gives the time
   at each level of `'power'`, `'heartRate'`, `'cadence'`, `'speed'` or

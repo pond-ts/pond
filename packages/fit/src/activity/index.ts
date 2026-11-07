@@ -60,3 +60,9 @@ export {
   type Distribution,
   type Coasting,
 } from './distribution.js';
+export {
+  type RunningDynamics,
+  type RunningDynamicsStats,
+  type DynamicsChannel,
+  type DynamicsSource,
+} from './dynamics.js';
