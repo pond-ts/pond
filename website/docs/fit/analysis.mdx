@@ -145,8 +145,9 @@ Threshold 21 s
 
 `analysis.aerobic` reads output per heartbeat. On a ride with power it is
 normalized power over average heart rate (watts per bpm); otherwise it is
-moving speed over moving heart rate, in metres per heartbeat. Higher always
-means more output for the same heart rate. It needs no settings.
+speed over heart rate, in metres per heartbeat. Both are on moving time, so a
+stop doesn't pull the number around. Higher always means more output for the
+same heart rate. It needs no settings.
 
 `decoupling()` compares the first half of a section with the second, split by
 moving time so a stop doesn't move the split. A positive `change` means the
@@ -167,13 +168,13 @@ console.log(d.suitable, d.cautions);
 ```
 
 ```text output
-power 1.714
-1.676 1.738 -3.7 %
+power 1.716
+1.679 1.738 -3.5 %
 false [ 'variable' ]
 ```
 
 The hill ride's power isn't steady (its variability index is 1.2), so the
-reading is marked `variable`. Read its −3.7 % as "no drift showed", not as an
+reading is marked `variable`. Read its −3.5 % as "no drift showed", not as an
 endurance verdict.
 
 Pass a section to leave out the warm-up, or ask for speed on a ride:

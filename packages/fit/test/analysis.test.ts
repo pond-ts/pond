@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { readActivity } from '../src/files/index.js';
 import { Activity } from '../src/activity/index.js';
 import { Profile, type AthleteProfileJson } from '../src/profile/index.js';
 import { km, meters, minutes, seconds, Distance } from '../src/quantities.js';
@@ -450,5 +454,67 @@ describe('aerobic', () => {
       .analyze({ athlete: NONE })
       .aerobic.efficiency({ output: 'speed' })!;
     expect(e.output).toBe('speed');
+  });
+
+  it('measures power on moving time, so a café stop does not hide drift', () => {
+    // 200 W throughout while moving; heart rate 140 in the first half and
+    // 150 in the second. A 20-minute stop (0 W, 0 m/s, HR 90) sits in the
+    // second half; on elapsed time it would pull that half's HR down.
+    const n = 4801;
+    const stop = (i: number) => i > 3000 && i <= 4200;
+    const ride = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (stop(i) ? 0 : 10)),
+        {
+          watts: Array.from({ length: n }, (_, i) => (stop(i) ? 0 : 200)),
+          heartrate: Array.from({ length: n }, (_, i) =>
+            stop(i) ? 90 : i <= 1800 ? 140 : 150,
+          ),
+        },
+      ),
+    );
+    const d = ride.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.secondHalf.value).toBeCloseTo(200 / 150, 1);
+    expect(d.change).toBeGreaterThan(0.05);
+    expect(d.coverage).toBeCloseTo(1, 6);
+  });
+
+  it('reads a negative change when the second half is more efficient', () => {
+    const n = 3601;
+    const ride = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        watts: Array(n).fill(200),
+        heartrate: Array.from({ length: n }, (_, i) => (i <= 1800 ? 150 : 140)),
+      }),
+    );
+    const d = ride.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.change).toBeCloseTo(1 - 150 / 140, 2);
+  });
+
+  it('is null with no timestamps, and decoupling is null on a pool swim', () => {
+    const n = 600;
+    const noTime = Activity.from({
+      activity: META,
+      streams: {
+        latlng: [],
+        distanceMeters: Array.from({ length: n }, (_, i) => i * 10),
+        heartrate: Array(n).fill(140),
+        watts: Array(n).fill(200),
+      },
+    });
+    const a = noTime.analyze({ athlete: NONE }).aerobic;
+    expect(a.efficiency()).toBeNull();
+    expect(a.decoupling()).toBeNull();
+
+    const pool = readActivity(
+      gunzipSync(
+        readFileSync(
+          fileURLToPath(
+            new URL('./fixtures/pool-swim.fit.gz', import.meta.url),
+          ),
+        ),
+      ),
+    );
+    expect(pool.analyze({ athlete: NONE }).aerobic.decoupling()).toBeNull();
   });
 });

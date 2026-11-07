@@ -11,14 +11,19 @@
  * took more heartbeats for the same output (heart rate drifted up, or output
  * fell at the same heart rate).
  */
-import { hasDistance, type PreparedActivity } from '../summary/index.js';
-import { movingClock, type Span } from '../stats/index.js';
+import {
+  hasDistance,
+  movingBeforeSample,
+  type PreparedActivity,
+} from '../summary/index.js';
+import { movingClock, type MovingClock, type Span } from '../stats/index.js';
 import type { Stats } from './stats.js';
 import { sportOf } from './sport.js';
 
 /** What efficiency is measured on. `'power'`: normalized power over average
- *  heart rate, both over every sample (coasting counts, as in NP itself).
- *  `'speed'`: average moving speed over average moving heart rate. */
+ *  heart rate; `'speed'`: average speed over average heart rate. Both are
+ *  on moving time, so a stop (resting heart rate, zero power) doesn't pull
+ *  the number around. Coasting while moving still counts, as in NP. */
 export type AerobicOutput = 'power' | 'speed';
 
 export interface EfficiencyOptions {
@@ -30,8 +35,10 @@ export interface Efficiency {
   output: AerobicOutput;
   /** Watts per bpm (`'power'`), or metres per heartbeat (`'speed'`). */
   value: number;
-  /** Share of the section's elapsed time with both heart rate and the
-   *  output recorded, 0 to 1. */
+  /** Share of the section's moving time with both heart rate and the
+   *  output recorded, 0 to 1. For `'speed'` the output is worked out from
+   *  the distance almost everywhere, so in practice this is heart-rate
+   *  coverage. */
   coverage: number;
 }
 
@@ -70,8 +77,8 @@ export interface Decoupling {
 export interface AerobicSource {
   prep: PreparedActivity;
   span: Span;
-  /** Stats for a stretch inside the section. */
-  statsOf(span: Span, basis: 'elapsed' | 'moving'): Stats;
+  /** Moving-time stats for a stretch inside the section. */
+  statsOf(span: Span, basis: 'moving'): Stats;
 }
 
 const SHORT_SECONDS = 20 * 60;
@@ -84,10 +91,16 @@ const MAX_GAP_SECONDS = 10;
 /** Aerobic readings for a section: `section.analyze({ athlete }).aerobic`. */
 export class Aerobic {
   readonly #src: AerobicSource;
+  #clock?: MovingClock;
+  #decoupling = new Map<AerobicOutput, Decoupling | null>();
 
   /** @internal */
   constructor(src: AerobicSource) {
     this.#src = src;
+  }
+
+  get #movingClock(): MovingClock {
+    return (this.#clock ??= movingClock(this.#src.prep));
   }
 
   /** The default {@link EfficiencyOptions.output}: `'power'` on a ride with
@@ -113,16 +126,27 @@ export class Aerobic {
   }
 
   /** Efficiency in the first half against the second; null when either
-   *  half has no efficiency. */
+   *  half has no efficiency, and for a pool swim (its speed comes in whole
+   *  lengths, so halves and minute-by-minute steadiness don't mean the
+   *  same thing there). */
   decoupling(options: DecouplingOptions = {}): Decoupling | null {
     const method = options.method ?? 'halves';
     if (method !== 'halves')
       throw new RangeError(`unknown decoupling method: ${String(method)}`);
     const output = options.output ?? this.defaultOutput;
     if (!output) return null;
+    if (this.#decoupling.has(output)) return this.#decoupling.get(output)!;
+    const result = this.#decouple(output);
+    this.#decoupling.set(output, result);
+    return result;
+  }
+
+  #decouple(output: AerobicOutput): Decoupling | null {
+    const method = 'halves';
     const src = this.#src;
+    if (src.prep.poolLengths) return null;
     const { fromSeconds: from, toSeconds: to } = src.span;
-    const clock = movingClock(src.prep);
+    const clock = this.#movingClock;
     const moving = clock.upTo(to) - clock.upTo(from);
     if (!(moving > 0)) return null;
     const mid = elapsedAtMoving(clock.upTo, from, to, moving / 2);
@@ -142,7 +166,7 @@ export class Aerobic {
     const cautions: DecouplingCaution[] = [];
     if (moving < SHORT_SECONDS) cautions.push('short');
     if (whole.coverage < MIN_COVERAGE) cautions.push('low-coverage');
-    if (isVariable(src, output)) cautions.push('variable');
+    if (isVariable(src, output, clock)) cautions.push('variable');
     return {
       method,
       output,
@@ -187,8 +211,7 @@ function efficiencyOver(
   span: Span,
   output: AerobicOutput,
 ): Efficiency | null {
-  const basis = output === 'power' ? 'elapsed' : 'moving';
-  const s = src.statsOf(span, basis);
+  const s = src.statsOf(span, 'moving');
   const hr = s.heartRate.average?.bpm;
   if (!hr || !(hr > 0)) return null;
   const out =
@@ -205,7 +228,7 @@ function efficiencyOver(
   };
 }
 
-/** Share of elapsed time inside `span` where heart rate and the output are
+/** Share of moving time inside `span` where heart rate and the output are
  *  both recorded. Each sample covers the time since the one before (capped
  *  at {@link MAX_GAP_SECONDS}), as in the time-weighted averages. */
 function coverage(
@@ -222,7 +245,7 @@ function coverage(
   for (let i = 1; i < t.length; i++) {
     const a = Math.max(t[i - 1]!, span.fromSeconds);
     const b = Math.min(t[i]!, span.toSeconds);
-    if (!(b > a)) continue;
+    if (!(b > a) || !movingBeforeSample(prep, i)) continue;
     const dt = Math.min(b - a, MAX_GAP_SECONDS);
     total += dt;
     if (Number.isFinite(hr[i]!) && Number.isFinite(out[i]!)) covered += dt;
@@ -230,20 +253,23 @@ function coverage(
   return total > 0 ? covered / total : 0;
 }
 
-function isVariable(src: AerobicSource, output: AerobicOutput): boolean {
+function isVariable(
+  src: AerobicSource,
+  output: AerobicOutput,
+  clock: MovingClock,
+): boolean {
   if (output === 'power') {
-    const p = src.statsOf(src.span, 'elapsed').power;
+    const p = src.statsOf(src.span, 'moving').power;
     if (!p.normalized || !p.average || !(p.average.watts > 0)) return false;
     return p.normalized.watts / p.average.watts > MAX_POWER_VI;
   }
-  return minuteSpeedCv(src) > MAX_SPEED_CV;
+  return minuteSpeedCv(src, clock) > MAX_SPEED_CV;
 }
 
 /** Coefficient of variation of moving speed across whole minutes of moving
  *  time. A minute is one minute on the moving clock, so stops drop out. */
-function minuteSpeedCv(src: AerobicSource): number {
-  const { prep, span } = src;
-  const clock = movingClock(prep);
+function minuteSpeedCv(src: AerobicSource, clock: MovingClock): number {
+  const { span } = src;
   const moving = clock.upTo(span.toSeconds) - clock.upTo(span.fromSeconds);
   const minutes = Math.floor(moving / 60);
   if (minutes < 2) return 0;
