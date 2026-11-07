@@ -38,8 +38,8 @@ export type AerobicOutput = 'power' | 'speed' | 'grade-adjusted-speed';
 export interface EfficiencyOptions {
   /** Default: `'power'` for a ride with power, else `'speed'`. */
   output?: AerobicOutput;
-  /** For `'grade-adjusted-speed'`: the grade model. Default: the running
-   *  curve for a run, the walking curve for a walk or hike; another sport
+  /** For `'grade-adjusted-speed'`: the grade model. Default: ACSM running
+   *  for a run, Minetti walking for a walk or hike; another sport
    *  needs one named (and reads as if run or walked). */
   gradeModel?: GradeModel;
 }

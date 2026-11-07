@@ -22,6 +22,8 @@ const META = {
   sportType: 'Run',
 };
 
+const M = { model: 'minetti-2002-running' } as const;
+
 /** Minetti (2002) running cost, J/kg/m. */
 const run = (g: number) =>
   155.4 * g ** 5 -
@@ -77,9 +79,9 @@ function hills(
 
 describe('grade-adjusted pace', () => {
   it('equals the recorded pace on the flat', () => {
-    const g = hills([
-      { secs: 600, speed: 3, grade: 0 },
-    ]).pace.adjustedForGrade()!;
+    const g = hills([{ secs: 600, speed: 3, grade: 0 }]).pace.adjustedForGrade(
+      M,
+    )!;
     expect(g.model).toBe('minetti-2002-running');
     expect(g.factor).toBeCloseTo(1, 9);
     expect(g.speed.metersPerSecond).toBeCloseTo(3, 6);
@@ -88,7 +90,7 @@ describe('grade-adjusted pace', () => {
 
   it('is faster than recorded up a steady climb, by the cost ratio', () => {
     const a = hills([{ secs: 600, speed: 3, grade: 0.1 }]);
-    const g = a.pace.adjustedForGrade()!;
+    const g = a.pace.adjustedForGrade(M)!;
     expect(g.factor).toBeCloseTo(run(0.1) / run(0), 6);
     expect(g.speed.metersPerSecond).toBeCloseTo(3 * g.factor, 6);
     expect(g.recorded.speed.metersPerSecond).toBeCloseTo(3, 6);
@@ -98,7 +100,7 @@ describe('grade-adjusted pace', () => {
   it('is slower than recorded down a gentle descent', () => {
     const g = hills([
       { secs: 600, speed: 3, grade: -0.1 },
-    ]).pace.adjustedForGrade()!;
+    ]).pace.adjustedForGrade(M)!;
     expect(g.factor).toBeCloseTo(run(-0.1) / run(0), 6);
     expect(g.factor).toBeLessThan(1);
   });
@@ -106,7 +108,7 @@ describe('grade-adjusted pace', () => {
   it('counts grades past ±45 % as ±45 %', () => {
     const g = hills([
       { secs: 300, speed: 1, grade: 0.8 },
-    ]).pace.adjustedForGrade()!;
+    ]).pace.adjustedForGrade(M)!;
     expect(g.factor).toBeCloseTo(run(0.45) / run(0), 6);
   });
 
@@ -119,8 +121,8 @@ describe('grade-adjusted pace', () => {
     const climb = a.section({
       elapsed: { from: seconds(700), to: seconds(1200) },
     });
-    expect(flat.pace.adjustedForGrade()!.factor).toBeCloseTo(1, 6);
-    expect(climb.pace.adjustedForGrade()!.factor).toBeCloseTo(
+    expect(flat.pace.adjustedForGrade(M)!.factor).toBeCloseTo(1, 6);
+    expect(climb.pace.adjustedForGrade(M)!.factor).toBeCloseTo(
       run(0.1) / run(0),
       6,
     );
@@ -146,7 +148,7 @@ describe('grade-adjusted pace', () => {
     const g = hills([
       { secs: 300, speed: 3, grade: 0.1 },
       { secs: 700, speed: 3, grade: 0.1, gap: true },
-    ]).pace.adjustedForGrade()!;
+    ]).pace.adjustedForGrade(M)!;
     expect(g.coverage).toBeGreaterThan(0.28);
     expect(g.coverage).toBeLessThan(0.32);
     const climb = run(0.1) / run(0);
@@ -159,7 +161,7 @@ describe('grade-adjusted pace', () => {
       { secs: 120, speed: 0, grade: 0 },
       { secs: 300, speed: 3, grade: 0.1 },
     ]);
-    const g = a.pace.adjustedForGrade()!;
+    const g = a.pace.adjustedForGrade(M)!;
     expect(g.factor).toBeCloseTo(run(0.1) / run(0), 2);
     expect(g.recorded.speed.metersPerSecond).toBeCloseTo(3, 1);
   });
@@ -204,7 +206,7 @@ describe('grade-adjusted pace', () => {
     }
     const tiny = a
       .section({ elapsed: { from: seconds(420.2), to: seconds(420.7) } })
-      .pace.adjustedForGrade()!;
+      .pace.adjustedForGrade(M)!;
     expect(tiny.factor).toBeCloseTo(run(0.08) / run(0), 6);
   });
 
@@ -213,13 +215,13 @@ describe('grade-adjusted pace', () => {
     // but over 100 m it stays within a few per cent
     const g = hills([
       { secs: 600, speed: 3, grade: 0, noise: (t) => (t % 2 ? 2 : -2) },
-    ]).pace.adjustedForGrade()!;
+    ]).pace.adjustedForGrade(M)!;
     expect(Math.abs(g.factor - 1)).toBeLessThan(0.05);
   });
 
   it('is null with no moving time', () => {
     expect(
-      hills([{ secs: 300, speed: 0, grade: 0 }]).pace.adjustedForGrade(),
+      hills([{ secs: 300, speed: 0, grade: 0 }]).pace.adjustedForGrade(M),
     ).toBeNull();
   });
 
@@ -229,13 +231,35 @@ describe('grade-adjusted pace', () => {
         [{ secs: 300, speed: 3, grade: 0 }],
         'Run',
         false,
-      ).pace.adjustedForGrade(),
+      ).pace.adjustedForGrade(M),
     ).toBeNull();
     const ride = hills([{ secs: 300, speed: 8, grade: 0.05 }], 'Ride');
     expect(ride.pace.adjustedForGrade()).toBeNull();
     expect(
       ride.pace.adjustedForGrade({ model: 'minetti-2002-running' })!.model,
     ).toBe('minetti-2002-running');
+  });
+});
+
+describe('the ACSM running model', () => {
+  it('is the default for a run: uphill 1 + 4.5 × grade, descents as level', () => {
+    const up = hills([
+      { secs: 600, speed: 3, grade: 0.1 },
+    ]).pace.adjustedForGrade()!;
+    expect(up.model).toBe('acsm-running');
+    expect(up.factor).toBeCloseTo(1.45, 6);
+    const down = hills([
+      { secs: 600, speed: 3, grade: -0.1 },
+    ]).pace.adjustedForGrade()!;
+    expect(down.factor).toBeCloseTo(1, 6);
+  });
+
+  it('can be asked for by name on a walk', () => {
+    const g = hills(
+      [{ secs: 600, speed: 1.2, grade: 0.05 }],
+      'Walk',
+    ).pace.adjustedForGrade({ model: 'acsm-running' })!;
+    expect(g.factor).toBeCloseTo(1.225, 6);
   });
 });
 
@@ -254,7 +278,10 @@ describe('grade-adjusted efficiency', () => {
   it('reads a steady effort over hills as steady', () => {
     const aerobic = steadyOverHills().analyze().aerobic;
     const plain = aerobic.decoupling({ output: 'speed' })!;
-    const adjusted = aerobic.decoupling({ output: 'grade-adjusted-speed' })!;
+    const adjusted = aerobic.decoupling({
+      output: 'grade-adjusted-speed',
+      gradeModel: M.model,
+    })!;
     expect(plain.cautions).toContain('variable');
     expect(adjusted.cautions).not.toContain('variable');
     expect(Math.abs(adjusted.change)).toBeLessThan(0.02);
@@ -263,9 +290,10 @@ describe('grade-adjusted efficiency', () => {
 
   it('gives grade-adjusted metres per heartbeat', () => {
     const a = hills([{ secs: 1200, speed: 3, grade: 0.1 }]);
-    const e = a
-      .analyze()
-      .aerobic.efficiency({ output: 'grade-adjusted-speed' })!;
+    const e = a.analyze().aerobic.efficiency({
+      output: 'grade-adjusted-speed',
+      gradeModel: M.model,
+    })!;
     const plain = a.analyze().aerobic.efficiency({ output: 'speed' })!;
     expect(e.value / plain.value).toBeCloseTo(run(0.1) / run(0), 3);
   });

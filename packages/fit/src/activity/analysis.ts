@@ -376,7 +376,7 @@ export class PowerEfforts<S> {
 }
 
 export interface GradeAdjustOptions {
-  /** Default: Minetti's running curve for a run, his walking curve for a
+  /** Default: `'acsm-running'` for a run, `'minetti-2002-walking'` for a
    *  walk or hike. */
   model?: GradeModel;
 }

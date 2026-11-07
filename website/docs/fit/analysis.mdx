@@ -144,12 +144,12 @@ Threshold 21 s
 ## Grade-adjusted pace
 
 `section.pace.adjustedForGrade()` estimates the pace the same effort would give
-on level ground. It is an estimate, so it names its model: Minetti's energy cost
-of running at each grade (2002), or his walking curve for a walk or hike. A
-metre uphill counts as more than a level metre and a metre on a gentle descent
-as less; the grade is read over 100 m of distance so elevation noise doesn't
-become steep slopes. It is on moving time, like `stats().pace`, and needs no
-settings.
+on level ground. It is an estimate, so it names its model. For a run the default
+is `'acsm-running'`, the American College of Sports Medicine's running
+equation: a metre climbed at grade g counts as 1 + 4.5 g level metres, and a
+descent counts as level (the equation doesn't cover descents). The grade is read
+over 100 m of distance so elevation noise doesn't become steep slopes. It is on
+moving time, like `stats().pace`, and needs no settings.
 
 ```ts
 const g = run.pace.adjustedForGrade()!;
@@ -158,18 +158,23 @@ console.log(g.factor.toFixed(3), g.coverage);
 ```
 
 ```text output
-minetti-2002-running 5:04/km 5:05/km
-0.997 1
+acsm-running 5:04/km 5:01/km
+1.009 1
 ```
 
 The interval run is nearly flat (18 m up, 24 m down), so the two paces are
 close. `factor` is level-equivalent metres per metre, and `coverage` the share
 of the distance where elevation was recorded; the rest counts as level.
 
-The curve has a known limit: it is cheapest near −20 %, where a metre costs
+Minetti's energy cost curves (2002) are there too, by name:
+`{ model: 'minetti-2002-running' }`, and `'minetti-2002-walking'`, the default
+for walks and hikes. They come from treadmill measurements and credit a gentle
+descent as cheaper than level ground, cheapest near −20 %, where a metre costs
 about half a level one. So a steep descent gets an adjusted pace well _slower_
-than its recorded pace, even when it felt hard (braking, rough footing). Read
-it on a whole hilly run, or on climbs, rather than on one steep descent.
+than its recorded pace, even when it felt hard (braking, rough footing). On a
+real 50 km trail race, ACSM stayed within about a minute per mile of Strava's
+grade-adjusted pace on most miles, while Minetti was 2 to 8 minutes per mile
+slower on the descents.
 
 ## Efficiency and decoupling
 

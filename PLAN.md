@@ -1301,7 +1301,8 @@ depend on. Plan:
   (`analysis.distribution`, `analysis.coasting`) and running dynamics
   (`section.dynamics`), swim stroke metrics (`analysis.technique`) and
   efforts with recoveries (`analysis.efforts`) and grade-adjusted pace
-  (`section.pace.adjustedForGrade()`, Minetti 2002, named in the result;
+  (`section.pace.adjustedForGrade()`, ACSM running by default, Minetti 2002
+  by name, the model named in the result;
   aerobic output `'grade-adjusted-speed'`) built.
   Then `TrainingHistory` (records, season curve, weekly volume, load
   timeline), on per-activity digests; each activity's load records the

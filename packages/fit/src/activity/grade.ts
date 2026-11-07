@@ -1,21 +1,27 @@
 /**
  * Grade-adjusted pace (RFC §15.1): the pace the same effort would give on
  * level ground. An estimate, not a measurement, so the result names the
- * model that made it.
+ * model that made it. A metre at grade g counts as cost(g) ÷ cost(0) level
+ * metres, so a stretch's grade-adjusted speed is its speed times the ratio
+ * of level-equivalent metres to metres. Two families of model:
  *
- * The model is Minetti et al. (2002), "Energy cost of walking and running
- * at extreme uphill and downhill slopes", J Appl Physiol 93: 1039–1046. It
- * gives the energy one metre costs at each grade, as a curve fitted to
- * treadmill measurements from −45 % to +45 %. A metre at grade g counts as
- * cost(g) ÷ cost(0) level metres, so a stretch's grade-adjusted speed is its
- * speed times the ratio of level-equivalent metres to metres. Runs use the
- * running curve; walks and hikes the walking one.
- *
- * Its known limit: the curve is cheapest near −20 %, where a metre costs
- * about half a level one, so a steep descent gets a slower adjusted pace
- * than its recorded pace, and steeper still costs more again. Runners often
- * feel steep descents as harder than that (braking, footing), and other
- * models (Strava's, from its own heart-rate data) treat them so.
+ * - `'acsm-running'` (the default for runs): the American College of
+ *   Sports Medicine's running equation (ACSM's Guidelines for Exercise
+ *   Testing and Prescription), oxygen cost 0.2 + 0.9 × grade per metre.
+ *   A climb at grade g counts 1 + 4.5 g level metres per metre. The
+ *   equation doesn't cover descents, so a descent counts as level. Checked
+ *   on a real 50 km trail race against Strava's grade-adjusted pace: within
+ *   about a minute per mile on most miles, where Minetti's running curve
+ *   was off by 2 to 8 minutes on descents.
+ * - Minetti et al. (2002), "Energy cost of walking and running at extreme
+ *   uphill and downhill slopes", J Appl Physiol 93: 1039–1046: the energy
+ *   one metre costs at each grade, a curve fitted to treadmill
+ *   measurements from −45 % to +45 % (`'minetti-2002-running'`, and
+ *   `'minetti-2002-walking'`, the default for walks and hikes). Its known
+ *   limit: the curve is cheapest near −20 %, where a metre costs about
+ *   half a level one, so a steep descent gets a much slower adjusted pace
+ *   than its recorded pace. Runners feel steep descents as harder than
+ *   that (braking, footing).
  *
  * Grade comes from the elevation over 100 m of distance centred on each
  * sample (less at the ends, none under 20 m), so a few metres of GPS or
@@ -30,8 +36,12 @@ import {
 import type { Span } from '../stats/index.js';
 import { sportOf } from './sport.js';
 
-/** The grade models so far: Minetti (2002)'s running and walking curves. */
-export type GradeModel = 'minetti-2002-running' | 'minetti-2002-walking';
+/** The grade models so far: ACSM's running equation and Minetti (2002)'s
+ *  running and walking curves. */
+export type GradeModel =
+  | 'minetti-2002-running'
+  | 'minetti-2002-walking'
+  | 'acsm-running';
 
 /** Half the distance a grade is read over, in metres. */
 const HALF_WINDOW_M = 50;
@@ -42,6 +52,7 @@ const MAX_GRADE = 0.45;
 
 /** Energy cost in J/kg/m at grade `g` (a fraction: 0.1 is 10 %). */
 const COST: Record<GradeModel, (g: number) => number> = {
+  'acsm-running': (g) => 0.2 + 0.9 * Math.max(g, 0),
   'minetti-2002-running': (g) =>
     155.4 * g ** 5 -
     30.4 * g ** 4 -
@@ -58,11 +69,12 @@ const COST: Record<GradeModel, (g: number) => number> = {
     2.5,
 };
 
-/** The model for an activity's sport: running for runs, walking for walks
- *  and hikes, none for anything else. @internal */
+/** The default model for an activity's sport: ACSM running for runs,
+ *  Minetti walking for walks and hikes, none for anything else.
+ *  @internal */
 export function gradeModelFor(prep: PreparedActivity): GradeModel | null {
   const sport = sportOf(prep.imported.activity.sportType);
-  if (sport === 'run') return 'minetti-2002-running';
+  if (sport === 'run') return 'acsm-running';
   if (sport === 'walk' || sport === 'hike') return 'minetti-2002-walking';
   return null;
 }
