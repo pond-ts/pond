@@ -26,3 +26,13 @@ export {
   type PowerRecord,
   type PaceRecord,
 } from './analysis.js';
+export {
+  HistoryLoad,
+  type LoadMethod,
+  type NoLoadReason,
+  type ActivityLoad,
+  type DayStatus,
+  type DayLoad,
+  type TimelineOptions,
+  type LoadTimeline,
+} from './load.js';

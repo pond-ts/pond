@@ -56,7 +56,8 @@ export function dayOfNumber(n: number): Day {
   return new Date(n * MS_PER_DAY).toISOString().slice(0, 10);
 }
 
-/** The day an activity counts on. */
+/** The day an activity counts on: the local date it started when the
+ *  recording gives one, else its UTC date. */
 export function dayOf(d: ActivityDigest): Day {
   return (d.localStart ?? d.startedAt).slice(0, 10);
 }
@@ -169,11 +170,15 @@ export class TrainingHistory {
     );
   }
 
-  /** The history read for one athlete: records and the power curve now;
-   *  settings resolve on each activity's own date. */
+  /** The history read for one athlete: records, the power curve and
+   *  training load; settings resolve on each activity's own date. */
   analyze(options: HistoryAnalyzeOptions = {}): HistoryAnalysis {
     return new HistoryAnalysis(
-      { digests: this.#digests, activities: this.#activities },
+      {
+        digests: this.#digests,
+        activities: this.#activities,
+        covers: this.#covers,
+      },
       options,
     );
   }

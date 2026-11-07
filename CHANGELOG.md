@@ -99,6 +99,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   `pace.records({ distances })`, each naming the activity, day and stretch,
   with the `Section` when the full activity was given, and watts per
   kilogram on the weight in force on the effort's date.
+  `analysis.load.activities(method)` gives each activity's load with its
+  method, `'cycling-tss'` or `'heart-rate-zones'` (minutes in zones 1 to 5
+  weighted 1 to 5 on the athlete's own zones), or the reason it has none
+  (`not-a-ride`, `no-power`, `no-ftp`, `no-heart-rate`, `no-zones`,
+  `no-time`).
+  `analysis.load.timeline({ method })` runs long- and short-term load day by
+  day (42 and 7 days by default, CTL / ATL / TSB), one method at a time, each
+  day marked trained, unscored (activities with no load in that method),
+  rest or gap. Unscored days and gaps count as 0, or with
+  `unknownDays: 'carry'` leave the curves as they were.
 - **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
   `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
   stretch's moving pace with the model named (`'acsm-running'`, the ACSM

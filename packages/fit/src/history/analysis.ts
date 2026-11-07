@@ -17,7 +17,8 @@ import {
   DIGEST_POWER_DURATIONS,
   type ActivityDigest,
 } from './digest.js';
-import { dayOf, type Day } from './history.js';
+import { dayOf, type Day, type DayRange } from './history.js';
+import { HistoryLoad } from './load.js';
 
 export interface HistoryAnalyzeOptions {
   /** Dated settings: each activity uses the values in force at its start
@@ -60,6 +61,7 @@ export interface PaceRecord extends RecordPlace {
 export interface HistoryParts {
   digests: readonly ActivityDigest[];
   activities: ReadonlyMap<string, Activity>;
+  covers: DayRange | null;
 }
 
 const NO_SETTINGS = Profile.of({});
@@ -90,6 +92,7 @@ export class HistoryAnalysis {
   readonly #athlete: AthleteInput | undefined;
   #power?: HistoryPower;
   #pace?: HistoryPace;
+  #load?: HistoryLoad;
 
   /** @internal made by `history.analyze()` */
   constructor(parts: HistoryParts, options: HistoryAnalyzeOptions) {
@@ -101,6 +104,18 @@ export class HistoryAnalysis {
   get power(): HistoryPower {
     return (this.#power ??= new HistoryPower(this.#parts, (d) =>
       this.#athlete ? resolveAthlete(this.#athlete, d.startedAt) : NO_SETTINGS,
+    ));
+  }
+
+  /** Each activity's load with its method, and the load timeline. */
+  get load(): HistoryLoad {
+    return (this.#load ??= new HistoryLoad(
+      this.#parts.digests,
+      this.#parts.covers,
+      (d) =>
+        this.#athlete
+          ? resolveAthlete(this.#athlete, d.startedAt)
+          : NO_SETTINGS,
     ));
   }
 

@@ -197,3 +197,89 @@ for (const r of onFoot.pace.records({ distances: [km(1), km(5)] }))
 
 Asking for a duration or distance a digest doesn't keep is an error, since
 the history can't answer it from digests.
+
+## Training load
+
+Each activity's load comes with the method that made it, because devices come
+and go across a history: a ride from before the power meter has no power
+load, a run without the strap has no heart-rate load.
+
+- `'cycling-tss'`: a ride with power and an FTP, elapsed seconds × NP × IF ÷
+  (FTP × 3600) × 100, as `section.analyze().load` gives.
+- `'heart-rate-zones'`: any sport with heart rate and heart-rate zones:
+  minutes in zones 1 to 5 weighted 1 to 5 (Edwards' method, on your own
+  zones). It reads the digest's heart-rate histogram, which is elapsed time,
+  so a stop counts at the low heart rate it has.
+
+```ts
+const athlete = {
+  ftpWatts: [{ at: '2026-01-01', value: 250 }],
+  hrZone: [{ at: '2026-01-01', maxHr: 186 }],
+};
+const loads = known.analyze({ athlete }).load;
+for (const method of ['cycling-tss', 'heart-rate-zones'] as const)
+  for (const l of loads.activities(method))
+    console.log(method, l.day, l.value?.toFixed(1) ?? l.reason);
+```
+
+```text output
+cycling-tss 2026-06-14 138.7
+cycling-tss 2026-06-16 not-a-ride
+heart-rate-zones 2026-06-14 203.4
+heart-rate-zones 2026-06-16 114.0
+```
+
+### The timeline
+
+`timeline({ method })` runs long-term load (42 days) and short-term load (7
+days) day by day, with the balance between them: the CTL, ATL and TSB of
+TrainingPeaks' Performance Manager. Each day's update is
+`chronic += (load − chronic) / 42`, the same for acute with 7, and `balance`
+is chronic minus acute at the start of the day.
+
+```ts
+const t = loads.timeline({ method: 'heart-rate-zones' });
+for (const day of t.days.slice(12, 18))
+  console.log(
+    day.day,
+    day.status,
+    day.load.toFixed(0),
+    day.chronic.toFixed(1),
+    day.acute.toFixed(1),
+    day.balance.toFixed(1),
+  );
+```
+
+```text output
+2026-06-13 rest 0 0.0 0.0 0.0
+2026-06-14 trained 203 4.8 29.1 0.0
+2026-06-15 rest 0 4.7 24.9 -24.2
+2026-06-16 trained 114 7.3 37.6 -20.2
+2026-06-17 rest 0 7.2 32.3 -30.3
+2026-06-18 rest 0 7.0 27.7 -25.1
+```
+
+A timeline uses **one method**. Power TSS and heart-rate load are on different
+scales (an hour at threshold is about 100 TSS but 240 by heart-rate zones), so
+adding them would make a new power meter look like a jump in fitness. Each day
+says what it was instead:
+
+- `'trained'`: an activity scored in this method (`scored` lists them).
+- `'unscored'`: there were activities, but none had a load in this method
+  (`unscored` lists them). The day counts as 0 unless you ask otherwise
+  (below).
+- `'rest'`: no activity on a day the history covers.
+- `'gap'`: outside `covers`. Nothing is known; load is taken as 0 so the
+  curves keep decaying, and a chart can shade it.
+
+Counting an unscored day as 0 is what TrainingPeaks does, but a day you rode
+with a dead power meter wasn't a day off, and it makes fitness look like it
+dropped. Pass `unknownDays: 'carry'` to leave both curves as they were on
+unscored days and gaps instead. Rest days decay either way.
+
+An activity counts on the local date it started when the recording gives one,
+and on its UTC date otherwise, so a late-evening run abroad lands on the day
+you ran it.
+
+The curves start at 0; pass `start: { chronic, acute }` to begin from known
+values, and `chronicDays` / `acuteDays` for other time constants.
