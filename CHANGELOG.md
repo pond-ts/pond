@@ -94,6 +94,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   week's count, distance, moving and elapsed time, ascent, longest activity
   and per-sport totals, empty weeks kept and each marked full, partial or
   gap.
+  `history.analyze({ athlete })` gives records: `power.records({ durations })`
+  and `power.curve()` (the season's power curve) and
+  `pace.records({ distances })`, each naming the activity, day and stretch,
+  with the `Section` when the full activity was given, and watts per
+  kilogram on the weight in force on the effort's date.
 - **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
   `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
   stretch's moving pace with the model named (`'acsm-running'`, the ACSM

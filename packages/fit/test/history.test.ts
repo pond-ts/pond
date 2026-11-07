@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Activity } from '../src/activity/index.js';
 import type { ImportedActivity } from '../src/types.js';
-import { seconds } from '../src/quantities.js';
+import { hours, km, miles, minutes, seconds } from '../src/quantities.js';
 import {
   TrainingHistory,
   dayOf,
@@ -309,5 +309,123 @@ describe('history edge cases', () => {
     });
     expect(a.digest().fingerprint).toBe(a.digest().fingerprint);
     expect(cropped.digest().fingerprint).not.toBe(a.digest().fingerprint);
+  });
+});
+
+describe('history.analyze(): records and the power curve', () => {
+  const ride = (id: string, day: string, watts: Record<number, number>) =>
+    digest(id, `${day}T08:00:00`, {
+      sport: 'ride',
+      sportType: 'Ride',
+      power: {
+        average: 150,
+        normalized: 160,
+        curve: Object.entries(watts).map(([s, w]) => ({
+          seconds: Number(s),
+          watts: w,
+          from: 100,
+          to: 100 + Number(s),
+        })),
+      },
+    });
+
+  it('takes the best per duration and says where it was', () => {
+    const h = TrainingHistory.of([
+      ride('a', '2026-01-10', { 60: 400, 1200: 250 }),
+      ride('b', '2026-05-10', { 60: 380, 1200: 270, 3600: 230 }),
+    ]);
+    const recs = h.analyze().power.curve();
+    expect(
+      recs.map((r) => [r.duration.seconds, r.power.watts, r.activity]),
+    ).toEqual([
+      [60, 400, 'a'],
+      [1200, 270, 'b'],
+      [3600, 230, 'b'],
+    ]);
+    expect(recs[0]!.day).toBe('2026-01-10');
+    expect(recs[0]!.from.seconds).toBe(100);
+    expect(recs[0]!.to.seconds).toBe(160);
+    expect(recs[0]!.section).toBeNull();
+    expect(recs[0]!.wattsPerKg).toBeNull();
+  });
+
+  it('uses the weight in force on the effort date', () => {
+    const h = TrainingHistory.of([
+      ride('a', '2026-01-10', { 60: 400 }),
+      ride('b', '2026-05-10', { 1200: 270 }),
+    ]);
+    const athlete = {
+      weightKg: [
+        { at: '2026-01-01', value: 80 },
+        { at: '2026-04-01', value: 75 },
+      ],
+    };
+    const [m1, m20] = h.analyze({ athlete }).power.records({
+      durations: [minutes(1), minutes(20)],
+    });
+    expect(m1!.wattsPerKg).toBeCloseTo(400 / 80, 9);
+    expect(m20!.wattsPerKg).toBeCloseTo(270 / 75, 9);
+  });
+
+  it('keeps the earlier activity on a tie, and refuses durations a digest lacks', () => {
+    const h = TrainingHistory.of([
+      ride('late', '2026-05-10', { 60: 400 }),
+      ride('early', '2026-01-10', { 60: 400 }),
+    ]);
+    expect(
+      h.analyze().power.records({ durations: [minutes(1)] })[0]!.activity,
+    ).toBe('early');
+    expect(() =>
+      h.analyze().power.records({ durations: [seconds(42)] }),
+    ).toThrow(/42 isn't one/);
+  });
+
+  it('finds the fastest time per distance, miles matched', () => {
+    const run = (id: string, day: string, mile: number, fiveK: number) =>
+      digest(id, `${day}T08:00:00`, {
+        pace: [
+          { metres: 1609.344, seconds: mile, from: 0, to: mile },
+          { metres: 5000, seconds: fiveK, from: 10, to: 10 + fiveK },
+        ],
+      });
+    const h = TrainingHistory.of([
+      run('a', '2026-01-10', 400, 1300),
+      run('b', '2026-02-10', 380, 1350),
+    ]);
+    const [mile, fiveK] = h
+      .analyze()
+      .pace.records({ distances: [miles(1), km(5)] });
+    expect(mile!.activity).toBe('b');
+    expect(mile!.time.seconds).toBe(380);
+    expect(mile!.distance.meters).toBe(1609.344);
+    expect(fiveK!.activity).toBe('a');
+    expect(fiveK!.pace.secondsPerKm).toBeCloseTo(260, 9);
+    expect(() => h.analyze().pace.records({ distances: [km(7)] })).toThrow();
+  });
+
+  it('hands back the section when the full activity was given', () => {
+    const a = steady({
+      id: 'full',
+      start: '2026-03-02T07:00:00Z',
+      sportType: 'Ride',
+      secs: 1200,
+      speed: 8,
+      watts: 200,
+    });
+    const [rec] = TrainingHistory.of([a])
+      .analyze()
+      .power.records({ durations: [minutes(5)] });
+    expect(rec!.section).not.toBeNull();
+    expect(rec!.section!.label).toBe('Best 5 min');
+    expect(rec!.section!.toSeconds - rec!.section!.fromSeconds).toBeCloseTo(
+      300,
+      0,
+    );
+  });
+
+  it('leaves out durations nobody reached', () => {
+    const h = TrainingHistory.of([ride('a', '2026-01-10', { 60: 400 })]);
+    expect(h.analyze().power.records({ durations: [hours(1)] })).toEqual([]);
+    expect(TrainingHistory.of([]).analyze().pace.records()).toEqual([]);
   });
 });

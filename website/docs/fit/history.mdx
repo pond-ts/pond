@@ -135,3 +135,65 @@ Weeks start on Monday; pass `{ weekStart: 'sunday' }` for Sunday. `coverage`
 is `'full'` when every day of the week is covered, `'partial'` when some are,
 and `'gap'` when none are. An activity without a moving time adds to elapsed
 time but not to moving time.
+
+## Records and the season curve
+
+Records need settings only for watts per kilogram, so `analyze()` takes the
+athlete as optional. Each activity uses the settings in force on its own date.
+
+```ts
+import { km, minutes } from '@pond-ts/fit';
+
+const season = known.analyze({
+  athlete: { weightKg: [{ at: '2026-01-01', value: 72 }] },
+});
+for (const r of season.power.records({
+  durations: [minutes(1), minutes(5), minutes(20)],
+}))
+  console.log(
+    r.duration.format(),
+    r.power.format(),
+    r.wattsPerKg?.toFixed(2),
+    r.day,
+    r.section?.label,
+  );
+```
+
+```text output
+1:00 323 W 4.49 2026-06-14 Best 1 min
+5:00 310 W 4.30 2026-06-14 Best 5 min
+20:00 269 W 3.73 2026-06-14 Best 20 min
+```
+
+Every record names its activity, the day and the stretch (`from` and `to`,
+elapsed from the activity's start). When the history was given the full
+activity, `section` is that stretch as a `Section`, so you can look inside it;
+from a digest alone it's `null`. On a tie the earlier activity keeps the
+record.
+
+`power.curve()` is the records at every duration a digest keeps (1 s to 5 h),
+which is the season's power curve. For a season, narrow the history first:
+`history.between({ from, to }).analyze()`.
+
+Pace records are the fastest elapsed time, stops included, over distances a
+digest keeps (400 m to 100 km). Records don't pick a sport for you, so narrow
+to the sports you mean first, or a ride would hold the running records:
+
+```ts
+const onFoot = known.sports(['run']).analyze();
+for (const r of onFoot.pace.records({ distances: [km(1), km(5)] }))
+  console.log(
+    r.distance.format('km'),
+    r.time.format(),
+    r.pace.format(),
+    r.activity,
+  );
+```
+
+```text output
+1.00 km 4:10 4:10/km fit:2026-06-16T18:00:00.000Z
+5.00 km 24:49 4:58/km fit:2026-06-16T18:00:00.000Z
+```
+
+Asking for a duration or distance a digest doesn't keep is an error, since
+the history can't answer it from digests.
