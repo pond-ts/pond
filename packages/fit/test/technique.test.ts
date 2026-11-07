@@ -126,7 +126,9 @@ describe('technique', () => {
 
   it('leaves out lengths counted as 0, and says how many', () => {
     const rec = swim();
-    rec.swim!.lengths[1] = { ...rec.swim!.lengths[1]!, strokes: 0 };
+    const lengths = [...(rec.swim!.lengths ?? [])];
+    lengths[1] = { ...lengths[1]!, strokes: 0 };
+    rec.swim = { ...rec.swim!, lengths };
     const t = Activity.from(rec).analyze().technique!;
     expect(t.lengths).toBe(5);
     expect(t.uncounted).toBe(1);
@@ -135,10 +137,13 @@ describe('technique', () => {
 
   it('keeps a named stroke when other lengths are unnamed', () => {
     const rec = swim();
-    rec.swim!.lengths = rec.swim!.lengths.map((l, i) =>
-      i < 2 ? l : { ...l, stroke: undefined },
-    );
-    rec.swim!.lengths[7] = { ...rec.swim!.lengths[7]!, stroke: 'drill' };
+    const lengths: SwimLength[] = (rec.swim!.lengths ?? []).map((l, i) => {
+      if (i < 2) return l;
+      const { stroke: _named, ...rest } = l;
+      return rest;
+    });
+    lengths[7] = { ...lengths[7]!, stroke: 'drill' };
+    rec.swim = { ...rec.swim!, lengths };
     expect(Activity.from(rec).analyze().technique!.stroke).toBe('freestyle');
   });
 
