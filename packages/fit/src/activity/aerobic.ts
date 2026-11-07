@@ -19,12 +19,16 @@ import {
 import { movingClock, type MovingClock, type Span } from '../stats/index.js';
 import type { Stats } from './stats.js';
 import { sportOf } from './sport.js';
+import { gradeFactors, gradeModelFor, gradeRatio } from './grade.js';
 
 /** What efficiency is measured on. `'power'`: normalized power over average
- *  heart rate; `'speed'`: average speed over average heart rate. Both are
- *  on moving time, so a stop (resting heart rate, zero power) doesn't pull
- *  the number around. Coasting while moving still counts, as in NP. */
-export type AerobicOutput = 'power' | 'speed';
+ *  heart rate; `'speed'`: average speed over average heart rate;
+ *  `'grade-adjusted-speed'`: the same with speed adjusted for grade
+ *  (`section.pace.adjustedForGrade()`), on foot only, so a hilly run isn't
+ *  read as uneven. All are on moving time, so a stop (resting heart rate,
+ *  zero power) doesn't pull the number around. Coasting while moving still
+ *  counts, as in NP. */
+export type AerobicOutput = 'power' | 'speed' | 'grade-adjusted-speed';
 
 export interface EfficiencyOptions {
   /** Default: `'power'` for a ride with power, else `'speed'`. */
@@ -33,12 +37,12 @@ export interface EfficiencyOptions {
 
 export interface Efficiency {
   output: AerobicOutput;
-  /** Watts per bpm (`'power'`), or metres per heartbeat (`'speed'`). */
+  /** Watts per bpm (`'power'`), or metres per heartbeat (the speeds). */
   value: number;
   /** Share of the section's moving time with both heart rate and the
    *  output recorded, 0 to 1. For `'speed'` the output is worked out from
    *  the distance almost everywhere, so in practice this is heart-rate
-   *  coverage. */
+   *  coverage; grade-adjusted speed also needs the grade (elevation). */
   coverage: number;
 }
 
@@ -50,7 +54,8 @@ export type DecouplingCaution =
   | 'low-coverage'
   /** The output isn't steady: for power, a variability index above 1.10;
    *  for speed, minute-by-minute moving speed varying by more than 10 %
-   *  (coefficient of variation). Intervals and hilly runs land here. */
+   *  (coefficient of variation). Intervals and hilly runs land here; with
+   *  grade-adjusted speed, a steady effort over hills doesn't. */
   | 'variable';
 
 export interface DecouplingOptions extends EfficiencyOptions {
@@ -104,7 +109,8 @@ export class Aerobic {
   }
 
   /** The default {@link EfficiencyOptions.output}: `'power'` on a ride with
-   *  power, `'speed'` with a distance, else null. */
+   *  power, `'speed'` with a distance, else null. Grade-adjusted speed is
+   *  asked for by name. */
   get defaultOutput(): AerobicOutput | null {
     const { prep } = this.#src;
     const sport = sportOf(prep.imported.activity.sportType);
@@ -180,6 +186,19 @@ export class Aerobic {
   }
 }
 
+/** 1 for plain speed; level-equivalent metres per metre for grade-adjusted
+ *  speed (NaN when it can't be worked out). */
+function gradeMultiplier(
+  src: AerobicSource,
+  span: Span,
+  output: AerobicOutput,
+): number {
+  if (output !== 'grade-adjusted-speed') return 1;
+  const model = gradeModelFor(src.prep);
+  const r = model ? gradeRatio(src.prep, span, model) : null;
+  return r ? r.ratio : NaN;
+}
+
 function hasFinite(a: Float64Array | undefined): boolean {
   if (!a) return false;
   for (let i = 0; i < a.length; i++) if (Number.isFinite(a[i]!)) return true;
@@ -218,7 +237,9 @@ function efficiencyOver(
     output === 'power'
       ? s.power.normalized?.watts
       : s.speed.average
-        ? s.speed.average.metersPerSecond * 60
+        ? s.speed.average.metersPerSecond *
+          60 *
+          gradeMultiplier(src, span, output)
         : undefined;
   if (out === undefined || !Number.isFinite(out)) return null;
   return {
@@ -239,7 +260,10 @@ function coverage(
   const t = prep.timeRel;
   const hr = prep.cols.hr;
   const out = output === 'power' ? prep.cols.power : prep.speed;
-  if (!hr || !out) return 0;
+  const model =
+    output === 'grade-adjusted-speed' ? gradeModelFor(prep) : undefined;
+  const grade = model ? gradeFactors(prep, model)?.factor : undefined;
+  if (!hr || !out || (output === 'grade-adjusted-speed' && !grade)) return 0;
   let total = 0;
   let covered = 0;
   for (let i = 1; i < t.length; i++) {
@@ -248,7 +272,12 @@ function coverage(
     if (!(b > a) || !movingBeforeSample(prep, i)) continue;
     const dt = Math.min(b - a, MAX_GAP_SECONDS);
     total += dt;
-    if (Number.isFinite(hr[i]!) && Number.isFinite(out[i]!)) covered += dt;
+    if (
+      Number.isFinite(hr[i]!) &&
+      Number.isFinite(out[i]!) &&
+      (!grade || Number.isFinite(grade[i]!))
+    )
+      covered += dt;
   }
   return total > 0 ? covered / total : 0;
 }
@@ -263,12 +292,16 @@ function isVariable(
     if (!p.normalized || !p.average || !(p.average.watts > 0)) return false;
     return p.normalized.watts / p.average.watts > MAX_POWER_VI;
   }
-  return minuteSpeedCv(src, clock) > MAX_SPEED_CV;
+  return minuteSpeedCv(src, clock, output) > MAX_SPEED_CV;
 }
 
 /** Coefficient of variation of moving speed across whole minutes of moving
  *  time. A minute is one minute on the moving clock, so stops drop out. */
-function minuteSpeedCv(src: AerobicSource, clock: MovingClock): number {
+function minuteSpeedCv(
+  src: AerobicSource,
+  clock: MovingClock,
+  output: AerobicOutput,
+): number {
   const { span } = src;
   const moving = clock.upTo(span.toSeconds) - clock.upTo(span.fromSeconds);
   const minutes = Math.floor(moving / 60);
@@ -282,8 +315,12 @@ function minuteSpeedCv(src: AerobicSource, clock: MovingClock): number {
       span.toSeconds,
       m * 60,
     );
-    const v = src.statsOf({ fromSeconds: prev, toSeconds: end }, 'moving').speed
-      .average?.metersPerSecond;
+    const minute = { fromSeconds: prev, toSeconds: end };
+    const raw = src.statsOf(minute, 'moving').speed.average?.metersPerSecond;
+    const v =
+      raw === undefined
+        ? undefined
+        : raw * gradeMultiplier(src, minute, output);
     if (v !== undefined && Number.isFinite(v)) speeds.push(v);
     prev = end;
   }

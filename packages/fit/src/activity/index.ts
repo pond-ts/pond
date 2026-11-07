@@ -43,7 +43,10 @@ export {
   type ZoneAnalysis,
   type PowerBestEffort,
   type PaceBestEffort,
+  type GradeAdjustOptions,
+  type GradeAdjustedPace,
 } from './analysis.js';
+export type { GradeModel } from './grade.js';
 export {
   Aerobic,
   type AerobicOutput,

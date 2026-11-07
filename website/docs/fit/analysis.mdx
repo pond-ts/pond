@@ -141,6 +141,36 @@ Tempo 143 s
 Threshold 21 s
 ```
 
+## Grade-adjusted pace
+
+`section.pace.adjustedForGrade()` estimates the pace the same effort would give
+on level ground. It is an estimate, so it names its model: Minetti's energy cost
+of running at each grade (2002), or his walking curve for a walk or hike. A
+metre uphill counts as more than a level metre and a metre on a gentle descent
+as less; the grade is read over 100 m of distance so elevation noise doesn't
+become steep slopes. It is on moving time, like `stats().pace`, and needs no
+settings.
+
+```ts
+const g = run.pace.adjustedForGrade()!;
+console.log(g.model, g.recorded.pace.format(), g.pace.format());
+console.log(g.factor.toFixed(3), g.coverage);
+```
+
+```text output
+minetti-2002-running 5:04/km 5:05/km
+0.997 1
+```
+
+The interval run is nearly flat (18 m up, 24 m down), so the two paces are
+close. `factor` is level-equivalent metres per metre, and `coverage` the share
+of the distance whose grade was known.
+
+The curve has a known limit: it is cheapest near −20 %, where a metre costs
+about half a level one. So a steep descent gets an adjusted pace well _slower_
+than its recorded pace, even when it felt hard (braking, rough footing). Read
+it on a whole hilly run, or on climbs, rather than on one steep descent.
+
 ## Efficiency and decoupling
 
 `analysis.aerobic` reads output per heartbeat. On a ride with power it is
@@ -148,6 +178,8 @@ normalized power over average heart rate (watts per bpm); otherwise it is
 speed over heart rate, in metres per heartbeat. Both are on moving time, so a
 stop doesn't pull the number around. Higher always means more output for the
 same heart rate. It needs no settings.
+On foot, `{ output: 'grade-adjusted-speed' }` uses grade-adjusted speed, so a
+steady effort over hills isn't read as uneven.
 
 `decoupling()` compares the first half of a section with the second, split by
 moving time so a stop doesn't move the split. A positive `change` means the

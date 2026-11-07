@@ -24,7 +24,8 @@ import { bestEffortsByDistance, BEST_EFFORT_DISTANCES } from '../geo/index.js';
 import { hrZoneDistribution, paceZoneDistribution } from '../zones/index.js';
 import type { ZoneTime } from '../zones/index.js';
 import { Profile, type AthleteProfileJson } from '../profile/index.js';
-import { Distance, Duration, Pace, Power } from '../quantities.js';
+import { Distance, Duration, Pace, Power, Speed } from '../quantities.js';
+import { gradeModelFor, gradeRatio, type GradeModel } from './grade.js';
 import type { Stats } from './stats.js';
 import { Aerobic } from './aerobic.js';
 import { techniqueOf, type Technique } from './technique.js';
@@ -374,7 +375,30 @@ export class PowerEfforts<S> {
   }
 }
 
-/** Best efforts by pace inside a section: `run.pace.bestEffort(km(5))`. */
+export interface GradeAdjustOptions {
+  /** Default: Minetti's running curve for a run, his walking curve for a
+   *  walk or hike. */
+  model?: GradeModel;
+}
+
+/** The pace a stretch's effort would give on level ground: an estimate,
+ *  so it names its model. On moving time, like `stats().pace`. */
+export interface GradeAdjustedPace {
+  model: GradeModel;
+  pace: Pace;
+  speed: Speed;
+  /** The recorded moving pace and speed, for comparison. */
+  recorded: { pace: Pace; speed: Speed };
+  /** Level-equivalent metres per metre: above 1 when the stretch climbed
+   *  more than it gained back cheaply on descents. */
+  factor: number;
+  /** Share of the moving distance whose grade was known (elevation
+   *  recorded), 0 to 1; the rest counts as level. */
+  coverage: number;
+}
+
+/** Pace inside a section: `run.pace.bestEffort(km(5))`,
+ *  `run.pace.adjustedForGrade()`. */
 export class PaceEfforts<S> {
   readonly #src: AnalysisSource;
   readonly #make: MakeSection<S>;
@@ -383,6 +407,29 @@ export class PaceEfforts<S> {
   constructor(src: AnalysisSource, make: MakeSection<S>) {
     this.#src = src;
     this.#make = make;
+  }
+
+  /** Grade-adjusted pace over the section (see {@link GradeAdjustedPace});
+   *  null for a sport other than running, walking or hiking (unless a
+   *  model is given), with no distance, no elevation or no moving time. */
+  adjustedForGrade(options: GradeAdjustOptions = {}): GradeAdjustedPace | null {
+    const { prep, span } = this.#src;
+    if (prep.poolLengths) return null;
+    const model = options.model ?? gradeModelFor(prep);
+    if (!model) return null;
+    const r = gradeRatio(prep, span, model);
+    const v = this.#src.statsOf(span, 'moving').speed.average?.metersPerSecond;
+    if (!r || v === undefined || !(v > 0)) return null;
+    const speed = Speed.metersPerSecond(v * r.ratio);
+    const recorded = Speed.metersPerSecond(v);
+    return {
+      model,
+      pace: speed.pace(),
+      speed,
+      recorded: { pace: recorded.pace(), speed: recorded },
+      factor: r.ratio,
+      coverage: r.coverage,
+    };
   }
 
   /** The fastest time over `distance`; null with no distance, no
