@@ -9,7 +9,8 @@
  *
  * Plain JSON, SI units (seconds, metres, watts, beats per minute).
  */
-import type { Activity } from '../activity/activity.js';
+import { preparedOf, type Activity } from '../activity/activity.js';
+import { gradeBandsOf, type GradeBand } from '../activity/grade.js';
 import type { Sport } from '../activity/sport.js';
 import { sportOf } from '../activity/sport.js';
 import { Distance, Duration } from '../quantities.js';
@@ -85,6 +86,12 @@ export interface ActivityDigest {
   /** Fastest times at {@link DIGEST_PACE_DISTANCES} that fit; empty with no
    *  distance. */
   pace: DigestPaceBest[];
+  /** Runs only: steady one-minute windows summed by 2 % grade band, with
+   *  the heartbeats they took (heart rate read 30 s later, as it trails
+   *  effort). What `history.analyze().pace.gradeCurve()` fits a personal
+   *  grade curve from. Null for other sports, or without heart rate,
+   *  distance or elevation; empty when no minute was steady enough. */
+  grades: GradeBand[] | null;
 }
 
 /** Power curve durations kept in a digest, in seconds: 1 s to 5 h. */
@@ -208,6 +215,15 @@ export function digestOf(activity: Activity): ActivityDigest {
     heartRate,
     power,
     pace,
+    grades:
+      sportOf(record.sportType) === 'run'
+        ? (gradeBandsOf(preparedOf(activity))?.map((b) => ({
+            grade: b.grade,
+            windows: b.windows,
+            metres: round(b.metres),
+            beats: round(b.beats),
+          })) ?? null)
+        : null,
   };
 }
 
@@ -238,6 +254,7 @@ export function checkDigest(d: unknown): asserts d is ActivityDigest {
   if (!numOrNull(v.distance)) bad('distance');
   if (!numOrNull(v.ascent)) bad('ascent');
   if (!Array.isArray(v.pace)) bad('pace');
+  if (v.grades !== null && !Array.isArray(v.grades)) bad('grades');
   if (v.heartRate !== null && typeof v.heartRate !== 'object') bad('heartRate');
   const power = v.power as Record<string, unknown> | null;
   if (

@@ -23,7 +23,7 @@ import {
   gradeFactors,
   gradeModelFor,
   gradeRatio,
-  type GradeModel,
+  type GradeModelInput,
 } from './grade.js';
 
 /** What efficiency is measured on. `'power'`: normalized power over average
@@ -41,7 +41,7 @@ export interface EfficiencyOptions {
   /** For `'grade-adjusted-speed'`: the grade model. Default: ACSM running
    *  for a run, Minetti walking for a walk or hike; another sport
    *  needs one named (and reads as if run or walked). */
-  gradeModel?: GradeModel;
+  gradeModel?: GradeModelInput;
 }
 
 export interface Efficiency {
@@ -152,7 +152,9 @@ export class Aerobic {
     const output = options.output ?? this.defaultOutput;
     if (!output) return null;
     const model = options.gradeModel ?? gradeModelFor(this.#src.prep);
-    const key = `${output}:${model ?? ''}`;
+    const key = `${output}:${
+      model === null ? '' : typeof model === 'string' ? model : model.key
+    }`;
     if (this.#decoupling.has(key)) return this.#decoupling.get(key)!;
     const result = this.#decouple(output, model);
     this.#decoupling.set(key, result);
@@ -161,7 +163,7 @@ export class Aerobic {
 
   #decouple(
     output: AerobicOutput,
-    model: GradeModel | null,
+    model: GradeModelInput | null,
   ): Decoupling | null {
     const method = 'halves';
     const src = this.#src;
@@ -209,7 +211,7 @@ function gradeMultiplier(
   src: AerobicSource,
   span: Span,
   output: AerobicOutput,
-  model: GradeModel | null,
+  model: GradeModelInput | null,
 ): number {
   if (output !== 'grade-adjusted-speed') return 1;
   const r = model ? gradeRatio(src.prep, span, model) : null;
@@ -246,7 +248,7 @@ function efficiencyOver(
   src: AerobicSource,
   span: Span,
   output: AerobicOutput,
-  model: GradeModel | null,
+  model: GradeModelInput | null,
 ): Efficiency | null {
   const s = src.statsOf(span, 'moving');
   const hr = s.heartRate.average?.bpm;
@@ -274,7 +276,7 @@ function coverage(
   prep: PreparedActivity,
   span: Span,
   output: AerobicOutput,
-  model: GradeModel | null,
+  model: GradeModelInput | null,
 ): number {
   const t = prep.timeRel;
   const hr = prep.cols.hr;
@@ -305,7 +307,7 @@ function coverage(
 function isVariable(
   src: AerobicSource,
   output: AerobicOutput,
-  model: GradeModel | null,
+  model: GradeModelInput | null,
   clock: MovingClock,
 ): boolean {
   if (output === 'power') {
@@ -322,7 +324,7 @@ function minuteSpeedCv(
   src: AerobicSource,
   clock: MovingClock,
   output: AerobicOutput,
-  model: GradeModel | null,
+  model: GradeModelInput | null,
 ): number {
   const { span } = src;
   const moving = clock.upTo(span.toSeconds) - clock.upTo(span.fromSeconds);

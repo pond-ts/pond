@@ -75,6 +75,7 @@ function digest(
     heartRate: null,
     power: null,
     pace: [],
+    grades: null,
     ...over,
   };
 }
