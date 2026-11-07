@@ -82,7 +82,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
-  `section.analyze().technique` over the pool lengths wholly inside a
+  `section.analyze().technique` over the pool lengths whose middle is in a
   section (drills and lengths counted as 0 left out, `uncounted` says how
   many): `strokesPerLength`, `strokeRate`,
   `distancePerStroke`, `swolf`, `timePerLength`, the `stroke` (or

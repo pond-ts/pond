@@ -213,7 +213,7 @@ export class Analysis {
     return this.#coasting;
   }
 
-  /** Stroke metrics over the pool lengths wholly inside the section, drills
+  /** Stroke metrics over the pool lengths whose middle is in the section, drills
    *  left out; null off the pool or with no counted length. */
   get technique(): Technique | null {
     if (this.#technique === undefined)

@@ -80,9 +80,9 @@ describe('technique', () => {
     expect(t.swolf).toBeCloseTo(200 / 6 + 96 / 6, 9);
   });
 
-  it('counts only lengths wholly inside the section', () => {
+  it('counts the lengths whose middle is inside the section', () => {
     const a = Activity.from(swim());
-    // 0 to 45 s: the first length, and half of the second
+    // 0 to 45 s: the first length; the second's middle is at 45 s, the end
     const part = a.section({ elapsed: { from: seconds(0), to: seconds(45) } });
     expect(part.analyze().technique!.lengths).toBe(1);
     // the second repeat's breaststroke lengths, 180 to 260 s

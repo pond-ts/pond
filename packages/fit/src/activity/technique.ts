@@ -7,14 +7,18 @@
  * minute and distance per stroke is distance per cycle. Nothing is
  * normalised to arm pulls, since the mapping depends on the stroke.
  *
- * Only lengths wholly inside the section count (to half a second, since lap
- * and length times are rounded differently in a file), and only those with
- * a time and a stroke count above 0 (a watch writes 0 when it couldn't
- * count, on a kick set say); drill lengths never count (their count, if
- * any, isn't a swimming stroke). Stroke rate is worked out from each
- * length's whole time, push-off and glide included, as Garmin defines it. SWOLF (seconds per length + strokes per length)
- * is descriptive, not a technique score: compare it only within the same
- * pool, stroke and convention.
+ * A length belongs to the section its middle falls in (start inclusive, end
+ * exclusive), the same rule a pool swim's repeats use. Lap and length times
+ * are rounded differently in a file (on a real Garmin swim the last length
+ * of a lap ends 0.6 s after the lap), so "wholly inside" would drop it.
+ *
+ * Only lengths with a time and a stroke count above 0 count (a watch writes
+ * 0 when it couldn't count, on a kick set say); drill lengths never count
+ * (their count, if any, isn't a swimming stroke). Stroke rate is worked out
+ * from each length's whole time, push-off and glide included, as Garmin
+ * defines it. SWOLF (seconds per length + strokes per length) is
+ * descriptive, not a technique score: compare it only within the same pool,
+ * stroke and convention.
  */
 import type { PreparedActivity } from '../summary/index.js';
 import type { Span } from '../stats/index.js';
@@ -56,7 +60,7 @@ export interface Technique {
   convention: StrokeConvention;
 }
 
-/** Technique over the pool lengths inside `span`; null off the pool or
+/** Technique over the pool lengths whose middle is inside `span`; null off the pool or
  *  with no counted length there. @internal */
 export function techniqueOf(
   prep: PreparedActivity,
@@ -65,7 +69,6 @@ export function techniqueOf(
   const swim = prep.imported.swim;
   if (!swim || !prep.poolLengths) return null;
   const start = Date.parse(prep.imported.activity.startTimeUtc);
-  const eps = 0.5;
   let lengths = 0;
   let uncounted = 0;
   let strokes = 0;
@@ -76,7 +79,8 @@ export function techniqueOf(
     const from = (Date.parse(l.startTimeUtc) - start) / 1000;
     if (!Number.isFinite(from)) continue;
     const to = from + l.seconds;
-    if (from < span.fromSeconds - eps || to > span.toSeconds + eps) continue;
+    const mid = (from + to) / 2;
+    if (mid < span.fromSeconds || mid >= span.toSeconds) continue;
     if (l.strokes === undefined || !(l.strokes > 0)) {
       uncounted++;
       continue;
