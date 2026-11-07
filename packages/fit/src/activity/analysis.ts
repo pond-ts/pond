@@ -28,6 +28,8 @@ import { Distance, Duration, Pace, Power } from '../quantities.js';
 import type { Stats } from './stats.js';
 import { Aerobic } from './aerobic.js';
 import { techniqueOf, type Technique } from './technique.js';
+import { EffortFinder } from './efforts.js';
+import type { Section } from './activity.js';
 import {
   coastingOf,
   distributionOf,
@@ -86,6 +88,8 @@ export interface AnalysisSource {
   stats: () => Stats;
   /** Stats for a stretch inside the section. */
   statsOf: (span: Span, basis: 'elapsed' | 'moving') => Stats;
+  /** A section for a stretch inside it. */
+  section: (span: Span, label: string) => Section;
 }
 
 /** Resolve an {@link AthleteInput} for an activity that started at
@@ -166,6 +170,7 @@ export class Analysis {
   #aerobic?: Aerobic;
   #coasting?: Coasting | null;
   #technique?: Technique | null;
+  #efforts?: EffortFinder<Section>;
 
   /** @internal */
   constructor(src: AnalysisSource, athlete: Profile) {
@@ -219,6 +224,17 @@ export class Analysis {
     if (this.#technique === undefined)
       this.#technique = techniqueOf(this.#src.prep, this.#src.span);
     return this.#technique;
+  }
+
+  /** Efforts and the recovery after each: `efforts.fromLaps()` or
+   *  `efforts.detect({ powerAbove: Power.watts(300) })`, then
+   *  `.compare()`. */
+  get efforts(): EffortFinder<Section> {
+    return (this.#efforts ??= new EffortFinder({
+      prep: this.#src.prep,
+      span: this.#src.span,
+      make: this.#src.section,
+    }));
   }
 
   /** Null for any sport but cycling, and without FTP, power or

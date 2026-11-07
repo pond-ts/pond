@@ -71,3 +71,13 @@ export {
   type StrokeConvention,
   type StrokeCounting,
 } from './technique.js';
+export {
+  EffortFinder,
+  Efforts,
+  type Effort,
+  type EffortSource,
+  type DetectOptions,
+  type EffortMetric,
+  type MetricComparison,
+  type EffortComparison,
+} from './efforts.js';
