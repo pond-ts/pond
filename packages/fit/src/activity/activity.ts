@@ -153,9 +153,12 @@ export class Section implements Span {
 
   /** This stretch read for one athlete: intensity, load and zones from
    *  their settings in force on the activity's date. */
-  analyze(options: AnalyzeOptions): Analysis {
+  analyze(options: AnalyzeOptions = {}): Analysis {
     const start = this.prep.imported.activity.startTimeUtc;
-    return new Analysis(this.#source(), resolveAthlete(options.athlete, start));
+    return new Analysis(
+      this.#source(),
+      resolveAthlete(options.athlete ?? {}, start),
+    );
   }
 
   /** Best efforts by power: `ride.power.bestEffort(minutes(20))`. */

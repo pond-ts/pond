@@ -66,3 +66,8 @@ export {
   type DynamicsChannel,
   type DynamicsSource,
 } from './dynamics.js';
+export {
+  type Technique,
+  type StrokeConvention,
+  type StrokeCounting,
+} from './technique.js';

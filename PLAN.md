@@ -1299,11 +1299,12 @@ depend on. Plan:
   One-activity work first, on any `Section`: aerobic efficiency and
   decoupling (`analysis.aerobic`) and distributions and coasting
   (`analysis.distribution`, `analysis.coasting`) and running dynamics
-  (`section.dynamics`) built; then swim
-  stroke metrics (stroke rate, SWOLF, distance per stroke, counting
-  convention), effort/recovery pairs and comparison, grade-adjusted pace.
+  (`section.dynamics`) and swim stroke metrics (`analysis.technique`)
+  built; then effort/recovery pairs and comparison, grade-adjusted pace.
   Then `TrainingHistory` (records, season curve, weekly volume, load
-  timeline), which needs a design call on its input (per-activity digests).
+  timeline), on per-activity digests; each activity's load records the
+  method that made it (power TSS, heart-rate load, none), since devices
+  come and go across a history (pjm17971, 2026-11-07).
 
 ---
 
