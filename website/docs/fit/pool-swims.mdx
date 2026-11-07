@@ -135,7 +135,9 @@ if (swim.isPoolSwim()) {
 
 `analyze().technique` reads the watch's stroke counts over the lengths wholly
 inside a section: the whole swim, a repeat, or one length. Drill lengths are
-left out (their count, if any, isn't a swimming stroke). No athlete settings
+left out (their count, if any, isn't a swimming stroke), and so are lengths
+counted as 0 (a watch writes 0 when it couldn't count); `uncounted` says how
+many. No athlete settings
 are needed, so `analyze()` takes none here.
 
 ```ts

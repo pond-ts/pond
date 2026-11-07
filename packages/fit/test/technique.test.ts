@@ -123,4 +123,50 @@ describe('technique', () => {
     expect(t.lengths).toBeGreaterThan(0);
     expect(t.convention.counts).toBe('arm-cycles');
   });
+
+  it('leaves out lengths counted as 0, and says how many', () => {
+    const rec = swim();
+    rec.swim!.lengths[1] = { ...rec.swim!.lengths[1]!, strokes: 0 };
+    const t = Activity.from(rec).analyze().technique!;
+    expect(t.lengths).toBe(5);
+    expect(t.uncounted).toBe(1);
+    expect(t.strokes).toBe(3 * 18 + 2 * 12);
+  });
+
+  it('keeps a named stroke when other lengths are unnamed', () => {
+    const rec = swim();
+    rec.swim!.lengths = rec.swim!.lengths.map((l, i) =>
+      i < 2 ? l : { ...l, stroke: undefined },
+    );
+    rec.swim!.lengths[7] = { ...rec.swim!.lengths[7]!, stroke: 'drill' };
+    expect(Activity.from(rec).analyze().technique!.stroke).toBe('freestyle');
+  });
+
+  it('reads a yards pool and a numbered maker', () => {
+    const rec = swim(null);
+    rec.swim!.pool = { lengthMeters: 22.86, unit: 'yd' };
+    rec.creator = { manufacturer: 1 };
+    const t = Activity.from(rec).analyze().technique!;
+    expect(t.distancePerStroke!.meters).toBeCloseTo((22.86 * 6) / 96, 9);
+    expect(t.convention).toEqual({ counts: 'arm-cycles', source: '1' });
+  });
+
+  it('counts a repeat’s lengths from a real file’s laps', () => {
+    const pool = readActivity(
+      gunzipSync(
+        readFileSync(
+          fileURLToPath(
+            new URL('./fixtures/pool-swim.fit.gz', import.meta.url),
+          ),
+        ),
+      ),
+    );
+    if (!pool.isPoolSwim()) throw new Error('not a pool swim');
+    for (const r of pool.repeats) {
+      const counted = r.lengths.filter(
+        (l) => !l.drill && (l.strokeCount ?? 0) > 0,
+      ).length;
+      expect(r.analyze().technique?.lengths ?? 0).toBe(counted);
+    }
+  });
 });

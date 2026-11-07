@@ -83,7 +83,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
   `section.analyze().technique` over the pool lengths wholly inside a
-  section (drills left out): `strokesPerLength`, `strokeRate`,
+  section (drills and lengths counted as 0 left out, `uncounted` says how
+  many): `strokesPerLength`, `strokeRate`,
   `distancePerStroke`, `swolf`, `timePerLength`, the `stroke` (or
   `'mixed'`), and the counting `convention` (`'arm-cycles'` for Garmin, else
   `'unknown'`, with the maker).
