@@ -20,8 +20,10 @@ import {
 import { dayOf, type Day } from './history.js';
 
 export interface HistoryAnalyzeOptions {
-  /** Dated settings (or a {@link Profile}); each activity uses the values in
-   *  force on its date. Optional: records need none, W/kg needs weight. */
+  /** Dated settings: each activity uses the values in force at its start
+   *  (resolved on the UTC start time, as `section.analyze()` does). A
+   *  {@link Profile} is already resolved to one date, so it applies as is to
+   *  every activity. Optional: records need none, W/kg needs weight. */
   athlete?: AthleteInput;
 }
 
@@ -95,15 +97,6 @@ export class HistoryAnalysis {
     this.#athlete = options.athlete;
   }
 
-  /** The settings in force for one activity of the history. */
-  athleteFor(id: string): Profile | null {
-    const d = this.#parts.digests.find((x) => x.id === id);
-    if (!d) return null;
-    return this.#athlete
-      ? resolveAthlete(this.#athlete, d.startedAt)
-      : NO_SETTINGS;
-  }
-
   /** Power records and the season's power curve. */
   get power(): HistoryPower {
     return (this.#power ??= new HistoryPower(this.#parts, (d) =>
@@ -139,12 +132,6 @@ function place(
         )
       : null,
   };
-}
-
-function durationLabel(s: number): string {
-  if (s < 60) return `${s} s`;
-  if (s < 3600) return `${s / 60} min`;
-  return `${s / 3600} h`;
 }
 
 /** Power across a history. Made by `analysis.power`. */
@@ -192,7 +179,7 @@ export class HistoryPower {
           best.d,
           best.from,
           best.to,
-          `Best ${durationLabel(s)}`,
+          `Best ${Duration.seconds(s).format()}`,
         ),
       });
     }

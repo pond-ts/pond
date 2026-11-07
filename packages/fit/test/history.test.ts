@@ -416,7 +416,7 @@ describe('history.analyze(): records and the power curve', () => {
       .analyze()
       .power.records({ durations: [minutes(5)] });
     expect(rec!.section).not.toBeNull();
-    expect(rec!.section!.label).toBe('Best 5 min');
+    expect(rec!.section!.label).toBe('Best 5:00');
     expect(rec!.section!.toSeconds - rec!.section!.fromSeconds).toBeCloseTo(
       300,
       0,
