@@ -83,7 +83,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - **`editRecording` (and `Activity.edit`): a cropped open water swim keeps
   its moving time by speed.** A crop took every swim's moving time from its
-  kept laps, but a swim that moves by speed (open water with GPS) gets its
+  kept laps, but a swim that moves by speed (open water, or a swim with GPS
+  and no pool details) gets its
   uncropped moving time from the samples. On a real open water swim whose
   laps counted all of it as swimming, cropping 10 % off each end raised
   moving time from 2,315 s to 2,555 s. It now shares out the recording's own

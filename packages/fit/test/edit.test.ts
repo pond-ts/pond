@@ -286,6 +286,33 @@ describe('an open water swim', () => {
   });
 });
 
+describe('a swim whose GPS is all in the part cropped off', () => {
+  it('takes the kept part’s rule: the watch’s swim time', () => {
+    const r = recording();
+    r.activity.sportType = 'Swim';
+    const t = r.streams.timeSeconds!;
+    // a fix for the first 50 s only, then none
+    r.streams = {
+      ...r.streams,
+      latlng: r.streams.latlng.map((p, i) => (t[i]! < 50 ? p : null)),
+    };
+    // the watch counts 80 % of each lap as swimming
+    r.laps = r.laps!.map((l) => ({
+      ...l,
+      movingSeconds: l.elapsedSeconds * 0.8,
+    }));
+    r.swim = { movingSeconds: 80 };
+    r.activity.movingTimeSeconds = 80;
+    const v = editRecording(r, { from: 50 });
+    // 80 % of the 50 s kept; by the whole recording's speed rule it read 32
+    expect(v.activity.movingTimeSeconds).toBe(40);
+    expect(v.swim).toBeDefined();
+    expect(v.activity.movingTimeSeconds).toBe(
+      Math.round(v.swim!.movingSeconds),
+    );
+  });
+});
+
 describe('a swim with no laps', () => {
   it('shares its swim time out by time, or by the lengths kept', () => {
     const r = recording();

@@ -493,7 +493,9 @@ function combine(
 /** The cropped activity's totals: its time from the clock, and its
  *  distance, moving time and climb as the recording's own totals shared out
  *  by how much of each the kept part holds (so the shares add back up to
- *  the recording's totals). A swim's moving time is its cropped swim time. */
+ *  the recording's totals). A swim timed by its lengths, laps or the watch's
+ *  swim time moves for its cropped swim time; one moving by speed shares out
+ *  like any other sport. */
 function croppedTotals(
   imported: ImportedActivity,
   cropped: ImportedActivity,
@@ -517,14 +519,16 @@ function croppedTotals(
       ? new Date(t0 + Math.round(from * 1000)).toISOString()
       : a.startTimeUtc,
     distanceMeters: a.distanceMeters * distShare,
-    // A swim timed by its lengths or laps (a pool swim, or one with no GPS
-    // and the watch's swim time) moves for its swim time, as the summary
-    // takes it. One moving by speed (open water with GPS) shares out the
-    // recording's own moving time like any other sport.
+    // A swim timed by its lengths, laps or the watch's swim time (a pool
+    // swim, or one with no GPS) moves for its swim time, as the summary
+    // takes it. One moving by speed (open water, or any swim with GPS and no
+    // pool) shares out the recording's own moving time like any other
+    // sport. The kept part's rule decides, so the totals agree with the
+    // cropped activity's own stats.
     movingTimeSeconds: Math.round(
       Math.min(
         to - from,
-        cropped.swim && movingRuleOf(imported).rule !== 'speed'
+        cropped.swim && movingRuleOf(cropped).rule !== 'speed'
           ? cropped.swim.movingSeconds
           : a.movingTimeSeconds * ratio(before?.moving, after?.moving),
       ),
