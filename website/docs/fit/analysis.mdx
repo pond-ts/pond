@@ -193,6 +193,50 @@ console.log(s?.output, s?.cautions);
 speed [ 'variable' ]
 ```
 
+## Distributions and coasting
+
+`distribution(channel)` says how long the section spent at each level of
+power, heart rate, cadence, speed or pace. Bins are in the channel's own unit
+(W, bpm, rpm, m/s, s/km), with every bin in between kept, so the array feeds a
+bar chart as it is. Power and cadence start at 0, so freewheeling shows.
+
+```ts
+const dist = ride.analyze({ athlete }).distribution('power', { binWidth: 50 })!;
+for (const b of dist.bins)
+  if (b.seconds > 0)
+    console.log(`${b.start}-${b.end} W`, Math.round(b.seconds), 's');
+```
+
+```text output
+0-50 W 682 s
+50-100 W 36 s
+100-150 W 616 s
+150-200 W 1557 s
+200-250 W 1164 s
+250-300 W 1048 s
+300-350 W 483 s
+350-400 W 34 s
+```
+
+On elapsed time (the default) a stop counts at 0 W, so the lowest bin above
+mixes stops with freewheeling. Pass `{ time: 'moving' }` to leave stops out.
+Pace is always on moving time, since a stop has no pace; anything slower than
+`slowestPace` (default 20:00 per km) counts in the slowest bin. On a cadence
+distribution off the bike, cadence is cycles per minute (one per two steps),
+as FIT records it.
+
+`coasting` is a ride's moving time with the pedals still: zero cadence, or
+zero power when no cadence was recorded.
+
+```ts
+const c = ride.analyze({ athlete }).coasting!;
+console.log(c.source, c.duration.format(), `${(c.share * 100).toFixed(1)} %`);
+```
+
+```text output
+cadence 10:48 11.6 %
+```
+
 ## Without history
 
 When you just have the numbers, `Profile.of` makes settings with no dates:

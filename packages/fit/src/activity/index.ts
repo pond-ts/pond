@@ -53,3 +53,10 @@ export {
   type Decoupling,
   type DecouplingCaution,
 } from './aerobic.js';
+export {
+  type DistributionChannel,
+  type DistributionOptions,
+  type DistributionBin,
+  type Distribution,
+  type Coasting,
+} from './distribution.js';
