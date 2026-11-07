@@ -529,6 +529,76 @@ describe('history.analyze().load', () => {
     expect(t.days[2]!.load).toBe(0);
   });
 
+  it('puts a heart rate on a zone edge in the lower zone', () => {
+    // 140 bpm is the top of zone 2 in [120, 140, 160, 180], weight 2.
+    const onEdge = digest('edge', '2026-02-01T08:00:00', {
+      heartRate: {
+        average: 140,
+        max: 140,
+        histogram: { start: 140, seconds: [3600] },
+      },
+    });
+    const l = TrainingHistory.of([onEdge])
+      .analyze({ athlete })
+      .load.activities('heart-rate-zones')[0]!;
+    expect(l.value).toBeCloseTo(120, 9);
+  });
+
+  it("matches the activity's own load and zones", () => {
+    const a = steady({
+      id: 'r',
+      start: '2026-02-01T08:00:00Z',
+      sportType: 'Ride',
+      secs: 3600,
+      speed: 8,
+      hr: 140,
+      watts: 213,
+    });
+    const own = a.analyze({ athlete });
+    const loads = TrainingHistory.of([a]).analyze({ athlete }).load;
+    // The digest keeps NP to a few decimals, so TSS agrees closely, not
+    // exactly.
+    expect(loads.activities('cycling-tss')[0]!.value).toBeCloseTo(
+      own.load!.value,
+      2,
+    );
+    const zoneMinutes = own.zones.heartRate!.reduce(
+      (s, z) => s + (z.seconds / 60) * z.zone,
+      0,
+    );
+    expect(loads.activities('heart-rate-zones')[0]!.value).toBeCloseTo(
+      zoneMinutes,
+      6,
+    );
+  });
+
+  it('can carry the curves over unscored days and gaps', () => {
+    const h = TrainingHistory.of(
+      [
+        ride('scored', '2026-02-02', 200),
+        ride('nopower', '2026-02-03', null),
+        ride('outside', '2026-02-06', 200),
+      ],
+      { covers: { from: '2026-02-01', to: '2026-02-04' } },
+    );
+    const t = h.analyze({ athlete }).load.timeline({
+      method: 'cycling-tss',
+      unknownDays: 'carry',
+    });
+    expect(t.unknownDays).toBe('carry');
+    const [, trained, unscored, rest, gap] = t.days;
+    expect(unscored!.chronic).toBe(trained!.chronic);
+    expect(unscored!.acute).toBe(trained!.acute);
+    // A rest day still decays; the gap after it holds.
+    expect(rest!.acute).toBeLessThan(unscored!.acute);
+    expect(gap!.acute).toBe(rest!.acute);
+    expect(() =>
+      h
+        .analyze({ athlete })
+        .load.timeline({ method: 'cycling-tss', unknownDays: 'hold' as never }),
+    ).toThrow();
+  });
+
   it('takes a starting load and other time constants', () => {
     const h = TrainingHistory.of([ride('a', '2026-02-02', 200)]);
     const t = h.analyze({ athlete }).load.timeline({

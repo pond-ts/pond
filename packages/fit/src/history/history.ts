@@ -56,7 +56,8 @@ export function dayOfNumber(n: number): Day {
   return new Date(n * MS_PER_DAY).toISOString().slice(0, 10);
 }
 
-/** The day an activity counts on. */
+/** The day an activity counts on: the local date it started when the
+ *  recording gives one, else its UTC date. */
 export function dayOf(d: ActivityDigest): Day {
   return (d.localStart ?? d.startedAt).slice(0, 10);
 }

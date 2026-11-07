@@ -16,6 +16,9 @@
  * would make a new power meter, or a forgotten heart-rate strap, look like a
  * change in fitness. A day whose activities have no load in the chosen method
  * is marked `'unscored'`, apart from rest days and gaps.
+ *
+ * An activity counts on the local date it started when the recording gives
+ * one, and on its UTC date otherwise (`dayOf`).
  */
 import type { Profile, ZoneDef } from '../profile/index.js';
 import type { ActivityDigest } from './digest.js';
@@ -64,8 +67,9 @@ export interface DayLoad {
   balance: number;
   /** `'trained'`: some activity scored. `'unscored'`: activities, none with
    *  a load in this method. `'rest'`: no activity on a covered day. `'gap'`:
-   *  outside the history's `covers`; nothing is known, and load is taken as
-   *  0 so the curves keep decaying. */
+   *  outside the history's `covers`; nothing is known. Unscored days and
+   *  gaps count as 0 unless the timeline was asked to carry them
+   *  (`unknownDays`). */
   status: DayStatus;
   /** Ids of the day's activities with a load in this method. */
   scored: string[];
@@ -81,12 +85,19 @@ export interface TimelineOptions {
   acuteDays?: number;
   /** Long- and short-term load going into the first day. Default 0 each. */
   start?: { chronic: number; acute: number };
+  /** What unscored days and gaps do to the curves. `'zero'` (the default)
+   *  takes their load as 0, so both curves decay, as TrainingPeaks does.
+   *  `'carry'` leaves both curves as they were, for when a missing load more
+   *  likely means a dead power meter or a forgotten strap than a day off.
+   *  Rest days decay either way. */
+  unknownDays?: 'zero' | 'carry';
 }
 
 export interface LoadTimeline {
   method: LoadMethod;
   chronicDays: number;
   acuteDays: number;
+  unknownDays: 'zero' | 'carry';
   /** One per day from the first covered day (or activity) to the last. */
   days: DayLoad[];
 }
@@ -99,9 +110,10 @@ function hrZoneLoad(d: ActivityDigest, zones: ZoneDef): number {
   let minutes = 0;
   for (let i = 0; i < h.seconds.length; i++) {
     const bpm = h.start + i;
-    // The zone whose [edge, next edge) holds this bpm.
+    // The zone whose (edge, next edge] holds this bpm: a reading exactly on
+    // an edge counts in the lower zone, as the activity's own zones do.
     let z = zones.edges.length - 2;
-    while (z > 0 && bpm < zones.edges[z]!) z--;
+    while (z > 0 && bpm <= zones.edges[z]!) z--;
     minutes +=
       ((h.seconds[i] ?? 0) / 60) * (ZONE_WEIGHTS[z] ?? ZONE_WEIGHTS[4]!);
   }
@@ -169,6 +181,10 @@ export class HistoryLoad {
   timeline(options: TimelineOptions): LoadTimeline {
     const chronicDays = options.chronicDays ?? 42;
     const acuteDays = options.acuteDays ?? 7;
+    const unknownDays = options.unknownDays ?? 'zero';
+    if (unknownDays !== 'zero' && unknownDays !== 'carry')
+      throw new RangeError("unknownDays must be 'zero' or 'carry'");
+    const carry = unknownDays === 'carry';
     if (!(chronicDays >= 1) || !(acuteDays >= 1))
       throw new RangeError('chronicDays and acuteDays must be at least 1');
     const loads = this.activities(options.method);
@@ -186,7 +202,13 @@ export class HistoryLoad {
     }
     const days: DayLoad[] = [];
     if (!Number.isFinite(lo))
-      return { method: options.method, chronicDays, acuteDays, days };
+      return {
+        method: options.method,
+        chronicDays,
+        acuteDays,
+        unknownDays,
+        days,
+      };
     const cLo = c ? dayNumber(c.from) : null;
     const cHi = c ? dayNumber(c.to) : null;
     let chronic = options.start?.chronic ?? 0;
@@ -205,8 +227,11 @@ export class HistoryLoad {
               ? 'rest'
               : 'gap';
       const balance = chronic - acute;
-      chronic += (load - chronic) / chronicDays;
-      acute += (load - acute) / acuteDays;
+      const unknown = status === 'unscored' || status === 'gap';
+      if (!(unknown && carry)) {
+        chronic += (load - chronic) / chronicDays;
+        acute += (load - acute) / acuteDays;
+      }
       days.push({
         day: dayOfNumber(n),
         load,
@@ -218,6 +243,12 @@ export class HistoryLoad {
         unscored: list.filter((l) => l.value === null).map((l) => l.activity),
       });
     }
-    return { method: options.method, chronicDays, acuteDays, days };
+    return {
+      method: options.method,
+      chronicDays,
+      acuteDays,
+      unknownDays,
+      days,
+    };
   }
 }

@@ -225,8 +225,8 @@ for (const method of ['cycling-tss', 'heart-rate-zones'] as const)
 ```text output
 cycling-tss 2026-06-14 138.7
 cycling-tss 2026-06-16 not-a-ride
-heart-rate-zones 2026-06-14 205.7
-heart-rate-zones 2026-06-16 117.7
+heart-rate-zones 2026-06-14 203.4
+heart-rate-zones 2026-06-16 114.0
 ```
 
 ### The timeline
@@ -252,11 +252,11 @@ for (const day of t.days.slice(12, 18))
 
 ```text output
 2026-06-13 rest 0 0.0 0.0 0.0
-2026-06-14 trained 206 4.9 29.4 0.0
-2026-06-15 rest 0 4.8 25.2 -24.5
-2026-06-16 trained 118 7.5 38.4 -20.4
-2026-06-17 rest 0 7.3 32.9 -30.9
-2026-06-18 rest 0 7.1 28.2 -25.6
+2026-06-14 trained 203 4.8 29.1 0.0
+2026-06-15 rest 0 4.7 24.9 -24.2
+2026-06-16 trained 114 7.3 37.6 -20.2
+2026-06-17 rest 0 7.2 32.3 -30.3
+2026-06-18 rest 0 7.0 27.7 -25.1
 ```
 
 A timeline uses **one method**. Power TSS and heart-rate load are on different
@@ -266,10 +266,20 @@ says what it was instead:
 
 - `'trained'`: an activity scored in this method (`scored` lists them).
 - `'unscored'`: there were activities, but none had a load in this method
-  (`unscored` lists them). The day counts as 0.
+  (`unscored` lists them). The day counts as 0 unless you ask otherwise
+  (below).
 - `'rest'`: no activity on a day the history covers.
 - `'gap'`: outside `covers`. Nothing is known; load is taken as 0 so the
   curves keep decaying, and a chart can shade it.
+
+Counting an unscored day as 0 is what TrainingPeaks does, but a day you rode
+with a dead power meter wasn't a day off, and it makes fitness look like it
+dropped. Pass `unknownDays: 'carry'` to leave both curves as they were on
+unscored days and gaps instead. Rest days decay either way.
+
+An activity counts on the local date it started when the recording gives one,
+and on its UTC date otherwise, so a late-evening run abroad lands on the day
+you ran it.
 
 The curves start at 0; pass `start: { chronic, acute }` to begin from known
 values, and `chronicDays` / `acuteDays` for other time constants.
