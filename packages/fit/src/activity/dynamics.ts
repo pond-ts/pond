@@ -4,7 +4,14 @@
  * Cadence is normalised to steps per minute. Files and most apps record
  * on-foot cadence per leg (cycles per minute, one per two steps), so a
  * recorded 85 is 170 steps per minute here; `stats().cadence` and
- * `series.cadence` keep the recorded value.
+ * `series.cadence` keep the recorded value. A stream that says it holds
+ * steps (`cadenceUnit: 'steps'`), or whose median is above 120, isn't
+ * doubled.
+ *
+ * The series keep every sample, standing ones included; `stats()` averages
+ * over moving time only, so a series' lowest value can sit below anything
+ * the stats show. Step length needs a distance, so a treadmill run with
+ * no distance has none.
  *
  * Ground contact time and vertical oscillation are as the device recorded
  * them (Garmin's running dynamics, from a chest strap, pod or the watch).
@@ -20,7 +27,7 @@ import {
   type PreparedActivity,
 } from '../summary/index.js';
 import type { Span } from '../stats/index.js';
-import { Cadence, Distance, Duration } from '../quantities.js';
+import { Distance, Duration, StepRate } from '../quantities.js';
 import { Measured, sampleRange, type SeriesChannel } from './series.js';
 import { sportOf } from './sport.js';
 
@@ -36,8 +43,10 @@ export interface DynamicsChannel<Q> {
 /** The running-dynamics channels a stretch has; a channel the device
  *  didn't record (and can't be worked out) is `null`. */
 export interface RunningDynamics {
-  /** Steps per minute. */
-  cadence: DynamicsChannel<Cadence> | null;
+  /** Steps per minute. `source` is `'recorded'` when the file wrote steps,
+   *  `'derived'` when it wrote cycles (one per two steps) and they were
+   *  doubled. */
+  cadence: DynamicsChannel<StepRate> | null;
   /** Metres per step: speed ÷ steps per second, while moving. */
   stepLength: DynamicsChannel<Distance> | null;
   /** Milliseconds of foot contact per step. */
@@ -51,7 +60,7 @@ export interface RunningDynamics {
 }
 
 export interface RunningDynamicsStats {
-  cadence: Cadence | null;
+  cadence: StepRate | null;
   stepLength: Distance | null;
   groundContactTime: Duration | null;
   verticalOscillation: Distance | null;
@@ -94,11 +103,12 @@ export function dynamicsOf(
   const n = prep.timeRel.length;
   const streams = prep.imported.streams;
 
+  const c = onFoot ? prep.cols.cadence : undefined;
+  const steps = c ? recordsSteps(streams.cadenceUnit, c) : false;
   const spm = (() => {
-    const c = prep.cols.cadence;
-    if (!onFoot || !c) return undefined;
+    if (!c) return undefined;
     const out = new Float64Array(n);
-    for (let i = 0; i < n; i++) out[i] = c[i]! * 2;
+    for (let i = 0; i < n; i++) out[i] = steps ? c[i]! : c[i]! * 2;
     return out;
   })();
   const gct = onFoot ? recorded(streams.groundContactMs, n) : undefined;
@@ -147,7 +157,13 @@ export function dynamicsOf(
     };
   };
 
-  const cadence = make('cadence', 'spm', spm, Cadence.rpm, 'recorded');
+  const cadence = make(
+    'cadence',
+    'spm',
+    spm,
+    StepRate.stepsPerMinute,
+    steps ? 'recorded' : 'derived',
+  );
   const stepLength = make('stepLength', 'm', step, Distance.meters, 'derived');
   const groundContactTime = make(
     'groundContactTime',
@@ -182,7 +198,7 @@ export function dynamicsOf(
       const o = avg(vo);
       const r = avg(ratio);
       return (cached = {
-        cadence: c === null ? null : Cadence.rpm(c),
+        cadence: c === null ? null : StepRate.stepsPerMinute(c),
         stepLength: l === null ? null : Distance.meters(l),
         groundContactTime: g === null ? null : Duration.seconds(g / 1000),
         verticalOscillation: o === null ? null : Distance.meters(o / 1000),
@@ -190,6 +206,20 @@ export function dynamicsOf(
       });
     },
   };
+}
+
+/** Whether on-foot cadence was written as steps per minute: as the stream
+ *  says, else when its median is above 120 (no one runs 240 steps a minute,
+ *  so a median that high can't be cycles). */
+function recordsSteps(
+  unit: 'cycles' | 'steps' | undefined,
+  cadence: Float64Array,
+): boolean {
+  if (unit) return unit === 'steps';
+  const vals = Array.from(cadence).filter((v) => Number.isFinite(v) && v > 0);
+  if (!vals.length) return false;
+  vals.sort((a, b) => a - b);
+  return vals[vals.length >> 1]! > 120;
 }
 
 /** Time-weighted average of `vals` over the moving samples in [lo, end),

@@ -44,6 +44,7 @@ export {
   Power,
   HeartRate,
   Cadence,
+  StepRate,
 } from './quantities.js';
 export {
   meters,

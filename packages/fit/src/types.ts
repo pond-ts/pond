@@ -37,9 +37,12 @@ export interface ActivityStreams {
   distanceMeters?: number[];
   /** Power, watts (from a power meter — real, not estimated). */
   watts?: number[];
-  /** Cadence, rpm. On foot, cycles per minute (one per two steps), as FIT
-   *  records it. */
+  /** Cadence, rpm. On foot, cycles per minute (one per two steps), as FIT,
+   *  TCX and Strava record it, unless {@link cadenceUnit} says steps. */
   cadence?: number[];
+  /** On foot: `'cycles'` (the default, one per two steps) or `'steps'` (an
+   *  importer that wrote steps per minute). */
+  cadenceUnit?: 'cycles' | 'steps';
   /** Running dynamics as recorded (Garmin's, from a strap, pod or the
    *  watch): ground contact time per step, ms. Top-level arrays like every
    *  other channel, so a crop cuts them too. */
