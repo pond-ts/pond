@@ -14,7 +14,7 @@ under the measure they are about: `power` and `pace`.
 
 ```ts
 import { readFileSync } from 'node:fs';
-import { km, minutes, seconds } from '@pond-ts/fit';
+import { km, minutes, Power, seconds } from '@pond-ts/fit';
 import { readActivity } from '@pond-ts/fit/files';
 
 const ride = readActivity(readFileSync('hill-ride.fit'));
@@ -105,7 +105,7 @@ Best 5 km   24:49 4:58/km
 
 An interval session is efforts with a recovery after each. `analyze().efforts`
 finds them, and each is an ordinary section, so its stats work as usual. The
-warm-up before the first effort and any cool-down the device marked are kept
+warm-up before the first effort and the cool-down after the last are kept
 apart, and every set says where its efforts came from (`source`).
 
 `fromLaps()` reads the recorded laps: the device's own work and rest marks
@@ -125,7 +125,7 @@ for (const m of cmp.metrics)
     m.metric.padEnd(9),
     m.unit.padEnd(4),
     'best',
-    m.best?.number,
+    m.best?.number ?? '-',
     'typical',
     m.typical?.toFixed(0),
     'spread',
@@ -139,20 +139,25 @@ console.log(
 
 ```text output
 lap-output 6 Warm-up
-duration  s    best 1 typical 188 spread 0.012
+duration  s    best - typical 188 spread 0.012
 pace      s/km best 1 typical 234 spread 0.012
-heartRate bpm  best 1 typical 158 spread 0.010
+heartRate bpm  best - typical 158 spread 0.010
 recoveries 89 89 89 89 89 -
 ```
 
-`detect()` finds stretches above a power (watts) or speed (m/s) threshold
-sample by sample, joining dips shorter than `mergeGapsUnder` (5 s) and dropping
-stretches shorter than `minimumDuration` (30 s):
+`best` and `worst` are there for pace and power, where the direction is plain;
+every metric has `highest` and `lowest`.
+
+`detect()` finds stretches above a power or speed threshold sample by sample,
+joining dips shorter than `mergeGapsUnder` (5 s) and dropping stretches shorter
+than `minimumDuration` (30 s). After the last effort, anything longer than
+twice the typical recovery is the cool-down:
 
 ```ts
-const hard = ride
-  .analyze()
-  .efforts.detect({ powerAbove: 300, minimumDuration: seconds(60) });
+const hard = ride.analyze().efforts.detect({
+  powerAbove: Power.watts(300),
+  minimumDuration: seconds(60),
+});
 console.log(hard.length, hard.at(0)?.section.stats().power.average?.format());
 ```
 

@@ -1,7 +1,8 @@
 /**
  * Efforts and the recovery after each (RFC §14.2, §15.3, §16.3):
  * `run.analyze().efforts.fromLaps()`,
- * `ride.analyze().efforts.detect({ powerAbove: 300 })`, then `.compare()`.
+ * `ride.analyze().efforts.detect({ powerAbove: Power.watts(300) })`, then
+ * `.compare()`.
  *
  * The model is effort plus recovery: each effort is an ordinary section, with
  * the stretch after it (up to the next effort) as its recovery, and the
@@ -12,7 +13,7 @@ import type { PreparedActivity } from '../summary/index.js';
 import { movingBeforeSample } from '../summary/index.js';
 import { intervals } from '../intervals.js';
 import { sectionWindow, type Span } from '../stats/index.js';
-import { Duration } from '../quantities.js';
+import type { Duration, Power, Speed } from '../quantities.js';
 import type { ImportedActivity, Lap } from '../types.js';
 import type { Stats } from './stats.js';
 import { sportOf } from './sport.js';
@@ -48,10 +49,9 @@ export interface Effort<S> {
 }
 
 export interface DetectOptions {
-  /** Watts. One of `powerAbove` or `speedAbove`. */
-  powerAbove?: number;
-  /** Metres per second. */
-  speedAbove?: number;
+  /** One of `powerAbove` or `speedAbove`. */
+  powerAbove?: Power;
+  speedAbove?: Speed;
   /** Shorter stretches are dropped. Default 30 s. */
   minimumDuration?: Duration;
   /** Dips below the threshold shorter than this don't end an effort.
@@ -113,8 +113,14 @@ export class EffortFinder<S extends EffortSectionLike> {
     let source: EffortSource;
     let isWork: (i: number) => boolean | null; // null: warm-up / cool-down
     if (pool) {
+      // a swim's rests are its laps with no distance; the device's
+      // warm-up and cool-down marks still count
       source = 'pool-laps';
-      isWork = (i) => laps[i]!.lap.distanceMeters > 0;
+      isWork = (i) => {
+        const k = laps[i]!.lap.intensity;
+        if (k === 'warmup' || k === 'cooldown') return null;
+        return laps[i]!.lap.distanceMeters > 0;
+      };
     } else if (marked) {
       source = 'lap-intensity';
       isWork = (i) => {
@@ -130,10 +136,12 @@ export class EffortFinder<S extends EffortSectionLike> {
         return new Efforts<S>(source, [], null, null);
       const lo = Math.min(...known);
       const hi = Math.max(...known);
-      if (!(lo > 0) || hi / lo < 1.15)
+      // a standing rest averages 0, which splits from any effort
+      if (!(hi > 0) || (lo > 0 && hi / lo < 1.15))
         return new Efforts<S>(source, [], null, null);
       const mid = (lo + hi) / 2;
-      isWork = (i) => (out[i] ?? -Infinity) > mid;
+      // a lap with no output can't be told apart, so it breaks the run
+      isWork = (i) => (out[i] === null ? null : out[i]! > mid);
     }
     let kinds = laps.map((_, i) => isWork(i));
     // Split by output alone, a steady run over hills would turn its climbs
@@ -159,9 +167,17 @@ export class EffortFinder<S extends EffortSectionLike> {
           : run[1];
       kinds = kinds.map((k, i) => (i < run[0] || i > end ? null : k));
     }
+    // a lap counts by its middle, but its stretch stops at the section's ends
+    const clip = (x: number) =>
+      Math.min(Math.max(x, src.span.fromSeconds), src.span.toSeconds);
     const work: Span[] = [];
     kinds.forEach((k, i) => {
-      if (k) work.push(laps[i]!.span);
+      const { fromSeconds, toSeconds } = laps[i]!.span;
+      if (k)
+        work.push({
+          fromSeconds: clip(fromSeconds),
+          toSeconds: clip(toSeconds),
+        });
     });
     // warm-up: everything before the first effort, whether marked or not;
     // cool-down: from the first lap after the last effort that is marked as
@@ -174,18 +190,22 @@ export class EffortFinder<S extends EffortSectionLike> {
         ? laps[last + 1 + kinds.slice(last + 1).indexOf(null)]!.span.fromSeconds
         : null;
     return this.#build(source, work, {
-      warmUpTo: first > 0 ? laps[first]!.span.fromSeconds : null,
-      coolDownFrom: coolFrom,
+      warmUpTo: first > 0 ? clip(laps[first]!.span.fromSeconds) : null,
+      coolDownFrom: coolFrom === null ? null : clip(coolFrom),
     });
   }
 
   /** Efforts as stretches above a power or speed threshold, sample by
-   *  sample. */
+   *  sample. After the last effort, a stretch no longer than twice the
+   *  typical recovery is its recovery; a longer one gets a typical
+   *  recovery and the rest is the cool-down (all of it after a lone
+   *  effort). */
   detect(options: DetectOptions): Efforts<S> {
     const { powerAbove, speedAbove } = options;
     if ((powerAbove === undefined) === (speedAbove === undefined))
       throw new RangeError('give one of powerAbove or speedAbove');
-    const threshold = (powerAbove ?? speedAbove)!;
+    const threshold =
+      powerAbove !== undefined ? powerAbove.watts : speedAbove!.metersPerSecond;
     if (!Number.isFinite(threshold))
       throw new RangeError('the threshold must be finite');
     const minimum = options.minimumDuration?.seconds ?? 30;
@@ -229,9 +249,22 @@ export class EffortFinder<S extends EffortSectionLike> {
         toSeconds: Math.min(s.toSeconds, src.span.toSeconds),
       }))
       .filter((s) => s.toSeconds - s.fromSeconds >= minimum);
+    // after the last effort: its recovery when no longer than twice the
+    // typical one, else (and after a lone effort) the cool-down
+    let coolDownFrom: number | null = null;
+    if (work.length) {
+      const gaps = work
+        .slice(1)
+        .map((s, i) => s.fromSeconds - work[i]!.toSeconds)
+        .sort((a, b) => a - b);
+      const lastEnd = work[work.length - 1]!.toSeconds;
+      const tail = src.span.toSeconds - lastEnd;
+      const typical = gaps.length ? gaps[gaps.length >> 1]! : 0;
+      if (tail > 2 * typical) coolDownFrom = lastEnd + Math.min(tail, typical);
+    }
     return this.#build('threshold', work, {
       warmUpTo: work.length ? work[0]!.fromSeconds : null,
-      coolDownFrom: null,
+      coolDownFrom,
     });
   }
 
@@ -330,15 +363,19 @@ export interface MetricComparison {
   /** Each effort's value in {@link unit}, in effort order; null where it
    *  has none. */
   values: (number | null)[];
-  /** The effort with the best value (shortest time or pace, most power),
-   *  by number; for heart rate and cadence, the highest. */
+  /** The effort with the best value, by number: the fastest pace, the most
+   *  power. Null for duration, distance, heart rate and cadence, where
+   *  higher isn't plainly better or worse (see {@link highest}). */
   best: { number: number; value: number } | null;
   worst: { number: number; value: number } | null;
+  highest: { number: number; value: number } | null;
+  lowest: { number: number; value: number } | null;
   /** The median. */
   typical: number | null;
   /** Coefficient of variation (standard deviation ÷ mean), 0 to 1. */
   spread: number | null;
-  /** (last − first) ÷ first, as a fraction. */
+  /** (last − first) ÷ first, from effort 1 and the last effort; null when
+   *  either has no value. */
   firstToLast: number | null;
 }
 
@@ -349,7 +386,11 @@ export interface EffortComparison {
   recoveries: (number | null)[];
 }
 
-const LOWER_IS_BETTER = new Set<EffortMetric>(['duration', 'pace']);
+/** Metrics with a plain better direction. */
+const BETTER: Partial<Record<EffortMetric, 'lower' | 'higher'>> = {
+  pace: 'lower',
+  power: 'higher',
+};
 
 /** Efforts found in a section, with the warm-up and cool-down apart. */
 export class Efforts<S extends EffortSectionLike> implements Iterable<
@@ -475,30 +516,43 @@ function compareOne(
       values,
       best: null,
       worst: null,
+      highest: null,
+      lowest: null,
       typical: null,
       spread: null,
       firstToLast: null,
     };
-  const lowerBetter = LOWER_IS_BETTER.has(metric);
   const sorted = [...known].sort((a, b) => a.value - b.value);
-  const best = lowerBetter ? sorted[0]! : sorted[sorted.length - 1]!;
-  const worst = lowerBetter ? sorted[sorted.length - 1]! : sorted[0]!;
+  const lowest = sorted[0]!;
+  const highest = sorted[sorted.length - 1]!;
+  const better = BETTER[metric];
+  const best = better ? (better === 'lower' ? lowest : highest) : null;
+  const worst = better ? (better === 'lower' ? highest : lowest) : null;
   const vs = sorted.map((x) => x.value);
   const mid = vs.length >> 1;
   const typical = vs.length % 2 ? vs[mid]! : (vs[mid - 1]! + vs[mid]!) / 2;
   const mean = vs.reduce((a, b) => a + b, 0) / vs.length;
   const sd = Math.sqrt(vs.reduce((a, b) => a + (b - mean) ** 2, 0) / vs.length);
-  const first = known[0]!.value;
-  const last = known[known.length - 1]!.value;
+  const first = values[0];
+  const last = values[values.length - 1];
   return {
     metric,
     unit,
     values,
     best,
     worst,
+    highest,
+    lowest,
     typical,
     spread: mean !== 0 ? sd / Math.abs(mean) : null,
     firstToLast:
-      known.length > 1 && first !== 0 ? (last - first) / first : null,
+      values.length > 1 &&
+      first != null &&
+      last != null &&
+      Number.isFinite(first) &&
+      Number.isFinite(last) &&
+      first !== 0
+        ? (last - first) / first
+        : null,
   };
 }

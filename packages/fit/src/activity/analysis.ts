@@ -227,7 +227,8 @@ export class Analysis {
   }
 
   /** Efforts and the recovery after each: `efforts.fromLaps()` or
-   *  `efforts.detect({ powerAbove: 300 })`, then `.compare()`. */
+   *  `efforts.detect({ powerAbove: Power.watts(300) })`, then
+   *  `.compare()`. */
   get efforts(): EffortFinder<Section> {
     return (this.#efforts ??= new EffortFinder({
       prep: this.#src.prep,

@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { Activity } from '../src/activity/index.js';
 import { readActivity } from '../src/files/index.js';
-import { seconds } from '../src/quantities.js';
+import { Power, seconds, Speed } from '../src/quantities.js';
 import type { ImportedActivity, Lap } from '../src/types.js';
 
 const START = '2024-06-01T08:00:00Z';
@@ -149,6 +149,48 @@ describe('efforts from laps', () => {
     expect(steady.analyze().efforts.fromLaps().length).toBe(0);
   });
 
+  it('splits standing rests (an average of 0) from the efforts', () => {
+    const parts = [{ secs: 300, speed: 3 }];
+    for (let k = 0; k < 4; k++)
+      parts.push({ secs: 60, speed: 5 }, { secs: 60, speed: 0 });
+    const e = Activity.from(blocks(parts)).analyze().efforts.fromLaps();
+    expect(e.length).toBe(4);
+  });
+
+  it('makes a slow last lap far longer than the rests the cool-down', () => {
+    const parts = [{ secs: 300, speed: 3 }];
+    for (let k = 0; k < 4; k++)
+      parts.push({ secs: 60, speed: 5 }, { secs: 60, speed: 2 });
+    parts.pop();
+    parts.push({ secs: 600, speed: 2 });
+    const e = Activity.from(blocks(parts)).analyze().efforts.fromLaps();
+    expect(e.length).toBe(4);
+    expect(e.at(-1)!.recoveryAfter).toBeNull();
+    expect(e.coolDown!.fromSeconds).toBe(e.at(-1)!.section.toSeconds);
+  });
+
+  it('keeps efforts inside a smaller section', () => {
+    const run = intervalRun();
+    // from the middle of the first effort lap to the middle of the last
+    const part = run.section({
+      elapsed: { from: seconds(650), to: seconds(1500) },
+    });
+    const e = part.analyze().efforts.fromLaps();
+    expect(e.length).toBeGreaterThan(0);
+    for (const x of e) {
+      expect(x.section.fromSeconds).toBeGreaterThanOrEqual(650);
+      expect(x.section.toSeconds).toBeLessThanOrEqual(1500);
+    }
+  });
+
+  it('finds none without laps', () => {
+    const rec = blocks([{ secs: 300, speed: 3 }]);
+    const e = Activity.from({ ...rec, laps: [] })
+      .analyze()
+      .efforts.fromLaps();
+    expect(e.length).toBe(0);
+  });
+
   it('takes a pool swim’s laps with distance as its efforts', () => {
     const pool = readActivity(
       gunzipSync(
@@ -188,7 +230,9 @@ describe('efforts by threshold', () => {
   }
 
   it('finds the stretches above the threshold, merging short dips', () => {
-    const e = intervals().analyze().efforts.detect({ powerAbove: 300 });
+    const e = intervals()
+      .analyze()
+      .efforts.detect({ powerAbove: Power.watts(300) });
     expect(e.source).toBe('threshold');
     expect(e.length).toBe(5);
     const first = e.at(0)!.section;
@@ -198,19 +242,84 @@ describe('efforts by threshold', () => {
     expect(e.warmUp!.toSeconds).toBe(300);
   });
 
+  it('gives the last effort a typical recovery, then the cool-down', () => {
+    const e = intervals()
+      .analyze()
+      .efforts.detect({
+        powerAbove: Power.watts(300),
+      });
+    // the 120 s after the last effort is the typical recovery: no cool-down
+    expect(e.coolDown).toBeNull();
+    const rec = blocks(
+      [
+        { secs: 60, speed: 8, watts: 150 },
+        { secs: 60, speed: 10, watts: 350 },
+        { secs: 60, speed: 8, watts: 150 },
+        { secs: 60, speed: 10, watts: 350 },
+        { secs: 900, speed: 8, watts: 150 },
+      ],
+      'Ride',
+    );
+    const long = Activity.from(rec)
+      .analyze()
+      .efforts.detect({ powerAbove: Power.watts(300) });
+    expect(long.length).toBe(2);
+    expect(long.at(-1)!.recoveryAfter!.toSeconds).toBe(
+      long.coolDown!.fromSeconds,
+    );
+    expect(
+      long.at(-1)!.recoveryAfter!.toSeconds -
+        long.at(-1)!.recoveryAfter!.fromSeconds,
+    ).toBe(60);
+  });
+
+  it('keeps a stretch of exactly the minimum and merges dips under the gap', () => {
+    const rec = blocks(
+      [
+        { secs: 60, speed: 8, watts: 150 },
+        { secs: 30, speed: 10, watts: 350 },
+        { secs: 60, speed: 8, watts: 150 },
+        { secs: 40, speed: 10, watts: 350 },
+        { secs: 5, speed: 8, watts: 150 },
+        { secs: 40, speed: 10, watts: 350 },
+        { secs: 60, speed: 8, watts: 150 },
+      ],
+      'Ride',
+    );
+    const e = Activity.from(rec)
+      .analyze()
+      .efforts.detect({ powerAbove: Power.watts(300) });
+    // 30 s kept; a 5 s dip isn't under 5 s, so it splits the 40 s pair
+    expect(e.length).toBe(3);
+    expect(e.at(0)!.section.toSeconds - e.at(0)!.section.fromSeconds).toBe(30);
+    const merged = Activity.from(rec)
+      .analyze()
+      .efforts.detect({
+        powerAbove: Power.watts(300),
+        mergeGapsUnder: seconds(6),
+      });
+    expect(merged.length).toBe(2);
+  });
+
   it('drops stretches shorter than the minimum', () => {
     const e = intervals()
       .analyze()
-      .efforts.detect({ powerAbove: 300, minimumDuration: seconds(200) });
+      .efforts.detect({
+        powerAbove: Power.watts(300),
+        minimumDuration: seconds(200),
+      });
     expect(e.length).toBe(0);
   });
 
   it('needs exactly one threshold', () => {
     const a = intervals().analyze();
     expect(() => a.efforts.detect({})).toThrow(RangeError);
-    expect(() => a.efforts.detect({ powerAbove: 300, speedAbove: 9 })).toThrow(
-      RangeError,
-    );
+    expect(() =>
+      a.efforts.detect({
+        powerAbove: Power.watts(300),
+        speedAbove: Speed.metersPerSecond(9),
+      }),
+    ).toThrow(RangeError);
   });
 });
 
@@ -220,14 +329,18 @@ describe('compare', () => {
     expect(c.count).toBe(6);
     const duration = c.metrics.find((m) => m.metric === 'duration')!;
     expect(duration.values).toEqual([80, 81, 82, 83, 84, 85]);
-    expect(duration.best).toEqual({ number: 1, value: 80 });
-    expect(duration.worst).toEqual({ number: 6, value: 85 });
+    // no plain better way for duration: highest and lowest only
+    expect(duration.best).toBeNull();
+    expect(duration.lowest).toEqual({ number: 1, value: 80 });
+    expect(duration.highest).toEqual({ number: 6, value: 85 });
     expect(duration.typical).toBe(82.5);
     expect(duration.firstToLast).toBeCloseTo(5 / 80, 9);
     const pace = c.metrics.find((m) => m.metric === 'pace')!;
     expect(pace.best!.number).toBe(1);
+    expect(pace.worst!.number).toBe(6);
     const hr = c.metrics.find((m) => m.metric === 'heartRate')!;
     expect(hr.typical).toBeCloseTo(165, 0);
+    expect(hr.best).toBeNull();
     expect(c.recoveries.slice(0, 5)).toEqual([80, 80, 80, 80, 80]);
   });
 
