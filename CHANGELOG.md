@@ -82,7 +82,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **`@pond-ts/fit`: `TrainingHistory` and activity digests** (RFC §14.3,
-  §15.4). `activity.digest()` is a small JSON summary (about 1.5 KB for a
+  §15.4). `activity.digest()` is a small JSON summary (about 1.4 KB for a
   50 km run) an app can store: clocks, distance, ascent, a 1 bpm heart-rate
   histogram, the power curve from 1 s to 5 h and pace bests from 400 m to
   100 km, each with where it was. It needs no athlete settings.

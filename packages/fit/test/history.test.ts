@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Activity } from '../src/activity/index.js';
 import type { ImportedActivity } from '../src/types.js';
+import { seconds } from '../src/quantities.js';
 import {
   TrainingHistory,
   dayOf,
@@ -61,6 +62,7 @@ function digest(
   return {
     version: 1,
     id,
+    fingerprint: `f-${id}`,
     name: id,
     sport: 'run',
     sportType: 'Run',
@@ -229,7 +231,7 @@ describe('history.volume.weekly()', () => {
 
   it('totals each week, empty weeks kept, with coverage', () => {
     const weeks = h.volume.weekly();
-    expect(weeks.map((w) => [w.week, w.to, w.count, w.coverage])).toEqual([
+    expect(weeks.map((w) => [w.from, w.to, w.count, w.coverage])).toEqual([
       ['2026-02-23', '2026-03-01', 0, 'partial'],
       ['2026-03-02', '2026-03-08', 3, 'full'],
       ['2026-03-09', '2026-03-15', 0, 'full'],
@@ -250,10 +252,10 @@ describe('history.volume.weekly()', () => {
 
   it('can start weeks on Sunday', () => {
     const weeks = h.volume.weekly({ weekStart: 'sunday' });
-    expect(weeks[0]!.week).toBe('2026-03-01');
+    expect(weeks[0]!.from).toBe('2026-03-01');
     // Sunday the 8th starts a new week.
     expect(weeks[0]!.count).toBe(2);
-    expect(weeks[1]!.week).toBe('2026-03-08');
+    expect(weeks[1]!.from).toBe('2026-03-08');
   });
 
   it('marks weeks outside covers as gaps', () => {
@@ -273,5 +275,39 @@ describe('history.volume.weekly()', () => {
 
   it('is empty for an empty history', () => {
     expect(TrainingHistory.of([]).volume.weekly()).toEqual([]);
+  });
+});
+
+describe('history edge cases', () => {
+  it('handles days before 1970', () => {
+    const weeks = TrainingHistory.of([
+      digest('old', '1969-12-31T08:00:00'),
+    ]).volume.weekly();
+    expect(weeks.map((w) => [w.from, w.to, w.count])).toEqual([
+      ['1969-12-29', '1970-01-04', 1],
+    ]);
+  });
+
+  it('names the bad field of a malformed digest', () => {
+    const d = digest('x', '2026-03-01T08:00:00');
+    const broken = { ...d, time: undefined } as unknown as ActivityDigest;
+    expect(() => TrainingHistory.of([broken])).toThrow(/"x": bad time/);
+    expect(() =>
+      TrainingHistory.of([{ ...d, pace: null } as unknown as ActivityDigest]),
+    ).toThrow(/bad pace/);
+  });
+
+  it('gives a new fingerprint after an edit', () => {
+    const a = steady({
+      id: 'e',
+      start: '2026-03-02T07:00:00Z',
+      secs: 1200,
+      speed: 3,
+    });
+    const cropped = a.edit({
+      crop: { from: seconds(60), to: seconds(1100) },
+    });
+    expect(a.digest().fingerprint).toBe(a.digest().fingerprint);
+    expect(cropped.digest().fingerprint).not.toBe(a.digest().fingerprint);
   });
 });

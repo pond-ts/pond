@@ -187,12 +187,13 @@ export interface VolumeTotals {
 /** One week of training. */
 export interface WeekVolume extends VolumeTotals {
   /** The week's first day. */
-  week: Day;
+  from: Day;
   /** Its last day. */
   to: Day;
   /** `'full'` when every day of the week is inside `covers`, `'partial'`
-   *  when some are, `'gap'` when none are (nothing known about the week;
-   *  its totals are 0 but don't mean rest). */
+   *  when some are, `'gap'` when none are. Activities outside `covers` still
+   *  count in their week's totals; what a gap week means is that a total
+   *  there can be incomplete, and a zero there isn't rest. */
   coverage: 'full' | 'partial' | 'gap';
   /** The longest activity by distance, or by elapsed time when none has a
    *  distance; null in an empty week. */
@@ -262,8 +263,12 @@ export class Volume {
     const startDow = options.weekStart === 'sunday' ? 0 : 1;
     const days = this.#digests.map((d) => dayNumber(dayOf(d)));
     const c = this.#covers;
-    const lo = Math.min(...days, ...(c ? [dayNumber(c.from)] : []));
-    const hi = Math.max(...days, ...(c ? [dayNumber(c.to)] : []));
+    let lo = c ? dayNumber(c.from) : Infinity;
+    let hi = c ? dayNumber(c.to) : -Infinity;
+    for (const n of days) {
+      if (n < lo) lo = n;
+      if (n > hi) hi = n;
+    }
     if (!Number.isFinite(lo)) return [];
     // 1970-01-01 was a Thursday (day of week 4).
     const weekOf = (n: number) => n - ((((n + 4 - startDow) % 7) + 7) % 7);
@@ -302,7 +307,7 @@ export class Volume {
       const bySport: Partial<Record<Sport, VolumeTotals>> = {};
       for (const [sport, acc] of wk.sports) bySport[sport] = totals(acc);
       return {
-        week: dayOfNumber(from),
+        from: dayOfNumber(from),
         to: dayOfNumber(to),
         ...totals(wk.acc),
         coverage: covered === 7 ? 'full' : covered > 0 ? 'partial' : 'gap',

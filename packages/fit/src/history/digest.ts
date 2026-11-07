@@ -40,6 +40,10 @@ export interface DigestPaceBest {
 export interface ActivityDigest {
   version: typeof DIGEST_VERSION;
   id: string;
+  /** Changes when the recording or the edit applied to it changes (a crop,
+   *  a lap edit), so an app can tell a stored digest is stale. Compare for
+   *  equality only. */
+  fingerprint: string;
   name: string;
   sport: Sport;
   /** The source's own sport label ("TrailRun"). */
@@ -65,7 +69,9 @@ export interface ActivityDigest {
     max: number;
     /** Elapsed seconds at each whole beat per minute, from `start` up:
      *  `seconds[i]` is the time at `start + i` bpm. Enough to work out
-     *  time in any heart-rate zones later. */
+     *  time in any heart-rate zones later. Elapsed, so time stopped counts
+     *  (at the low heart rate a stop has), as heart-rate load methods count
+     *  the whole recording. */
     histogram: { start: number; seconds: number[] };
   } | null;
   /** Null with no power recorded. */
@@ -100,6 +106,31 @@ const round = (v: number, places = 1) => {
   const f = 10 ** places;
   return Math.round(v * f) / f;
 };
+
+/** FNV-1a, 32 bits, as 8 hex digits. */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+function fingerprintOf(activity: Activity): string {
+  const s = activity.record.streams;
+  const n = s.timeSeconds?.length ?? s.latlng.length;
+  const last = <T>(a: readonly T[] | undefined) => (a ? a[a.length - 1] : null);
+  return fnv1a(
+    JSON.stringify([
+      activity.record.activity.id,
+      n,
+      last(s.timeSeconds),
+      last(s.distanceMeters),
+      activity.appliedEdit,
+    ]),
+  );
+}
 
 /** The digest of one activity. */
 export function digestOf(activity: Activity): ActivityDigest {
@@ -157,6 +188,7 @@ export function digestOf(activity: Activity): ActivityDigest {
   return {
     version: DIGEST_VERSION,
     id: record.id,
+    fingerprint: fingerprintOf(activity),
     name: activity.name,
     sport: sportOf(record.sportType),
     sportType: record.sportType,
@@ -179,13 +211,38 @@ export function digestOf(activity: Activity): ActivityDigest {
   };
 }
 
-/** Throws when a value isn't a digest this pond can read. */
+const numOrNull = (v: unknown) =>
+  v === null || (typeof v === 'number' && Number.isFinite(v));
+
+/** Throws when a value isn't a digest this pond can read, naming the first
+ *  field that's wrong. Checks the fields a history reads; it doesn't
+ *  re-check every number in the curves. */
 export function checkDigest(d: unknown): asserts d is ActivityDigest {
-  const v = d as Partial<ActivityDigest> | null;
+  const v = d as Record<string, unknown> | null;
   if (!v || typeof v !== 'object' || typeof v.id !== 'string')
     throw new TypeError('not an activity digest');
   if (v.version !== DIGEST_VERSION)
     throw new TypeError(
       `activity digest version ${String(v.version)}; this pond reads ${DIGEST_VERSION}`,
     );
+  const bad = (field: string) => {
+    throw new TypeError(`activity digest "${v.id as string}": bad ${field}`);
+  };
+  if (typeof v.startedAt !== 'string' || Number.isNaN(Date.parse(v.startedAt)))
+    bad('startedAt');
+  if (v.localStart !== null && typeof v.localStart !== 'string')
+    bad('localStart');
+  if (typeof v.sport !== 'string') bad('sport');
+  const time = v.time as Record<string, unknown> | undefined;
+  if (!time || !numOrNull(time.elapsed) || !numOrNull(time.moving)) bad('time');
+  if (!numOrNull(v.distance)) bad('distance');
+  if (!numOrNull(v.ascent)) bad('ascent');
+  if (!Array.isArray(v.pace)) bad('pace');
+  if (v.heartRate !== null && typeof v.heartRate !== 'object') bad('heartRate');
+  const power = v.power as Record<string, unknown> | null;
+  if (
+    power !== null &&
+    (typeof power !== 'object' || !Array.isArray(power.curve))
+  )
+    bad('power');
 }

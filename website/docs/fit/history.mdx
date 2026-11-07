@@ -32,7 +32,7 @@ console.log(JSON.stringify(d).length, 'bytes');
 1 run null
 { elapsed: 3083, moving: 2947 } 9702.2 18
 [ 400, 804.672, 1000, 1609.344, 3218.688, 5000 ]
-930 bytes
+955 bytes
 ```
 
 A digest holds the clocks, distance and ascent; heart rate as seconds at each
@@ -114,7 +114,7 @@ range is there, empty ones too, so the array feeds a chart as it is.
 ```ts
 for (const w of known.volume.weekly())
   console.log(
-    w.week,
+    w.from,
     w.coverage,
     w.count,
     w.distance.format('km', 1),
