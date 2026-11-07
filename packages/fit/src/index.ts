@@ -44,6 +44,7 @@ export {
   Power,
   HeartRate,
   Cadence,
+  StepRate,
 } from './quantities.js';
 export {
   meters,
@@ -103,6 +104,10 @@ export type {
   DistributionBin,
   Distribution,
   Coasting,
+  RunningDynamics,
+  RunningDynamicsStats,
+  DynamicsChannel,
+  DynamicsSource,
   ActivitySeries,
   SeriesChannel,
   SeriesPoint,

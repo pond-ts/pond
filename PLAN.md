@@ -1298,8 +1298,8 @@ depend on. Plan:
   lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
   One-activity work first, on any `Section`: aerobic efficiency and
   decoupling (`analysis.aerobic`) and distributions and coasting
-  (`analysis.distribution`, `analysis.coasting`) built,
-  running dynamics (steps per minute, step length, ground contact), swim
+  (`analysis.distribution`, `analysis.coasting`) and running dynamics
+  (`section.dynamics`) built; then swim
   stroke metrics (stroke rate, SWOLF, distance per stroke, counting
   convention), effort/recovery pairs and comparison, grade-adjusted pace.
   Then `TrainingHistory` (records, season curve, weekly volume, load
