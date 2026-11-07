@@ -299,3 +299,21 @@ export type {
   LapsSummary,
   LapExtremes,
 } from './laps/groups.js';
+
+export {
+  TrainingHistory,
+  Volume,
+  dayOf,
+  DIGEST_VERSION,
+  DIGEST_POWER_DURATIONS,
+  DIGEST_PACE_DISTANCES,
+  type ActivityDigest,
+  type DigestPowerPoint,
+  type DigestPaceBest,
+  type Day,
+  type DayRange,
+  type HistoryOptions,
+  type VolumeTotals,
+  type WeekVolume,
+  type WeeklyOptions,
+} from './history/index.js';

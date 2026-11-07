@@ -33,6 +33,7 @@ import { routeOf, type Route } from './route.js';
 import { explainOf, type Explainable, type Explanation } from './explain.js';
 import { dynamicsOf, type RunningDynamics } from './dynamics.js';
 import { lapSpans } from './efforts.js';
+import { digestOf, type ActivityDigest } from '../history/digest.js';
 import {
   editParts,
   isNoEdit,
@@ -377,6 +378,13 @@ export class Activity extends Section {
       };
     });
     return parts[0]!;
+  }
+
+  /** A small, storable summary for a {@link TrainingHistory}: clocks,
+   *  distance, ascent, a heart-rate histogram, the power curve and pace
+   *  bests. Needs no athlete settings. */
+  digest(): ActivityDigest {
+    return digestOf(this);
   }
 
   /** Where one of its numbers comes from: the source, the method, how much
