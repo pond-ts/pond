@@ -1300,8 +1300,13 @@ depend on. Plan:
   decoupling (`analysis.aerobic`) and distributions and coasting
   (`analysis.distribution`, `analysis.coasting`) and running dynamics
   (`section.dynamics`), swim stroke metrics (`analysis.technique`) and
-  efforts with recoveries (`analysis.efforts`) built; then grade-adjusted
-  pace.
+  efforts with recoveries (`analysis.efforts`) and grade-adjusted pace
+  (`section.pace.adjustedForGrade()`, ACSM running by default, Minetti 2002
+  by name, the model named in the result;
+  aerobic output `'grade-adjusted-speed'`) built. ACSM is the run default
+  because on a real 50 km trail race Minetti read descents 2 to 8 min/mi
+  slower than Strava's grade-adjusted pace while ACSM stayed within about a
+  minute (pjm17971 chose to ship both, 2026-11-07).
   Then `TrainingHistory` (records, season curve, weekly volume, load
   timeline), on per-activity digests; each activity's load records the
   method that made it (power TSS, heart-rate load, none), since devices

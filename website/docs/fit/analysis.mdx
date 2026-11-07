@@ -141,6 +141,41 @@ Tempo 143 s
 Threshold 21 s
 ```
 
+## Grade-adjusted pace
+
+`section.pace.adjustedForGrade()` estimates the pace the same effort would give
+on level ground. It is an estimate, so it names its model. For a run the default
+is `'acsm-running'`, the American College of Sports Medicine's running
+equation: a metre climbed at grade g counts as 1 + 4.5 g level metres, and a
+descent counts as level (the equation doesn't cover descents). The grade is read
+over 100 m of distance so elevation noise doesn't become steep slopes. It is on
+moving time, like `stats().pace`, and needs no settings.
+
+```ts
+const g = run.pace.adjustedForGrade()!;
+console.log(g.model, g.recorded.pace.format(), g.pace.format());
+console.log(g.factor.toFixed(3), g.coverage);
+```
+
+```text output
+acsm-running 5:04/km 5:01/km
+1.009 1
+```
+
+The interval run is nearly flat (18 m up, 24 m down), so the two paces are
+close. `factor` is level-equivalent metres per metre, and `coverage` the share
+of the distance where elevation was recorded; the rest counts as level.
+
+Minetti's energy cost curves (2002) are there too, by name:
+`{ model: 'minetti-2002-running' }`, and `'minetti-2002-walking'`, the default
+for walks and hikes. They come from treadmill measurements and credit a gentle
+descent as cheaper than level ground, cheapest near −20 %, where a metre costs
+about half a level one. So a steep descent gets an adjusted pace well _slower_
+than its recorded pace, even when it felt hard (braking, rough footing). ACSM
+gives a descent no credit either way, so running faster downhill at the same
+effort reads as a faster adjusted pace. Pick the model that matches how you want
+descents read, and compare numbers only within one model.
+
 ## Efficiency and decoupling
 
 `analysis.aerobic` reads output per heartbeat. On a ride with power it is
@@ -148,6 +183,8 @@ normalized power over average heart rate (watts per bpm); otherwise it is
 speed over heart rate, in metres per heartbeat. Both are on moving time, so a
 stop doesn't pull the number around. Higher always means more output for the
 same heart rate. It needs no settings.
+On foot, `{ output: 'grade-adjusted-speed' }` uses grade-adjusted speed, so a
+steady effort over hills isn't read as uneven.
 
 `decoupling()` compares the first half of a section with the second, split by
 moving time so a stop doesn't move the split. A positive `change` means the
