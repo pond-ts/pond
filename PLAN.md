@@ -1294,6 +1294,15 @@ depend on. Plan:
   release waits on these four (pjm17971, 2026-11-04). Built, with `analyze`
   and best efforts by metric (#892–#895); `edit` in durations and `views`
   follow.
+- **[PND-FITDEPTH]** — the sport layers after 0.76: pjm17971's first-release
+  lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
+  One-activity work first, on any `Section`: aerobic efficiency and
+  decoupling (shipped, `analysis.aerobic`), distributions and coasting,
+  running dynamics (steps per minute, step length, ground contact), swim
+  stroke metrics (stroke rate, SWOLF, distance per stroke, counting
+  convention), effort/recovery pairs and comparison, grade-adjusted pace.
+  Then `TrainingHistory` (records, season curve, weekly volume, load
+  timeline), which needs a design call on its input (per-activity digests).
 
 ---
 
