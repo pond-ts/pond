@@ -30,7 +30,11 @@ export type SeriesChannel =
   | 'cadence'
   | 'speed'
   | 'elevation'
-  | 'distance';
+  | 'distance'
+  | 'stepLength'
+  | 'groundContactTime'
+  | 'verticalOscillation'
+  | 'verticalRatio';
 
 const SERIES_SCHEMA = [
   { name: 'time', kind: 'time' },

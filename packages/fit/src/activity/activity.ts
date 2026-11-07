@@ -31,6 +31,7 @@ import { toStats, type Stats, type StatsOptions } from './stats.js';
 import { seriesOf, type ActivitySeries } from './series.js';
 import { routeOf, type Route } from './route.js';
 import { explainOf, type Explainable, type Explanation } from './explain.js';
+import { dynamicsOf, type RunningDynamics } from './dynamics.js';
 import {
   editParts,
   isNoEdit,
@@ -97,6 +98,7 @@ export class Section implements Span {
   #power?: PowerEfforts<Section>;
   #pace?: PaceEfforts<Section>;
   #series?: ActivitySeries;
+  #dynamics?: RunningDynamics;
 
   /** @internal sections are made by an {@link Activity}, not directly */
   constructor(
@@ -168,6 +170,13 @@ export class Section implements Span {
     return (this.#pace ??= new PaceEfforts(this.#source(), (span, label) =>
       this.#effort(span, label),
     ));
+  }
+
+  /** Running dynamics (steps per minute, step length, ground contact,
+   *  vertical oscillation and ratio): `run.dynamics.cadence`. Every channel
+   *  is null off foot. */
+  get dynamics(): RunningDynamics {
+    return (this.#dynamics ??= dynamicsOf(this.prep, this));
   }
 
   /** The measured values inside this stretch, by channel:
