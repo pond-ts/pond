@@ -18,6 +18,7 @@ import { Activity } from '../activity/activity.js';
 import type { Sport } from '../activity/sport.js';
 import { Distance, Duration, Elevation } from '../quantities.js';
 import { checkDigest, digestOf, type ActivityDigest } from './digest.js';
+import { HistoryAnalysis, type HistoryAnalyzeOptions } from './analysis.js';
 
 /** A calendar day, "YYYY-MM-DD". */
 export type Day = string;
@@ -165,6 +166,15 @@ export class TrainingHistory {
       this.#digests.filter((d) => keep.has(d.sport)),
       this.#activities,
       this.#covers,
+    );
+  }
+
+  /** The history read for one athlete: records and the power curve now;
+   *  settings resolve on each activity's own date. */
+  analyze(options: HistoryAnalyzeOptions = {}): HistoryAnalysis {
+    return new HistoryAnalysis(
+      { digests: this.#digests, activities: this.#activities },
+      options,
     );
   }
 

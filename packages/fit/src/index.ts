@@ -316,4 +316,11 @@ export {
   type VolumeTotals,
   type WeekVolume,
   type WeeklyOptions,
+  HistoryAnalysis,
+  HistoryPower,
+  HistoryPace,
+  type HistoryAnalyzeOptions,
+  type RecordPlace,
+  type PowerRecord,
+  type PaceRecord,
 } from './history/index.js';

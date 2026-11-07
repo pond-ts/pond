@@ -17,3 +17,12 @@ export {
   type WeekVolume,
   type WeeklyOptions,
 } from './history.js';
+export {
+  HistoryAnalysis,
+  HistoryPower,
+  HistoryPace,
+  type HistoryAnalyzeOptions,
+  type RecordPlace,
+  type PowerRecord,
+  type PaceRecord,
+} from './analysis.js';

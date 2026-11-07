@@ -307,8 +307,9 @@ export interface PaceBestEffort<S> {
 
 const METERS_PER_MILE = 1609.344;
 
-/** "400 m", "5 km", "1 mi", "marathon", else kilometres to two places. */
-function distanceLabel(m: number): string {
+/** "400 m", "5 km", "1 mi", "marathon", else kilometres to two places.
+ *  @internal */
+export function distanceLabel(m: number): string {
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
   if (near(m, 21097.5)) return 'half marathon';
   if (near(m, 42195)) return 'marathon';
