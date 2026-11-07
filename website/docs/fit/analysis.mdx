@@ -218,8 +218,12 @@ for (const b of dist.bins)
 350-400 W 34 s
 ```
 
-Pace leaves out the time stopped, since a stop has no pace. Pass
-`{ time: 'moving' }` to leave stops out of any channel.
+On elapsed time (the default) a stop counts at 0 W, so the lowest bin above
+mixes stops with freewheeling. Pass `{ time: 'moving' }` to leave stops out.
+Pace is always on moving time, since a stop has no pace; anything slower than
+`slowestPace` (default 20:00 per km) counts in the slowest bin. On a cadence
+distribution off the bike, cadence is cycles per minute (one per two steps),
+as FIT records it.
 
 `coasting` is a ride's moving time with the pedals still: zero cadence, or
 zero power when no cadence was recorded.

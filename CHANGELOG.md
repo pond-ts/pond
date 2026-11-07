@@ -84,7 +84,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 - **`@pond-ts/fit`: distributions and coasting on any section** (RFC
   §14.1). `analysis.distribution(channel, { binWidth, time })` gives the time
   at each level of `'power'`, `'heartRate'`, `'cadence'`, `'speed'` or
-  `'pace'` (s/km, stops left out), binned with pond's `byColumn`, every bin
+  `'pace'` (s/km, or s/100 m in open water; stops left out, slow paces held
+  in one bin), binned with pond's `byColumn`, every bin
   in between kept; power and cadence start at 0. `analysis.coasting` is a
   ride's moving time with zero cadence (or zero power without cadence), with
   its share of moving time.

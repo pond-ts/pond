@@ -594,4 +594,92 @@ describe('distribution', () => {
     );
     expect(run.analyze({ athlete: NONE }).coasting).toBeNull();
   });
+
+  it('keeps a fractional width exact', () => {
+    // 0.3 m/s / 0.1 is 2.999… in floating point; it still lands in 0.3-0.4
+    const n = 601;
+    const slow = Activity.from(fromSpeeds(Array(n).fill(0.3), {}, 'Walk'));
+    const d = slow
+      .analyze({ athlete: NONE })
+      .distribution('speed', { binWidth: 0.1 })!;
+    expect(d.bins).toHaveLength(1);
+    expect(d.bins[0]!.start).toBeCloseTo(0.3, 9);
+  });
+
+  it('holds slow paces in the slowest bin, and reports pace as moving', () => {
+    const n = 1201;
+    // 600 s at 4 m/s, then 600 s at 0.6 m/s (still moving: 1667 s/km)
+    const run = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (i <= 600 ? 4 : 0.6)),
+        {},
+        'Run',
+      ),
+    );
+    const d = run.analyze({ athlete: NONE }).distribution('pace')!;
+    expect(d.time).toBe('moving');
+    const lastBin = d.bins[d.bins.length - 1]!;
+    expect(lastBin.start).toBe(1200);
+    expect(lastBin.seconds).toBeCloseTo(600, 0);
+    expect(d.bins.length).toBe((1200 - 240) / 15 + 1);
+  });
+
+  it('works on a part of the activity, and clamps negative power to 0', () => {
+    const n = 601;
+    const ride = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        watts: Array.from({ length: n }, (_, i) => (i <= 300 ? -5 : 200)),
+      }),
+    );
+    const d = ride
+      .section({ elapsed: { from: minutes(0), to: minutes(5) } })
+      .analyze({ athlete: NONE })
+      .distribution('power')!;
+    expect(d.bins[0]!.seconds).toBeCloseTo(300, 0);
+    expect(d.seconds).toBeCloseTo(300, 0);
+  });
+
+  it('refuses a width that makes too many bins', () => {
+    expect(() =>
+      ride()
+        .analyze({ athlete: NONE })
+        .distribution('power', { binWidth: 0.001 }),
+    ).toThrow(RangeError);
+  });
+
+  it('is null with no timestamps, and for pace on a pool swim', () => {
+    const n = 600;
+    const noTime = Activity.from({
+      activity: META,
+      streams: { latlng: [], watts: Array(n).fill(200) },
+    });
+    expect(noTime.analyze({ athlete: NONE }).distribution('power')).toBeNull();
+
+    const pool = readActivity(
+      gunzipSync(
+        readFileSync(
+          fileURLToPath(
+            new URL('./fixtures/pool-swim.fit.gz', import.meta.url),
+          ),
+        ),
+      ),
+    );
+    expect(pool.analyze({ athlete: NONE }).distribution('pace')).toBeNull();
+    expect(
+      pool.analyze({ athlete: NONE }).distribution('heartRate'),
+    ).not.toBeUndefined();
+  });
+
+  it('treats an all-zero cadence channel as not recorded for coasting', () => {
+    const n = 601;
+    const ride = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        cadence: Array(n).fill(0),
+        watts: Array.from({ length: n }, (_, i) => (i % 2 ? 200 : 0)),
+      }),
+    );
+    const c = ride.analyze({ athlete: NONE }).coasting!;
+    expect(c.source).toBe('power');
+    expect(c.share).toBeCloseTo(0.5, 2);
+  });
 });
