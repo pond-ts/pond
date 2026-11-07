@@ -79,6 +79,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: aerobic efficiency and decoupling on any section**
+  (RFC §14.1, §15.2). `section.analyze({ athlete }).aerobic` has
+  `efficiency({ output })` (normalized power ÷ average heart rate on a ride
+  with power, else moving speed ÷ moving heart rate in metres per
+  heartbeat), `efficiencyFactor`, and `decoupling({ output, method:
+'halves' })`: the first half against the second, split by moving time,
+  with `change`, `coverage`, and `cautions` (`'short'`, `'low-coverage'`,
+  `'variable'`) so an interval session doesn't read as a steady effort.
+
 ## [0.76.0] — 2026-11-06
 
 ### Added

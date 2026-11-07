@@ -326,3 +326,129 @@ describe('pace best efforts', () => {
     expect(noTime.pace.bestEffort(meters(400))).toBeNull();
   });
 });
+
+describe('aerobic', () => {
+  const NONE = Profile.of({});
+
+  /** One hour, 1 Hz. Heart rate 140 for the first half hour, then rising
+   *  steadily to 154 at the end. */
+  function drifting(
+    sportType: string,
+    extra: (i: number) => Partial<Record<'watts', number>> = () => ({}),
+    speed = (_i: number) => 10,
+  ): Activity {
+    const n = 3601;
+    const hr = Array.from({ length: n }, (_, i) =>
+      i <= 1800 ? 140 : 140 + (14 * (i - 1800)) / 1800,
+    );
+    const watts = Array.from({ length: n }, (_, i) => extra(i).watts ?? 200);
+    return Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => speed(i)),
+        { heartrate: hr, watts },
+        sportType,
+      ),
+    );
+  }
+
+  it('measures a ride on power per heartbeat', () => {
+    const a = drifting('Ride').analyze({ athlete: NONE }).aerobic;
+    const e = a.efficiency()!;
+    expect(e.output).toBe('power');
+    const np = drifting('Ride').stats().power.normalized!.watts;
+    const hr = drifting('Ride').stats().heartRate.average!.bpm;
+    expect(e.value).toBeCloseTo(np / hr, 9);
+    expect(e.coverage).toBeCloseTo(1, 9);
+    expect(a.efficiencyFactor).toBe(e.value);
+  });
+
+  it('measures a run on metres per heartbeat', () => {
+    const run = drifting(
+      'Run',
+      () => ({}),
+      () => 3,
+    );
+    const e = run.analyze({ athlete: NONE }).aerobic.efficiency()!;
+    expect(e.output).toBe('speed');
+    const hr = run.stats({ time: 'moving' }).heartRate.average!.bpm;
+    expect(e.value).toBeCloseTo(180 / hr, 6);
+  });
+
+  it('finds heart-rate drift as positive decoupling', () => {
+    const d = drifting('Ride').analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.method).toBe('halves');
+    // first half: 200 W at 140; second: 200 W at an average of 147
+    expect(d.firstHalf.value).toBeCloseTo(200 / 140, 2);
+    expect(d.secondHalf.value).toBeCloseTo(200 / 147, 2);
+    expect(d.change).toBeCloseTo(1 - 140 / 147, 2);
+    expect(d.suitable).toBe(true);
+    expect(d.cautions).toEqual([]);
+  });
+
+  it('splits the halves by moving time, so a stop does not move them', () => {
+    // stopped for the first 600 s, then 3000 s at 3 m/s: the moving midpoint
+    // is at 2100 s elapsed. Heart rate steps from 140 to 160 exactly there.
+    const n = 3601;
+    const run = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (i <= 600 ? 0 : 3)),
+        {
+          heartrate: Array.from({ length: n }, (_, i) =>
+            i <= 2100 ? 140 : 160,
+          ),
+        },
+        'Run',
+      ),
+    );
+    const d = run.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.firstHalf.value).toBeCloseTo(180 / 140, 6);
+    expect(d.secondHalf.value).toBeCloseTo(180 / 160, 6);
+    expect(d.change).toBeCloseTo(1 - 140 / 160, 6);
+  });
+
+  it('flags a short, gappy or uneven section', () => {
+    const short = drifting('Ride')
+      .section({ elapsed: { from: minutes(0), to: minutes(10) } })
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(short.cautions).toContain('short');
+    expect(short.suitable).toBe(false);
+
+    const intervals = drifting('Ride', (i) => ({
+      watts: Math.floor(i / 60) % 2 ? 400 : 100,
+    }))
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(intervals.cautions).toContain('variable');
+
+    const n = 3601;
+    const gappy = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        watts: Array(n).fill(200),
+        heartrate: Array.from({ length: n }, (_, i) =>
+          i % 4 === 0 ? NaN : 140,
+        ),
+      }),
+    )
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(gappy.coverage).toBeCloseTo(0.75, 2);
+    expect(gappy.cautions).toContain('low-coverage');
+  });
+
+  it('is null without heart rate', () => {
+    const n = 600;
+    const noHr = Activity.from(fromSpeeds(Array(n).fill(10)));
+    const a = noHr.analyze({ athlete: NONE }).aerobic;
+    expect(a.efficiency()).toBeNull();
+    expect(a.decoupling()).toBeNull();
+    expect(a.efficiencyFactor).toBeNull();
+  });
+
+  it('measures speed when asked, even on a ride with power', () => {
+    const e = drifting('Ride')
+      .analyze({ athlete: NONE })
+      .aerobic.efficiency({ output: 'speed' })!;
+    expect(e.output).toBe('speed');
+  });
+});

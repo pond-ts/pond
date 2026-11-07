@@ -177,7 +177,13 @@ export class Section implements Span {
   }
 
   #source(): AnalysisSource {
-    return { prep: this.prep, span: this, stats: () => this.stats() };
+    return {
+      prep: this.prep,
+      span: this,
+      stats: () => this.stats(),
+      statsOf: (span, basis) =>
+        new Section(this.prep, 'effort', 'Part', span).stats({ time: basis }),
+    };
   }
 
   #effort(span: Span, label: string): Section {

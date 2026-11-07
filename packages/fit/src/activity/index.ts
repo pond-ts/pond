@@ -44,3 +44,12 @@ export {
   type PowerBestEffort,
   type PaceBestEffort,
 } from './analysis.js';
+export {
+  Aerobic,
+  type AerobicOutput,
+  type EfficiencyOptions,
+  type Efficiency,
+  type DecouplingOptions,
+  type Decoupling,
+  type DecouplingCaution,
+} from './aerobic.js';
