@@ -101,6 +101,65 @@ Best 2 mi   15:39 4:52/km
 Best 5 km   24:49 4:58/km
 ```
 
+## Efforts and recoveries
+
+An interval session is efforts with a recovery after each. `analyze().efforts`
+finds them, and each is an ordinary section, so its stats work as usual. The
+warm-up before the first effort and any cool-down the device marked are kept
+apart, and every set says where its efforts came from (`source`).
+
+`fromLaps()` reads the recorded laps: the device's own work and rest marks
+when it made any (a structured workout), a pool swim's laps with distance, or
+else laps split into faster and slower. That last split keeps the longest
+stretch of laps that take turns (effort, recovery, …, effort), with the laps
+before it as the warm-up and after it as the cool-down (a slower lap right
+after the last effort is its recovery unless it runs more than twice as long
+as the others), so a steady run over hills finds none.
+
+```ts
+const efforts = run.analyze().efforts.fromLaps();
+console.log(efforts.source, efforts.length, efforts.warmUp?.label);
+const cmp = efforts.compare(['duration', 'pace', 'heartRate']);
+for (const m of cmp.metrics)
+  console.log(
+    m.metric.padEnd(9),
+    m.unit.padEnd(4),
+    'best',
+    m.best?.number,
+    'typical',
+    m.typical?.toFixed(0),
+    'spread',
+    m.spread?.toFixed(3),
+  );
+console.log(
+  'recoveries',
+  cmp.recoveries.map((s) => s?.toFixed(0) ?? '-').join(' '),
+);
+```
+
+```text output
+lap-output 6 Warm-up
+duration  s    best 1 typical 188 spread 0.012
+pace      s/km best 1 typical 234 spread 0.012
+heartRate bpm  best 1 typical 158 spread 0.010
+recoveries 89 89 89 89 89 -
+```
+
+`detect()` finds stretches above a power (watts) or speed (m/s) threshold
+sample by sample, joining dips shorter than `mergeGapsUnder` (5 s) and dropping
+stretches shorter than `minimumDuration` (30 s):
+
+```ts
+const hard = ride
+  .analyze()
+  .efforts.detect({ powerAbove: 300, minimumDuration: seconds(60) });
+console.log(hard.length, hard.at(0)?.section.stats().power.average?.format());
+```
+
+```text output
+2 306 W
+```
+
 ## Inside any section
 
 Best efforts belong to sections, so you can ask inside a lap, a climb or a

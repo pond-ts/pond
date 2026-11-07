@@ -124,6 +124,11 @@ export interface Lap {
   /** Energy, kcal. */
   calories?: number;
   elevationGainMeters?: number;
+  /** What the lap was for, when the device says (FIT lap `intensity`, set
+   *  by a structured workout): `'active'`, `'rest'`, `'warmup'`,
+   *  `'cooldown'`, `'recovery'`, `'interval'` or `'other'`. A watch with no
+   *  workout marks every lap `'active'`. */
+  intensity?: string;
 }
 
 /** One pool length as the watch logged it: a swum length, or a rest at the

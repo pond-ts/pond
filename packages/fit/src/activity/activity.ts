@@ -32,6 +32,7 @@ import { seriesOf, type ActivitySeries } from './series.js';
 import { routeOf, type Route } from './route.js';
 import { explainOf, type Explainable, type Explanation } from './explain.js';
 import { dynamicsOf, type RunningDynamics } from './dynamics.js';
+import { lapSpans } from './efforts.js';
 import {
   editParts,
   isNoEdit,
@@ -197,6 +198,7 @@ export class Section implements Span {
       stats: () => this.stats(),
       statsOf: (span, basis) =>
         new Section(this.prep, 'effort', 'Part', span).stats({ time: basis }),
+      section: (span, label) => new Section(this.prep, 'effort', label, span),
     };
   }
 
@@ -496,18 +498,9 @@ export class Activity extends Section {
   /** The laps the device recorded (empty when it recorded none). */
   get laps(): Sections<LapSection> {
     if (!this.#laps) {
-      const startMs = Date.parse(this.#record.activity.startTimeUtc);
-      let cursor = 0;
-      const items = (this.#record.laps ?? []).map((lap) => {
-        const t = lap.startTimeUtc ? Date.parse(lap.startTimeUtc) : NaN;
-        const from = Number.isFinite(t) ? (t - startMs) / 1000 : cursor;
-        const to = from + lap.elapsedSeconds;
-        cursor = to;
-        return new LapSection(this.prep, lap, {
-          fromSeconds: from,
-          toSeconds: to,
-        });
-      });
+      const items = lapSpans(this.#record).map(
+        ({ span, lap }) => new LapSection(this.prep, lap, span),
+      );
       this.#laps = new Sections(this.prep, items);
     }
     return this.#laps;
