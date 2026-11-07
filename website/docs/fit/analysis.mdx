@@ -141,6 +141,58 @@ Tempo 143 s
 Threshold 21 s
 ```
 
+## Efficiency and decoupling
+
+`analysis.aerobic` reads output per heartbeat. On a ride with power it is
+normalized power over average heart rate (watts per bpm); otherwise it is
+speed over heart rate, in metres per heartbeat. Both are on moving time, so a
+stop doesn't pull the number around. Higher always means more output for the
+same heart rate. It needs no settings.
+
+`decoupling()` compares the first half of a section with the second, split by
+moving time so a stop doesn't move the split. A positive `change` means the
+second half took more heartbeats for the same output. It also says whether the
+stretch suits the question: an interval session or a short stretch comes back
+with `cautions`, so it can't pass as a steady endurance reading.
+
+```ts
+const aerobic = ride.analyze({ athlete }).aerobic;
+console.log(aerobic.efficiency()?.output, aerobic.efficiencyFactor?.toFixed(3));
+const d = aerobic.decoupling()!;
+console.log(
+  d.firstHalf.value.toFixed(3),
+  d.secondHalf.value.toFixed(3),
+  `${(d.change * 100).toFixed(1)} %`,
+);
+console.log(d.suitable, d.cautions);
+```
+
+```text output
+power 1.716
+1.679 1.738 -3.5 %
+false [ 'variable' ]
+```
+
+The hill ride's power isn't steady (its variability index is 1.2), so the
+reading is marked `variable`. Read its −3.5 % as "no drift showed", not as an
+endurance verdict.
+
+Pass a section to leave out the warm-up, or ask for speed on a ride:
+
+```ts
+import { minutes } from '@pond-ts/fit';
+
+const steady = ride.section({
+  elapsed: { from: minutes(10), to: minutes(50) },
+});
+const s = steady.analyze({ athlete }).aerobic.decoupling({ output: 'speed' });
+console.log(s?.output, s?.cautions);
+```
+
+```text output
+speed [ 'variable' ]
+```
+
 ## Without history
 
 When you just have the numbers, `Profile.of` makes settings with no dates:

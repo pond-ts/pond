@@ -26,6 +26,7 @@ import type { ZoneTime } from '../zones/index.js';
 import { Profile, type AthleteProfileJson } from '../profile/index.js';
 import { Distance, Duration, Pace, Power } from '../quantities.js';
 import type { Stats } from './stats.js';
+import { Aerobic } from './aerobic.js';
 import { sportOf } from './sport.js';
 
 /** The athlete to analyse for: a {@link Profile} already resolved to a date,
@@ -72,6 +73,8 @@ export interface AnalysisSource {
   prep: PreparedActivity;
   span: Span;
   stats: () => Stats;
+  /** Stats for a stretch inside the section. */
+  statsOf: (span: Span, basis: 'elapsed' | 'moving') => Stats;
 }
 
 /** Resolve an {@link AthleteInput} for an activity that started at
@@ -149,6 +152,7 @@ export class Analysis {
   #power?: PowerAnalysis;
   #load?: Load | null;
   #zones?: ZoneAnalysis;
+  #aerobic?: Aerobic;
 
   /** @internal */
   constructor(src: AnalysisSource, athlete: Profile) {
@@ -170,6 +174,12 @@ export class Analysis {
           ? normalized.watts / average.watts
           : null,
     });
+  }
+
+  /** Efficiency (output per heartbeat) and decoupling. Needs no athlete
+   *  settings; it sits here with the other readings of the section. */
+  get aerobic(): Aerobic {
+    return (this.#aerobic ??= new Aerobic(this.#src));
   }
 
   /** Null for any sport but cycling, and without FTP, power or

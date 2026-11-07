@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { readActivity } from '../src/files/index.js';
 import { Activity } from '../src/activity/index.js';
 import { Profile, type AthleteProfileJson } from '../src/profile/index.js';
 import { km, meters, minutes, seconds, Distance } from '../src/quantities.js';
@@ -324,5 +328,193 @@ describe('pace best efforts', () => {
       },
     });
     expect(noTime.pace.bestEffort(meters(400))).toBeNull();
+  });
+});
+
+describe('aerobic', () => {
+  const NONE = Profile.of({});
+
+  /** One hour, 1 Hz. Heart rate 140 for the first half hour, then rising
+   *  steadily to 154 at the end. */
+  function drifting(
+    sportType: string,
+    extra: (i: number) => Partial<Record<'watts', number>> = () => ({}),
+    speed = (_i: number) => 10,
+  ): Activity {
+    const n = 3601;
+    const hr = Array.from({ length: n }, (_, i) =>
+      i <= 1800 ? 140 : 140 + (14 * (i - 1800)) / 1800,
+    );
+    const watts = Array.from({ length: n }, (_, i) => extra(i).watts ?? 200);
+    return Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => speed(i)),
+        { heartrate: hr, watts },
+        sportType,
+      ),
+    );
+  }
+
+  it('measures a ride on power per heartbeat', () => {
+    const a = drifting('Ride').analyze({ athlete: NONE }).aerobic;
+    const e = a.efficiency()!;
+    expect(e.output).toBe('power');
+    const np = drifting('Ride').stats().power.normalized!.watts;
+    const hr = drifting('Ride').stats().heartRate.average!.bpm;
+    expect(e.value).toBeCloseTo(np / hr, 9);
+    expect(e.coverage).toBeCloseTo(1, 9);
+    expect(a.efficiencyFactor).toBe(e.value);
+  });
+
+  it('measures a run on metres per heartbeat', () => {
+    const run = drifting(
+      'Run',
+      () => ({}),
+      () => 3,
+    );
+    const e = run.analyze({ athlete: NONE }).aerobic.efficiency()!;
+    expect(e.output).toBe('speed');
+    const hr = run.stats({ time: 'moving' }).heartRate.average!.bpm;
+    expect(e.value).toBeCloseTo(180 / hr, 6);
+  });
+
+  it('finds heart-rate drift as positive decoupling', () => {
+    const d = drifting('Ride').analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.method).toBe('halves');
+    // first half: 200 W at 140; second: 200 W at an average of 147
+    expect(d.firstHalf.value).toBeCloseTo(200 / 140, 2);
+    expect(d.secondHalf.value).toBeCloseTo(200 / 147, 2);
+    expect(d.change).toBeCloseTo(1 - 140 / 147, 2);
+    expect(d.suitable).toBe(true);
+    expect(d.cautions).toEqual([]);
+  });
+
+  it('splits the halves by moving time, so a stop does not move them', () => {
+    // stopped for the first 600 s, then 3000 s at 3 m/s: the moving midpoint
+    // is at 2100 s elapsed. Heart rate steps from 140 to 160 exactly there.
+    const n = 3601;
+    const run = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (i <= 600 ? 0 : 3)),
+        {
+          heartrate: Array.from({ length: n }, (_, i) =>
+            i <= 2100 ? 140 : 160,
+          ),
+        },
+        'Run',
+      ),
+    );
+    const d = run.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.firstHalf.value).toBeCloseTo(180 / 140, 6);
+    expect(d.secondHalf.value).toBeCloseTo(180 / 160, 6);
+    expect(d.change).toBeCloseTo(1 - 140 / 160, 6);
+  });
+
+  it('flags a short, gappy or uneven section', () => {
+    const short = drifting('Ride')
+      .section({ elapsed: { from: minutes(0), to: minutes(10) } })
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(short.cautions).toContain('short');
+    expect(short.suitable).toBe(false);
+
+    const intervals = drifting('Ride', (i) => ({
+      watts: Math.floor(i / 60) % 2 ? 400 : 100,
+    }))
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(intervals.cautions).toContain('variable');
+
+    const n = 3601;
+    const gappy = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        watts: Array(n).fill(200),
+        heartrate: Array.from({ length: n }, (_, i) =>
+          i % 4 === 0 ? NaN : 140,
+        ),
+      }),
+    )
+      .analyze({ athlete: NONE })
+      .aerobic.decoupling()!;
+    expect(gappy.coverage).toBeCloseTo(0.75, 2);
+    expect(gappy.cautions).toContain('low-coverage');
+  });
+
+  it('is null without heart rate', () => {
+    const n = 600;
+    const noHr = Activity.from(fromSpeeds(Array(n).fill(10)));
+    const a = noHr.analyze({ athlete: NONE }).aerobic;
+    expect(a.efficiency()).toBeNull();
+    expect(a.decoupling()).toBeNull();
+    expect(a.efficiencyFactor).toBeNull();
+  });
+
+  it('measures speed when asked, even on a ride with power', () => {
+    const e = drifting('Ride')
+      .analyze({ athlete: NONE })
+      .aerobic.efficiency({ output: 'speed' })!;
+    expect(e.output).toBe('speed');
+  });
+
+  it('measures power on moving time, so a café stop does not hide drift', () => {
+    // 200 W throughout while moving; heart rate 140 in the first half and
+    // 150 in the second. A 20-minute stop (0 W, 0 m/s, HR 90) sits in the
+    // second half; on elapsed time it would pull that half's HR down.
+    const n = 4801;
+    const stop = (i: number) => i > 3000 && i <= 4200;
+    const ride = Activity.from(
+      fromSpeeds(
+        Array.from({ length: n }, (_, i) => (stop(i) ? 0 : 10)),
+        {
+          watts: Array.from({ length: n }, (_, i) => (stop(i) ? 0 : 200)),
+          heartrate: Array.from({ length: n }, (_, i) =>
+            stop(i) ? 90 : i <= 1800 ? 140 : 150,
+          ),
+        },
+      ),
+    );
+    const d = ride.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.secondHalf.value).toBeCloseTo(200 / 150, 1);
+    expect(d.change).toBeGreaterThan(0.05);
+    expect(d.coverage).toBeCloseTo(1, 6);
+  });
+
+  it('reads a negative change when the second half is more efficient', () => {
+    const n = 3601;
+    const ride = Activity.from(
+      fromSpeeds(Array(n).fill(10), {
+        watts: Array(n).fill(200),
+        heartrate: Array.from({ length: n }, (_, i) => (i <= 1800 ? 150 : 140)),
+      }),
+    );
+    const d = ride.analyze({ athlete: NONE }).aerobic.decoupling()!;
+    expect(d.change).toBeCloseTo(1 - 150 / 140, 2);
+  });
+
+  it('is null with no timestamps, and decoupling is null on a pool swim', () => {
+    const n = 600;
+    const noTime = Activity.from({
+      activity: META,
+      streams: {
+        latlng: [],
+        distanceMeters: Array.from({ length: n }, (_, i) => i * 10),
+        heartrate: Array(n).fill(140),
+        watts: Array(n).fill(200),
+      },
+    });
+    const a = noTime.analyze({ athlete: NONE }).aerobic;
+    expect(a.efficiency()).toBeNull();
+    expect(a.decoupling()).toBeNull();
+
+    const pool = readActivity(
+      gunzipSync(
+        readFileSync(
+          fileURLToPath(
+            new URL('./fixtures/pool-swim.fit.gz', import.meta.url),
+          ),
+        ),
+      ),
+    );
+    expect(pool.analyze({ athlete: NONE }).aerobic.decoupling()).toBeNull();
   });
 });
