@@ -1313,8 +1313,8 @@ depend on. Plan:
   come and go across a history (pjm17971, 2026-11-07). Digests,
   `TrainingHistory` (`of`, `between`, `sports`, `covers`) and
   `volume.weekly()` built, then records and the season power curve
-  (`history.analyze().power.records()` / `curve()`, `pace.records()`); the
-  load timeline and a personal grade-adjusted pace curve fitted from the history follow. The
+  (`history.analyze().power.records()` / `curve()`, `pace.records()`), then
+  load (`analysis.load.activities(method)`, `timeline({ method })`); a personal grade-adjusted pace curve fitted from the history follow. The
   digest carries no athlete settings (FTP, weight, zones apply at analysis,
   on the activity's date) and a 1 bpm heart-rate histogram so heart-rate
   zones and load can be worked out later for any zone setting. A load

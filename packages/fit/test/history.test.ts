@@ -429,3 +429,123 @@ describe('history.analyze(): records and the power curve', () => {
     expect(TrainingHistory.of([]).analyze().pace.records()).toEqual([]);
   });
 });
+
+describe('history.analyze().load', () => {
+  const athlete = {
+    ftpWatts: [
+      { at: '2026-01-01', value: 200 },
+      { at: '2026-03-01', value: 250 },
+    ],
+    hrZone: [
+      {
+        at: '2026-01-01',
+        bounds: [120, 140, 160, 180] as [number, number, number, number],
+      },
+    ],
+  };
+  const ride = (id: string, day: string, np: number | null, hr = false) =>
+    digest(id, `${day}T08:00:00`, {
+      sport: 'ride',
+      sportType: 'Ride',
+      time: { elapsed: 3600, moving: 3600 },
+      power: np === null ? null : { average: np, normalized: np, curve: [] },
+      heartRate: hr
+        ? { average: 150, max: 150, histogram: { start: 150, seconds: [3600] } }
+        : null,
+    });
+
+  it('gives each activity its load, or the reason it has none', () => {
+    const h = TrainingHistory.of([
+      ride('feb', '2026-02-01', 200, true),
+      ride('mar', '2026-03-10', 200),
+      ride('nopower', '2026-03-11', null, true),
+      digest('run', '2026-03-12T08:00:00'),
+    ]);
+    const a = h.analyze({ athlete });
+    const tss = a.load.activities('cycling-tss');
+    // An hour at FTP is 100; the same 200 W after FTP rose to 250 is 64.
+    expect(tss[0]!.value).toBeCloseTo(100, 9);
+    expect(tss[1]!.value).toBeCloseTo(64, 9);
+    expect(tss.slice(2).map((l) => l.reason)).toEqual([
+      'no-power',
+      'not-a-ride',
+    ]);
+    const hr = a.load.activities('heart-rate-zones');
+    // 60 min at 150 bpm: zone 3 of [120, 140, 160, 180], weight 3.
+    expect(hr[0]!.value).toBeCloseTo(180, 9);
+    expect(hr.map((l) => l.reason)).toEqual([
+      null,
+      'no-heart-rate',
+      null,
+      'no-heart-rate',
+    ]);
+    expect(
+      TrainingHistory.of([ride('x', '2026-02-01', 200, true)])
+        .analyze()
+        .load.activities('heart-rate-zones')[0]!.reason,
+    ).toBe('no-zones');
+  });
+
+  it('runs the long- and short-term curves day by day', () => {
+    const h = TrainingHistory.of(
+      [ride('d1', '2026-02-02', 200), ride('d3', '2026-02-04', 200)],
+      { covers: { from: '2026-02-01', to: '2026-02-05' } },
+    );
+    const t = h.analyze({ athlete }).load.timeline({ method: 'cycling-tss' });
+    expect(t.days.map((d) => [d.day, d.status, d.load])).toEqual([
+      ['2026-02-01', 'rest', 0],
+      ['2026-02-02', 'trained', 100],
+      ['2026-02-03', 'rest', 0],
+      ['2026-02-04', 'trained', 100],
+      ['2026-02-05', 'rest', 0],
+    ]);
+    const d2 = t.days[1]!;
+    expect(d2.chronic).toBeCloseTo(100 / 42, 9);
+    expect(d2.acute).toBeCloseTo(100 / 7, 9);
+    expect(d2.balance).toBe(0);
+    // Balance is the day before's end: chronic − acute after day 2.
+    expect(t.days[2]!.balance).toBeCloseTo(100 / 42 - 100 / 7, 9);
+  });
+
+  it('marks unscored days and gaps apart from rest', () => {
+    const h = TrainingHistory.of(
+      [
+        ride('scored', '2026-02-02', 200),
+        ride('nopower', '2026-02-03', null),
+        ride('outside', '2026-02-06', 200),
+      ],
+      { covers: { from: '2026-02-01', to: '2026-02-04' } },
+    );
+    const t = h.analyze({ athlete }).load.timeline({ method: 'cycling-tss' });
+    expect(t.days.map((d) => d.status)).toEqual([
+      'rest',
+      'trained',
+      'unscored',
+      'rest',
+      'gap',
+      'trained',
+    ]);
+    expect(t.days[2]!.unscored).toEqual(['nopower']);
+    expect(t.days[2]!.load).toBe(0);
+  });
+
+  it('takes a starting load and other time constants', () => {
+    const h = TrainingHistory.of([ride('a', '2026-02-02', 200)]);
+    const t = h.analyze({ athlete }).load.timeline({
+      method: 'cycling-tss',
+      chronicDays: 28,
+      acuteDays: 5,
+      start: { chronic: 50, acute: 70 },
+    });
+    expect(t.days[0]!.balance).toBe(-20);
+    expect(t.days[0]!.chronic).toBeCloseTo(50 + 50 / 28, 9);
+    expect(t.days[0]!.acute).toBeCloseTo(70 + 30 / 5, 9);
+    expect(() =>
+      h.analyze().load.timeline({ method: 'cycling-tss', acuteDays: 0 }),
+    ).toThrow();
+    expect(
+      TrainingHistory.of([]).analyze().load.timeline({ method: 'cycling-tss' })
+        .days,
+    ).toEqual([]);
+  });
+});

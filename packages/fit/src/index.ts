@@ -323,4 +323,12 @@ export {
   type RecordPlace,
   type PowerRecord,
   type PaceRecord,
+  HistoryLoad,
+  type LoadMethod,
+  type NoLoadReason,
+  type ActivityLoad,
+  type DayStatus,
+  type DayLoad,
+  type TimelineOptions,
+  type LoadTimeline,
 } from './history/index.js';

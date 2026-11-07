@@ -169,11 +169,15 @@ export class TrainingHistory {
     );
   }
 
-  /** The history read for one athlete: records and the power curve now;
-   *  settings resolve on each activity's own date. */
+  /** The history read for one athlete: records, the power curve and
+   *  training load; settings resolve on each activity's own date. */
   analyze(options: HistoryAnalyzeOptions = {}): HistoryAnalysis {
     return new HistoryAnalysis(
-      { digests: this.#digests, activities: this.#activities },
+      {
+        digests: this.#digests,
+        activities: this.#activities,
+        covers: this.#covers,
+      },
       options,
     );
   }
