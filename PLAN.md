@@ -1300,8 +1300,9 @@ depend on. Plan:
   decoupling (`analysis.aerobic`) and distributions and coasting
   (`analysis.distribution`, `analysis.coasting`) and running dynamics
   (`section.dynamics`), swim stroke metrics (`analysis.technique`) and
-  efforts with recoveries (`analysis.efforts`) built; then grade-adjusted
-  pace.
+  efforts with recoveries (`analysis.efforts`) and grade-adjusted pace
+  (`section.pace.adjustedForGrade()`, Minetti 2002, named in the result;
+  aerobic output `'grade-adjusted-speed'`) built.
   Then `TrainingHistory` (records, season curve, weekly volume, load
   timeline), on per-activity digests; each activity's load records the
   method that made it (power TSS, heart-rate load, none), since devices
