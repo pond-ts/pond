@@ -1,0 +1,137 @@
+---
+title: Training history
+sidebar_position: 12
+description: Activity digests, TrainingHistory, the days a history covers, and weekly volume.
+---
+
+# Training history
+
+Some questions span many activities: how much did I run each week this
+spring, what's my best 20 minutes this season. `TrainingHistory` answers them.
+
+## Digests
+
+Loading every recording to draw a year of weekly totals would be slow, so a
+history works on **digests**: a small JSON summary of each activity that an
+app can store beside it.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { readActivity } from '@pond-ts/fit/files';
+
+const ride = readActivity(readFileSync('hill-ride.fit'));
+const run = readActivity(readFileSync('interval-run.fit'));
+const d = run.digest();
+console.log(d.version, d.sport, d.localStart);
+console.log(d.time, d.distance, d.ascent);
+console.log(d.pace.map((p) => p.metres));
+console.log(JSON.stringify(d).length, 'bytes');
+```
+
+```text output
+1 run null
+{ elapsed: 3083, moving: 2947 } 9702.2 18
+[ 400, 804.672, 1000, 1609.344, 3218.688, 5000 ]
+930 bytes
+```
+
+A digest holds the clocks, distance and ascent; heart rate as seconds at each
+beat per minute; the power curve from 1 s to 5 h; and the fastest time over
+distances from 400 m to 100 km. Each curve point and pace best says where it
+was, in elapsed seconds.
+
+It holds **no athlete settings**. FTP, weight and zones are applied when the
+history is read, with the values in force on each activity's date, so a new
+FTP never means reading the files again. The heart-rate histogram is there so
+time in any heart-rate zones can be worked out later.
+
+`version` says which digest format made it; a history refuses a version it
+doesn't know rather than misreading it.
+
+## A history
+
+`TrainingHistory.of` takes digests, full activities, or a mix, and orders
+them by start. A full activity is digested, and kept so a result can hand it
+back.
+
+```ts
+import { TrainingHistory } from '@pond-ts/fit';
+
+const history = TrainingHistory.of([ride, d]);
+console.log(history.length, history.covers);
+console.log(history.activity(ride.id) === ride, history.activity(run.id));
+```
+
+```text output
+2 { from: '2026-06-14', to: '2026-06-16' }
+true null
+```
+
+Days are the local date where each activity happened, from the file's own
+local time, so an evening run in Madrid counts on the day it was run, not the
+UTC one. A file with no local time (like these examples, so `localStart` is
+`null` above) counts on its UTC date.
+
+`between` and `sports` narrow a history:
+
+```ts
+const june = history.between({ from: '2026-06-01', to: '2026-06-30' });
+const runs = history.sports(['run', 'walk', 'hike']);
+console.log(
+  june.length,
+  runs.digests.map((x) => x.id),
+);
+```
+
+```text output
+2 [ 'fit:2026-06-16T18:00:00.000Z' ]
+```
+
+## Rest days and gaps
+
+`covers` is the stretch of days the history is known to be complete for. A day
+inside it with no activity is a **rest day**. A day outside it is a **gap**:
+nothing is known, so a zero there doesn't mean rest. By default it runs from
+the first activity's day to the last one's; pass it when you know more:
+
+```ts
+const known = TrainingHistory.of([ride, d], {
+  covers: { from: '2026-06-01', to: '2026-06-30' },
+});
+console.log(known.covers);
+```
+
+```text output
+{ from: '2026-06-01', to: '2026-06-30' }
+```
+
+## Weekly volume
+
+`volume.weekly()` totals each week: count, distance, moving and elapsed time,
+ascent, the longest activity, and the same totals by sport. Every week in the
+range is there, empty ones too, so the array feeds a chart as it is.
+
+```ts
+for (const w of known.volume.weekly())
+  console.log(
+    w.week,
+    w.coverage,
+    w.count,
+    w.distance.format('km', 1),
+    w.elapsed.format(),
+    Object.keys(w.bySport).join(','),
+  );
+```
+
+```text output
+2026-06-01 full 0 0.0 km 0:00
+2026-06-08 full 1 45.0 km 1:39:54 ride
+2026-06-15 full 1 9.7 km 51:23 run
+2026-06-22 full 0 0.0 km 0:00
+2026-06-29 partial 0 0.0 km 0:00
+```
+
+Weeks start on Monday; pass `{ weekStart: 'sunday' }` for Sunday. `coverage`
+is `'full'` when every day of the week is covered, `'partial'` when some are,
+and `'gap'` when none are. An activity without a moving time adds to elapsed
+time but not to moving time.

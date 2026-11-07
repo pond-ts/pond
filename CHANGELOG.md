@@ -81,6 +81,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: `TrainingHistory` and activity digests** (RFC §14.3,
+  §15.4). `activity.digest()` is a small JSON summary (about 1.5 KB for a
+  50 km run) an app can store: clocks, distance, ascent, a 1 bpm heart-rate
+  histogram, the power curve from 1 s to 5 h and pace bests from 400 m to
+  100 km, each with where it was. It needs no athlete settings.
+  `TrainingHistory.of(activitiesOrDigests, { covers })` orders them by start;
+  `between({ from, to })` and `sports([...])` narrow it, and days are the
+  local date where each activity happened. `covers` is the stretch of days
+  the history is complete for, so a day inside it with no activity is a rest
+  day and a day outside it is a gap. `history.volume.weekly()` gives every
+  week's count, distance, moving and elapsed time, ascent, longest activity
+  and per-sport totals, empty weeks kept and each marked full, partial or
+  gap.
 - **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
   `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
   stretch's moving pace with the model named (`'acsm-running'`, the ACSM

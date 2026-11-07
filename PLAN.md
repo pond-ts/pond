@@ -1310,7 +1310,16 @@ depend on. Plan:
   Then `TrainingHistory` (records, season curve, weekly volume, load
   timeline), on per-activity digests; each activity's load records the
   method that made it (power TSS, heart-rate load, none), since devices
-  come and go across a history (pjm17971, 2026-11-07).
+  come and go across a history (pjm17971, 2026-11-07). Digests,
+  `TrainingHistory` (`of`, `between`, `sports`, `covers`) and
+  `volume.weekly()` built; records and season curve, the load timeline and
+  a personal grade-adjusted pace curve fitted from the history follow. The
+  digest carries no athlete settings (FTP, weight, zones apply at analysis,
+  on the activity's date) and a 1 bpm heart-rate histogram so heart-rate
+  zones and load can be worked out later for any zone setting. A load
+  timeline will use one method at a time, marking days with only
+  unscored activities, because adding power TSS to heart-rate load would
+  make a new power meter read as a jump in fitness.
 
 ---
 
