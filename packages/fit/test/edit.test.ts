@@ -259,6 +259,33 @@ describe('editRecording', () => {
   });
 });
 
+describe('an open water swim', () => {
+  it('keeps moving by speed after a crop, not by its laps', () => {
+    const r = recording();
+    r.activity.sportType = 'Swim';
+    // treading water from 10 to 30 s; the watch's laps and swim time count
+    // all of it as swimming
+    const d = (s: number) => 3 * (s < 10 ? s : s < 30 ? 10 : s - 20);
+    const t = r.streams.timeSeconds!;
+    r.streams = {
+      ...r.streams,
+      openWater: true,
+      latlng: t.map((s) => [37 + d(s) / 111195, -122] as [number, number]),
+      distanceMeters: t.map(d),
+    };
+    r.swim = { movingSeconds: 100 };
+    r.activity.distanceMeters = 240;
+    r.activity.movingTimeSeconds = 80;
+    const v = editRecording(r, { to: 50 });
+    // 50 s kept, 20 of them still: about 30 s moving, as the samples say
+    expect(v.activity.movingTimeSeconds).toBeGreaterThanOrEqual(29);
+    expect(v.activity.movingTimeSeconds).toBeLessThanOrEqual(31);
+    expect(v.activity.movingTimeSeconds).toBeLessThan(
+      r.activity.movingTimeSeconds,
+    );
+  });
+});
+
 describe('a swim with no laps', () => {
   it('shares its swim time out by time, or by the lengths kept', () => {
     const r = recording();

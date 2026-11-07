@@ -14,6 +14,7 @@
  */
 import { polylineCumulative } from '../geo/index.js';
 import { computeActivitySummary } from '../summary/index.js';
+import { movingRuleOf } from '../activity/moving.js';
 import { swimMovingSeconds } from '../swim.js';
 import type { ImportedActivity, Lap, SwimData } from '../types.js';
 
@@ -516,11 +517,14 @@ function croppedTotals(
       ? new Date(t0 + Math.round(from * 1000)).toISOString()
       : a.startTimeUtc,
     distanceMeters: a.distanceMeters * distShare,
-    // a swim's moving time is its swim time, as the summary takes it
+    // A swim timed by its lengths or laps (a pool swim, or one with no GPS
+    // and the watch's swim time) moves for its swim time, as the summary
+    // takes it. One moving by speed (open water with GPS) shares out the
+    // recording's own moving time like any other sport.
     movingTimeSeconds: Math.round(
       Math.min(
         to - from,
-        cropped.swim
+        cropped.swim && movingRuleOf(imported).rule !== 'speed'
           ? cropped.swim.movingSeconds
           : a.movingTimeSeconds * ratio(before?.moving, after?.moving),
       ),
