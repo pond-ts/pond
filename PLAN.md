@@ -1319,7 +1319,10 @@ depend on. Plan:
   zones and load can be worked out later for any zone setting. A load
   timeline will use one method at a time, marking days with only
   unscored activities, because adding power TSS to heart-rate load would
-  make a new power meter read as a jump in fitness.
+  make a new power meter read as a jump in fitness. Digest format v1 is frozen when it ships (0.78); until then the stacked
+  history PRs add the fields they need (e.g. a per-grade summary for the
+  personal grade-adjusted pace curve), and after release an addition bumps
+  `version`.
 
 ---
 
