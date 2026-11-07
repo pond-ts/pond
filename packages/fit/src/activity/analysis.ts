@@ -393,7 +393,7 @@ export interface GradeAdjustedPace {
    *  more than it gained back cheaply on descents. */
   factor: number;
   /** Share of the moving distance whose grade was known (elevation
-   *  recorded), 0 to 1; the rest counts as level. */
+   *  recorded at the step), 0 to 1; the rest counts as level. */
   coverage: number;
 }
 
@@ -411,7 +411,8 @@ export class PaceEfforts<S> {
 
   /** Grade-adjusted pace over the section (see {@link GradeAdjustedPace});
    *  null for a sport other than running, walking or hiking (unless a
-   *  model is given), with no distance, no elevation or no moving time. */
+   *  model is given: then the stretch reads as if run or walked), for a
+   *  pool swim, and with no distance, no elevation or no moving time. */
   adjustedForGrade(options: GradeAdjustOptions = {}): GradeAdjustedPace | null {
     const { prep, span } = this.#src;
     if (prep.poolLengths) return null;

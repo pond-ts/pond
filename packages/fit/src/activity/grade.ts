@@ -72,6 +72,12 @@ interface Factors {
   /** Per sample i ≥ 1: level-equivalent metres per metre for the step
    *  ending at i; NaN where the grade isn't known. */
   factor: Float64Array;
+  /** Running totals over whole moving steps 1..i (index i): metres,
+   *  level-equivalent metres (unknown grade counted as level) and metres
+   *  with a known grade. Index 0 is 0. */
+  metres: Float64Array;
+  level: Float64Array;
+  known: Float64Array;
 }
 
 const cache = new WeakMap<PreparedActivity, Map<GradeModel, Factors | null>>();
@@ -141,12 +147,44 @@ function computeFactors(
     const mid = (a + b) / 2;
     const lo = Math.max(mid - HALF_WINDOW_M, first);
     const hi = Math.min(mid + HALF_WINDOW_M, last);
-    if (hi - lo < MIN_WINDOW_M) continue;
+    // the grade is known only where elevation was recorded at the step's
+    // end; across a gap in the recording it would only be a guess
+    if (hi - lo < MIN_WINDOW_M || !Number.isFinite(ele[i]!)) continue;
     const g = (eleAt(hi) - eleAt(lo)) / (hi - lo);
     const clamped = Math.max(-MAX_GRADE, Math.min(MAX_GRADE, g));
     factor[i] = cost(clamped) / level;
   }
-  return { model, factor };
+  const metres = new Float64Array(n);
+  const lvl = new Float64Array(n);
+  const known = new Float64Array(n);
+  for (let i = 1; i < n; i++) {
+    const s = stepOf(prep, i);
+    const k = factor[i]!;
+    metres[i] = metres[i - 1]! + s;
+    lvl[i] = lvl[i - 1]! + (Number.isFinite(k) ? s * k : s);
+    known[i] = known[i - 1]! + (Number.isFinite(k) ? s : 0);
+  }
+  return { model, factor, metres, level: lvl, known };
+}
+
+/** Metres of the moving step ending at sample i (0 for a standing or
+ *  invalid step). */
+function stepOf(prep: PreparedActivity, i: number): number {
+  const t = prep.timeRel;
+  const s = prep.cum[i]! - prep.cum[i - 1]!;
+  return t[i]! > t[i - 1]! && s > 0 && movingBeforeSample(prep, i) ? s : 0;
+}
+
+/** First index i with t[i] > x (t never falls). */
+function firstAfter(t: Float64Array, x: number): number {
+  let lo = 0;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t[mid]! > x) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 /** Over the moving steps inside `span`: level-equivalent metres per metre
@@ -161,24 +199,39 @@ export function gradeRatio(
   const f = gradeFactors(prep, model);
   if (!f) return null;
   const t = prep.timeRel;
-  const cum = prep.cum;
+  const n = t.length;
+  // steps ending at i in [first, last] overlap the span; the two end steps
+  // may only partly, the ones between wholly
+  const first = Math.max(firstAfter(t, span.fromSeconds), 1);
+  const last = Math.min(firstAfter(t, span.toSeconds), n - 1);
+  if (last < first) return null;
   let metres = 0;
   let level = 0;
   let known = 0;
-  for (let i = 1; i < t.length; i++) {
+  const part = (i: number) => {
+    const s = stepOf(prep, i);
+    if (!(s > 0)) return;
     const t0 = t[i - 1]!;
     const t1 = t[i]!;
     const a = Math.max(t0, span.fromSeconds);
     const b = Math.min(t1, span.toSeconds);
-    if (!(b > a) || !(t1 > t0) || !movingBeforeSample(prep, i)) continue;
-    const step = (cum[i]! - cum[i - 1]!) * ((b - a) / (t1 - t0));
-    if (!(step > 0)) continue;
+    if (!(b > a)) return;
+    const m = s * ((b - a) / (t1 - t0));
     const k = f.factor[i]!;
-    metres += step;
-    if (Number.isFinite(k)) {
-      level += step * k;
-      known += step;
-    } else level += step;
+    metres += m;
+    level += Number.isFinite(k) ? m * k : m;
+    if (Number.isFinite(k)) known += m;
+  };
+  part(first);
+  if (last > first) {
+    part(last);
+    const lo = first;
+    const hi = last - 1;
+    if (hi > lo) {
+      metres += f.metres[hi]! - f.metres[lo]!;
+      level += f.level[hi]! - f.level[lo]!;
+      known += f.known[hi]! - f.known[lo]!;
+    }
   }
   if (!(metres > 0)) return null;
   return { ratio: level / metres, coverage: known / metres };

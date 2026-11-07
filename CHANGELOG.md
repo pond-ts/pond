@@ -87,9 +87,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   runs, `'minetti-2002-walking'` for walks and hikes), the recorded pace
   beside it, the level-equivalent `factor` and the share of distance with a
   known grade. Grade is read over 100 m of distance and capped at ±45 %.
-  `aerobic.efficiency()` and `decoupling()` take
-  `output: 'grade-adjusted-speed'`, so a steady effort over hills isn't
-  marked `variable`.
+  Steps with no elevation recorded count as level, and `coverage` says how
+  much distance had it. `aerobic.efficiency()` and `decoupling()` take
+  `output: 'grade-adjusted-speed'` (and `gradeModel`), so a steady effort
+  over hills isn't marked `variable`.
 
 - **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
   `analysis.efforts.fromLaps()` reads the recorded laps (the device's

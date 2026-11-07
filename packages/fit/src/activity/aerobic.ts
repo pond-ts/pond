@@ -19,7 +19,12 @@ import {
 import { movingClock, type MovingClock, type Span } from '../stats/index.js';
 import type { Stats } from './stats.js';
 import { sportOf } from './sport.js';
-import { gradeFactors, gradeModelFor, gradeRatio } from './grade.js';
+import {
+  gradeFactors,
+  gradeModelFor,
+  gradeRatio,
+  type GradeModel,
+} from './grade.js';
 
 /** What efficiency is measured on. `'power'`: normalized power over average
  *  heart rate; `'speed'`: average speed over average heart rate;
@@ -33,6 +38,10 @@ export type AerobicOutput = 'power' | 'speed' | 'grade-adjusted-speed';
 export interface EfficiencyOptions {
   /** Default: `'power'` for a ride with power, else `'speed'`. */
   output?: AerobicOutput;
+  /** For `'grade-adjusted-speed'`: the grade model. Default: the running
+   *  curve for a run, the walking curve for a walk or hike; another sport
+   *  needs one named (and reads as if run or walked). */
+  gradeModel?: GradeModel;
 }
 
 export interface Efficiency {
@@ -97,7 +106,7 @@ const MAX_GAP_SECONDS = 10;
 export class Aerobic {
   readonly #src: AerobicSource;
   #clock?: MovingClock;
-  #decoupling = new Map<AerobicOutput, Decoupling | null>();
+  #decoupling = new Map<string, Decoupling | null>();
 
   /** @internal */
   constructor(src: AerobicSource) {
@@ -128,7 +137,8 @@ export class Aerobic {
   efficiency(options: EfficiencyOptions = {}): Efficiency | null {
     const output = options.output ?? this.defaultOutput;
     if (!output) return null;
-    return efficiencyOver(this.#src, this.#src.span, output);
+    const model = options.gradeModel ?? gradeModelFor(this.#src.prep);
+    return efficiencyOver(this.#src, this.#src.span, output, model);
   }
 
   /** Efficiency in the first half against the second; null when either
@@ -141,13 +151,18 @@ export class Aerobic {
       throw new RangeError(`unknown decoupling method: ${String(method)}`);
     const output = options.output ?? this.defaultOutput;
     if (!output) return null;
-    if (this.#decoupling.has(output)) return this.#decoupling.get(output)!;
-    const result = this.#decouple(output);
-    this.#decoupling.set(output, result);
+    const model = options.gradeModel ?? gradeModelFor(this.#src.prep);
+    const key = `${output}:${model ?? ''}`;
+    if (this.#decoupling.has(key)) return this.#decoupling.get(key)!;
+    const result = this.#decouple(output, model);
+    this.#decoupling.set(key, result);
     return result;
   }
 
-  #decouple(output: AerobicOutput): Decoupling | null {
+  #decouple(
+    output: AerobicOutput,
+    model: GradeModel | null,
+  ): Decoupling | null {
     const method = 'halves';
     const src = this.#src;
     if (src.prep.poolLengths) return null;
@@ -160,19 +175,21 @@ export class Aerobic {
       src,
       { fromSeconds: from, toSeconds: mid },
       output,
+      model,
     );
     const second = efficiencyOver(
       src,
       { fromSeconds: mid, toSeconds: to },
       output,
+      model,
     );
-    const whole = efficiencyOver(src, src.span, output);
+    const whole = efficiencyOver(src, src.span, output, model);
     if (!first || !second || !whole) return null;
 
     const cautions: DecouplingCaution[] = [];
     if (moving < SHORT_SECONDS) cautions.push('short');
     if (whole.coverage < MIN_COVERAGE) cautions.push('low-coverage');
-    if (isVariable(src, output, clock)) cautions.push('variable');
+    if (isVariable(src, output, model, clock)) cautions.push('variable');
     return {
       method,
       output,
@@ -192,9 +209,9 @@ function gradeMultiplier(
   src: AerobicSource,
   span: Span,
   output: AerobicOutput,
+  model: GradeModel | null,
 ): number {
   if (output !== 'grade-adjusted-speed') return 1;
-  const model = gradeModelFor(src.prep);
   const r = model ? gradeRatio(src.prep, span, model) : null;
   return r ? r.ratio : NaN;
 }
@@ -229,6 +246,7 @@ function efficiencyOver(
   src: AerobicSource,
   span: Span,
   output: AerobicOutput,
+  model: GradeModel | null,
 ): Efficiency | null {
   const s = src.statsOf(span, 'moving');
   const hr = s.heartRate.average?.bpm;
@@ -239,13 +257,13 @@ function efficiencyOver(
       : s.speed.average
         ? s.speed.average.metersPerSecond *
           60 *
-          gradeMultiplier(src, span, output)
+          gradeMultiplier(src, span, output, model)
         : undefined;
   if (out === undefined || !Number.isFinite(out)) return null;
   return {
     output,
     value: out / hr,
-    coverage: coverage(src.prep, span, output),
+    coverage: coverage(src.prep, span, output, model),
   };
 }
 
@@ -256,13 +274,15 @@ function coverage(
   prep: PreparedActivity,
   span: Span,
   output: AerobicOutput,
+  model: GradeModel | null,
 ): number {
   const t = prep.timeRel;
   const hr = prep.cols.hr;
   const out = output === 'power' ? prep.cols.power : prep.speed;
-  const model =
-    output === 'grade-adjusted-speed' ? gradeModelFor(prep) : undefined;
-  const grade = model ? gradeFactors(prep, model)?.factor : undefined;
+  const grade =
+    output === 'grade-adjusted-speed' && model
+      ? gradeFactors(prep, model)?.factor
+      : undefined;
   if (!hr || !out || (output === 'grade-adjusted-speed' && !grade)) return 0;
   let total = 0;
   let covered = 0;
@@ -285,6 +305,7 @@ function coverage(
 function isVariable(
   src: AerobicSource,
   output: AerobicOutput,
+  model: GradeModel | null,
   clock: MovingClock,
 ): boolean {
   if (output === 'power') {
@@ -292,7 +313,7 @@ function isVariable(
     if (!p.normalized || !p.average || !(p.average.watts > 0)) return false;
     return p.normalized.watts / p.average.watts > MAX_POWER_VI;
   }
-  return minuteSpeedCv(src, clock, output) > MAX_SPEED_CV;
+  return minuteSpeedCv(src, clock, output, model) > MAX_SPEED_CV;
 }
 
 /** Coefficient of variation of moving speed across whole minutes of moving
@@ -301,6 +322,7 @@ function minuteSpeedCv(
   src: AerobicSource,
   clock: MovingClock,
   output: AerobicOutput,
+  model: GradeModel | null,
 ): number {
   const { span } = src;
   const moving = clock.upTo(span.toSeconds) - clock.upTo(span.fromSeconds);
@@ -320,7 +342,7 @@ function minuteSpeedCv(
     const v =
       raw === undefined
         ? undefined
-        : raw * gradeMultiplier(src, minute, output);
+        : raw * gradeMultiplier(src, minute, output, model);
     if (v !== undefined && Number.isFinite(v)) speeds.push(v);
     prev = end;
   }
