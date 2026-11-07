@@ -27,6 +27,7 @@ import { Profile, type AthleteProfileJson } from '../profile/index.js';
 import { Distance, Duration, Pace, Power } from '../quantities.js';
 import type { Stats } from './stats.js';
 import { Aerobic } from './aerobic.js';
+import { techniqueOf, type Technique } from './technique.js';
 import {
   coastingOf,
   distributionOf,
@@ -43,7 +44,9 @@ import { sportOf } from './sport.js';
 export type AthleteInput = Profile | AthleteProfileJson;
 
 export interface AnalyzeOptions {
-  athlete: AthleteInput;
+  /** Left out: no settings, so only the readings that need none (power,
+   *  aerobic, distributions, technique) come back. */
+  athlete?: AthleteInput;
 }
 
 /** Power read against the athlete's settings. */
@@ -162,6 +165,7 @@ export class Analysis {
   #zones?: ZoneAnalysis;
   #aerobic?: Aerobic;
   #coasting?: Coasting | null;
+  #technique?: Technique | null;
 
   /** @internal */
   constructor(src: AnalysisSource, athlete: Profile) {
@@ -207,6 +211,14 @@ export class Analysis {
     if (this.#coasting === undefined)
       this.#coasting = coastingOf(this.#src.prep, this.#src.span);
     return this.#coasting;
+  }
+
+  /** Stroke metrics over the pool lengths whose middle is in the section, drills
+   *  left out; null off the pool or with no counted length. */
+  get technique(): Technique | null {
+    if (this.#technique === undefined)
+      this.#technique = techniqueOf(this.#src.prep, this.#src.span);
+    return this.#technique;
   }
 
   /** Null for any sport but cycling, and without FTP, power or
