@@ -254,6 +254,13 @@ describe('the ACSM running model', () => {
     expect(down.factor).toBeCloseTo(1, 6);
   });
 
+  it('counts climbs past 45 % as 45 %', () => {
+    const g = hills([
+      { secs: 300, speed: 1, grade: 0.8 },
+    ]).pace.adjustedForGrade()!;
+    expect(g.factor).toBeCloseTo(1 + 4.5 * 0.45, 6);
+  });
+
   it('can be asked for by name on a walk', () => {
     const g = hills(
       [{ secs: 600, speed: 1.2, grade: 0.05 }],
@@ -286,6 +293,21 @@ describe('grade-adjusted efficiency', () => {
     expect(adjusted.cautions).not.toContain('variable');
     expect(Math.abs(adjusted.change)).toBeLessThan(0.02);
     expect(adjusted.coverage).toBeGreaterThan(0.95);
+  });
+
+  it('reads an effort steady by ACSM as steady with the default model', () => {
+    // ACSM: climbs cost 1 + 4.5 g, descents as level
+    const parts: { secs: number; speed: number; grade: number }[] = [];
+    for (let k = 0; k < 8; k++) {
+      const grade = k % 2 ? -0.06 : 0.06;
+      parts.push({ secs: 300, speed: grade > 0 ? 3.3 / 1.27 : 3.3, grade });
+    }
+    const aerobic = hills(parts).analyze().aerobic;
+    expect(aerobic.decoupling({ output: 'speed' })!.cautions).toContain(
+      'variable',
+    );
+    const d = aerobic.decoupling({ output: 'grade-adjusted-speed' })!;
+    expect(d.cautions).not.toContain('variable');
   });
 
   it('gives grade-adjusted metres per heartbeat', () => {

@@ -9,10 +9,12 @@
  *   Sports Medicine's running equation (ACSM's Guidelines for Exercise
  *   Testing and Prescription), oxygen cost 0.2 + 0.9 × grade per metre.
  *   A climb at grade g counts 1 + 4.5 g level metres per metre. The
- *   equation doesn't cover descents, so a descent counts as level. Checked
- *   on a real 50 km trail race against Strava's grade-adjusted pace: within
- *   about a minute per mile on most miles, where Minetti's running curve
- *   was off by 2 to 8 minutes on descents.
+ *   equation doesn't cover descents, so a descent counts as level. The
+ *   equation has stayed the same across the Guidelines' editions, so the id
+ *   carries no year. It is validated on climbs up to about 15 %; steeper
+ *   climbs read as the straight line goes on, which credits a steep hiked
+ *   climb less than Minetti does. Because descents count as level, running
+ *   faster downhill at the same effort reads as a faster adjusted pace.
  * - Minetti et al. (2002), "Energy cost of walking and running at extreme
  *   uphill and downhill slopes", J Appl Physiol 93: 1039–1046: the energy
  *   one metre costs at each grade, a curve fitted to treadmill
@@ -26,7 +28,7 @@
  * Grade comes from the elevation over 100 m of distance centred on each
  * sample (less at the ends, none under 20 m), so a few metres of GPS or
  * barometer noise don't turn into steep grades. Grades past ±45 % (the
- * curve's measured range) count as ±45 %.
+ * Minetti curves' measured range) count as ±45 %.
  */
 import {
   hasDistance,
@@ -50,7 +52,8 @@ const MIN_WINDOW_M = 20;
 /** The curves' measured range. */
 const MAX_GRADE = 0.45;
 
-/** Energy cost in J/kg/m at grade `g` (a fraction: 0.1 is 10 %). */
+/** Cost per metre at grade `g` (a fraction: 0.1 is 10 %): J/kg/m for
+ *  Minetti, mL O₂/kg/m for ACSM. Only ratios to level ground are used. */
 const COST: Record<GradeModel, (g: number) => number> = {
   'acsm-running': (g) => 0.2 + 0.9 * Math.max(g, 0),
   'minetti-2002-running': (g) =>
