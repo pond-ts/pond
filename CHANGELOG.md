@@ -81,6 +81,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
+  `section.analyze().technique` over the pool lengths whose middle is in a
+  section (drills and lengths counted as 0 left out, `uncounted` says how
+  many): `strokesPerLength`, `strokeRate`,
+  `distancePerStroke`, `swolf`, `timePerLength`, the `stroke` (or
+  `'mixed'`), and the counting `convention` (`'arm-cycles'` for Garmin, else
+  `'unknown'`, with the maker).
+- **`@pond-ts/fit`: `analyze()` without an athlete.** `athlete` is now
+  optional; left out, only the readings that need no settings come back.
+
 - **`@pond-ts/fit`: running dynamics** (RFC §15.7). `section.dynamics` has
   `cadence` in steps per minute (a new `StepRate` quantity; on-foot cadence
   is recorded per leg, so it is doubled unless the new `cadenceUnit: 'steps'`

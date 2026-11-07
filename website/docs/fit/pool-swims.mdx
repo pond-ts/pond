@@ -131,6 +131,68 @@ if (swim.isPoolSwim()) {
 6 600 9:24
 ```
 
+## Stroke metrics
+
+`analyze().technique` reads the watch's stroke counts over the lengths whose
+middle is inside a section: the whole swim, a repeat, or one length. Drill lengths are
+left out (their count, if any, isn't a swimming stroke), and so are lengths
+counted as 0 (a watch writes 0 when it couldn't count); `uncounted` says how
+many. No athlete settings
+are needed, so `analyze()` takes none here.
+
+```ts
+const t = swim.analyze().technique!;
+console.log(t.lengths, t.stroke, t.strokesPerLength.toFixed(1));
+console.log(
+  t.strokeRate.toFixed(1),
+  t.distancePerStroke?.meters.toFixed(2),
+  t.swolf.toFixed(1),
+);
+console.log(t.convention);
+```
+
+```text output
+44 freestyle 17.9
+42.1 1.40 43.4
+{ counts: 'unknown', source: 'development' }
+```
+
+- `strokeRate`: strokes per minute of swimming; `distancePerStroke`: distance
+  per stroke; `swolf`: average seconds per length plus average strokes per
+  length.
+- `convention` says how the strokes were counted. Garmin counts cycles of the
+  arm wearing the watch (one per two arm pulls in freestyle), so a Garmin
+  stroke rate is cycles per minute. Nothing is converted to arm pulls, since
+  that depends on the stroke.
+  This example file was written by a test tool, not a Garmin, so its
+  convention is `'unknown'`.
+- `stroke` is `'mixed'` over lengths of several strokes. Compare SWOLF only
+  within the same pool, stroke and convention: it describes a swim, it doesn't
+  score technique.
+
+Per repeat:
+
+```ts
+if (swim.isPoolSwim())
+  for (const r of swim.repeats)
+    console.log(r.label, r.analyze().technique?.swolf.toFixed(1) ?? '-');
+```
+
+```text output
+Repeat 1 46.5
+Repeat 2 39.5
+Repeat 3 40.0
+Repeat 4 39.8
+Repeat 5 39.5
+Repeat 6 40.8
+Repeat 7 40.3
+Repeat 8 -
+Repeat 9 -
+Repeat 10 -
+Repeat 11 -
+Repeat 12 49.0
+```
+
 ## Open water
 
 An open water swim has `environment === 'open-water'` and isn't a `PoolSwim`.
