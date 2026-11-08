@@ -55,6 +55,38 @@ console.log(ts.length, ts.at(0)!.get('value'));
 3084 88
 ```
 
+## Running dynamics
+
+On a run, walk or hike, `dynamics` holds the running-dynamics channels, each a
+series plus where it came from:
+
+```ts norun
+const d = run.dynamics;
+d.cadence?.series; // steps per minute
+d.stepLength?.series; // metres per step (worked out)
+d.groundContactTime?.series; // ms per step (recorded)
+d.verticalOscillation?.series; // mm per step (recorded)
+d.verticalRatio?.series; // % (worked out)
+d.cadence?.source; // 'derived': cycles doubled to steps
+
+const s = d.stats(); // time-weighted, over moving time
+s.cadence?.format(); // "171 spm"
+s.groundContactTime?.seconds; // 0.25
+```
+
+Files record cadence on foot per leg: one cycle per two steps. `dynamics`
+gives steps per minute (85.5 cycles is 171 steps), while `stats().cadence` and
+`series.cadence` keep the value as recorded. A stream marked
+`cadenceUnit: 'steps'`, or whose median is above 120, is already steps and
+isn't doubled. Step length is speed ÷ steps per
+second, vertical ratio is vertical oscillation ÷ step length; ground contact
+time and vertical oscillation come from the device (a Garmin strap, pod or
+watch) when it recorded them. Every channel is `null` off foot or when not
+recorded; step length also needs a distance, so a treadmill run with none
+has no step length. The series keep every sample, standing ones included,
+while `stats()` averages over moving time. Ground contact balance isn't read yet: the FIT decoder doesn't decode
+it per record.
+
 ## Route: the line on the map
 
 `route` is the line the activity followed and the box around it; `null`

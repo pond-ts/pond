@@ -31,6 +31,8 @@ import { toStats, type Stats, type StatsOptions } from './stats.js';
 import { seriesOf, type ActivitySeries } from './series.js';
 import { routeOf, type Route } from './route.js';
 import { explainOf, type Explainable, type Explanation } from './explain.js';
+import { dynamicsOf, type RunningDynamics } from './dynamics.js';
+import { lapSpans } from './efforts.js';
 import {
   editParts,
   isNoEdit,
@@ -97,6 +99,7 @@ export class Section implements Span {
   #power?: PowerEfforts<Section>;
   #pace?: PaceEfforts<Section>;
   #series?: ActivitySeries;
+  #dynamics?: RunningDynamics;
 
   /** @internal sections are made by an {@link Activity}, not directly */
   constructor(
@@ -150,10 +153,15 @@ export class Section implements Span {
   }
 
   /** This stretch read for one athlete: intensity, load and zones from
-   *  their settings in force on the activity's date. */
-  analyze(options: AnalyzeOptions): Analysis {
+   *  their settings in force on the activity's date. With no athlete, only
+   *  the readings that need no settings come back (power, aerobic,
+   *  distributions, technique); load and zones are null. */
+  analyze(options: AnalyzeOptions = {}): Analysis {
     const start = this.prep.imported.activity.startTimeUtc;
-    return new Analysis(this.#source(), resolveAthlete(options.athlete, start));
+    return new Analysis(
+      this.#source(),
+      resolveAthlete(options.athlete ?? {}, start),
+    );
   }
 
   /** Best efforts by power: `ride.power.bestEffort(minutes(20))`. */
@@ -170,6 +178,13 @@ export class Section implements Span {
     ));
   }
 
+  /** Running dynamics (steps per minute, step length, ground contact,
+   *  vertical oscillation and ratio): `run.dynamics.cadence`. Every channel
+   *  is null off foot. */
+  get dynamics(): RunningDynamics {
+    return (this.#dynamics ??= dynamicsOf(this.prep, this));
+  }
+
   /** The measured values inside this stretch, by channel:
    *  `run.series.heartRate`. */
   get series(): ActivitySeries {
@@ -177,7 +192,14 @@ export class Section implements Span {
   }
 
   #source(): AnalysisSource {
-    return { prep: this.prep, span: this, stats: () => this.stats() };
+    return {
+      prep: this.prep,
+      span: this,
+      stats: () => this.stats(),
+      statsOf: (span, basis) =>
+        new Section(this.prep, 'effort', 'Part', span).stats({ time: basis }),
+      section: (span, label) => new Section(this.prep, 'effort', label, span),
+    };
   }
 
   #effort(span: Span, label: string): Section {
@@ -476,18 +498,9 @@ export class Activity extends Section {
   /** The laps the device recorded (empty when it recorded none). */
   get laps(): Sections<LapSection> {
     if (!this.#laps) {
-      const startMs = Date.parse(this.#record.activity.startTimeUtc);
-      let cursor = 0;
-      const items = (this.#record.laps ?? []).map((lap) => {
-        const t = lap.startTimeUtc ? Date.parse(lap.startTimeUtc) : NaN;
-        const from = Number.isFinite(t) ? (t - startMs) / 1000 : cursor;
-        const to = from + lap.elapsedSeconds;
-        cursor = to;
-        return new LapSection(this.prep, lap, {
-          fromSeconds: from,
-          toSeconds: to,
-        });
-      });
+      const items = lapSpans(this.#record).map(
+        ({ span, lap }) => new LapSection(this.prep, lap, span),
+      );
       this.#laps = new Sections(this.prep, items);
     }
     return this.#laps;

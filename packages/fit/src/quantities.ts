@@ -214,6 +214,18 @@ export class Cadence {
   }
 }
 
+/** Step rate on foot — canonical steps/minute (both feet counted). */
+export class StepRate {
+  private constructor(readonly stepsPerMinute: number) {}
+  static stepsPerMinute(s: number): StepRate {
+    return new StepRate(s);
+  }
+  /** Display string, e.g. `"171 spm"`. */
+  format(decimals = 0): string {
+    return `${this.stepsPerMinute.toFixed(decimals)} spm`;
+  }
+}
+
 /** Shorthands for building quantities: `km(5)`, `minutes(20)`. */
 export const meters = (m: number): Distance => Distance.meters(m);
 export const km = (v: number): Distance => Distance.km(v);

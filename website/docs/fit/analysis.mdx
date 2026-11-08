@@ -141,6 +141,139 @@ Tempo 143 s
 Threshold 21 s
 ```
 
+## Grade-adjusted pace
+
+`section.pace.adjustedForGrade()` estimates the pace the same effort would give
+on level ground. It is an estimate, so it names its model. For a run the default
+is `'acsm-running'`, the American College of Sports Medicine's running
+equation: a metre climbed at grade g counts as 1 + 4.5 g level metres, and a
+descent counts as level (the equation doesn't cover descents). The grade is read
+over 100 m of distance so elevation noise doesn't become steep slopes. It is on
+moving time, like `stats().pace`, and needs no settings.
+
+```ts
+const g = run.pace.adjustedForGrade()!;
+console.log(g.model, g.recorded.pace.format(), g.pace.format());
+console.log(g.factor.toFixed(3), g.coverage);
+```
+
+```text output
+acsm-running 5:04/km 5:01/km
+1.009 1
+```
+
+The interval run is nearly flat (18 m up, 24 m down), so the two paces are
+close. `factor` is level-equivalent metres per metre, and `coverage` the share
+of the distance where elevation was recorded; the rest counts as level.
+
+Minetti's energy cost curves (2002) are there too, by name:
+`{ model: 'minetti-2002-running' }`, and `'minetti-2002-walking'`, the default
+for walks and hikes. They come from treadmill measurements and credit a gentle
+descent as cheaper than level ground, cheapest near −20 %, where a metre costs
+about half a level one. So a steep descent gets an adjusted pace well _slower_
+than its recorded pace, even when it felt hard (braking, rough footing). ACSM
+gives a descent no credit either way, so running faster downhill at the same
+effort reads as a faster adjusted pace. Pick the model that matches how you want
+descents read, and compare numbers only within one model.
+
+## Efficiency and decoupling
+
+`analysis.aerobic` reads output per heartbeat. On a ride with power it is
+normalized power over average heart rate (watts per bpm); otherwise it is
+speed over heart rate, in metres per heartbeat. Both are on moving time, so a
+stop doesn't pull the number around. Higher always means more output for the
+same heart rate. It needs no settings.
+On foot, `{ output: 'grade-adjusted-speed' }` uses grade-adjusted speed, so a
+steady effort over hills isn't read as uneven.
+
+`decoupling()` compares the first half of a section with the second, split by
+moving time so a stop doesn't move the split. A positive `change` means the
+second half took more heartbeats for the same output. It also says whether the
+stretch suits the question: an interval session or a short stretch comes back
+with `cautions`, so it can't pass as a steady endurance reading.
+
+```ts
+const aerobic = ride.analyze({ athlete }).aerobic;
+console.log(aerobic.efficiency()?.output, aerobic.efficiencyFactor?.toFixed(3));
+const d = aerobic.decoupling()!;
+console.log(
+  d.firstHalf.value.toFixed(3),
+  d.secondHalf.value.toFixed(3),
+  `${(d.change * 100).toFixed(1)} %`,
+);
+console.log(d.suitable, d.cautions);
+```
+
+```text output
+power 1.716
+1.679 1.738 -3.5 %
+false [ 'variable' ]
+```
+
+The hill ride's power isn't steady (its variability index is 1.2), so the
+reading is marked `variable`. Read its −3.5 % as "no drift showed", not as an
+endurance verdict.
+
+Pass a section to leave out the warm-up, or ask for speed on a ride:
+
+```ts
+import { minutes } from '@pond-ts/fit';
+
+const steady = ride.section({
+  elapsed: { from: minutes(10), to: minutes(50) },
+});
+const s = steady.analyze({ athlete }).aerobic.decoupling({ output: 'speed' });
+console.log(s?.output, s?.cautions);
+```
+
+```text output
+speed [ 'variable' ]
+```
+
+## Distributions and coasting
+
+`distribution(channel)` says how long the section spent at each level of
+power, heart rate, cadence, speed or pace. Bins are in the channel's own unit
+(W, bpm, rpm, m/s, s/km), with every bin in between kept, so the array feeds a
+bar chart as it is. Power and cadence start at 0, so freewheeling shows.
+
+```ts
+const dist = ride.analyze({ athlete }).distribution('power', { binWidth: 50 })!;
+for (const b of dist.bins)
+  if (b.seconds > 0)
+    console.log(`${b.start}-${b.end} W`, Math.round(b.seconds), 's');
+```
+
+```text output
+0-50 W 682 s
+50-100 W 36 s
+100-150 W 616 s
+150-200 W 1557 s
+200-250 W 1164 s
+250-300 W 1048 s
+300-350 W 483 s
+350-400 W 34 s
+```
+
+On elapsed time (the default) a stop counts at 0 W, so the lowest bin above
+mixes stops with freewheeling. Pass `{ time: 'moving' }` to leave stops out.
+Pace is always on moving time, since a stop has no pace; anything slower than
+`slowestPace` (default 20:00 per km) counts in the slowest bin. On a cadence
+distribution off the bike, cadence is cycles per minute (one per two steps),
+as FIT records it.
+
+`coasting` is a ride's moving time with the pedals still: zero cadence, or
+zero power when no cadence was recorded.
+
+```ts
+const c = ride.analyze({ athlete }).coasting!;
+console.log(c.source, c.duration.format(), `${(c.share * 100).toFixed(1)} %`);
+```
+
+```text output
+cadence 10:48 11.6 %
+```
+
 ## Without history
 
 When you just have the numbers, `Profile.of` makes settings with no dates:

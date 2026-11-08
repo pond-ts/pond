@@ -24,8 +24,21 @@ import { bestEffortsByDistance, BEST_EFFORT_DISTANCES } from '../geo/index.js';
 import { hrZoneDistribution, paceZoneDistribution } from '../zones/index.js';
 import type { ZoneTime } from '../zones/index.js';
 import { Profile, type AthleteProfileJson } from '../profile/index.js';
-import { Distance, Duration, Pace, Power } from '../quantities.js';
+import { Distance, Duration, Pace, Power, Speed } from '../quantities.js';
+import { gradeModelFor, gradeRatio, type GradeModel } from './grade.js';
 import type { Stats } from './stats.js';
+import { Aerobic } from './aerobic.js';
+import { techniqueOf, type Technique } from './technique.js';
+import { EffortFinder } from './efforts.js';
+import type { Section } from './activity.js';
+import {
+  coastingOf,
+  distributionOf,
+  type Coasting,
+  type Distribution,
+  type DistributionChannel,
+  type DistributionOptions,
+} from './distribution.js';
 import { sportOf } from './sport.js';
 
 /** The athlete to analyse for: a {@link Profile} already resolved to a date,
@@ -34,7 +47,9 @@ import { sportOf } from './sport.js';
 export type AthleteInput = Profile | AthleteProfileJson;
 
 export interface AnalyzeOptions {
-  athlete: AthleteInput;
+  /** Left out: no settings, so only the readings that need none (power,
+   *  aerobic, distributions, technique) come back. */
+  athlete?: AthleteInput;
 }
 
 /** Power read against the athlete's settings. */
@@ -72,6 +87,10 @@ export interface AnalysisSource {
   prep: PreparedActivity;
   span: Span;
   stats: () => Stats;
+  /** Stats for a stretch inside the section. */
+  statsOf: (span: Span, basis: 'elapsed' | 'moving') => Stats;
+  /** A section for a stretch inside it. */
+  section: (span: Span, label: string) => Section;
 }
 
 /** Resolve an {@link AthleteInput} for an activity that started at
@@ -149,6 +168,10 @@ export class Analysis {
   #power?: PowerAnalysis;
   #load?: Load | null;
   #zones?: ZoneAnalysis;
+  #aerobic?: Aerobic;
+  #coasting?: Coasting | null;
+  #technique?: Technique | null;
+  #efforts?: EffortFinder<Section>;
 
   /** @internal */
   constructor(src: AnalysisSource, athlete: Profile) {
@@ -170,6 +193,49 @@ export class Analysis {
           ? normalized.watts / average.watts
           : null,
     });
+  }
+
+  /** Efficiency (output per heartbeat) and decoupling. Needs no athlete
+   *  settings; it sits here with the other readings of the section. */
+  get aerobic(): Aerobic {
+    return (this.#aerobic ??= new Aerobic(this.#src));
+  }
+
+  /** Time at each level of a channel:
+   *  `a.distribution('power', { binWidth: 25 })`. Null when the channel
+   *  wasn't recorded here or the samples have no timestamps. */
+  distribution(
+    channel: DistributionChannel,
+    options?: DistributionOptions,
+  ): Distribution | null {
+    return distributionOf(this.#src.prep, this.#src.span, channel, options);
+  }
+
+  /** Moving time with the pedals still, on a ride; null for other sports
+   *  or with neither cadence nor power recorded. */
+  get coasting(): Coasting | null {
+    if (this.#coasting === undefined)
+      this.#coasting = coastingOf(this.#src.prep, this.#src.span);
+    return this.#coasting;
+  }
+
+  /** Stroke metrics over the pool lengths whose middle is in the section, drills
+   *  left out; null off the pool or with no counted length. */
+  get technique(): Technique | null {
+    if (this.#technique === undefined)
+      this.#technique = techniqueOf(this.#src.prep, this.#src.span);
+    return this.#technique;
+  }
+
+  /** Efforts and the recovery after each: `efforts.fromLaps()` or
+   *  `efforts.detect({ powerAbove: Power.watts(300) })`, then
+   *  `.compare()`. */
+  get efforts(): EffortFinder<Section> {
+    return (this.#efforts ??= new EffortFinder({
+      prep: this.#src.prep,
+      span: this.#src.span,
+      make: this.#src.section,
+    }));
   }
 
   /** Null for any sport but cycling, and without FTP, power or
@@ -309,7 +375,30 @@ export class PowerEfforts<S> {
   }
 }
 
-/** Best efforts by pace inside a section: `run.pace.bestEffort(km(5))`. */
+export interface GradeAdjustOptions {
+  /** Default: `'acsm-running'` for a run, `'minetti-2002-walking'` for a
+   *  walk or hike. */
+  model?: GradeModel;
+}
+
+/** The pace a stretch's effort would give on level ground: an estimate,
+ *  so it names its model. On moving time, like `stats().pace`. */
+export interface GradeAdjustedPace {
+  model: GradeModel;
+  pace: Pace;
+  speed: Speed;
+  /** The recorded moving pace and speed, for comparison. */
+  recorded: { pace: Pace; speed: Speed };
+  /** Level-equivalent metres per metre: above 1 when the stretch climbed
+   *  more than it gained back cheaply on descents. */
+  factor: number;
+  /** Share of the moving distance whose grade was known (elevation
+   *  recorded at the step), 0 to 1; the rest counts as level. */
+  coverage: number;
+}
+
+/** Pace inside a section: `run.pace.bestEffort(km(5))`,
+ *  `run.pace.adjustedForGrade()`. */
 export class PaceEfforts<S> {
   readonly #src: AnalysisSource;
   readonly #make: MakeSection<S>;
@@ -318,6 +407,30 @@ export class PaceEfforts<S> {
   constructor(src: AnalysisSource, make: MakeSection<S>) {
     this.#src = src;
     this.#make = make;
+  }
+
+  /** Grade-adjusted pace over the section (see {@link GradeAdjustedPace});
+   *  null for a sport other than running, walking or hiking (unless a
+   *  model is given: then the stretch reads as if run or walked), for a
+   *  pool swim, and with no distance, no elevation or no moving time. */
+  adjustedForGrade(options: GradeAdjustOptions = {}): GradeAdjustedPace | null {
+    const { prep, span } = this.#src;
+    if (prep.poolLengths) return null;
+    const model = options.model ?? gradeModelFor(prep);
+    if (!model) return null;
+    const r = gradeRatio(prep, span, model);
+    const v = this.#src.statsOf(span, 'moving').speed.average?.metersPerSecond;
+    if (!r || v === undefined || !(v > 0)) return null;
+    const speed = Speed.metersPerSecond(v * r.ratio);
+    const recorded = Speed.metersPerSecond(v);
+    return {
+      model,
+      pace: speed.pace(),
+      speed,
+      recorded: { pace: recorded.pace(), speed: recorded },
+      factor: r.ratio,
+      coverage: r.coverage,
+    };
   }
 
   /** The fastest time over `distance`; null with no distance, no

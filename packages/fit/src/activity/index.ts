@@ -43,4 +43,44 @@ export {
   type ZoneAnalysis,
   type PowerBestEffort,
   type PaceBestEffort,
+  type GradeAdjustOptions,
+  type GradeAdjustedPace,
 } from './analysis.js';
+export type { GradeModel } from './grade.js';
+export {
+  Aerobic,
+  type AerobicOutput,
+  type EfficiencyOptions,
+  type Efficiency,
+  type DecouplingOptions,
+  type Decoupling,
+  type DecouplingCaution,
+} from './aerobic.js';
+export {
+  type DistributionChannel,
+  type DistributionOptions,
+  type DistributionBin,
+  type Distribution,
+  type Coasting,
+} from './distribution.js';
+export {
+  type RunningDynamics,
+  type RunningDynamicsStats,
+  type DynamicsChannel,
+  type DynamicsSource,
+} from './dynamics.js';
+export {
+  type Technique,
+  type StrokeConvention,
+  type StrokeCounting,
+} from './technique.js';
+export {
+  EffortFinder,
+  Efforts,
+  type Effort,
+  type EffortSource,
+  type DetectOptions,
+  type EffortMetric,
+  type MetricComparison,
+  type EffortComparison,
+} from './efforts.js';
