@@ -2045,51 +2045,58 @@ host's own badge, median of 5, cold host). First version → shipped:
 | `extremes` (unchanged floor)               | 19      | 14      | — run-to-run noise is about ±4 ms                                                                                                          |
 
 **The catalogue's graphs, end to end** (`packages/financial/scripts/perf-graphs.mjs`,
-2026-11-08, after #927 merged). The 22 catalogue graphs the kit can express,
-written as the slot requests an agent would send, timed through `host.run` on
-1M one-minute bars (695 one-day sessions for the session studies). _First_ is
-the first request in a fresh process; _warm_ is the median of 7 on a fresh host
-after 5 passes over all 22. Run-to-run noise on this machine is about ±30%.
+2026-11-08, after #927 merged). The 23 catalogue graphs the kit can express
+(the 8 "Works" and 15 of the 16 "Server adds"; #46 needs a gap-finding fold
+that is not built), written as the slot requests an agent would send, timed
+through `host.run` on 1M one-minute bars (695 one-day sessions for the session
+studies). _First_ is each graph's first run, graphs in table order in one fresh
+process, so only the earliest graph using an op meets it uncompiled (#24 and
+#43 reuse #1's `rsi`, #45 reuses #23's cross); _warm_ is the median of 7 on a
+fresh host after 5 passes over all 23; _nodes_ is the median, over the same 7,
+of the host's own per-node timings summed. Run-to-run noise on this machine is
+about ±30%.
 
-| #   | Question                                                   | Steps | First ms | Warm ms | Slowest node ms |
-| --- | ---------------------------------------------------------- | ----- | -------- | ------- | --------------- |
-| 1   | 14-day RSI now; overbought?                                | 3     | 132      | 80      | rsi 59          |
-| 2   | Position inside Bollinger bands                            | 2     | 147      | 59      | pb 56           |
-| 3   | % above 50 and 200 day averages                            | 8     | 228      | 132     | s50 43          |
-| 4   | MACD and side of signal                                    | 6     | 218      | 104     | m 63            |
-| 5   | Trend strength (ADX)                                       | 3     | 193      | 150     | dm 132          |
-| 6   | ATR as % of price                                          | 4     | 105      | 53      | atr 25          |
-| 8   | How unusual is volume today                                | 3     | 123      | 81      | z 46            |
-| 10  | 30-day annualised volatility                               | 2     | 136      | 67      | hv 55           |
-| 13  | Biggest one-bar drop and gain                              | 2     | 48       | 36      | ext 32          |
-| 14  | Rolling 252-bar return line                                | 2     | 20       | 22      | ret 20          |
-| 15  | Share of bars that closed up                               | 3     | 52       | 29      | ret 12          |
-| 16  | One-bar 95% VaR                                            | 2     | 62       | 31      | var 14          |
-| 23  | Last golden cross                                          | 2     | 136      | 82      | x 77            |
-| 24  | Every time RSI fell below 30                               | 3     | 105      | 67      | rsi 48          |
-| 26  | Did close break its 20-bar high                            | 4     | 230      | 231     | dc 195          |
-| 27  | SuperTrend direction and last flip                         | 3     | 80       | 78      | st 58           |
-| 28  | Bars with 3x volume and a >3% drop                         | 7     | 148      | 119     | avgv 32         |
-| 29  | Close vs session VWAP                                      | 3     | 114      | 56      | vw 54           |
-| 32  | Today's pivot points                                       | 8     | 201      | 139     | pp 108          |
-| 43  | Average 10-bar return after RSI<30                         | 5     | 140      | 110     | rsi 53          |
-| 44  | Hit rate of a higher close 5 bars after a lower-band break | 6     | 172      | 190     | bb 96           |
-| 45  | 50/200 crossover vs buy and hold                           | 11    | 242      | 258     | x 123           |
-| 48  | Flag possible unadjusted splits                            | 5     | 87       | 76      | big 25          |
+| #   | Question                                                   | Steps | First ms | Warm ms | Nodes ms | Slowest node ms |
+| --- | ---------------------------------------------------------- | ----- | -------- | ------- | -------- | --------------- |
+| 1   | 14-day RSI now; overbought?                                | 3     | 127      | 70      | 69       | rsi 52          |
+| 2   | Position inside Bollinger bands                            | 2     | 109      | 63      | 63       | pb 55           |
+| 3   | % above 50 and 200 day averages                            | 8     | 180      | 138     | 133      | s50 44          |
+| 4   | MACD and side of signal                                    | 6     | 160      | 108     | 103      | m 79            |
+| 5   | Trend strength (ADX)                                       | 3     | 171      | 161     | 160      | dm 103          |
+| 6   | ATR as % of price                                          | 4     | 96       | 58      | 53       | atr 28          |
+| 8   | How unusual is volume today                                | 3     | 94       | 83      | 82       | z 56            |
+| 10  | 30-day annualised volatility                               | 2     | 73       | 78      | 77       | hv 54           |
+| 13  | Biggest one-bar drop and gain                              | 2     | 40       | 32      | 32       | ext 22          |
+| 14  | Rolling 252-bar return line                                | 2     | 16       | 16      | 14       | ret 11          |
+| 15  | Share of bars that closed up                               | 3     | 46       | 26      | 25       | ret 11          |
+| 16  | One-bar 95% VaR                                            | 2     | 47       | 27      | 27       | var 13          |
+| 23  | Last golden cross                                          | 2     | 87       | 77      | 74       | x 73            |
+| 24  | Every time RSI fell below 30                               | 3     | 101      | 63      | 62       | rsi 43          |
+| 26  | Did close break its 20-bar high                            | 4     | 272      | 237     | 236      | dc 204          |
+| 27  | SuperTrend direction and last flip                         | 3     | 83       | 75      | 74       | st 66           |
+| 28  | Bars with 3x volume and a >3% drop                         | 7     | 163      | 126     | 121      | avgv 41         |
+| 29  | Close vs session VWAP                                      | 3     | 144      | 68      | 68       | vw 51           |
+| 32  | Today's pivot points                                       | 8     | 198      | 122     | 120      | pp 99           |
+| 43  | Average 10-bar return after RSI<30                         | 5     | 142      | 94      | 90       | rsi 49          |
+| 44  | Hit rate of a higher close 5 bars after a lower-band break | 6     | 191      | 121     | 120      | bb 61           |
+| 45  | 50/200 crossover vs buy and hold                           | 11    | 264      | 177     | 175      | x 76            |
+| 48  | Flag possible unadjusted splits                            | 5     | 110      | 60      | 57       | big 18          |
 
-All 22 as one request (97 slots, 88 distinct nodes once shared ones
-like `rsi(14)` and `percentChange(1)` merge): 1991 ms, against
-2250 ms for the 22 sent one by one.
+All 23 as one request (97 slots, 88 distinct nodes once shared ones
+like `rsi(14)` and `percentChange(1)` merge): 1905 ms, against
+2083 ms for the 23 sent one by one.
 
 What it showed:
 
-- **The plan layer costs little.** Warm time is within noise of the sum of the
-  host's own node timings; the time is in the studies. Calling the same
+- **The plan layer costs little.** Warm time is within 1–6 ms of the summed
+  node timings on every graph; the time is in the studies. Calling the same
   studies directly (no plan) gives the same numbers (Donchian 181 ms, ADX
   120 ms, pivot points 133 ms, RSI 56 ms).
 - **`percentile` was the one slow fold** (142 ms, a full sort for two
   values); now quickselect, 22 ms, checked against a sort on ties, runs, gaps
-  and signed zeros.
+  and signed zeros. An organ-pipe input (rises then falls) defeats the
+  median-of-three pivot and takes the sort fallback: ~79 ms at 1M rows
+  (Layer-2 review), still under the old sort; the test covers that path.
 - **The slowest graph is Donchian's 20-bar high (#26, ~230 ms)**, because
   `highestLowestValues` runs on core's general rolling `max`/`min` (~80 ms
   per column at 1M rows, against ~40 ms for `avg`). This is the standing note

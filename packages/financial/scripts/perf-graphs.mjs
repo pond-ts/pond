@@ -2,7 +2,7 @@
 // one-million-bar series.
 //
 // `docs/notes/finance-process-graphs-2026-11.md` lists 48 questions an
-// agent asks a finance MCP server. 22 of them can be answered with what
+// agent asks a finance MCP server. 23 of them can be answered with what
 // ships today: the study bridge (`@pond-ts/financial/process`), the basic
 // steps (`BASIC_OPS`) and the summary folds (`SUMMARY_FOLDS`, plus the
 // four standard folds). Each is written here as the slot request an agent
@@ -10,16 +10,20 @@
 // node.
 //
 // Per graph it reports:
-//   first — the very first request in a fresh process (nothing compiled
-//           yet by V8: what the first agent after a server restart waits)
+//   first — the first run of this graph, graphs taken in table order in
+//           one fresh process. Only the earliest graph using an op meets
+//           it uncompiled (#24 and #43 reuse #1's rsi, #45 reuses #23's
+//           cross), so this is "first after a server restart" only for
+//           those; it is an upper bound for the rest
 //   warm  — median of RUNS requests after WARMUP passes over every graph,
 //           each on a fresh host so no node is served from cache
-//   nodes — the sum of the host's own per-node timings for one warm run;
+//   nodes — median over the same runs of the sum of the host's own
+//           per-node timings;
 //           `warm - nodes` is what the plan layer itself costs (compile,
 //           ids, adding columns, building facts)
 //   slow  — the slowest node in that run, and its time
 //
-// Then the same 22 graphs as one request (an agent asking several
+// Then the same 23 graphs as one request (an agent asking several
 // questions at once), where shared nodes (`rsi(14)`, `percentChange(1)`,
 // …) are computed once.
 //
@@ -380,7 +384,7 @@ function combined() {
     for (const [k, v] of Object.entries(g.outputs))
       outputs[p(k)] = { on: p(v.on) };
   }
-  return { n: 'all', q: 'all 22 in one request', nodes, outputs };
+  return { n: 'all', q: `all ${GRAPHS.length} in one request`, nodes, outputs };
 }
 
 // first: one request per graph, in a process where nothing has run yet.
@@ -392,13 +396,15 @@ for (let w = 0; w < WARMUP; w += 1) for (const g of GRAPHS) runOnce(g);
 const rows = [];
 for (const g of GRAPHS) {
   const walls = [];
+  const sums = [];
   let last;
   for (let r = 0; r < RUNS; r += 1) {
     last = runOnce(g);
     walls.push(last.wall);
+    sums.push(last.result.nodes.reduce((a, x) => a + x.ms, 0));
   }
   const nodes = last.result.nodes.filter((x) => typeof x.ms === 'number');
-  const nodeSum = nodes.reduce((a, x) => a + x.ms, 0);
+  const nodeSum = median(sums);
   const slow = nodes.reduce((a, x) => (x.ms > a.ms ? x : a), { ms: -1 });
   rows.push({
     n: g.n,
