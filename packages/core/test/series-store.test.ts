@@ -14,6 +14,7 @@ import {
   timeRangeKeyColumnFromPairs,
 } from '../src/columnar/index.js';
 import { SeriesStore, type SeriesEvent } from '../src/live/series-store.js';
+import { TimeSeries } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
 /* Construction                                                               */
@@ -859,5 +860,30 @@ describe('toEvents builds rows straight into its array', () => {
       [2000, { value: 20, load: 0.75 }],
       [3000, { value: 30, load: 0.9 }],
     ]);
+  });
+
+  it("keeps a trimmed series' keys the source's own objects", () => {
+    // `trim` on time keys reads its keys from the source store; building
+    // the events in one pass must still use them, not fresh copies.
+    const src = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1],
+        [10, 2],
+        [20, 3],
+      ],
+    });
+    const t = src.trim(new TimeRange({ start: 5, end: 100 }));
+    const events = t.events;
+    expect(events.map((e) => e.key())).toEqual([
+      src.at(1)!.key(),
+      src.at(2)!.key(),
+    ]);
+    expect(events[0]!.key()).toBe(src.at(1)!.key());
+    expect(events[1]!.key()).toBe(src.at(2)!.key());
   });
 });
