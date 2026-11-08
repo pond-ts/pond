@@ -12,8 +12,8 @@
     "packages/react",
     "packages/charts",
     "packages/fit",
-    "packages/financial",
-    "packages/process"
+    "packages/process",
+    "packages/financial"
   ],
   "engines": {
     "node": ">=18"
