@@ -32,7 +32,7 @@ console.log(JSON.stringify(d).length, 'bytes');
 1 run null
 { elapsed: 3083, moving: 2947 } 9702.2 18
 [ 400, 804.672, 1000, 1609.344, 3218.688, 5000 ]
-955 bytes
+1024 bytes
 ```
 
 A digest holds the clocks, distance and ascent; heart rate as seconds at each
@@ -283,3 +283,81 @@ you ran it.
 
 The curves start at 0; pass `start: { chronic, acute }` to begin from known
 values, and `chronicDays` / `acuteDays` for other time constants.
+
+## A personal grade curve
+
+Grade-adjusted pace ([analysis](./analysis.mdx#grade-adjusted-pace)) uses a
+model of how much harder a climb is than flat ground, made from other people.
+A history can fit your own, from your heart rate: how many heartbeats a metre
+takes at each grade, over how many it takes on the flat.
+
+Each run's digest keeps its steady minutes summed by 2 % grade band
+(`grades`). A minute counts when you kept moving at 1.2 m/s or faster, and
+speed, grade and heart rate held steady. Heart rate is read 30 s later, as it
+trails effort.
+
+```ts
+for (const b of run.digest().grades ?? [])
+  console.log(b.grade, b.windows, (b.beats / b.metres).toFixed(3));
+```
+
+```text output
+0 70 0.713
+```
+
+The interval run is on flat ground, so all 70 of its steady minutes sit in
+the 0 band: 0.713 heartbeats per metre.
+
+A run's heartbeats per metre also depend on the day: fitness, heat, how far
+into a long run you are. So `gradeCurve()` gives each run its own scale and
+fits the scales and the curve together, which lets a run with little flat
+ground still count. It keeps the bands with at least `minWindows` steady
+minutes (20 by default) across the history; past them the curve follows the
+fallback model's shape (ACSM unless you name another).
+
+```ts
+const fit = onFoot.pace.gradeCurve({ minWindows: 5 });
+for (const b of fit?.bands ?? [])
+  console.log(b.grade, b.factor.toFixed(2), b.windows, b.activities);
+```
+
+```text output
+0 1.00 70 1
+```
+
+With one flat run there is only the flat band, which is 1 by definition, and
+the rest of the curve is the fallback's. A history of hilly runs fills in the
+climbs and descents. Each band says how many minutes it rests on and how many
+runs they came from.
+`spread` is how far apart the factor comes out when fitted from every other
+run, two halves of the history: a guide to how settled the band is. Hundreds of
+runs give a steadier curve than a handful; climbs settle more slowly than
+descents. To fit over part of your history, fit `history.between(from, to)`.
+
+`fit.curve` is a `GradeCurve`, which goes anywhere a model name does:
+
+```ts
+import { GradeCurve } from '@pond-ts/fit';
+
+const mine = new GradeCurve(
+  [
+    { grade: -0.1, factor: 0.9 },
+    { grade: 0, factor: 1 },
+    { grade: 0.1, factor: 1.45 },
+  ],
+  { name: 'personal' },
+);
+const g = run.pace.adjustedForGrade({ model: mine })!;
+console.log(g.model, g.curve?.name, g.pace.format());
+const stored = JSON.stringify(mine);
+console.log(GradeCurve.fromJSON(JSON.parse(stored)).factorAt(0.05));
+```
+
+```text output
+curve personal 5:02/km
+1.225
+```
+
+Between points the curve is read in a straight line. Store it with
+`JSON.stringify` beside your athlete settings, so it isn't fitted again each
+time.
