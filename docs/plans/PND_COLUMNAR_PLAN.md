@@ -127,7 +127,8 @@ chart case alongside the gRPC fan-out case above;
 - **When:** right after `'batch'`, before `'evict'`, once per push that
   added rows.
 - Not built: columnar `'evict'`, `'columns'` on views / aggregations /
-  partitioned series as a whole, a pond-rs counterpart ([PND-RUSTCOLS]).
+  partitioned series as a whole. The pond-rs counterpart
+  ([PND-RUSTCOLS]) is built: see `PND_RUST_PLAN.md`.
 
 Numbers (`packages/core/scripts/perf-live-columns.mjs`, 10k-row buffer,
 median of 5, same consumer work on `'batch'` vs `'columns'`):

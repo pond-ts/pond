@@ -921,7 +921,11 @@ impl LiveSeries {
         //    gathered in one pass over the push.
         let wants_batch: Vec<bool> = shares
             .iter()
-            .map(|share| !self.slots[share.slot].subs[OutputKind::Batch.slot()].is_empty())
+            .map(|share| {
+                let subs = &self.slots[share.slot].subs;
+                !subs[OutputKind::Batch.slot()].is_empty()
+                    || !subs[OutputKind::Columns.slot()].is_empty()
+            })
             .collect();
         let mut added: Vec<Vec<LiveEvent>> = vec![Vec::new(); shares.len()];
         if wants_batch.iter().any(|&w| w) {
@@ -943,6 +947,7 @@ impl LiveSeries {
                     node,
                     events: added.clone(),
                 });
+                self.emit_columns(part, added, out);
             }
             if n > 0 {
                 self.evict_series(part, n, out);

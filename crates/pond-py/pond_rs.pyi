@@ -1770,7 +1770,7 @@ def study_info(name: str) -> dict[str, Any]:
 
 # --- live: events as they arrive ---
 
-OutputKind = Literal["event", "batch", "evict", "bucket", "update"]
+OutputKind = Literal["event", "batch", "evict", "bucket", "update", "columns"]
 NodeKindName = Literal[
     "series", "view", "aggregation", "rolling", "reduce", "partitioned", "partitioned_view", "partition_rolling"
 ]
@@ -1802,7 +1802,9 @@ class LiveOutput:
     an event (an aggregation: closed a bucket); "batch": the series took
     these events in one push; "evict": the node dropped these; "bucket": an
     aggregation's open bucket as it now stands; "update": a rolling window's
-    values as they now stand (None from an aggregation)."""
+    values as they now stand (None from an aggregation); "columns": the rows
+    the series took in one push, as a TimeSeries in key order (watching a
+    root for "columns" alone builds no LiveEvent per row)."""
 
     @property
     def node(self) -> LiveNode: ...
@@ -1817,6 +1819,9 @@ class LiveOutput:
     @property
     def values(self) -> Optional[dict[str, Cell]]:
         """For "update"."""
+    @property
+    def series(self) -> Optional[TimeSeries]:
+        """For "columns"."""
 
 class _LiveBase:
     """What a LiveSeries and every LiveNode have: building nodes on it, and
@@ -1886,7 +1891,7 @@ class _LiveBase:
     def stats(self) -> dict[str, Any]: ...
     def watch(self, *kinds: OutputKind) -> None:
         """Have each push return this node's outputs of these kinds (all it
-        emits when none are named)."""
+        emits except "columns" when none are named)."""
     def unwatch(self, *kinds: OutputKind) -> None: ...
     # A partitioned node emits nothing itself; watch() on it is an error.
 

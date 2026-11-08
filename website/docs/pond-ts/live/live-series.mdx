@@ -749,7 +749,26 @@ Partition sub-series fire it too.
 | copies one column into a buffer |    356 ms |      142 ms |
 | writes every row as JSON        |    446 ms |      251 ms |
 
-pond-rs has no `'columns'` output yet.
+In pond-rs, watch `OutputKind::Columns`: each push then returns an
+`Output::Columns` whose `series` is a batch `TimeSeries` of the rows it
+added. Watched alone on the series, it builds no `LiveEvent`; the batch is
+copied out of the stored columns. That copy has a fixed cost per push, and a
+`LiveEvent` is cheap in Rust, so it pays off somewhere between 10 and 100 rows a push (1M
+rows, summing one column: 1,000 a push 296 ms with `Batch`, 232 ms with
+`Columns`; 10 a push about even; one a push 413 vs 861 ms).
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+
+let mut live = LiveSeries::new("cpu", schema)?;
+live.watch(live.root(), OutputKind::Columns)?;
+for out in live.push_many(rows)? {
+    if let Output::Columns { series, .. } = out {
+        let cpu = series.column("cpu")?.numbers()?.values(); // gaps are NaN
+        send(series.key().begin(), cpu);
+    }
+}
+```
 
 ### Callback ordering
 

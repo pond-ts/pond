@@ -235,12 +235,14 @@ fn kind_code(o: &Output) -> u32 {
         Output::Evict { .. } => 2,
         Output::Bucket { .. } => 3,
         Output::Update { .. } => 4,
+        Output::Columns { .. } => 5,
     }
 }
 
-/// Outputs as one flat list: `handle, kind, payload` for each (kind 0..4
-/// = event, batch, evict, bucket, update; payload a row, a list of rows,
-/// a value record or `undefined`).
+/// Outputs as one flat list: `handle, kind, payload` for each (kind 0..5
+/// = event, batch, evict, bucket, update, columns; payload a row, a list
+/// of rows, a value record, `undefined`, or a stored batch series id that
+/// the JavaScript side owns from then on).
 fn outputs_js(live: &Live, outs: Vec<Output>) -> Array {
     let list = Array::new();
     let mut names: HashMap<u32, Vec<String>> = HashMap::new();
@@ -266,6 +268,7 @@ fn outputs_js(live: &Live, outs: Vec<Output>) -> Array {
                     .or_insert_with(|| live.value_names(h).unwrap_or_default());
                 record(n, &v)
             }
+            Output::Columns { series, .. } => JsValue::from(store(series)),
         };
         list.push(&payload);
     }
@@ -326,6 +329,8 @@ fn outputs_f64(live: &Live, outs: &[Output]) -> Option<Vec<f64>> {
                 v.push(1.0);
                 cells(&mut v, values)?;
             }
+            // A batch series goes as an id, in the JavaScript list.
+            Output::Columns { .. } => return None,
         }
     }
     Some(v)
