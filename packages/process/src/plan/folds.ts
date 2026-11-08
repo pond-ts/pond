@@ -19,7 +19,21 @@
 import { int } from './params.js';
 import type { FoldContext, FoldDef, Params } from './types.js';
 
-const day = (t: number): string => new Date(t).toISOString().slice(0, 10);
+const DAY_MS = 86_400_000;
+
+/**
+ * A fact's timestamp: the UTC day when the row sits on midnight UTC (a
+ * daily bar), the full UTC instant otherwise.
+ *
+ * This used to be the day alone, always — so an intraday answer read
+ * "2026-11-07" with no time, and an agent asking "when did VWAP cross?"
+ * on 5-minute bars could not be told. Daily data reads exactly as before.
+ */
+export function stamp(t: number): string {
+  const iso = new Date(t).toISOString();
+  if (t % DAY_MS === 0) return iso.slice(0, 10);
+  return iso.endsWith('.000Z') ? `${iso.slice(0, 19)}Z` : iso;
+}
 
 /**
  * Six decimal places, applied at the boundary rather than in the graph.
@@ -27,7 +41,7 @@ const day = (t: number): string => new Date(t).toISOString().slice(0, 10);
  * A column holds full `Float64Array` precision; a fact is read by a
  * person or quoted by a model, and neither wants seventeen digits.
  */
-const round = (v: number): number => Math.round(v * 1e6) / 1e6;
+export const round = (v: number): number => Math.round(v * 1e6) / 1e6;
 
 const source = [{ role: 'source' }] as const;
 
@@ -46,7 +60,8 @@ export const last: FoldDef = {
     // and on the boxed path it paid to densify all 500,000 first.
     const v = read(ctx);
     for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v.defined(i)) return { value: round(v.value(i)), at: day(ctx.at(i)) };
+      if (v.defined(i))
+        return { value: round(v.value(i)), at: stamp(ctx.at(i)) };
     }
     return { value: null };
   },
@@ -82,8 +97,8 @@ export const extremes: FoldDef = {
     }
     if (loAt === -1) return { min: null, max: null };
     return {
-      min: { value: round(lo), at: day(ctx.at(loAt)) },
-      max: { value: round(hi), at: day(ctx.at(hiAt)) },
+      min: { value: round(lo), at: stamp(ctx.at(loAt)) },
+      max: { value: round(hi), at: stamp(ctx.at(hiAt)) },
     };
   },
 };
@@ -154,7 +169,7 @@ export const shape: FoldDef = {
     const step = Math.max(1, Math.ceil(v.length / want));
     const points: [string, number][] = [];
     for (let i = 0; i < v.length; i += step) {
-      if (v.defined(i)) points.push([day(ctx.at(i)), round(v.value(i))]);
+      if (v.defined(i)) points.push([stamp(ctx.at(i)), round(v.value(i))]);
     }
     return { points: points.length, series: points };
   },
@@ -170,12 +185,15 @@ export const shape: FoldDef = {
  * same either way — `defined(i)` then `value(i)`, never a cell that
  * might be `undefined`.
  */
-function read(ctx: FoldContext): {
+export function read(
+  ctx: FoldContext,
+  role = 'source',
+): {
   length: number;
   defined(i: number): boolean;
   value(i: number): number;
 } {
-  const view = ctx.numeric('source');
+  const view = ctx.numeric(role);
   if (view !== undefined) {
     const { values } = view;
     return {
@@ -184,7 +202,7 @@ function read(ctx: FoldContext): {
       value: (i) => values[i]!,
     };
   }
-  const boxed = ctx.values['source']!;
+  const boxed = ctx.values[role]!;
   return {
     length: boxed.length,
     defined: (i) => boxed[i] !== undefined,

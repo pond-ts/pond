@@ -150,6 +150,14 @@ new revision updates the source in place and lets ordinary graph invalidation
 run. Use synchronous `host.run()` for string-keyed datasets added with
 `host.add()`.
 
+## Ready-made steps and facts
+
+`BASIC_OPS` (arithmetic, `shift`, comparisons, `and` / `or`, running totals,
+`hold`) and `SUMMARY_FOLDS` (`mean`, `stdev`, `percentile`, `shareTrue`,
+`events`, `meanWhere`, `change`, …) are opt-in sets; the finance studies come
+from `studyOps()` in `@pond-ts/financial/process`. See
+[the registry docs](https://pond-ts.org/docs/process/registry#basic-steps-summary-folds-and-the-study-catalog).
+
 ## Worker pool (Node)
 
 `@pond-ts/process/pool` runs **whole requests** across worker threads, each

@@ -89,6 +89,35 @@ export {
   percentileRank,
   shape,
 } from './plan/folds.js';
+export {
+  SUMMARY_FOLDS,
+  mean,
+  stdev,
+  sum,
+  count,
+  percentile,
+  shareTrue,
+  lastTrue,
+  lastChange,
+  events,
+  meanWhere,
+  change,
+} from './plan/summary-folds.js';
+export {
+  BASIC_OPS,
+  add,
+  subtract,
+  multiply,
+  divide,
+  scale,
+  shift,
+  compare,
+  compareColumns,
+  and,
+  or,
+  cumulative,
+  hold,
+} from './plan/basic-ops.js';
 export type { OpDescriptor } from './plan/registry.js';
 export type { SpecIdOptions } from './plan/identity.js';
 export {

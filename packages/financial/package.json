@@ -58,6 +58,10 @@
     "./parallel": {
       "types": "./dist/parallel/index.d.ts",
       "import": "./dist/parallel/index.js"
+    },
+    "./process": {
+      "types": "./dist/process/index.d.ts",
+      "import": "./dist/process/index.js"
     }
   },
   "engines": {
@@ -83,7 +87,13 @@
     "@js-temporal/polyfill": "^0.5.1"
   },
   "peerDependencies": {
-    "pond-ts": "^0.76.0"
+    "pond-ts": "^0.76.0",
+    "@pond-ts/process": "^0.76.0"
+  },
+  "peerDependenciesMeta": {
+    "@pond-ts/process": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@pond-ts/process": "^0.76.0",

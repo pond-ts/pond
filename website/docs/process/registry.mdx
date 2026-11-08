@@ -31,7 +31,8 @@ const registry = createRegistry().define({
 ```
 
 `createRegistry()` pre-registers the four [standard folds](#folds); pass
-`{ folds: false }` to start empty. Definitions are plain objects — a
+`{ folds: false }` to start empty. More steps and folds, and the finance
+studies, are [opt-in sets](#basic-steps-summary-folds-and-the-study-catalog). Definitions are plain objects — a
 consumer replaces one by calling `define` over its name.
 
 ## Params
@@ -108,6 +109,86 @@ array because a fold reports two or three rows out of 150,000.
 Facts carry provenance the fold body cannot override: `id`, `name`, `op`,
 and `unit` always mean what the graph says, whatever keys the body
 returns.
+
+## Basic steps, summary folds and the study catalog
+
+Three ready-made sets, none pre-registered, so `createRegistry()` and what
+it describes to a model stay as they are until you opt in:
+
+```ts
+import { BASIC_OPS, SUMMARY_FOLDS, createRegistry } from '@pond-ts/process';
+import { studyOps } from '@pond-ts/financial/process';
+
+let registry = createRegistry();
+for (const def of [
+  ...studyOps({ sessions: nyse }), // RSI, MACD, Bollinger, ATR, beta, …
+  ...BASIC_OPS,
+  ...SUMMARY_FOLDS,
+])
+  registry = registry.define(def);
+```
+
+**`BASIC_OPS`** are row-by-row steps. A gap in any input is a gap out, and
+a non-finite result (a division by zero) is a gap.
+
+| Step                                    | Does                                                                             |
+| --------------------------------------- | -------------------------------------------------------------------------------- |
+| `add`, `subtract`, `multiply`, `divide` | `left ∘ right`; inputs `left`, `right`                                           |
+| `scale`                                 | `source × factor + offset` — ×100 for percent, offset −1 for a change            |
+| `shift`                                 | `periods` rows back; negative reads the future (forward returns)                 |
+| `compare`                               | `source` against a `value`: `above`, `below`, `atLeast`, `atMost`, `equal` → 1/0 |
+| `compareColumns`                        | the same tests, `left` against `right`                                           |
+| `and`, `or`                             | two signals (non-zero is true) → 1/0                                             |
+| `cumulative`                            | running `sum`, `product`, `max` (the peak, for drawdowns) or `min`               |
+| `hold`                                  | carries the last non-zero value — crossover events into a position               |
+
+**`SUMMARY_FOLDS`** answer questions about a whole column. Each carries
+its `count`, because an average of three values and of three thousand read
+the same without it.
+
+| Fold                            | Answers                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------- |
+| `mean`, `stdev`, `sum`, `count` | the usual; `stdev` is the population figure, as pond's reducer                           |
+| `percentile`                    | the value under `q` percent of the data (`q: 5` of daily returns is the 95% one-day VaR) |
+| `shareTrue`                     | how often a signal was true                                                              |
+| `lastTrue`                      | when it was last true ("the last golden cross")                                          |
+| `lastChange`                    | the current value, since when, and the one before                                        |
+| `events`                        | the dates a signal was true — the newest `limit`, plus the total                         |
+| `meanWhere`                     | `source` averaged over the rows `when` marks (the return after a signal)                 |
+| `change`                        | first and last values with dates, and the change in percent                              |
+
+A worked question — _after RSI fell below 30, what was the average 10-bar
+return?_ — is five slots:
+
+```ts
+host.run({
+  from: 'SPY_1d',
+  nodes: {
+    rsi: { op: 'rsi', in: ['close'] },
+    dip: { op: 'compare', params: { test: 'below', value: 30 }, in: ['rsi'] },
+    later: { op: 'shift', params: { periods: -10 }, in: ['close'] },
+    growth: { op: 'divide', in: ['later', 'close'] },
+    fwd: { op: 'scale', params: { factor: 100, offset: -100 }, in: ['growth'] },
+    answer: { op: 'meanWhere', in: ['fwd', 'dip'] },
+  },
+  outputs: { answer: { on: 'answer' } },
+});
+// facts: [{ name: 'answer', value: <mean %>, count: <dips with 10 bars after>, signals: <all dips> }]
+```
+
+`signals` counts every dip; `count` only those with a full ten bars after
+them. A negative `shift` reads rows after each row, which
+[`requiredHistory`](./performance) does not model — it counts history
+before a row only.
+
+**`studyOps`** (`@pond-ts/financial/process`) bridges the study catalog.
+A study's column inputs become input roles in catalog order, so an ATR
+step lists `['high', 'low', 'close']`. A param the study requires takes
+its catalog example as the default (`sma` is period 20) and lands in the
+spec id like any default. `sessions` adds the two session-anchored
+studies; `anchoredVwap` is left out, because its anchor is an instant and
+a param cannot be one (`UNBRIDGED_STUDIES` says so). No lookback is
+declared, so a plan of studies reports its history as unknown.
 
 ## Describing the vocabulary
 

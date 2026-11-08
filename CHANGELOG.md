@@ -81,6 +81,42 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`@pond-ts/process`: basic steps and summary folds** — the pieces a finance
+  MCP server needs past "what is RSI now?". `BASIC_OPS`: `add`, `subtract`,
+  `multiply`, `divide`, `scale` (× factor + offset), `shift` (positive reads
+  the past, negative the future, for forward returns), `compare` /
+  `compareColumns` (write 1/0), `and`, `or`, `cumulative` (`sum` / `product`
+  / `max` / `min` — compounding, running peaks) and `hold` (carry the last
+  non-zero value, turning crossover events into a position). `SUMMARY_FOLDS`:
+  `mean`, `stdev` (population, as pond's reducer), `sum`, `count`,
+  `percentile` (`q` 0–100, linear), `shareTrue`, `lastTrue`, `lastChange`,
+  `events` (the newest `limit` dates plus the total), `meanWhere` (an average
+  over the rows a signal marks) and `change` (first, last, percent). Neither
+  set is pre-registered, so `createRegistry()` and what it describes to a
+  model are unchanged; `define` them to opt in. All are one pass over packed
+  columns (`percentile` sorts): 4–14 ms per op and 9–20 ms per fold at 1M rows
+  (`scripts/perf-kit.mjs`).
+- **`@pond-ts/financial/process`: the study catalog as process steps.**
+  `studyOps({ sessions? })` returns every study as an `OpDef` with its params
+  and ranges, input roles and output units — the bridge that until now lived
+  only in a test, with no params. A required param takes its catalog
+  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`;
+  `anchoredVwap` is left out (its anchor is an instant, which a process param
+  cannot be) and listed in `UNBRIDGED_STUDIES`. `@pond-ts/process` is an
+  optional peer, needed for types only. A test runs all 108 through a host
+  request and checks each column cell for cell against a direct study call.
+
+### Changed
+
+- **`@pond-ts/process`: a fact on an intraday row now carries its time.** The
+  folds' `at` (and `shape`'s points) used to print the UTC day only, so an
+  answer on 5-minute bars read `2026-11-07` with no time. A row on midnight UTC
+  still prints `YYYY-MM-DD`; any other row prints the UTC instant
+  (`2026-11-07T14:35:00Z`). Daily bars stamped at midnight UTC read exactly as
+  before; daily bars stamped at another hour now show it.
+
+### Added
+
 - **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
   `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
   stretch's moving pace with the model named (`'acsm-running'`, the ACSM
