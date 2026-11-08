@@ -322,6 +322,44 @@ describe('summary folds', () => {
     expect(facts['p100']!['value']).toBe(4);
   });
 
+  it('percentile matches a full sort on ties, runs, gaps and signed zeros', () => {
+    // It selects two order statistics instead of sorting; these are the
+    // inputs that break a careless partition.
+    let seed = 11;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const shapes: ((i: number, n: number) => number | undefined)[] = [
+      () => Math.floor(rnd() * 3), // heavy ties
+      (i) => i, // already sorted
+      (i, n) => n - i, // reversed
+      () => (rnd() < 0.3 ? undefined : rnd() * 10 - 5), // gaps
+      () => (rnd() < 0.5 ? 0 : -0), // only zeros
+    ];
+    for (const [s, shape] of shapes.entries()) {
+      const n = 257;
+      const xs = Array.from({ length: n }, (_, i) => shape(i, n));
+      const sorted = xs
+        .filter((x): x is number => x !== undefined)
+        .sort((a, b) => a - b);
+      for (const q of [0, 5, 37.5, 50, 95, 100]) {
+        const { facts } = ask(
+          series(xs.map((x) => [x, undefined])),
+          { p: { op: 'percentile', params: { q }, in: ['close'] } },
+          ['p'],
+        );
+        const rank = (q / 100) * (sorted.length - 1);
+        const lo = Math.floor(rank);
+        const hi = Math.ceil(rank);
+        const want = sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (rank - lo);
+        const got = facts['p']!['value'] as number;
+        expect(got, `shape ${s} q ${q}`).toBeCloseTo(want, 5);
+        expect(Object.is(got, -0), `shape ${s} q ${q} gives -0`).toBe(false);
+      }
+    }
+  });
+
   it('shareTrue, lastTrue and events read a signal as defined-and-non-zero', () => {
     const { facts } = ask(
       data,
