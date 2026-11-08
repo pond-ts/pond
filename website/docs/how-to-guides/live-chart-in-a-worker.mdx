@@ -39,9 +39,8 @@ numbers are in [section 8](#8-what-it-costs).
 
 :::note[Two things to know first]
 
-- **`pushSeries` needs a pond-ts release newer than 0.75.0.** Before that
-  release is out, build pond-ts from `main` (the example links the repo's
-  own copy).
+- **`pushSeries` needs pond-ts 0.76.0 or newer.** (The example links the
+  repo's own copy of pond-ts.)
 - **pond's charts can't run in a worker yet.** `LineChart` draws inside
   React and hands the canvas functions, which can't be sent to a worker.
   So this guide draws with its own code: about 100 lines for the line,

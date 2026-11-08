@@ -2,7 +2,7 @@
 id: python
 title: Python (pond_rs)
 sidebar_position: 1.5
-description: pond-rs from Python. Install from PyPI, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
+description: pond-rs from Python. Install with pip, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
 ---
 
 # Python (pond_rs)
@@ -24,6 +24,10 @@ pip install "pond-rs[polars]"  # plus polars; or [pandas], [pyarrow]
 import pond_rs                 # and imported as pond_rs
 ```
 
+If pip can't find `pond-rs` (it is not on PyPI yet), install it from the
+repository instead (needs Rust):
+`pip install "git+https://github.com/pond-ts/pond#subdirectory=crates/pond-py"`.
+
 - **Python 3.9 or newer.** There is one wheel per platform for every
   Python from 3.9 on: Linux (x86-64 and ARM, glibc 2.17 or newer), macOS
   (Intel and Apple silicon) and Windows (x86-64). Elsewhere pip builds it
@@ -32,8 +36,8 @@ import pond_rs                 # and imported as pond_rs
   `to_polars()` needs polars, `to_pyarrow()` needs pyarrow, and
   `to_pandas()` needs pandas 2.2+ and pyarrow; the extras above install
   them.
-- **Versions** follow pond-ts: `pond_rs` 0.75.0 is released with pond-ts
-  0.75.0 and gives the same answers. `pond_rs.__version__` says which you
+- **Versions** follow pond-ts: `pond_rs` 0.76.0 is released with pond-ts
+  0.76.0 and gives the same answers. `pond_rs.__version__` says which you
   have.
 - **Type hints** for every method ship in the package, so an editor
   completes method and option names.

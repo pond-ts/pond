@@ -82,7 +82,11 @@ export function parseFit(
   const cadence: number[] = [];
   const temperatureC: number[] = [];
   const distanceMeters: number[] = [];
+  const groundContactMs: number[] = [];
+  const verticalOscillationMm: number[] = [];
   const epochMs: number[] = [];
+  let hasGct = false;
+  let hasVo = false;
   let hasEle = false;
   let hasHr = false;
   let hasWatts = false;
@@ -110,12 +114,24 @@ export function parseFit(
     const p = num(r.power);
     watts.push(p ?? NaN);
     if (p != null) hasWatts = true;
-    const c = num(r.cadence);
+    // fractional_cadence carries the part of a cycle the whole-number field
+    // can't (on foot, 85.5 cycles is 171 steps per minute)
+    const whole = num(r.cadence);
+    const c =
+      whole === undefined
+        ? undefined
+        : whole + (num(r.fractional_cadence) ?? 0);
     cadence.push(c ?? NaN);
     if (c != null) hasCadence = true;
     const t = num(r.temperature);
     temperatureC.push(t ?? NaN);
     if (t != null) hasTemp = true;
+    const gct = num(r.stance_time);
+    groundContactMs.push(gct ?? NaN);
+    if (gct != null) hasGct = true;
+    const vo = num(r.vertical_oscillation);
+    verticalOscillationMm.push(vo ?? NaN);
+    if (vo != null) hasVo = true;
     const d = num(r.distance);
     distanceMeters.push(d ?? NaN);
     if (d != null) hasDist = true;
@@ -140,6 +156,8 @@ export function parseFit(
   if (hasWatts) streams.watts = watts;
   if (hasCadence) streams.cadence = cadence;
   if (hasTemp) streams.temperatureC = temperatureC;
+  if (hasGct) streams.groundContactMs = groundContactMs;
+  if (hasVo) streams.verticalOscillationMm = verticalOscillationMm;
   const name = options.name ?? 'Untitled';
   const sportType = options.sportType ?? fitSport(data) ?? 'Unknown';
   // An open water swim: the watch gets a fix only when the wrist leaves the
@@ -364,6 +382,7 @@ function projectLaps(raw: FitLap[]): Lap[] {
         totalWorkKj: workJ != null ? workJ / 1000 : undefined,
         calories: num(l.total_calories),
         elevationGainMeters: num(l.total_ascent),
+        intensity: typeof l.intensity === 'string' ? l.intensity : undefined,
       }),
     );
     startDistanceMeters += distanceMeters;
