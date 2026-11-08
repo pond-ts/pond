@@ -687,7 +687,9 @@ To cut a release from `main`:
    is not optional, and it is easy to miss. Most cross-package references are
    **`peerDependencies`** (not `dependencies`), and they live in **five**
    manifests: `react`, `charts`, `fit`, `financial`, `process` all peer on
-   `pond-ts`, and `charts` additionally peers on `@pond-ts/react`. There is
+   `pond-ts`, `charts` additionally peers on `@pond-ts/react`, and `financial`
+   additionally peers (optionally, for `@pond-ts/financial/process`) on
+   `@pond-ts/process`. There is
    also one **`devDependency`** — `financial` on `@pond-ts/process`, for the
    catalog's cross-package round-trip test — so do not sweep by field name.
    The grep below is by range and catches every kind:

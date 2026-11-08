@@ -1237,6 +1237,19 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
+- **[PND-PROCWINDOW]** — A date window on a request (`from` / `to`, or
+  "today" / "last N sessions"), reading enough earlier rows that every step's
+  warm-up is still right. Blocks 7 of the 48 agent questions in the
+  [finance graph catalogue](docs/plans/PND_PROCESS_PLAN.md#pnd-prockit--finance-kit-for-an-mcp-server).
+  A design call: the host deliberately does not window today.
+- **[PND-PROCMULTI]** — Let a wire request name several datasets plus a join
+  policy, so an agent can ask for beta, a pair ratio or a spread. The join
+  node exists ([PND-PROCJOIN]) but only `bind()` reaches it; `Host.add` takes
+  one series and `from` is one name. Blocks 6 of the 48.
+- **[PND-PROCFAN]** — Roll-ups that change the row count (weekly bars, monthly
+  tables, group by weekday) and one question run across a set of tickers with
+  rank, count and group — the Spark-like asks. Blocks the last 11 of the 48;
+  may belong in a layer above process rather than inside it.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —

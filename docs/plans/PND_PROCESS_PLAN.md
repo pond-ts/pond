@@ -1968,3 +1968,81 @@ open; the text below is the entry as it read before the cleanup.
   critical path, polars-mt territory), is the rest of this ticket. Full
   assessment:
   [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+
+### [PND-PROCKIT] — Finance kit for an MCP server
+
+**Why.** Peter, 2026-11-08: the process library is going to carry financial
+operations, asked for by agents through an MCP server. A catalogue of 48
+realistic agent questions, each written as a graph
+([finance-process-graphs-2026-11.md](../notes/finance-process-graphs-2026-11.md)),
+found 8 expressible with the four standard folds and the study catalog, 16
+blocked only by pieces every server would write for itself, and 24 blocked by
+the library's shape (no date window, no row-count change, one dataset per
+request, no fan-out across tickers). Peter chose to ship the 16's pieces
+first: no design change, and every later step needs them.
+
+**Outcome (shipped).** Three opt-in sets:
+
+- `BASIC_OPS` (`plan/basic-ops.ts`): `add`, `subtract`, `multiply`, `divide`,
+  `scale`, `shift`, `compare`, `compareColumns`, `and`, `or`, `cumulative`,
+  `hold`.
+- `SUMMARY_FOLDS` (`plan/summary-folds.ts`): `mean`, `stdev`, `sum`, `count`,
+  `percentile`, `shareTrue`, `lastTrue`, `lastChange`, `events`, `meanWhere`,
+  `change`.
+- `studyOps()` in `@pond-ts/financial/process`: the catalog bridge, with
+  params, which had lived only in `catalog-process.test.ts` with `params: {}`.
+
+Plus a behaviour change: a fact on an intraday series now prints the UTC
+instant, not just the day (intraday answers had no time). The format is
+chosen per series, not per row, so an intraday bar on 00:00 UTC does not
+print as a bare date beside instants (Layer-2 review).
+
+Decisions, with the reasoning:
+
+- **Not pre-registered.** `createRegistry()` feeds `describe()` and
+  `toJsonSchema()`, which a consumer hands to a model; 23 new entries would
+  change every existing consumer's prompt. A loop of `define` opts in.
+- **A signal is a number**, true where defined and non-zero. Comparisons write
+  1/0, so they chain into `and`/`or`, into `meanWhere` (where a 1/0 source is a
+  hit rate) and into the event folds, without a boolean column kind.
+- **`stdev` is the population figure and `percentile` is linear in `q` 0–100**,
+  matching pond's reducers, so a fact and an `aggregate` agree. A Sharpe ratio
+  over daily returns wants the sample figure; at the hundreds of rows such
+  questions use, the difference is under 1%, and it is named in the summary.
+- **`shift` declares only its backward reach** as `lookback`. A negative shift
+  reads rows after each row, which `requiredHistory` cannot express; a caller
+  slicing a tail for live use would lose those rows' answers, which is the
+  honest result (the future is not there yet).
+- **`cumulative` and `hold` declare no lookback**: their reach is unbounded,
+  and unknown is the documented answer for that.
+- **Bridge: a required tuning param takes its catalog `example` as default.**
+  Process needs a default; the value lands in the spec id and `explain`, so it
+  is never hidden. **Not for an instrument setting** (Layer-2 review):
+  `swingIndex` / `accumulativeSwingIndex` `limit` (the limit move) and
+  `tradeVolumeIndex` `minTick` (the tick size) have no value right for every
+  market, so those three are left out rather than run against an invented
+  contract spec. A server that knows its instrument can write that one op
+  itself. Optional params (only `balanceOfPower.period`) are dropped
+  with the params that `require` them. Output columns are named by the spec id
+  so a study's default name cannot collide with a source column.
+  `anchoredVwap` is left out (an instant is not a param kind); all four are
+  listed in `UNBRIDGED_STUDIES`; `pivotPoints`' camarilla `R4`/`S4` are not reachable
+  (only the default method's seven outputs are declared).
+- **`@pond-ts/process` is an optional peer of `@pond-ts/financial`**, types
+  only; nothing in the bridge imports it at run time.
+
+**Perf** (`scripts/perf-kit.mjs`, 1M one-minute bars, per-node ms from the
+host's own badge, median of 5, cold host). First version → shipped:
+
+| Node                                       | First   | Shipped | What changed                                                                                                                               |
+| ------------------------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `add` / `subtract` / `multiply` / `divide` | 25–31   | 4–7     | one loop per op, not a shared loop calling a callback (megamorphic); hand the buffer to `Float64Column` instead of `packColumn` copying it |
+| `compare` / `compareColumns`               | 17 / 29 | 11 / 13 | the same, plus branch-free masking (`+(a > b) + (a − a) + (b − b)`)                                                                        |
+| `and` / `or`                               | 42 / 37 | 22 / 18 | the same; the op alone is 7.7 ms, the rest is the graph appending two step outputs to the series first                                     |
+| `events`                                   | 36      | 9       | count, then date only the newest `limit`                                                                                                   |
+| `shareTrue` / `meanWhere`                  | 17 / 23 | 10 / 14 | read the packed buffer directly, branch-free counts                                                                                        |
+| `percentile`                               | 163     | 142     | typed buffer instead of a boxed array before the sort                                                                                      |
+| `extremes` (unchanged floor)               | 19      | 14      | — run-to-run noise is about ±4 ms                                                                                                          |
+
+**Left open** as PLAN tasks: [PND-PROCWINDOW], [PND-PROCMULTI],
+[PND-PROCFAN].
