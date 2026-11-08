@@ -492,3 +492,79 @@ describe('a worked agent question', () => {
     expect(fact['value']).toBeCloseTo((-100 / 11 + 100 / 3) / 2, 5);
   });
 });
+
+describe('review findings', () => {
+  const boolSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'flag', kind: 'boolean', required: false },
+  ] as const;
+
+  it('a boolean column reads as 1/0 in steps and folds alike', () => {
+    const flags = [true, false, true, null, true];
+    const data = TimeSeries.fromJSON({
+      name: 'flags',
+      schema: boolSchema,
+      rows: flags.map((f, i) => [T0 + i * DAY, f]),
+    } as never);
+    const host = createHost({ registry: kit() }).add('f', data);
+    const result = host.run({
+      from: 'f',
+      nodes: {
+        direct: { op: 'shareTrue', in: ['flag'] },
+        tested: {
+          op: 'compare',
+          params: { test: 'equal', value: 1 },
+          in: ['flag'],
+        },
+        viaStep: { op: 'shareTrue', in: ['tested'] },
+      },
+      outputs: { direct: { on: 'direct' }, viaStep: { on: 'viaStep' } },
+    } as never);
+    const byName = Object.fromEntries(result.facts.map((f) => [f.name, f]));
+    expect(byName['direct']).toMatchObject({ true: 3, of: 4 });
+    expect(byName['viaStep']).toMatchObject({ true: 3, of: 4 });
+  });
+
+  it('cumulative product that overflows and meets a 0 stays a gap, never restarts', () => {
+    const data = series([
+      [1e200, 0],
+      [1e200, 0],
+      [0, 0],
+      [5, 0],
+    ]);
+    const { result } = ask(
+      data,
+      { p: { op: 'cumulative', params: { how: 'product' }, in: ['close'] } },
+      ['p'],
+    );
+    // Infinity is a missing cell, and Infinity × 0 is NaN: both gaps.
+    expect(cells(result, 'p')).toEqual([
+      1e200,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('an intraday row on 00:00 UTC still prints its time, so one list never mixes formats', () => {
+    const hourly = series(
+      [
+        [1, 1],
+        [2, 1],
+        [3, 1],
+      ],
+      60 * 60_000,
+      Date.UTC(2026, 0, 5, 23, 0),
+    );
+    const { facts } = ask(hourly, { e: { op: 'events', in: ['other'] } }, [
+      'e',
+    ]);
+    expect(facts['e']!['at']).toEqual([
+      '2026-01-05T23:00:00Z',
+      '2026-01-06T00:00:00Z',
+      '2026-01-06T01:00:00Z',
+    ]);
+    // A list of dates carries no price unit.
+    expect(facts['e']!['unit']).toBe('dates');
+  });
+});

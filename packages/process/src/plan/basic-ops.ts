@@ -15,7 +15,8 @@
  *
  * ## Shared rules
  *
- * - A gap in any input is a gap in the output. Nothing is guessed.
+ * - A gap in any input is a gap in the output. Nothing is guessed. The
+ *   one exception is `hold`, whose job is to carry a value over gaps.
  * - A non-finite result (`1 / 0`) is a gap, because a column cannot hold
  *   one ([PND-PROCCOL] packs non-finite cells as missing).
  * - A **signal** is a number read as true when it is defined and non-zero.
@@ -39,7 +40,14 @@ export function readNumbers(ctx: OpContext, role: string): Float64Array {
   const read = (column as unknown as { read(i: number): unknown }).read;
   for (let i = 0; i < length; i += 1) {
     const v = read.call(column, i);
-    out[i] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+    // A boolean column reads as 1/0, as the folds read it — otherwise
+    // `compare(flag)` saw every cell as a gap while `shareTrue(flag)` counted it.
+    out[i] =
+      typeof v === 'number' && Number.isFinite(v)
+        ? v
+        : typeof v === 'boolean'
+          ? +v
+          : NaN;
   }
   return out;
 }
@@ -215,7 +223,7 @@ export const scale: OpDef = {
   name: 'scale',
   family: 'arithmetic',
   summary:
-    'source × factor + offset. ×100 turns a ratio into percent; offset −1 turns a ratio into a change; factor √252 annualises a daily figure.',
+    'source × factor + offset. ×100 turns a ratio into percent; offset −1 turns a ratio into a change; factor √252 annualises a daily figure. Keeps the input’s unit label, which it cannot know the factor changes.',
   params: {
     factor: num({ default: 1, suggest: [-100, 100] }),
     offset: num({ default: 0, suggest: [-100, 100] }),
@@ -347,13 +355,17 @@ export const cumulative: OpDef = {
             : (acc, x) => acc + x;
     const out = new Float64Array(v.length);
     let acc = NaN;
+    let started = false;
     for (let i = 0; i < v.length; i += 1) {
       const x = v[i]!;
       if (!Number.isFinite(x)) {
         out[i] = NaN;
         continue;
       }
-      acc = Number.isNaN(acc) ? x : step(acc, x);
+      // `started`, not `isNaN(acc)`: a product that overflows to Infinity
+      // and then meets a 0 is NaN, and must stay so rather than restart.
+      acc = started ? step(acc, x) : x;
+      started = true;
       out[i] = acc;
     }
     return seal(out);

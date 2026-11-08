@@ -99,21 +99,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 - **`@pond-ts/financial/process`: the study catalog as process steps.**
   `studyOps({ sessions? })` returns every study as an `OpDef` with its params
   and ranges, input roles and output units — the bridge that until now lived
-  only in a test, with no params. A required param takes its catalog
-  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`;
-  `anchoredVwap` is left out (its anchor is an instant, which a process param
-  cannot be) and listed in `UNBRIDGED_STUDIES`. `@pond-ts/process` is an
-  optional peer, needed for types only. A test runs all 108 through a host
-  request and checks each column cell for cell against a direct study call.
+  only in a test, with no params. A required tuning param takes its catalog
+  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`.
+  Four are left out and listed in `UNBRIDGED_STUDIES` with the reason:
+  `anchoredVwap` (its anchor is an instant, which a process param cannot be)
+  and `swingIndex`, `accumulativeSwingIndex`, `tradeVolumeIndex` (each needs
+  an instrument setting — limit move, tick size — with no honest default).
+  `@pond-ts/process` is an optional peer, needed for types only. A test runs
+  all 105 through a host request and checks each column cell for cell
+  against a direct study call.
 
 ### Changed
 
 - **`@pond-ts/process`: a fact on an intraday row now carries its time.** The
   folds' `at` (and `shape`'s points) used to print the UTC day only, so an
-  answer on 5-minute bars read `2026-11-07` with no time. A row on midnight UTC
-  still prints `YYYY-MM-DD`; any other row prints the UTC instant
-  (`2026-11-07T14:35:00Z`). Daily bars stamped at midnight UTC read exactly as
-  before; daily bars stamped at another hour now show it.
+  answer on 5-minute bars read `2026-11-07` with no time. The format is chosen
+  per series: a daily series (first and last rows on midnight UTC, first step
+  a whole number of days) still prints `YYYY-MM-DD`; anything finer prints the
+  UTC instant (`2026-11-07T14:35:00Z`) on every row, midnight included. Daily
+  bars stamped at midnight UTC read exactly as before; daily bars stamped at
+  another hour now show it.
 
 ### Added
 

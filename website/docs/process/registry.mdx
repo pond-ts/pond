@@ -183,11 +183,13 @@ before a row only.
 
 **`studyOps`** (`@pond-ts/financial/process`) bridges the study catalog.
 A study's column inputs become input roles in catalog order, so an ATR
-step lists `['high', 'low', 'close']`. A param the study requires takes
-its catalog example as the default (`sma` is period 20) and lands in the
-spec id like any default. `sessions` adds the two session-anchored
-studies; `anchoredVwap` is left out, because its anchor is an instant and
-a param cannot be one (`UNBRIDGED_STUDIES` says so). No lookback is
+step lists `['high', 'low', 'close']`. A tuning param the study requires
+takes its catalog example as the default (`sma` is period 20) and lands in
+the spec id like any default. `sessions` adds the two session-anchored
+studies. Four are left out, each listed in `UNBRIDGED_STUDIES` with the
+reason: `anchoredVwap`, because its anchor is an instant and a param cannot
+be one, and three studies that need an instrument setting (a limit move, a
+tick size) that no default would get right. No lookback is
 declared, so a plan of studies reports its history as unknown.
 
 ## Describing the vocabulary

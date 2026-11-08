@@ -22,7 +22,7 @@
  */
 
 import { int, num } from './params.js';
-import { read, round, stamp } from './folds.js';
+import { read, round, stamper } from './folds.js';
 import type { FoldDef, Params } from './types.js';
 
 const source = [{ role: 'source' }] as const;
@@ -222,9 +222,10 @@ export const lastTrue: FoldDef = {
   label: (_p, inputs) => `last time ${inputs}`,
   fold: (ctx) => {
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     for (let i = v.length - 1; i >= 0; i -= 1) {
       if (v.defined(i) && v.value(i) !== 0) {
-        return { value: round(v.value(i)), at: stamp(ctx.at(i)) };
+        return { value: round(v.value(i)), at: fmt(ctx.at(i)) };
       }
     }
     return { value: null };
@@ -243,6 +244,7 @@ export const lastChange: FoldDef = {
   label: (_p, inputs) => `last change of ${inputs}`,
   fold: (ctx) => {
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     let i = v.length - 1;
     while (i >= 0 && !v.defined(i)) i -= 1;
     if (i < 0) return { value: null };
@@ -253,7 +255,7 @@ export const lastChange: FoldDef = {
       if (v.value(j) !== current) {
         return {
           value: round(current),
-          since: stamp(ctx.at(since)),
+          since: fmt(ctx.at(since)),
           previous: round(v.value(j)),
         };
       }
@@ -262,7 +264,7 @@ export const lastChange: FoldDef = {
     // Never changed: `since` is the first defined row, nothing before it.
     return {
       value: round(current),
-      since: stamp(ctx.at(since)),
+      since: fmt(ctx.at(since)),
       previous: null,
     };
   },
@@ -278,10 +280,11 @@ export const events: FoldDef = {
     limit: int({ min: 1, max: 400, suggest: [5, 100], default: 50 }),
   },
   inputs: source,
-  unit: 'inherit',
+  unit: 'dates',
   label: (p: Params, inputs) => `dates of ${inputs} (≤${String(p['limit'])})`,
   fold: (ctx) => {
     const v = numbers(ctx, 'source');
+    const fmt = stamper(ctx, v.length);
     const limit = ctx.params['limit'] as number;
     // Count, then date only the newest `limit`: a token budget for the
     // reader, and no array of every hit on a signal true half the time.
@@ -296,7 +299,7 @@ export const events: FoldDef = {
     return {
       count: total,
       shown: hits.length,
-      at: hits.map((i) => stamp(ctx.at(i))),
+      at: hits.map((i) => fmt(ctx.at(i))),
     };
   },
 };
@@ -348,6 +351,7 @@ export const change: FoldDef = {
   label: (_p, inputs) => `change in ${inputs}`,
   fold: (ctx) => {
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     let first = -1;
     for (let i = 0; i < v.length; i += 1) {
       if (v.defined(i)) {
@@ -361,8 +365,8 @@ export const change: FoldDef = {
     const a = v.value(first);
     const b = v.value(last);
     return {
-      first: { value: round(a), at: stamp(ctx.at(first)) },
-      last: { value: round(b), at: stamp(ctx.at(last)) },
+      first: { value: round(a), at: fmt(ctx.at(first)) },
+      last: { value: round(b), at: fmt(ctx.at(last)) },
       change: round(b - a),
       percent: a === 0 ? null : round((b / a - 1) * 100),
     };

@@ -39,16 +39,33 @@ function registry(): Registry {
 }
 
 describe('studyOps', () => {
-  it('bridges every study except anchoredVwap, and drops the session pair without sessions', () => {
+  it('bridges every study but the four it cannot express, and drops the session pair without sessions', () => {
+    const left = [
+      'anchoredVwap',
+      'swingIndex',
+      'accumulativeSwingIndex',
+      'tradeVolumeIndex',
+    ];
+    expect(Object.keys(UNBRIDGED_STUDIES).sort()).toEqual([...left].sort());
     const all = studyOps({ sessions }).map((d) => d.name);
-    expect(all).toHaveLength(STUDIES.length - 1);
-    expect(all).not.toContain('anchoredVwap');
-    expect(Object.keys(UNBRIDGED_STUDIES)).toEqual(['anchoredVwap']);
+    expect(all).toHaveLength(STUDIES.length - left.length);
+    for (const n of left) expect(all).not.toContain(n);
 
     const plain = studyOps().map((d) => d.name);
-    expect(plain).toHaveLength(STUDIES.length - 3);
+    expect(plain).toHaveLength(STUDIES.length - left.length - 2);
     expect(plain).not.toContain('sessionVwap');
     expect(plain).not.toContain('pivotPoints');
+  });
+
+  it('never invents an instrument setting: the limit-move and tick-size studies are refused, not defaulted', () => {
+    for (const name of [
+      'swingIndex',
+      'accumulativeSwingIndex',
+      'tradeVolumeIndex',
+    ]) {
+      const d = STUDIES.find((s) => s.name === name)!;
+      expect(() => studyOp(d, { sessions }), name).toThrow(/no honest default/);
+    }
   });
 
   it('study names are unique and do not collide with the basic steps or folds', () => {
@@ -87,7 +104,7 @@ describe('studyOps', () => {
     const host = createHost({ registry: reg }).add('bars', bars);
     let compared = 0;
     for (const d of STUDIES) {
-      if (d.anchor === 'time') continue;
+      if (Object.hasOwn(UNBRIDGED_STUDIES, d.name)) continue;
       const op = reg.get(d.name) as ReturnType<typeof studyOp>;
       const inputs = d.inputs.map((i) => inputColumn(d, i.role));
       const result = host.run({

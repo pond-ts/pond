@@ -1992,8 +1992,10 @@ first: no design change, and every later step needs them.
 - `studyOps()` in `@pond-ts/financial/process`: the catalog bridge, with
   params, which had lived only in `catalog-process.test.ts` with `params: {}`.
 
-Plus a behaviour change: a fact on a row that is not midnight UTC now prints
-its UTC instant, not just the day (intraday answers had no time).
+Plus a behaviour change: a fact on an intraday series now prints the UTC
+instant, not just the day (intraday answers had no time). The format is
+chosen per series, not per row, so an intraday bar on 00:00 UTC does not
+print as a bare date beside instants (Layer-2 review).
 
 Decisions, with the reasoning:
 
@@ -2013,13 +2015,18 @@ Decisions, with the reasoning:
   honest result (the future is not there yet).
 - **`cumulative` and `hold` declare no lookback**: their reach is unbounded,
   and unknown is the documented answer for that.
-- **Bridge: a required study param takes its catalog `example` as default.**
+- **Bridge: a required tuning param takes its catalog `example` as default.**
   Process needs a default; the value lands in the spec id and `explain`, so it
-  is never hidden. Optional params (only `balanceOfPower.period`) are dropped
+  is never hidden. **Not for an instrument setting** (Layer-2 review):
+  `swingIndex` / `accumulativeSwingIndex` `limit` (the limit move) and
+  `tradeVolumeIndex` `minTick` (the tick size) have no value right for every
+  market, so those three are left out rather than run against an invented
+  contract spec. A server that knows its instrument can write that one op
+  itself. Optional params (only `balanceOfPower.period`) are dropped
   with the params that `require` them. Output columns are named by the spec id
   so a study's default name cannot collide with a source column.
-  `anchoredVwap` is left out (an instant is not a param kind) and listed in
-  `UNBRIDGED_STUDIES`; `pivotPoints`' camarilla `R4`/`S4` are not reachable
+  `anchoredVwap` is left out (an instant is not a param kind); all four are
+  listed in `UNBRIDGED_STUDIES`; `pivotPoints`' camarilla `R4`/`S4` are not reachable
   (only the default method's seven outputs are declared).
 - **`@pond-ts/process` is an optional peer of `@pond-ts/financial`**, types
   only; nothing in the bridge imports it at run time.

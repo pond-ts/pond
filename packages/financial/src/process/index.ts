@@ -27,10 +27,13 @@
  * - **Column inputs become input roles**, in the catalog's order, so an
  *   ATR spec lists `['high', 'low', 'close']`. A plan names every column
  *   explicitly; the catalog's column defaults are not applied.
- * - **A param with no default takes its catalog `example` as the default**
- *   (`sma`'s `period` is 20). Process requires every param to have one, and
- *   the default lands in the spec id and its explanation, so nothing is
- *   hidden from the agent.
+ * - **A tuning param with no default takes its catalog `example` as the
+ *   default** (`sma`'s `period` is 20). Process requires every param to
+ *   have one, and the default lands in the spec id and its explanation, so
+ *   nothing is hidden from the agent. **An instrument setting is not a
+ *   tuning param**: a swing index's limit move or a tick size has no value
+ *   that is right for every market, so the three studies that need one are
+ *   left out rather than run against an invented contract.
  * - **An `optional` param is left out**, with any param that `requires`
  *   it: process has no way to say "absent". Only `balanceOfPower` has one;
  *   its step is the raw per-bar ratio.
@@ -44,7 +47,8 @@
  *   the default method's seven outputs are declared, so those two are not
  *   reachable.
  * - **`anchoredVwap` is left out**: its anchor is an instant, and a process
- *   param can only be a number, a fixed choice or a flag.
+ *   param can only be a number, a fixed choice or a flag. Every study left
+ *   out is in {@link UNBRIDGED_STUDIES} with its reason.
  * - **No lookback is declared**, so `requiredHistory` reports a plan using
  *   these as unknown rather than guessing.
  */
@@ -73,6 +77,12 @@ export interface StudyOpsOptions {
 export const UNBRIDGED_STUDIES: Readonly<Record<string, string>> = {
   anchoredVwap:
     'its anchor is an instant, and a process param can only be a number, a fixed choice or a flag',
+  swingIndex:
+    "its `limit` is the instrument's limit move, which has no honest default and process cannot require",
+  accumulativeSwingIndex:
+    "its `limit` is the instrument's limit move, which has no honest default and process cannot require",
+  tradeVolumeIndex:
+    "its `minTick` is the instrument's tick size, which has no honest default and process cannot require",
 };
 
 function outletId(d: StudyDescriptor, output: StudyOutput): string {
@@ -112,9 +122,8 @@ export function studyOp(
   d: StudyDescriptor,
   options: StudyOpsOptions = {},
 ): OpDef {
-  if (d.anchor === 'time') {
-    throw new Error(`${d.name}: ${UNBRIDGED_STUDIES[d.name] ?? 'not bridged'}`);
-  }
+  const unbridged = UNBRIDGED_STUDIES[d.name];
+  if (unbridged !== undefined) throw new Error(`${d.name}: ${unbridged}`);
   if (d.anchor === 'session' && options.sessions === undefined) {
     throw new Error(
       `${d.name} needs sessions — pass studyOp(d, { sessions: calendar })`,
@@ -151,13 +160,13 @@ export function studyOp(
 /**
  * Every bridgeable study as a process op, in catalog order.
  *
- * `anchoredVwap` is always left out ({@link UNBRIDGED_STUDIES}); the two
+ * The {@link UNBRIDGED_STUDIES} are always left out; the two
  * session studies are left out unless `sessions` is given.
  */
 export function studyOps(options: StudyOpsOptions = {}): readonly OpDef[] {
   return STUDIES.filter(
     (d) =>
-      d.anchor !== 'time' &&
+      !Object.hasOwn(UNBRIDGED_STUDIES, d.name) &&
       (d.anchor !== 'session' || options.sessions !== undefined),
   ).map((d) => studyOp(d, options));
 }

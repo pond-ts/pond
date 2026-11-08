@@ -22,17 +22,31 @@ import type { FoldContext, FoldDef, Params } from './types.js';
 const DAY_MS = 86_400_000;
 
 /**
- * A fact's timestamp: the UTC day when the row sits on midnight UTC (a
- * daily bar), the full UTC instant otherwise.
+ * How a fold prints its timestamps: the UTC day for a **daily** series,
+ * the full UTC instant for anything finer.
  *
- * This used to be the day alone, always — so an intraday answer read
- * "2026-11-07" with no time, and an agent asking "when did VWAP cross?"
- * on 5-minute bars could not be told. Daily data reads exactly as before.
+ * This used to be the day alone, always, so an intraday answer read
+ * "2026-11-07" with no time. Deciding per series rather than per row is
+ * the point: an intraday bar that happens to sit on 00:00 UTC must still
+ * print its time, or one list mixes bare dates with instants. A series is
+ * daily when its first and last rows sit on midnight UTC and its first
+ * step is a whole number of days. O(1) — three timestamps.
  */
-export function stamp(t: number): string {
-  const iso = new Date(t).toISOString();
-  if (t % DAY_MS === 0) return iso.slice(0, 10);
-  return iso.endsWith('.000Z') ? `${iso.slice(0, 19)}Z` : iso;
+export function stamper(
+  ctx: FoldContext,
+  length: number,
+): (t: number) => string {
+  const first = length > 0 ? ctx.at(0) : 0;
+  const daily =
+    length === 0 ||
+    (first % DAY_MS === 0 &&
+      ctx.at(length - 1) % DAY_MS === 0 &&
+      (length < 2 || (ctx.at(1) - first) % DAY_MS === 0));
+  if (daily) return (t) => new Date(t).toISOString().slice(0, 10);
+  return (t) => {
+    const iso = new Date(t).toISOString();
+    return iso.endsWith('.000Z') ? `${iso.slice(0, 19)}Z` : iso;
+  };
 }
 
 /**
@@ -59,9 +73,9 @@ export const last: FoldDef = {
     // The fold that makes [PND-PROCCOL] worth doing: it reads one cell,
     // and on the boxed path it paid to densify all 500,000 first.
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v.defined(i))
-        return { value: round(v.value(i)), at: stamp(ctx.at(i)) };
+      if (v.defined(i)) return { value: round(v.value(i)), at: fmt(ctx.at(i)) };
     }
     return { value: null };
   },
@@ -79,6 +93,7 @@ export const extremes: FoldDef = {
   label: (_p, inputs) => `range of ${inputs}`,
   fold: (ctx) => {
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     let lo = Infinity;
     let hi = -Infinity;
     let loAt = -1;
@@ -97,8 +112,8 @@ export const extremes: FoldDef = {
     }
     if (loAt === -1) return { min: null, max: null };
     return {
-      min: { value: round(lo), at: stamp(ctx.at(loAt)) },
-      max: { value: round(hi), at: stamp(ctx.at(hiAt)) },
+      min: { value: round(lo), at: fmt(ctx.at(loAt)) },
+      max: { value: round(hi), at: fmt(ctx.at(hiAt)) },
     };
   },
 };
@@ -161,6 +176,7 @@ export const shape: FoldDef = {
   label: (p: Params, inputs) => `shape(${String(p['points'])}) of ${inputs}`,
   fold: (ctx) => {
     const v = read(ctx);
+    const fmt = stamper(ctx, v.length);
     const want = ctx.params['points'] as number;
     // `ceil`, not `floor`: `floor` rounds the stride DOWN, which rounds
     // the sample count UP — 200 points asked of 399 rows gave a stride
@@ -169,7 +185,7 @@ export const shape: FoldDef = {
     const step = Math.max(1, Math.ceil(v.length / want));
     const points: [string, number][] = [];
     for (let i = 0; i < v.length; i += step) {
-      if (v.defined(i)) points.push([stamp(ctx.at(i)), round(v.value(i))]);
+      if (v.defined(i)) points.push([fmt(ctx.at(i)), round(v.value(i))]);
     }
     return { points: points.length, series: points };
   },
