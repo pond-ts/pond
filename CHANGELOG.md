@@ -130,7 +130,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   over hills isn't marked `variable`. A `GradeCurve` (points of grade and
   factor, read in a straight line between them, with `toJSON` / `fromJSON`)
   can be passed wherever a model name can; the result then says `'curve'`
-  and carries it.
+  and carries it, so `GradeAdjustedPace.model` widens to
+  `GradeModel | 'curve'` (a `switch` over every model name needs the new
+  case).
 
 - **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
   `analysis.efforts.fromLaps()` reads the recorded laps (the device's

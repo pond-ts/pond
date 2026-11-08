@@ -81,6 +81,12 @@ describe('GradeCurve', () => {
         ]),
     ).toThrow();
     expect(() => new GradeCurve([{ grade: 0, factor: 0 }])).toThrow();
+    expect(() =>
+      GradeCurve.fromJSON({
+        points: [{ grade: 0, factor: 1 }],
+        fallback: 'nope' as never,
+      }),
+    ).toThrow();
     const back = GradeCurve.fromJSON(JSON.parse(JSON.stringify(c)));
     expect(back.name).toBe('mine');
     expect(back.fallback).toBe('acsm-running');
@@ -201,6 +207,57 @@ describe('history.analyze().pace.gradeCurve()', () => {
       .analyze()
       .pace.gradeCurve({ minWindows: 10 })!;
     expect(loose.bands.some((b) => b.grade === 0.2)).toBe(true);
+  });
+
+  it('settles when runs share only neighbouring bands', () => {
+    // Each run covers two neighbouring bands, so the curve is linked up the
+    // hill one band at a time: slow for alternating rounds to settle.
+    const chain = Array.from({ length: 9 }, (_, i) =>
+      digestOf(
+        `c${i}`,
+        `2026-05-${String(i + 1).padStart(2, '0')}`,
+        0.4 + i * 0.03,
+        [i * 0.02, (i + 1) * 0.02],
+      ),
+    );
+    const fit = TrainingHistory.of(chain).analyze().pace.gradeCurve()!;
+    for (const b of fit.bands) expect(b.factor).toBeCloseTo(truth(b.grade), 6);
+    expect(fit.bands.at(-1)!.grade).toBe(0.18);
+  });
+
+  it('drops runs that add nothing and bands not linked to the flat', () => {
+    const fit = TrainingHistory.of([
+      ...runs,
+      // One band only: its own scale absorbs it.
+      digestOf('lone', '2026-05-11', 0.5, [0.04]),
+      // Shares no band with the rest, so nothing ties it to the flat.
+      digestOf('island', '2026-05-12', 0.5, [0.12, 0.14]),
+      digestOf('island2', '2026-05-13', 0.7, [0.12, 0.14]),
+    ])
+      .analyze()
+      .pace.gradeCurve()!;
+    expect(fit.activities).not.toContain('lone');
+    expect(fit.activities).not.toContain('island');
+    expect(fit.bands.some((b) => b.grade === 0.12)).toBe(false);
+    expect(fit.bands.find((b) => b.grade === 0.04)!.activities).toBe(3);
+  });
+
+  it('reports how far the halves disagree', () => {
+    // Every other run finds climbs 20 % harder.
+    const noisy = runs.slice(0, 4).map((d, i) =>
+      i % 2
+        ? {
+            ...d,
+            grades: d.grades!.map((b) => ({
+              ...b,
+              beats: b.grade > 0 ? b.beats * 1.2 : b.beats,
+            })),
+          }
+        : d,
+    );
+    const fit = TrainingHistory.of(noisy).analyze().pace.gradeCurve()!;
+    const up = fit.bands.find((b) => b.grade === 0.04)!;
+    expect(up.spread).toBeGreaterThan(0.1);
   });
 
   it('is null without flat ground or runs with grades', () => {

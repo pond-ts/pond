@@ -32,7 +32,7 @@ console.log(JSON.stringify(d).length, 'bytes');
 1 run null
 { elapsed: 3083, moving: 2947 } 9702.2 18
 [ 400, 804.672, 1000, 1609.344, 3218.688, 5000 ]
-1024 bytes
+1023 bytes
 ```
 
 A digest holds the clocks, distance and ascent; heart rate as seconds at each
@@ -302,7 +302,7 @@ for (const b of run.digest().grades ?? [])
 ```
 
 ```text output
-0 70 0.713
+0 68 0.716
 ```
 
 The interval run is on flat ground, so all 70 of its steady minutes sit in
@@ -316,19 +316,23 @@ minutes (20 by default) across the history; past them the curve follows the
 fallback model's shape (ACSM unless you name another).
 
 ```ts
-const fit = onFoot.pace.gradeCurve({ minWindows: 5 });
-for (const b of fit?.bands ?? [])
-  console.log(b.grade, b.factor.toFixed(2), b.windows, b.activities);
+const fit = onFoot.pace.gradeCurve();
+console.log(fit);
 ```
 
 ```text output
-0 1.00 70 1
+null
 ```
 
-With one flat run there is only the flat band, which is 1 by definition, and
-the rest of the curve is the fallback's. A history of hilly runs fills in the
-climbs and descents. Each band says how many minutes it rests on and how many
-runs they came from.
+That is null here: the interval run only has flat minutes, and a run with a
+single band says nothing about the curve (its own scale takes it all). A
+history of hilly runs fills in the climbs and descents. Runs and bands that
+share nothing with the flat, through runs that cover both, are left out too,
+since their factors can't be told apart from a run's scale.
+
+When it fits, it gives `{ curve, bands, activities }`, the bands lowest grade
+first with their `factor`. Each band says how many minutes it rests on and how
+many runs they came from.
 `spread` is how far apart the factor comes out when fitted from every other
 run, two halves of the history: a guide to how settled the band is. Hundreds of
 runs give a steadier curve than a handful; climbs settle more slowly than
@@ -358,6 +362,10 @@ curve personal 5:02/km
 1.225
 ```
 
-Between points the curve is read in a straight line. Store it with
+Between points the curve is read in a straight line. Past its ends it follows
+the fallback's shape; ACSM, the default, treats every descent as level, so a
+fitted curve keeps its steepest fitted descent's factor below that. A curve
+made by hand should include grade 0, or flat ground is read from the fallback
+too. Store it with
 `JSON.stringify` beside your athlete settings, so it isn't fitted again each
 time.

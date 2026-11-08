@@ -51,7 +51,11 @@ export interface GradeCurveFit {
 
 /** Steady minutes a run needs to count. */
 const MIN_RUN_WINDOWS = 20;
-const ITERATIONS = 25;
+/** Alternating rounds stop once no factor moves more than this (in log
+ *  units), or at the cap. Runs that share few bands link the curve only
+ *  loosely and take many rounds to settle. */
+const TOLERANCE = 1e-9;
+const MAX_ROUNDS = 20000;
 
 interface Cell {
   run: number;
@@ -75,7 +79,8 @@ function solve(
     scale[r] = mean(flat.length ? flat : own, (c) => c.y);
   }
   let f = new Map<number, number>();
-  for (let it = 0; it < ITERATIONS; it++) {
+  for (let it = 0; it < MAX_ROUNDS; it++) {
+    const before = f;
     const sum = new Map<number, [number, number]>();
     for (const c of cells) {
       const s = sum.get(c.band) ?? [0, 0];
@@ -93,6 +98,10 @@ function solve(
     }
     for (let r = 0; r < runs; r++)
       if (acc[r]![1]! > 0) scale[r] = acc[r]![0]! / acc[r]![1]!;
+    let moved = 0;
+    for (const [k, v] of f)
+      moved = Math.max(moved, Math.abs(v - (before.get(k) ?? Infinity)));
+    if (moved < TOLERANCE) break;
   }
   return f;
 }
@@ -106,34 +115,68 @@ function mean<T>(xs: readonly T[], f: (x: T) => number): number {
 const BAND = 0.02;
 const keyOf = (grade: number) => Math.round(grade / BAND);
 
-/** Cells for the runs given, keeping bands with at least `min` minutes. */
+/**
+ * Cells for the runs given: one per run and band, keeping bands with at
+ * least `min` minutes. A run with a single band says nothing about the
+ * curve (its own scale absorbs it), so it is dropped; so are runs and bands
+ * not linked to flat ground through runs they share, since their factors
+ * couldn't be told apart from a run's scale.
+ */
 function cellsOf(
   runs: readonly ActivityDigest[],
   min: number,
 ): { cells: Cell[]; windows: Map<number, number>; seen: Map<number, number> } {
+  let cells: Cell[] = [];
+  runs.forEach((d, run) => {
+    for (const b of d.grades!)
+      if (b.metres > 0 && b.beats > 0)
+        cells.push({
+          run,
+          band: keyOf(b.grade),
+          y: Math.log(b.beats / b.metres),
+          w: b.windows,
+        });
+  });
+  for (;;) {
+    const windows = new Map<number, number>();
+    for (const c of cells)
+      windows.set(c.band, (windows.get(c.band) ?? 0) + c.w);
+    let kept = cells.filter((c) => windows.get(c.band)! >= min);
+    const perRun = new Map<number, number>();
+    for (const c of kept) perRun.set(c.run, (perRun.get(c.run) ?? 0) + 1);
+    kept = kept.filter((c) => perRun.get(c.run)! >= 2);
+    kept = linkedToFlat(kept);
+    if (kept.length === cells.length) break;
+    cells = kept;
+  }
   const windows = new Map<number, number>();
   const seen = new Map<number, number>();
-  for (const d of runs)
-    for (const b of d.grades!) {
-      const k = keyOf(b.grade);
-      windows.set(k, (windows.get(k) ?? 0) + b.windows);
-      seen.set(k, (seen.get(k) ?? 0) + 1);
-    }
-  const cells: Cell[] = [];
-  runs.forEach((d, run) => {
-    for (const b of d.grades!) {
-      const k = keyOf(b.grade);
-      if ((windows.get(k) ?? 0) < min || !(b.metres > 0) || !(b.beats > 0))
-        continue;
-      cells.push({
-        run,
-        band: k,
-        y: Math.log(b.beats / b.metres),
-        w: b.windows,
-      });
-    }
-  });
+  for (const c of cells) {
+    windows.set(c.band, (windows.get(c.band) ?? 0) + c.w);
+    seen.set(c.band, (seen.get(c.band) ?? 0) + 1);
+  }
   return { cells, windows, seen };
+}
+
+/** The cells reachable from the flat band, through runs and the bands they
+ *  share. */
+function linkedToFlat(cells: readonly Cell[]): Cell[] {
+  const bands = new Set<number>([0]);
+  const runs = new Set<number>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of cells) {
+      if (bands.has(c.band) && !runs.has(c.run)) {
+        runs.add(c.run);
+        grew = true;
+      }
+      if (runs.has(c.run) && !bands.has(c.band)) {
+        bands.add(c.band);
+        grew = true;
+      }
+    }
+  }
+  return cells.filter((c) => runs.has(c.run));
 }
 
 /** @internal */

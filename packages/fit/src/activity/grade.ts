@@ -49,9 +49,13 @@ export type GradeModel =
  *  metre at each grade, such as one fitted from an athlete's own history
  *  (`history.analyze().pace.gradeCurve()`). Between points it's read in a
  *  straight line. Past the first or last point it follows `fallback`'s
- *  shape, scaled to meet the end point. */
+ *  shape, scaled to meet the end point; ACSM (the default) is level on
+ *  every descent, so a curve holds its lowest point's factor below it.
+ *  Include a point at grade 0, or the flat is read from the fallback
+ *  too. */
 export class GradeCurve {
-  /** Shown in results, e.g. `'personal'`. */
+  /** A label for the curve, e.g. `'personal'`; results name a curve
+   *  `'curve'` and carry it, so this is `result.curve.name`. */
   readonly name: string;
   /** Grades as fractions (0.1 is 10 %), rising; factors positive. */
   readonly points: readonly { grade: number; factor: number }[];
@@ -81,6 +85,8 @@ export class GradeCurve {
     this.points = points.map((p) => ({ grade: p.grade, factor: p.factor }));
     this.name = options.name ?? 'curve';
     this.fallback = options.fallback ?? 'acsm-running';
+    if (!Object.prototype.hasOwnProperty.call(COST, this.fallback))
+      throw new RangeError(`unknown grade model ${String(this.fallback)}`);
     this.key = `curve#${GradeCurve.#next++}`;
   }
 
@@ -444,7 +450,9 @@ export function gradeBandsOf(prep: PreparedActivity): GradeBand[] | null {
     let steady = true;
     for (let i = s; i < s + WINDOW_S; i++) {
       const h = hr[i + HR_LAG_S]!;
-      if (!ok[i] || !Number.isFinite(g[i]!) || !(h > 0)) {
+      // The lagged heart rate must come from a moving second too, not from
+      // a stop or a gap where the last reading is held.
+      if (!ok[i] || !ok[i + HR_LAG_S] || !Number.isFinite(g[i]!) || !(h > 0)) {
         steady = false;
         break;
       }
