@@ -784,14 +784,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   finding 5), so both read the same file to the same schema. Until then they
   differ on every pyarrow / polars file (both mark fields nullable by
   default): pond-rs reads such columns as optional, pond-ts as required.
-- **[PND-ARROWTEXT]** — pond-ts `fromArrow` is slow on text columns: a
-  1M-row `Utf8` column takes ~500 ms to read (`ValueSeries.fromArrow`, the
-  axis alone ~8 ms). 345 ms of that is apache-arrow's own `toArray()`
-  turning each string into a JS string; the rest is pond's `readStrings`.
-  Reading the offsets and bytes directly (decoding each distinct string
-  once) may avoid most of it; not tried. A nullable number column adds
-  ~60 ms per 1M rows, cause not looked into. Found 2026-10-21 by the
-  pond-rs step 8i4 bench (pond-rs: 5 ms for the same table).
+- **[PND-ARROWNUM]** — the pond-rs step 8i4 bench saw a nullable number
+  column add ~60 ms per 1M rows to pond-ts `fromArrow`. Not reproduced on a
+  single-chunk `vectorFromArray` table (6.6 → 16 ms, 2026-10-22); the bench
+  read an IPC file, which may give a shape the bulk null-copy path declines
+  (`copyNumericWithNulls`) and so falls back to per-row `get`. Check with
+  that file before changing anything. Split out of [PND-ARROWTEXT].
 - **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
   even when the mapping leaves a gap (a non-finite result is stored as a
   gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
