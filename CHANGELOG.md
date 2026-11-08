@@ -79,6 +79,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
+  (number columns, count or duration windows), with the same answers bit for
+  bit. The range studies that stand on them speed up about 2×: at 1M bars
+  `donchian` 193 → 79 ms, `williamsR` 199 → 82 ms, `stochastic` 235 → 123 ms,
+  `choppinessIndex` 227 → 127 ms.
+
 ### Added
 
 - **`@pond-ts/process`: basic steps and summary folds** — the pieces a finance

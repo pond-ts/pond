@@ -900,8 +900,9 @@ pandas-oracle-verified) have shipped. Plan:
   - **G4 — calendar-gated** (2): Projected Aggregate Volume and Projected
     Volume at Time; low value, deferred.
   - Six skipped by decision. Package-wide questions, none blocking: `ema()`'s
-    seed vs TA-Lib's, a monotonic-deque fast path for core's rolling
-    min/max, and `rollingValues`' inconsistent answer to a misnamed column.
+    seed vs TA-Lib's and `rollingValues`' inconsistent answer to a misnamed
+    column. (Core's rolling min/max fast path shipped 2026-11-08: Donchian,
+    %R, stochastics ~2x; see PND_FINANCIAL_PLAN.)
 - **[PND-STUDYCAT]** — Runtime study catalog **shipped complete in v0.67.0**
   (all 109 fluent methods; F-charts-27 resolved in #736). **Open only for a
   decision:** F-charts-26 (no per-output _mark_ — nothing says `macdHist` is a
