@@ -3201,8 +3201,8 @@ open; the text below is the entry as it read before the cleanup.
     convention is settled by precedent unless a consumer asks); the
     Wilder-vs-`ema` interior-gap asymmetry (**decided 2026-09-06: kept**,
     documented per study, decision record in the financial plan); a
-    monotonic-deque fast path for core's rolling min/max, for which `aroon`
-    (107 ms vs `donchian`'s 246 ms at 1M bars) is the measured evidence; and
+    monotonic-deque fast path for core's rolling min/max (**shipped
+    2026-11-08**, see "Core rolling min/max fast path" below); and
     `rollingValues`' reducer-dependent answer to a misnamed column
     (`stdev`/`avg` read all-missing, `max`/`min` throw — pinned both ways in
     #703; the two-series studies added a third answer, `assertColumn`
@@ -3231,3 +3231,62 @@ open; the text below is the entry as it read before the cleanup.
   semantics belongs in a data package. Close this task, or split those two
   out, once that is decided. Breakout:
   `docs/plans/PND_FINANCIAL_PLAN.md`.
+
+### Core rolling min/max fast path — shipped 2026-11-08
+
+**Why.** The standing note (above, and in the G3 write-up) that the range
+studies sat on core's slowest reducer pair. Measured again on 2026-11-08 by
+the finance graph bench ([PND-PROCKIT], `perf-graphs.mjs`): Donchian's
+20-bar high was the slowest of the 23 catalogue graphs at ~230 ms, and core's
+`rolling({ count })` `max`/`min` cost ~55–70 ms a column at 1M rows against
+~20 ms for `avg`.
+
+**Cause.** The columnar sweep (`sweepRollingColumn` in core's
+`batch/aggregate-columns.ts`) ran `max`/`min` through the reducer state
+(`rollingMonotoneDeque`): an `{ index, value }` object per row in an array
+re-sliced as the head moves, behind a comparator closure.
+
+**Fix.** `sweepRollingExtreme`, the same window walk with the deque as row
+indices in one `Int32Array` (each row enters once, so no wrap). The same
+rule as the state (strict pop, so the older of two equal values, `0`/`-0`
+included, stays; head dropped only when it is the leaving row), so the same
+bits: `core/test/rolling-extremes-fast.test.ts` compares it with `Object.is`
+against the state path over count and duration windows, every alignment,
+ties, signed zeros, gaps and repeated keys; six mutants of the new code fail
+it; the financial suite including the oracle passes unchanged. A separate
+function rather than two more cases in `sweepRollingColumn`: as cases there
+Donchian measured 101 ms, as its own function 78 ms.
+
+`highestLowestValues` needed no change: it already reached this sweep. The
+studies on their own extremes kernels (`ichimoku`, `stochasticRsi`'s
+`rollingExtremesValues`) are unaffected and serve as the bench's controls.
+
+**Perf** (`core/scripts/perf-rolling-extremes.mjs`, 1M rows, median of 7
+after 8 warm-up calls, then the median of 3 processes per build):
+
+| case                              | main ms | after ms | speed-up |
+| --------------------------------- | ------- | -------- | -------- |
+| `avg` count 20 (floor, unchanged) | 22.6    | 20.0     | 1.1x     |
+| `max` count 20                    | 51.6    | 33.0     | 1.6x     |
+| `min` count 20                    | 71.0    | 27.6     | 2.6x     |
+| `max` count 200                   | 70.0    | 27.7     | 2.5x     |
+| `max` count 20, 90% missing       | 42.4    | 15.4     | 2.8x     |
+| `max` count 20, rising            | 49.6    | 13.0     | 3.8x     |
+| `max` count 20, falling           | 73.1    | 15.3     | 4.8x     |
+| `max` 20-minute duration          | 100.3   | 38.4     | 2.6x     |
+| `donchian`                        | 193.3   | 79.4     | 2.4x     |
+| `stochastic`                      | 235.3   | 122.5    | 1.9x     |
+| `williamsR`                       | 199.2   | 82.2     | 2.4x     |
+| `choppinessIndex`                 | 226.9   | 126.5    | 1.8x     |
+| `ichimoku` (control)              | 203.0   | 212.5    | 1.0x     |
+| `stochasticRsi` (control)         | 153.6   | 161.1    | 1.0x     |
+
+A random walk is slower than a rising or falling run (33 vs 13–15 ms)
+because how many candidates each row pops depends on the data, so the pop
+loop's branch is hard to predict. In the finance graph bench, graph #26
+(Donchian 20-bar high) went from 237 ms to 118 ms warm.
+
+A first version with `avg` timed last in the bench read `avg` ~20% slower
+after the change. Timing `avg` alone in a fresh process gave 18–21 ms on both
+builds, so it was the bench's order (what V8 had already compiled), not the
+change; the bench now times `avg` first.

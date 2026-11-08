@@ -820,6 +820,19 @@ function sweepRollingColumn(
   laned: boolean,
   bounds: RollingWindowBounds | null = null,
 ): Float64Column {
+  // `max` / `min` have their own sweep: see `sweepRollingExtreme`. (Laned
+  // only matters to the sums; an extreme has no overflow to re-run.)
+  if (!laned && (spec.reducer === 'max' || spec.reducer === 'min')) {
+    return sweepRollingExtreme(
+      spec.reducer === 'max',
+      source,
+      rowCount,
+      count,
+      alignment,
+      minSamples,
+      bounds,
+    );
+  }
   const values = source._values;
   const allFinite = source.allFinite;
 
@@ -1035,5 +1048,115 @@ function sweepRollingColumn(
 
   // Every written cell passed the finite test above, so the column is
   // all-finite exactly when every row was written.
+  return new Float64Column(outValues, rowCount, outDefined === rowCount);
+}
+
+/**
+ * `max` / `min` over one column: {@link sweepRollingColumn}'s window walk,
+ * with the reducer state's monotonic deque (`rollingMonotoneDeque`) written
+ * out over the source buffer.
+ *
+ * The state keeps `{ index, value }` objects in an array it re-slices as
+ * the head moves, behind a comparator closure — an allocation and an
+ * indirect call per row, ~70 ms a column at 1M rows. Here the deque is row
+ * indices in one `Int32Array`. Every row enters at most once, so `tail`
+ * never passes `rowCount` and the queue never wraps.
+ *
+ * Same rule as the state, so the same answers bit for bit (pinned with
+ * `Object.is` by `rolling-extremes-fast.test.ts`): a defined cell pops
+ * every candidate it beats strictly (`max`: `<`, `min`: `>`), so of two
+ * equal values — `0` and `-0` included — the older stays; removing a row
+ * drops the head only when the head is that row; and the window walk
+ * (alignments, shared-key rows, drop-before-add for leading and centred
+ * duration windows, [PND-ROLLEMPTY]'s step past an emptied window) is
+ * `sweepRollingColumn`'s, line for line.
+ *
+ * A separate function rather than two more cases in `sweepRollingColumn`:
+ * it measured faster (Donchian at 1M rows 101 ms as cases there, 78 ms
+ * here; `scripts/perf-rolling-extremes.mjs`), and it leaves the loop every
+ * `avg` / `stdev` study runs exactly as it was.
+ */
+function sweepRollingExtreme(
+  isMax: boolean,
+  source: Float64Column,
+  rowCount: number,
+  count: number,
+  alignment: RollingAlignment,
+  minSamples: number,
+  bounds: RollingWindowBounds | null,
+): Float64Column {
+  const values = source._values;
+  const allFinite = source.allFinite;
+  const outValues = new Float64Array(rowCount).fill(NaN);
+  let outDefined = 0;
+  const deque = new Int32Array(rowCount);
+  let head = 0;
+  let tail = 0;
+
+  const leftSpan = Math.floor((count - 1) / 2);
+  const rightSpan = count - 1 - leftSpan;
+  let windowStart = 0;
+  let windowEnd = 0;
+
+  for (let index = 0; index < rowCount; index += 1) {
+    let lo: number;
+    let hi: number;
+    if (bounds !== null) {
+      if (bounds.sameKey[index] === 1) {
+        const prev = outValues[index - 1]!;
+        if (prev - prev === 0) {
+          outValues[index] = prev;
+          outDefined += 1;
+        }
+        continue;
+      }
+      lo = bounds.lo[index]!;
+      hi = bounds.hi[index]!;
+      if (alignment !== 'trailing') {
+        const stop = lo < windowEnd ? lo : windowEnd;
+        while (windowStart < stop) {
+          if (head < tail && deque[head] === windowStart) head += 1;
+          windowStart += 1;
+        }
+        if (windowStart === windowEnd && lo > windowEnd) {
+          windowStart = lo;
+          windowEnd = lo;
+        }
+      }
+    } else if (alignment === 'trailing') {
+      lo = index - count + 1 < 0 ? 0 : index - count + 1;
+      hi = index;
+    } else if (alignment === 'leading') {
+      lo = index;
+      hi = index + count - 1 < rowCount ? index + count - 1 : rowCount - 1;
+    } else {
+      lo = index - leftSpan < 0 ? 0 : index - leftSpan;
+      hi = index + rightSpan < rowCount ? index + rightSpan : rowCount - 1;
+    }
+
+    // `isMax` is loop-invariant, so each pop test is one predictable
+    // branch, not a call.
+    while (windowEnd <= hi) {
+      const v = values[windowEnd]!;
+      if (allFinite || v - v === 0) {
+        if (isMax) {
+          while (tail > head && values[deque[tail - 1]!]! < v) tail -= 1;
+        } else {
+          while (tail > head && values[deque[tail - 1]!]! > v) tail -= 1;
+        }
+        deque[tail++] = windowEnd;
+      }
+      windowEnd += 1;
+    }
+    while (windowStart < lo) {
+      if (head < tail && deque[head] === windowStart) head += 1;
+      windowStart += 1;
+    }
+
+    if (windowEnd - windowStart < minSamples) continue; // missing row
+    if (head === tail) continue; // no defined cell in the window
+    outValues[index] = values[deque[head]!]!;
+    outDefined += 1;
+  }
   return new Float64Column(outValues, rowCount, outDefined === rowCount);
 }

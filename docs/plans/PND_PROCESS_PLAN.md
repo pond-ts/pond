@@ -2101,7 +2101,8 @@ What it showed:
   `highestLowestValues` runs on core's general rolling `max`/`min` (~80 ms
   per column at 1M rows, against ~40 ms for `avg`). This is the standing note
   in PND_FINANCIAL_PLAN ("a monotonic-deque fast path for core's rolling
-  min/max would lift stochastics/%R/Donchian ~2×"); not done here.
+  min/max would lift stochastics/%R/Donchian ~2×"). **Done 2026-11-08** (see
+  PND_FINANCIAL_PLAN, "Core rolling min/max fast path"): #26 237 → 118 ms.
 
 **Left open** as PLAN tasks: [PND-PROCWINDOW], [PND-PROCMULTI],
 [PND-PROCFAN].
