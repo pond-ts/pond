@@ -150,6 +150,35 @@ describe('rolling max / min sweep deque matches the reducer state', () => {
     }
   });
 
+  it("huge values (the sums' overflow lanes) take the same deque, same answers", () => {
+    const n = 30;
+    const time = new Float64Array(n);
+    const v = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 1_000;
+      v[i] = i % 7 === 0 ? NaN : (rnd() - 0.5) * 1e300;
+    }
+    const s = TimeSeries.fromColumns({
+      name: 'v',
+      schema,
+      columns: { time, v },
+    });
+    for (const window of [{ count: 4 }, '4s'] as const) {
+      const fast = s.rolling(window as never, mapping);
+      const generic = s.rolling(window as never, {
+        ...mapping,
+        n: customCount,
+      });
+      for (const name of ['hi', 'lo']) {
+        expectSame(
+          column(fast as never, name),
+          column(generic as never, name),
+          `huge ${JSON.stringify(window)} ${name}`,
+        );
+      }
+    }
+  });
+
   it('a window of only missing cells is missing, then recovers', () => {
     const s = new TimeSeries({
       name: 'v',

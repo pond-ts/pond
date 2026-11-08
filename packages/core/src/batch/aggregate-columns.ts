@@ -820,9 +820,9 @@ function sweepRollingColumn(
   laned: boolean,
   bounds: RollingWindowBounds | null = null,
 ): Float64Column {
-  // `max` / `min` have their own sweep: see `sweepRollingExtreme`. (Laned
-  // only matters to the sums; an extreme has no overflow to re-run.)
-  if (!laned && (spec.reducer === 'max' || spec.reducer === 'min')) {
+  // `max` / `min` have their own sweep: see `sweepRollingExtreme`. Also
+  // when `laned`: the lanes split running sums, and an extreme has none.
+  if (spec.reducer === 'max' || spec.reducer === 'min') {
     return sweepRollingExtreme(
       spec.reducer === 'max',
       source,
@@ -1066,10 +1066,11 @@ function sweepRollingColumn(
  * `Object.is` by `rolling-extremes-fast.test.ts`): a defined cell pops
  * every candidate it beats strictly (`max`: `<`, `min`: `>`), so of two
  * equal values — `0` and `-0` included — the older stays; removing a row
- * drops the head only when the head is that row; and the window walk
- * (alignments, shared-key rows, drop-before-add for leading and centred
- * duration windows, [PND-ROLLEMPTY]'s step past an emptied window) is
- * `sweepRollingColumn`'s, line for line.
+ * drops the head only when the head is that row; and each row's window is
+ * the one `sweepRollingColumn` gives it. Of that window walk, only the
+ * bounds matter to an extreme: drop-before-add, the step past an emptied
+ * window ([PND-ROLLEMPTY]) and reusing a shared-key row's answer change how
+ * much work is done, not the answer, unlike for the running sums.
  *
  * A separate function rather than two more cases in `sweepRollingColumn`:
  * it measured faster (Donchian at 1M rows 101 ms as cases there, 78 ms
