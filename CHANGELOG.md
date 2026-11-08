@@ -82,7 +82,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **`@pond-ts/fit`: `TrainingHistory` and activity digests** (RFC §14.3,
-  §15.4). `activity.digest()` is a small JSON summary (about 1.4 KB for a
+  §15.4). `activity.digest()` is a small JSON summary (about 2.5 KB for a
   50 km run) an app can store: clocks, distance, ascent, a 1 bpm heart-rate
   histogram, the power curve from 1 s to 5 h and pace bests from 400 m to
   100 km, each with where it was. It needs no athlete settings.
@@ -109,6 +109,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   day marked trained, unscored (activities with no load in that method),
   rest or gap. Unscored days and gaps count as 0, or with
   `unknownDays: 'carry'` leave the curves as they were.
+  `analysis.pace.gradeCurve({ minWindows })` fits a personal grade curve
+  from the history's runs: heartbeats per metre at each 2 % grade band over
+  heartbeats per metre on the flat, each run scaled for its own day, from
+  the steady minutes each run digest keeps by grade (`digest.grades`, heart
+  rate read 30 s later). Each band gives its minutes, runs and the spread
+  between two halves of the history; thin bands follow the fallback model
+  (ACSM by default).
 - **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
   `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
   stretch's moving pace with the model named (`'acsm-running'`, the ACSM
@@ -120,7 +127,12 @@ include new features and type-level changes; patch bumps are strictly additive.
   Steps with no elevation recorded count as level, and `coverage` says how
   much distance had it. `aerobic.efficiency()` and `decoupling()` take
   `output: 'grade-adjusted-speed'` (and `gradeModel`), so a steady effort
-  over hills isn't marked `variable`.
+  over hills isn't marked `variable`. A `GradeCurve` (points of grade and
+  factor, read in a straight line between them, with `toJSON` / `fromJSON`)
+  can be passed wherever a model name can; the result then says `'curve'`
+  and carries it, so `GradeAdjustedPace.model` widens to
+  `GradeModel | 'curve'` (a `switch` over every model name needs the new
+  case).
 
 - **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
   `analysis.efforts.fromLaps()` reads the recorded laps (the device's

@@ -19,6 +19,11 @@ import {
 } from './digest.js';
 import { dayOf, type Day, type DayRange } from './history.js';
 import { HistoryLoad } from './load.js';
+import {
+  fitGradeCurve,
+  type GradeCurveFit,
+  type GradeCurveOptions,
+} from './gradeCurve.js';
 
 export interface HistoryAnalyzeOptions {
   /** Dated settings: each activity uses the values in force at its start
@@ -215,6 +220,15 @@ export class HistoryPace {
   /** @internal */
   constructor(parts: HistoryParts) {
     this.#parts = parts;
+  }
+
+  /** A personal grade curve from the history's runs: heartbeats per metre
+   *  at each 2 % grade band over heartbeats per metre on the flat, each run
+   *  scaled for its own day. Bands with fewer than `minWindows` steady
+   *  minutes are left to the fallback model. Null when the runs have too
+   *  little steady flat ground to fit against. */
+  gradeCurve(options: GradeCurveOptions = {}): GradeCurveFit | null {
+    return fitGradeCurve(this.#parts.digests, options);
   }
 
   /** The fastest time over each distance, shortest first. Distances must be

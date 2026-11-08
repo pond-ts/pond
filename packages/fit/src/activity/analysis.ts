@@ -25,7 +25,13 @@ import { hrZoneDistribution, paceZoneDistribution } from '../zones/index.js';
 import type { ZoneTime } from '../zones/index.js';
 import { Profile, type AthleteProfileJson } from '../profile/index.js';
 import { Distance, Duration, Pace, Power, Speed } from '../quantities.js';
-import { gradeModelFor, gradeRatio, type GradeModel } from './grade.js';
+import {
+  GradeCurve,
+  gradeModelFor,
+  gradeRatio,
+  type GradeModel,
+  type GradeModelInput,
+} from './grade.js';
 import type { Stats } from './stats.js';
 import { Aerobic } from './aerobic.js';
 import { techniqueOf, type Technique } from './technique.js';
@@ -378,14 +384,18 @@ export class PowerEfforts<S> {
 
 export interface GradeAdjustOptions {
   /** Default: `'acsm-running'` for a run, `'minetti-2002-walking'` for a
-   *  walk or hike. */
-  model?: GradeModel;
+   *  walk or hike. A {@link GradeCurve} (such as one fitted from a
+   *  history) can be passed instead. */
+  model?: GradeModelInput;
 }
 
 /** The pace a stretch's effort would give on level ground: an estimate,
  *  so it names its model. On moving time, like `stats().pace`. */
 export interface GradeAdjustedPace {
-  model: GradeModel;
+  /** The named model, or `'curve'` when a {@link GradeCurve} was used. */
+  model: GradeModel | 'curve';
+  /** The curve used, when one was passed; null for a named model. */
+  curve: GradeCurve | null;
   pace: Pace;
   speed: Speed;
   /** The recorded moving pace and speed, for comparison. */
@@ -425,7 +435,8 @@ export class PaceEfforts<S> {
     const speed = Speed.metersPerSecond(v * r.ratio);
     const recorded = Speed.metersPerSecond(v);
     return {
-      model,
+      model: model instanceof GradeCurve ? 'curve' : model,
+      curve: model instanceof GradeCurve ? model : null,
       pace: speed.pace(),
       speed,
       recorded: { pace: recorded.pace(), speed: recorded },

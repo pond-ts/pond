@@ -46,7 +46,7 @@ export {
   type GradeAdjustOptions,
   type GradeAdjustedPace,
 } from './analysis.js';
-export type { GradeModel } from './grade.js';
+export { GradeCurve, type GradeModel, type GradeModelInput } from './grade.js';
 export {
   Aerobic,
   type AerobicOutput,

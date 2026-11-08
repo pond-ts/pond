@@ -6,6 +6,7 @@ export {
   type DigestPowerPoint,
   type DigestPaceBest,
 } from './digest.js';
+export type { GradeBand } from '../activity/grade.js';
 export {
   TrainingHistory,
   Volume,
@@ -36,3 +37,8 @@ export {
   type TimelineOptions,
   type LoadTimeline,
 } from './load.js';
+export type {
+  GradeCurveOptions,
+  GradeCurveBand,
+  GradeCurveFit,
+} from './gradeCurve.js';

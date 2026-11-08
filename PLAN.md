@@ -1314,7 +1314,15 @@ depend on. Plan:
   `TrainingHistory` (`of`, `between`, `sports`, `covers`) and
   `volume.weekly()` built, then records and the season power curve
   (`history.analyze().power.records()` / `curve()`, `pace.records()`), then
-  load (`analysis.load.activities(method)`, `timeline({ method })`); a personal grade-adjusted pace curve fitted from the history follow. The
+  load (`analysis.load.activities(method)`, `timeline({ method })`,
+  `unknownDays: 'carry'` for days with no load in the method), then a
+  personal grade curve (`pace.gradeCurve()`, a `GradeCurve` usable as any
+  grade model). The personal curve fits per-run scales and the curve
+  together on heartbeats per metre by 2 % band, heart rate read 30 s later:
+  a test on 14 of pjm17971's hilly runs (Strava streams) gave a sensible
+  curve, and the 30 s lag cut the split-half disagreement (0.158 → 0.125);
+  subtracting resting heart rate made it worse. Climbs need many runs to
+  settle, so each band reports its spread between halves. The
   digest carries no athlete settings (FTP, weight, zones apply at analysis,
   on the activity's date) and a 1 bpm heart-rate histogram so heart-rate
   zones and load can be worked out later for any zone setting. A load

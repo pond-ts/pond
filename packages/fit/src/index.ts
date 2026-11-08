@@ -73,6 +73,7 @@ export {
   Efforts,
   Measured,
   Route,
+  GradeCurve,
   sportOf,
 } from './activity/index.js';
 export type {
@@ -98,6 +99,7 @@ export type {
   GradeAdjustOptions,
   GradeAdjustedPace,
   GradeModel,
+  GradeModelInput,
   AerobicOutput,
   EfficiencyOptions,
   Efficiency,
@@ -331,4 +333,8 @@ export {
   type DayLoad,
   type TimelineOptions,
   type LoadTimeline,
+  type GradeBand,
+  type GradeCurveOptions,
+  type GradeCurveBand,
+  type GradeCurveFit,
 } from './history/index.js';
