@@ -124,6 +124,16 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   reads `stance_time` and `vertical_oscillation` into the new streams
   `groundContactMs` and `verticalOscillationMm`.
 
+- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
+  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
+  `output.series`). Each push returns `Output::Columns { node, series }`, a
+  batch `TimeSeries` of the rows it added, in key order. Watched alone on
+  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
+  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
+  `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
+  matches on `Output` / `OutputKind` without a wildcard arm (new variant):
+  pond-rs's next release is 0.2.0.
+
 ### Changed
 
 - **`@pond-ts/fit`: the FIT reader adds `fractional_cadence` to `cadence`.**
@@ -195,16 +205,6 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   events, sorted by key. Fires after `'batch'` and before `'evict'`;
   partition sub-series fire it too. `'event'` / `'batch'` / `'evict'` are
   unchanged.
-
-- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
-  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
-  `output.series`). Each push returns `Output::Columns { node, series }`, a
-  batch `TimeSeries` of the rows it added, in key order. Watched alone on
-  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
-  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
-  `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
-  matches on `Output` / `OutputKind` without a wildcard arm (new variant):
-  pond-rs's next release is 0.2.0.
 
 - **Maths in expressions: `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow`**
   ([PND-SCANDATA]). `col('x').pow(2).add(col('y').pow(2)).sqrt()` now runs
