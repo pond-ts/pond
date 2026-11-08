@@ -1076,7 +1076,7 @@ after 2):
 The partitioned cases are now mostly `TimeSeries.concat` re-sorting the
 pieces ([PND-CONCATSORT], next).
 
-### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
+### [PND-ARRAYSLOW] — SHIPPED (arrayAggregate / arrayExplode / arrayContains\* on columns)
 
 From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,
 built a frozen row per event and re-read the rows; `arrayExplode` built one
@@ -1156,7 +1156,8 @@ against the previous build. Planted bug caught: a non-array cell tested
 (12/1500). `includes` → `indexOf` was not caught, and can't differ: array
 cells refuse `NaN`.
 
-Fixed before merge (2026-11-08): a `fromEvents` series skips that check, so
+Fixed before merge (2026-11-08): a series built from ready-made events
+(`fromEvents`, a `map` result, rows selected from one) skips that check, so
 its events can carry an array with a `null` or `NaN` element that the column
 stores differently (the 1,500 series above were all built from rows). The
 filters now read the events whenever

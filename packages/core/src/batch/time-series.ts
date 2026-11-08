@@ -6328,8 +6328,10 @@ export class TimeSeries<S extends SeriesSchema> {
     test: (arr: ArrayValue) => boolean,
   ): TimeSeries<S> {
     if (this.#store._eventsMayDifferFromColumnsModulePrivate()) {
-      // A `fromEvents` series can hold event values its columns store
-      // differently, and these filters have always read the events.
+      // A series built from ready-made events (`fromEvents`, a `map`
+      // result, or rows selected from one) can hold event values its
+      // columns store differently, and these filters have always read the
+      // events.
       return TimeSeries.#fromTrustedEvents(
         this.name,
         this.schema,

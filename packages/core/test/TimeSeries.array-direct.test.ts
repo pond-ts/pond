@@ -152,7 +152,6 @@ describe('arrayContains* read the array column', () => {
     const r = s.arrayContains('tags', 'a');
     const kept = r.at(1)!;
     expect(s.at(4)).toBe(kept);
-    expect(kept.get('tags')).toBe(s.at(4)!.get('tags'));
   });
 
   it('reads the events of a fromEvents series, as before', () => {
