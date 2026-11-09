@@ -843,3 +843,120 @@ notes, lap labels) on the original recording so they survive re-editing;
 Estela needed exactly these three functions. The swimming repair edits in
 §16.8 (missed length, pool size, stroke label) join the same `edit()` as
 further kinds, with the same rule that an edit never invents a measurement.
+
+## 18. Metrics: athlete values over time
+
+**Authorship:** idea and the zone design by pjm17971 (2026-11-09: "I actually
+wonder if we need a new library primitive called a metric"; "Zone boundaries
+as the metrics (within a metric group) and max hr computes and stores the
+boundaries. Time series visualization would show the boundaries."). Written
+up by the pond-ts library agent (Claude).
+
+### 18.1 Why
+
+The athlete profile (`AthleteProfileJson`, `profileAsOf`) holds four dated
+lists: weight, FTP, heart-rate zone basis, 5 k time. Each answers "what was in
+force on this date?" through a private pond series and `atOrBefore`. That
+works for a handful of typed values, and stops working when values are
+measured:
+
+- Estela's "Get weight" from Apple Health (Estela PR #289) turned years of
+  daily weigh-ins into thousands of "from this date" entries. The fix there
+  (one value a week, a paged list) is a workaround: a weigh-in is a reading,
+  and holding one reading until the next is the wrong rule for a noisy value.
+- Resting heart rate (needed for heart-rate load), HRV, VO2max and sleep are
+  the same kind of thing and have nowhere to go.
+- Estela copies the dated-list logic three more times (the first value
+  covering earlier dates, editing the list, the Swift weight merge), because
+  pond keeps it private.
+
+### 18.2 A metric
+
+One named series of dated numbers with a unit, and a rule for answering a
+date.
+
+```ts
+const weight = Metric.of('weight', {
+  unit: 'kg',
+  rule: { average: days(7) }, // readings within the window, averaged
+  entries: [
+    { at: '2026-11-02T07:10:00Z', value: 71.4, source: 'apple-health' },
+    { at: '2026-11-03T07:05:00Z', value: 71.1, source: 'apple-health' },
+    { at: '2026-10-01', value: 72, source: 'typed' },
+  ],
+});
+
+weight.on('2026-11-03'); // { value: 71.25, readings: 2, age: Duration, sources: [...] } | null
+weight.entries; // as stored, date order
+weight.between({ from, to }); // a pond series, for charts
+```
+
+- **Rules.** `'hold'` (the last value stays in force until the next: FTP,
+  max HR, 5 k time); `{ average: window }` (weight, resting HR, HRV);
+  `'interpolate'` (a straight line between readings). The rule is part of the
+  metric, with a default per known metric, so callers ask `on(date)` and don't
+  repeat it.
+- **Before the first entry.** `before: 'first' | 'none'`. Estela's
+  `reachBack` (the first value covers everything earlier) becomes this option
+  instead of app code.
+- **Each entry says where it came from**: typed, a device or app, a race
+  result, an estimate from activities (an FTP from rides, a 5 k from a run).
+  The answer to `on(date)` carries the age of what it used, so a W/kg from a
+  weight eight months old can say so (§9).
+- **Same-day entries.** Two entries at one moment: the later write wins.
+  Typed and measured entries on one day both stay; the rule decides.
+
+### 18.3 Metric groups: zones
+
+Some values only make sense together. A **metric group** is a set of metrics
+that change together: one dated entry sets every member.
+
+Zones are groups of their **boundaries**:
+
+| Group            | Members                          | Set from           |
+| ---------------- | -------------------------------- | ------------------ |
+| Heart-rate zones | Z1/Z2, Z2/Z3, Z3/Z4, Z4/Z5 (bpm) | max HR, or typed   |
+| Power zones      | the boundaries, in watts         | FTP, or typed      |
+| Pace zones       | the boundaries, as speed         | 5 k time, or typed |
+
+- The boundaries are the stored truth. An input such as max HR is a metric
+  of its own; entering one **computes the boundaries and stores them** in the
+  group on that date, with the source saying how (`{ from: 'maxHr', value:
+186, method: 'percent-of-max' }`). Typing boundaries is an entry with
+  source `typed`.
+- Stored, not worked out each time: a later change of method doesn't rewrite
+  past zones, and the boundaries are what a chart shows.
+- A chart of the group over time draws each boundary as a stepped line, so
+  the zones read as bands that move when the athlete changed them.
+- A group entry must be complete and rising (Z1/Z2 < Z2/Z3 < …); one that
+  isn't is refused, not stored.
+
+### 18.4 The profile as metrics
+
+`Profile.asOf(date)` stays the call analysis makes. Underneath, the profile
+becomes a set of metrics and groups: weight, FTP, max HR, 5 k time, resting
+HR, and the three zone groups. Today's `AthleteProfileJson` maps over
+directly:
+
+- `weightKg`, `ftpWatts`, `paceThreshold` → metrics with `rule: 'hold'`
+  (weight moves to `average` once readings arrive).
+- `hrZone` `{ maxHr }` entries → a max HR entry plus the computed boundaries;
+  `{ bounds }` entries → typed boundaries.
+
+`TrainingHistory` reads W/kg and heart-rate load from these, with the value
+in force (or averaged) on each activity's date, as it does now.
+
+### 18.5 Open questions
+
+1. **The average window**: centred on the date, or only readings before it?
+   Centred is the better estimate for a past activity; before-only is what
+   was known then.
+2. **Power and pace zones**: store the boundaries when FTP or the 5 k time
+   changes (consistent with heart rate), or keep working them out, since
+   their method rarely changes?
+3. **Where the entries live** for a large history: raw weigh-ins for ten
+   years are about 3,600 entries. Fine in one file or document; an app could
+   still choose to keep one per day.
+4. **Estimated values** (FTP from rides, max HR seen in activities): entries
+   with an `estimate` source the athlete accepts, or a separate suggestion
+   the app shows? Accepting keeps the metric the single answer.
