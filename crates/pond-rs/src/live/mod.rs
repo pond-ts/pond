@@ -235,10 +235,10 @@ pub struct LiveStats {
     pub latest: Option<i64>,
 }
 
-/// The kinds of [`Output`]. A series emits `Event`, `Batch` and `Evict`; a
-/// view `Event` and `Evict`; an aggregation `Event` (a closed bucket),
-/// `Bucket` and `Update`; a rolling window `Event` and `Update` (fused
-/// windows `Event` only); a reduce `Event`.
+/// The kinds of [`Output`]. A series emits `Event`, `Batch`, `Columns` and
+/// `Evict`; a view `Event` and `Evict`; an aggregation `Event` (a closed
+/// bucket), `Bucket` and `Update`; a rolling window `Event` and `Update`
+/// (fused windows `Event` only); a reduce `Event`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputKind {
     /// [`Output::Event`].
@@ -251,9 +251,11 @@ pub enum OutputKind {
     Bucket,
     /// [`Output::Update`].
     Update,
+    /// [`Output::Columns`].
+    Columns,
 }
 
-const KINDS: usize = 5;
+const KINDS: usize = 6;
 
 impl OutputKind {
     fn slot(self) -> usize {
@@ -302,6 +304,16 @@ pub enum Output {
         /// A rolling window's values; `None` for an aggregation.
         values: Option<Vec<Option<Value>>>,
     },
+    /// The rows a series took in one push, as a batch series (pond-ts
+    /// `on('columns')`), in key order. Watching only this on the root keeps
+    /// a push from building an event per row: the batch is read straight
+    /// from the stored columns.
+    Columns {
+        /// The node.
+        node: NodeId,
+        /// The rows the push added.
+        series: TimeSeries,
+    },
 }
 
 impl Output {
@@ -312,7 +324,8 @@ impl Output {
             | Output::Batch { node, .. }
             | Output::Evict { node, .. }
             | Output::Bucket { node, .. }
-            | Output::Update { node, .. } => *node,
+            | Output::Update { node, .. }
+            | Output::Columns { node, .. } => *node,
         }
     }
 
@@ -324,6 +337,7 @@ impl Output {
             Output::Evict { .. } => OutputKind::Evict,
             Output::Bucket { .. } => OutputKind::Bucket,
             Output::Update { .. } => OutputKind::Update,
+            Output::Columns { .. } => OutputKind::Columns,
         }
     }
 }
@@ -512,7 +526,12 @@ struct Slot {
 impl Slot {
     fn emits(&self) -> &'static [OutputKind] {
         match &self.state {
-            State::Series(_) => &[OutputKind::Event, OutputKind::Batch, OutputKind::Evict],
+            State::Series(_) => &[
+                OutputKind::Event,
+                OutputKind::Batch,
+                OutputKind::Columns,
+                OutputKind::Evict,
+            ],
             State::View(_) => &[OutputKind::Event, OutputKind::Evict],
             State::Aggregation(_) => &[OutputKind::Event, OutputKind::Bucket, OutputKind::Update],
             State::Rolling(r) if r.is_fused() => &[OutputKind::Event],
@@ -524,6 +543,19 @@ impl Slot {
 
     fn has_subs(&self) -> bool {
         self.subs.iter().any(|s| !s.is_empty())
+    }
+
+    /// Whether anything takes this node's events one by one: any watch or
+    /// node other than `Columns` watches, which read stored columns.
+    fn takes_events(&self) -> bool {
+        self.subs
+            .iter()
+            .enumerate()
+            .any(|(k, s)| k != OutputKind::Columns.slot() && !s.is_empty())
+    }
+
+    fn watches(&self, kind: OutputKind) -> bool {
+        !self.subs[kind.slot()].is_empty()
     }
 }
 
@@ -731,9 +763,10 @@ impl LiveSeries {
     ) -> Result<Vec<Output>> {
         let row = self.check_row(0, key.into(), values.into())?;
         let mut out = Vec::new();
-        if self.bare_root() {
+        if self.bare_root_for(std::iter::once(&row.0)) {
             self.check_order(std::iter::once(&row.0))?;
             self.ingest_bare(std::iter::once(row), &mut out);
+            self.take_failure()?;
             return Ok(out);
         }
         let (key, values) = row;
@@ -769,7 +802,18 @@ impl LiveSeries {
             }
             self.check_order(checked.iter().map(|(key, _)| key))?;
             self.check_labels(checked.iter().map(|(key, _)| key))?;
-            self.ingest_bare(checked, &mut out);
+            if self.bare_root_for(checked.iter().map(|(key, _)| key)) {
+                self.ingest_bare(checked, &mut out);
+                self.take_failure()?;
+                return Ok(out);
+            }
+            let schema = Arc::clone(&self.core().schema);
+            let events: Vec<LiveEvent> = checked
+                .into_iter()
+                .map(|(key, values)| LiveEvent::new(Arc::clone(&schema), key, values))
+                .collect();
+            self.ingest_series(0, events, &mut out);
+            self.take_failure()?;
             return Ok(out);
         }
         let schema = Arc::clone(&self.core().schema);
@@ -820,8 +864,9 @@ impl LiveSeries {
         }
         let keys: Vec<EventKey> = (0..n).map(|i| series_key(series, i)).collect();
         self.check_order(keys.iter())?;
-        if self.bare_root() {
+        if self.bare_root_for(keys.iter()) {
             self.ingest_bare_series(series, &columns, &keys, &mut out);
+            self.take_failure()?;
             return Ok(out);
         }
         let schema = Arc::clone(&self.core().schema);
@@ -841,9 +886,31 @@ impl LiveSeries {
     }
 
     /// Whether nothing takes the root's events: no node built on it (and
-    /// so no partition), nothing watched on it.
+    /// so no partition), nothing watched on it but `Columns`.
     fn bare_root(&self) -> bool {
-        !self.slots[0].has_subs() && self.routers.is_empty() && self.partitions.is_empty()
+        !self.slots[0].takes_events() && self.routers.is_empty() && self.partitions.is_empty()
+    }
+
+    /// [`LiveSeries::bare_root`] for a push with these keys (checked):
+    /// `Columns` reads the push's rows off the end of storage, so a push
+    /// that would place a late row among older ones takes the event path
+    /// when `Columns` is watched.
+    fn bare_root_for<'k>(&self, keys: impl Iterator<Item = &'k EventKey>) -> bool {
+        if !self.bare_root() {
+            return false;
+        }
+        let core = self.core();
+        if !self.slots[0].watches(OutputKind::Columns) || core.ordering != OrderingMode::Reorder {
+            return true;
+        }
+        let mut last = core.buffer.last_key();
+        for key in keys {
+            if last.is_some_and(|l| compare_keys(l, key) == Ordering::Greater) {
+                return false;
+            }
+            last = Some(key);
+        }
+        true
     }
 
     /// Push rows written as pond-ts JSON: a JSON array of rows, each an
@@ -1157,6 +1224,7 @@ impl LiveSeries {
         out: &mut Vec<Output>,
     ) {
         let series = self.series_mut(0);
+        let start = series.buffer.len();
         let mut any = false;
         for (key, values) in rows {
             let late = series
@@ -1172,7 +1240,7 @@ impl LiveSeries {
             series.buffer.insert_cells(key, values);
         }
         if any {
-            self.after_bare_store(out);
+            self.after_bare_store(start, out);
         }
     }
 
@@ -1189,6 +1257,7 @@ impl LiveSeries {
         out: &mut Vec<Output>,
     ) {
         let s = self.series_mut(0);
+        let start = s.buffer.len();
         let mut any = false;
         let mut run = 0;
         for i in 0..keys.len() {
@@ -1218,12 +1287,27 @@ impl LiveSeries {
         s.ingested += (keys.len() - run) as u64;
         any |= run < keys.len();
         if any {
-            self.after_bare_store(out);
+            self.after_bare_store(start, out);
         }
     }
 
-    /// Retention and settle after a bare root stored a push.
-    fn after_bare_store(&mut self, out: &mut Vec<Output>) {
+    /// `Columns`, retention and settle after a bare root stored a push,
+    /// whose rows are the ones from `start` on ([`LiveSeries::bare_root_for`]
+    /// sent a push that would place a row among older ones elsewhere).
+    fn after_bare_store(&mut self, start: usize, out: &mut Vec<Output>) {
+        if self.slots[0].watches(OutputKind::Columns) {
+            let s = self.series(0);
+            match s
+                .buffer
+                .snapshot_rows("LiveSeries::push", &s.name, start..s.buffer.len())
+            {
+                Ok(series) => self.emit_columns_series(0, series, out),
+                // Not reachable after the row checks; if it were, the rows
+                // stay stored and the push reports the error, as on the
+                // event path.
+                Err(e) => self.fail(e),
+            }
+        }
         let n = self.series(0).retention_count();
         if n > 0 {
             self.evict_series(0, n, out);
@@ -1260,7 +1344,8 @@ impl LiveSeries {
         events: impl IntoIterator<Item = LiveEvent>,
         out: &mut Vec<Output>,
     ) {
-        let want_batch = !self.slots[i].subs[OutputKind::Batch.slot()].is_empty();
+        let want_batch = !self.slots[i].subs[OutputKind::Batch.slot()].is_empty()
+            || self.slots[i].watches(OutputKind::Columns);
         let mut added = Vec::new();
         let mut any = false;
         for event in events {
@@ -1296,11 +1381,38 @@ impl LiveSeries {
                 node,
                 events: added.clone(),
             });
+            self.emit_columns(i, added, out);
         }
         if n > 0 {
             self.evict_series(i, n, out);
         }
         self.settle(i, out);
+    }
+
+    /// `Columns` of series `i` for the events a push added, in the order
+    /// added: as a batch series in key order (a late row under `Reorder`
+    /// goes before newer ones; equal keys keep the order added, as pond-ts
+    /// `TimeSeries.fromEvents`).
+    pub(crate) fn emit_columns(
+        &mut self,
+        i: usize,
+        mut added: Vec<LiveEvent>,
+        out: &mut Vec<Output>,
+    ) {
+        if added.is_empty() || !self.slots[i].watches(OutputKind::Columns) {
+            return;
+        }
+        if added
+            .windows(2)
+            .any(|w| compare_keys(w[0].key(), w[1].key()) == Ordering::Greater)
+        {
+            added.sort_by(|a, b| compare_keys(a.key(), b.key()));
+        }
+        let s = self.series(i);
+        match buffer::series_of("LiveSeries::push", &s.name, &s.schema, added.iter()) {
+            Ok(series) => self.emit_columns_series(i, series, out),
+            Err(e) => self.fail(e),
+        }
     }
 
     /// The end of a push into series `series` (pond-ts's settle hook,
@@ -1399,6 +1511,17 @@ impl LiveSeries {
             if *sub == Sub::Watch {
                 out.push(make(id));
             }
+        }
+    }
+
+    /// A `Columns` output of `node`, moved in (a node is watched at most
+    /// once for a kind, so no copy is made).
+    fn emit_columns_series(&self, node: usize, series: TimeSeries, out: &mut Vec<Output>) {
+        if self.slots[node].subs[OutputKind::Columns.slot()].contains(&Sub::Watch) {
+            out.push(Output::Columns {
+                node: self.id_of(node),
+                series,
+            });
         }
     }
 

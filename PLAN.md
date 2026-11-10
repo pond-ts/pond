@@ -710,10 +710,6 @@ the study oracle) is done.
   TypeScript, Rust and Python tabs, all checked against pond-ts; `rust ignore`
   fences are skipped by the script (excerpts from other repos). Open: run the script in
   CI.
-- **[PND-RUSTCOLS]** — pond-rs has no counterpart to pond-ts
-  `live.on('columns')` ([PND-COLOUT], 2026-11-05): an `OutputKind` whose
-  output holds each push's added rows as columns instead of `LiveEvent`s.
-  Not scheduled; the live parity fixture doesn't cover `'columns'`.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
@@ -784,14 +780,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   finding 5), so both read the same file to the same schema. Until then they
   differ on every pyarrow / polars file (both mark fields nullable by
   default): pond-rs reads such columns as optional, pond-ts as required.
-- **[PND-ARROWTEXT]** — pond-ts `fromArrow` is slow on text columns: a
-  1M-row `Utf8` column takes ~500 ms to read (`ValueSeries.fromArrow`, the
-  axis alone ~8 ms). 345 ms of that is apache-arrow's own `toArray()`
-  turning each string into a JS string; the rest is pond's `readStrings`.
-  Reading the offsets and bytes directly (decoding each distinct string
-  once) may avoid most of it; not tried. A nullable number column adds
-  ~60 ms per 1M rows, cause not looked into. Found 2026-10-21 by the
-  pond-rs step 8i4 bench (pond-rs: 5 ms for the same table).
+- **[PND-ARROWNUM]** — the pond-rs step 8i4 bench saw a nullable number
+  column add ~60 ms per 1M rows to pond-ts `fromArrow`. Not reproduced on a
+  single-chunk `vectorFromArray` table (6.6 → 16 ms, 2026-10-22); the bench
+  read an IPC file, which may give a shape the bulk null-copy path declines
+  (`copyNumericWithNulls`) and so falls back to per-row `get`. Check with
+  that file before changing anything. Split out of [PND-ARROWTEXT].
 - **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
   even when the mapping leaves a gap (a non-finite result is stored as a
   gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
@@ -906,8 +900,9 @@ pandas-oracle-verified) have shipped. Plan:
   - **G4 — calendar-gated** (2): Projected Aggregate Volume and Projected
     Volume at Time; low value, deferred.
   - Six skipped by decision. Package-wide questions, none blocking: `ema()`'s
-    seed vs TA-Lib's, a monotonic-deque fast path for core's rolling
-    min/max, and `rollingValues`' inconsistent answer to a misnamed column.
+    seed vs TA-Lib's and `rollingValues`' inconsistent answer to a misnamed
+    column. (Core's rolling min/max fast path shipped 2026-11-08: Donchian,
+    %R, stochastics ~2x; see PND_FINANCIAL_PLAN.)
 - **[PND-STUDYCAT]** — Runtime study catalog **shipped complete in v0.67.0**
   (all 109 fluent methods; F-charts-27 resolved in #736). **Open only for a
   decision:** F-charts-26 (no per-output _mark_ — nothing says `macdHist` is a
@@ -1243,6 +1238,19 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
+- **[PND-PROCWINDOW]** — A date window on a request (`from` / `to`, or
+  "today" / "last N sessions"), reading enough earlier rows that every step's
+  warm-up is still right. Blocks 7 of the 48 agent questions in the
+  [finance graph catalogue](docs/plans/PND_PROCESS_PLAN.md#pnd-prockit--finance-kit-for-an-mcp-server).
+  A design call: the host deliberately does not window today.
+- **[PND-PROCMULTI]** — Let a wire request name several datasets plus a join
+  policy, so an agent can ask for beta, a pair ratio or a spread. The join
+  node exists ([PND-PROCJOIN]) but only `bind()` reaches it; `Host.add` takes
+  one series and `from` is one name. Blocks 6 of the 48.
+- **[PND-PROCFAN]** — Roll-ups that change the row count (weekly bars, monthly
+  tables, group by weekday) and one question run across a set of tickers with
+  rank, count and group — the Spark-like asks. Blocks the last 11 of the 48;
+  may belong in a layer above process rather than inside it.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —
@@ -1294,6 +1302,23 @@ depend on. Plan:
   release waits on these four (pjm17971, 2026-11-04). Built, with `analyze`
   and best efforts by metric (#892–#895); `edit` in durations and `views`
   follow.
+- **[PND-FITDEPTH]** — the sport layers after 0.76: pjm17971's first-release
+  lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
+  One-activity work first, on any `Section`: aerobic efficiency and
+  decoupling (`analysis.aerobic`) and distributions and coasting
+  (`analysis.distribution`, `analysis.coasting`) and running dynamics
+  (`section.dynamics`), swim stroke metrics (`analysis.technique`) and
+  efforts with recoveries (`analysis.efforts`) and grade-adjusted pace
+  (`section.pace.adjustedForGrade()`, ACSM running by default, Minetti 2002
+  by name, the model named in the result;
+  aerobic output `'grade-adjusted-speed'`) built. ACSM is the run default
+  because on a real 50 km trail race Minetti read descents 2 to 8 min/mi
+  slower than Strava's grade-adjusted pace while ACSM stayed within about a
+  minute (pjm17971 chose to ship both, 2026-11-07).
+  Then `TrainingHistory` (records, season curve, weekly volume, load
+  timeline), on per-activity digests; each activity's load records the
+  method that made it (power TSS, heart-rate load, none), since devices
+  come and go across a history (pjm17971, 2026-11-07).
 
 ---
 

@@ -37,8 +37,18 @@ export interface ActivityStreams {
   distanceMeters?: number[];
   /** Power, watts (from a power meter — real, not estimated). */
   watts?: number[];
-  /** Cadence, rpm. */
+  /** Cadence, rpm. On foot, cycles per minute (one per two steps), as FIT,
+   *  TCX and Strava record it, unless {@link cadenceUnit} says steps. */
   cadence?: number[];
+  /** On foot: `'cycles'` (the default, one per two steps) or `'steps'` (an
+   *  importer that wrote steps per minute). */
+  cadenceUnit?: 'cycles' | 'steps';
+  /** Running dynamics as recorded (Garmin's, from a strap, pod or the
+   *  watch): ground contact time per step, ms. Top-level arrays like every
+   *  other channel, so a crop cuts them too. */
+  groundContactMs?: number[];
+  /** Running dynamics: vertical oscillation per step, mm. */
+  verticalOscillationMm?: number[];
   /** Temperature, °C. */
   temperatureC?: number[];
   /** An open water swim. The watch only gets a GPS fix while the arm is out of
@@ -114,6 +124,11 @@ export interface Lap {
   /** Energy, kcal. */
   calories?: number;
   elevationGainMeters?: number;
+  /** What the lap was for, when the device says (FIT lap `intensity`, set
+   *  by a structured workout): `'active'`, `'rest'`, `'warmup'`,
+   *  `'cooldown'`, `'recovery'`, `'interval'` or `'other'`. A watch with no
+   *  workout marks every lap `'active'`. */
+  intensity?: string;
 }
 
 /** One pool length as the watch logged it: a swum length, or a rest at the

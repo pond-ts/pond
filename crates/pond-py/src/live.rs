@@ -416,6 +416,10 @@ pub struct PyLiveOutput {
     /// For `update`: `{column: value}`, or `None` from an aggregation.
     #[pyo3(get)]
     values: Option<Py<PyDict>>,
+    /// For `columns`: the rows the series took in that push, as a
+    /// `TimeSeries`.
+    #[pyo3(get)]
+    series: Option<Py<PyTimeSeries>>,
 }
 
 #[pymethods]
@@ -428,6 +432,8 @@ impl PyLiveOutput {
             format!("{} events", e.bind(py).len())
         } else if let Some(v) = &self.values {
             v.bind(py).repr()?.to_string()
+        } else if let Some(s) = &self.series {
+            format!("{} rows", s.bind(py).get().inner.len())
         } else {
             "None".into()
         };
@@ -442,6 +448,7 @@ fn kind_word(k: OutputKind) -> &'static str {
         OutputKind::Evict => "evict",
         OutputKind::Bucket => "bucket",
         OutputKind::Update => "update",
+        OutputKind::Columns => "columns",
     }
 }
 
@@ -452,9 +459,10 @@ fn output_kind(word: &str) -> PyResult<OutputKind> {
         "evict" => OutputKind::Evict,
         "bucket" => OutputKind::Bucket,
         "update" => OutputKind::Update,
+        "columns" => OutputKind::Columns,
         other => {
             return Err(value_error(format!(
-                "an output kind is 'event', 'batch', 'evict', 'bucket' or 'update', got '{other}'"
+                "an output kind is 'event', 'batch', 'evict', 'bucket', 'update' or 'columns', got '{other}'"
             )));
         }
     })
@@ -512,7 +520,7 @@ fn outputs_to_py<'py>(
             }
         };
         let kind = kind_word(o.kind());
-        let (mut event, mut events, mut values) = (None, None, None);
+        let (mut event, mut events, mut values, mut series) = (None, None, None, None);
         match o {
             Output::Event { event: e, .. } | Output::Bucket { event: e, .. } => {
                 event = Some(Py::new(py, PyLiveEvent { event: e })?);
@@ -530,6 +538,9 @@ fn outputs_to_py<'py>(
                     values = Some(d.unbind());
                 }
             }
+            Output::Columns { series: s, .. } => {
+                series = Some(Py::new(py, PyTimeSeries::wrap(s))?);
+            }
         }
         list.append(PyLiveOutput {
             node,
@@ -537,6 +548,7 @@ fn outputs_to_py<'py>(
             event,
             events,
             values,
+            series,
         })?;
     }
     Ok(list)

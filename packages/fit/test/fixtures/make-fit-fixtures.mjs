@@ -204,3 +204,57 @@ write('open-water-swim', (e) => {
     numLaps: 1,
   });
 });
+
+// A 10-minute run at 3 m/s with Garmin running dynamics: cadence 85 cycles
+// per minute plus half a cycle (171 steps per minute), 250 ms ground
+// contact, 85 mm vertical oscillation.
+write('run-dynamics', (e) => {
+  e.onMesg(M.FILE_ID, {
+    type: 'activity',
+    manufacturer: 'garmin',
+    product: 1018,
+    timeCreated: at(0),
+    serialNumber: 2,
+  });
+  e.onMesg(M.EVENT, { timestamp: at(0), event: 'timer', eventType: 'start' });
+  for (let s = 0; s <= 600; s++) {
+    e.onMesg(M.RECORD, {
+      timestamp: at(s),
+      distance: s * 3,
+      heartRate: 150,
+      cadence: 85,
+      fractionalCadence: 0.5,
+      stanceTime: 250,
+      verticalOscillation: 85,
+    });
+  }
+  e.onMesg(M.EVENT, {
+    timestamp: at(600),
+    event: 'timer',
+    eventType: 'stopAll',
+  });
+  e.onMesg(M.LAP, {
+    timestamp: at(600),
+    startTime: at(0),
+    totalElapsedTime: 600,
+    totalTimerTime: 600,
+    totalDistance: 1800,
+  });
+  e.onMesg(M.SESSION, {
+    timestamp: at(600),
+    startTime: at(0),
+    totalElapsedTime: 600,
+    totalTimerTime: 600,
+    totalDistance: 1800,
+    sport: 'running',
+    numLaps: 1,
+  });
+  e.onMesg(M.ACTIVITY, {
+    timestamp: at(600),
+    totalTimerTime: 600,
+    numSessions: 1,
+    type: 'manual',
+    event: 'activity',
+    eventType: 'stop',
+  });
+});

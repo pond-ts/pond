@@ -1968,3 +1968,141 @@ open; the text below is the entry as it read before the cleanup.
   critical path, polars-mt territory), is the rest of this ticket. Full
   assessment:
   [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+
+### [PND-PROCKIT] — Finance kit for an MCP server
+
+**Why.** Peter, 2026-11-08: the process library is going to carry financial
+operations, asked for by agents through an MCP server. A catalogue of 48
+realistic agent questions, each written as a graph
+([finance-process-graphs-2026-11.md](../notes/finance-process-graphs-2026-11.md)),
+found 8 expressible with the four standard folds and the study catalog, 16
+blocked only by pieces every server would write for itself, and 24 blocked by
+the library's shape (no date window, no row-count change, one dataset per
+request, no fan-out across tickers). Peter chose to ship the 16's pieces
+first: no design change, and every later step needs them.
+
+**Outcome (shipped).** Three opt-in sets:
+
+- `BASIC_OPS` (`plan/basic-ops.ts`): `add`, `subtract`, `multiply`, `divide`,
+  `scale`, `shift`, `compare`, `compareColumns`, `and`, `or`, `cumulative`,
+  `hold`.
+- `SUMMARY_FOLDS` (`plan/summary-folds.ts`): `mean`, `stdev`, `sum`, `count`,
+  `percentile`, `shareTrue`, `lastTrue`, `lastChange`, `events`, `meanWhere`,
+  `change`.
+- `studyOps()` in `@pond-ts/financial/process`: the catalog bridge, with
+  params, which had lived only in `catalog-process.test.ts` with `params: {}`.
+
+Plus a behaviour change: a fact on an intraday series now prints the UTC
+instant, not just the day (intraday answers had no time). The format is
+chosen per series, not per row, so an intraday bar on 00:00 UTC does not
+print as a bare date beside instants (Layer-2 review).
+
+Decisions, with the reasoning:
+
+- **Not pre-registered.** `createRegistry()` feeds `describe()` and
+  `toJsonSchema()`, which a consumer hands to a model; 23 new entries would
+  change every existing consumer's prompt. A loop of `define` opts in.
+- **A signal is a number**, true where defined and non-zero. Comparisons write
+  1/0, so they chain into `and`/`or`, into `meanWhere` (where a 1/0 source is a
+  hit rate) and into the event folds, without a boolean column kind.
+- **`stdev` is the population figure and `percentile` is linear in `q` 0–100**,
+  matching pond's reducers, so a fact and an `aggregate` agree. A Sharpe ratio
+  over daily returns wants the sample figure; at the hundreds of rows such
+  questions use, the difference is under 1%, and it is named in the summary.
+- **`shift` declares only its backward reach** as `lookback`. A negative shift
+  reads rows after each row, which `requiredHistory` cannot express; a caller
+  slicing a tail for live use would lose those rows' answers, which is the
+  honest result (the future is not there yet).
+- **`cumulative` and `hold` declare no lookback**: their reach is unbounded,
+  and unknown is the documented answer for that.
+- **Bridge: a required tuning param takes its catalog `example` as default.**
+  Process needs a default; the value lands in the spec id and `explain`, so it
+  is never hidden. **Not for an instrument setting** (Layer-2 review):
+  `swingIndex` / `accumulativeSwingIndex` `limit` (the limit move) and
+  `tradeVolumeIndex` `minTick` (the tick size) have no value right for every
+  market, so those three are left out rather than run against an invented
+  contract spec. A server that knows its instrument can write that one op
+  itself. Optional params (only `balanceOfPower.period`) are dropped
+  with the params that `require` them. Output columns are named by the spec id
+  so a study's default name cannot collide with a source column.
+  `anchoredVwap` is left out (an instant is not a param kind); all four are
+  listed in `UNBRIDGED_STUDIES`; `pivotPoints`' camarilla `R4`/`S4` are not reachable
+  (only the default method's seven outputs are declared).
+- **`@pond-ts/process` is an optional peer of `@pond-ts/financial`**, types
+  only; nothing in the bridge imports it at run time.
+
+**Perf** (`scripts/perf-kit.mjs`, 1M one-minute bars, per-node ms from the
+host's own badge, median of 5, cold host). First version → shipped:
+
+| Node                                       | First   | Shipped | What changed                                                                                                                               |
+| ------------------------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `add` / `subtract` / `multiply` / `divide` | 25–31   | 4–7     | one loop per op, not a shared loop calling a callback (megamorphic); hand the buffer to `Float64Column` instead of `packColumn` copying it |
+| `compare` / `compareColumns`               | 17 / 29 | 11 / 13 | the same, plus branch-free masking (`+(a > b) + (a − a) + (b − b)`)                                                                        |
+| `and` / `or`                               | 42 / 37 | 22 / 18 | the same; the op alone is 7.7 ms, the rest is the graph appending two step outputs to the series first                                     |
+| `events`                                   | 36      | 9       | count, then date only the newest `limit`                                                                                                   |
+| `shareTrue` / `meanWhere`                  | 17 / 23 | 10 / 14 | read the packed buffer directly, branch-free counts                                                                                        |
+| `percentile`                               | 163     | 22      | typed buffer, then two order statistics by quickselect instead of a sort (142 ms with the sort)                                            |
+| `extremes` (unchanged floor)               | 19      | 14      | — run-to-run noise is about ±4 ms                                                                                                          |
+
+**The catalogue's graphs, end to end** (`packages/financial/scripts/perf-graphs.mjs`,
+2026-11-08, after #927 merged). The 23 catalogue graphs the kit can express
+(the 8 "Works" and 15 of the 16 "Server adds"; #46 needs a gap-finding fold
+that is not built), written as the slot requests an agent would send, timed
+through `host.run` on 1M one-minute bars (695 one-day sessions for the session
+studies). _First_ is each graph's first run, graphs in table order in one fresh
+process, so only the earliest graph using an op meets it uncompiled (#24 and
+#43 reuse #1's `rsi`, #45 reuses #23's cross); _warm_ is the median of 7 on a
+fresh host after 5 passes over all 23; _nodes_ is the median, over the same 7,
+of the host's own per-node timings summed. Run-to-run noise on this machine is
+about ±30%.
+
+| #   | Question                                                   | Steps | First ms | Warm ms | Nodes ms | Slowest node ms |
+| --- | ---------------------------------------------------------- | ----- | -------- | ------- | -------- | --------------- |
+| 1   | 14-day RSI now; overbought?                                | 3     | 127      | 70      | 69       | rsi 52          |
+| 2   | Position inside Bollinger bands                            | 2     | 109      | 63      | 63       | pb 55           |
+| 3   | % above 50 and 200 day averages                            | 8     | 180      | 138     | 133      | s50 44          |
+| 4   | MACD and side of signal                                    | 6     | 160      | 108     | 103      | m 79            |
+| 5   | Trend strength (ADX)                                       | 3     | 171      | 161     | 160      | dm 103          |
+| 6   | ATR as % of price                                          | 4     | 96       | 58      | 53       | atr 28          |
+| 8   | How unusual is volume today                                | 3     | 94       | 83      | 82       | z 56            |
+| 10  | 30-day annualised volatility                               | 2     | 73       | 78      | 77       | hv 54           |
+| 13  | Biggest one-bar drop and gain                              | 2     | 40       | 32      | 32       | ext 22          |
+| 14  | Rolling 252-bar return line                                | 2     | 16       | 16      | 14       | ret 11          |
+| 15  | Share of bars that closed up                               | 3     | 46       | 26      | 25       | ret 11          |
+| 16  | One-bar 95% VaR                                            | 2     | 47       | 27      | 27       | var 13          |
+| 23  | Last golden cross                                          | 2     | 87       | 77      | 74       | x 73            |
+| 24  | Every time RSI fell below 30                               | 3     | 101      | 63      | 62       | rsi 43          |
+| 26  | Did close break its 20-bar high                            | 4     | 272      | 237     | 236      | dc 204          |
+| 27  | SuperTrend direction and last flip                         | 3     | 83       | 75      | 74       | st 66           |
+| 28  | Bars with 3x volume and a >3% drop                         | 7     | 163      | 126     | 121      | avgv 41         |
+| 29  | Close vs session VWAP                                      | 3     | 144      | 68      | 68       | vw 51           |
+| 32  | Today's pivot points                                       | 8     | 198      | 122     | 120      | pp 99           |
+| 43  | Average 10-bar return after RSI<30                         | 5     | 142      | 94      | 90       | rsi 49          |
+| 44  | Hit rate of a higher close 5 bars after a lower-band break | 6     | 191      | 121     | 120      | bb 61           |
+| 45  | 50/200 crossover vs buy and hold                           | 11    | 264      | 177     | 175      | x 76            |
+| 48  | Flag possible unadjusted splits                            | 5     | 110      | 60      | 57       | big 18          |
+
+All 23 as one request (97 slots, 88 distinct nodes once shared ones
+like `rsi(14)` and `percentChange(1)` merge): 1905 ms, against
+2083 ms for the 23 sent one by one.
+
+What it showed:
+
+- **The plan layer costs little.** Warm time is within 1–6 ms of the summed
+  node timings on every graph; the time is in the studies. Calling the same
+  studies directly (no plan) gives the same numbers (Donchian 181 ms, ADX
+  120 ms, pivot points 133 ms, RSI 56 ms).
+- **`percentile` was the one slow fold** (142 ms, a full sort for two
+  values); now quickselect, 22 ms, checked against a sort on ties, runs, gaps
+  and signed zeros. An organ-pipe input (rises then falls) defeats the
+  median-of-three pivot and takes the sort fallback: ~79 ms at 1M rows
+  (Layer-2 review), still under the old sort; the test covers that path.
+- **The slowest graph is Donchian's 20-bar high (#26, ~230 ms)**, because
+  `highestLowestValues` runs on core's general rolling `max`/`min` (~80 ms
+  per column at 1M rows, against ~40 ms for `avg`). This is the standing note
+  in PND_FINANCIAL_PLAN ("a monotonic-deque fast path for core's rolling
+  min/max would lift stochastics/%R/Donchian ~2×"). **Done 2026-11-08** (see
+  PND_FINANCIAL_PLAN, "Core rolling min/max fast path"): #26 237 → 118 ms.
+
+**Left open** as PLAN tasks: [PND-PROCWINDOW], [PND-PROCMULTI],
+[PND-PROCFAN].

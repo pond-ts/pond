@@ -1165,3 +1165,28 @@ describe('compactDictionary', () => {
     expect(compactDictionary(col)).toBe(col);
   });
 });
+
+describe('stringColumnFromArray stops counting once the dictionary is too big', () => {
+  it('gives the same storage choice as a full count', () => {
+    // 20 rows, ratio 0.5: the 10th distinct value settles it.
+    const mostlyDistinct = Array.from({ length: 20 }, (_, i) =>
+      i < 12 ? `u${i}` : i % 3 === 0 ? null : 'u0',
+    );
+    const col = stringColumnFromArray(mostlyDistinct);
+    expect(col.fallback).toBeDefined();
+    expect(Array.from({ length: 20 }, (_, i) => col.read(i))).toEqual(
+      mostlyDistinct.map((v) => v ?? undefined),
+    );
+    expect(col.validity?.isDefined(12)).toBe(false);
+    // One short of the limit stays dictionary-encoded.
+    const nine = Array.from({ length: 20 }, (_, i) => `u${i % 9}`);
+    expect(stringColumnFromArray(nine).dictionary).toHaveLength(9);
+    // A ratio no count can pass, or NaN, still means plain storage.
+    for (const dictRatio of [0, -1, NaN]) {
+      expect(stringColumnFromArray(nine, { dictRatio }).fallback).toBeDefined();
+    }
+    expect(
+      stringColumnFromArray(mostlyDistinct, { forceDict: true }).dictionary,
+    ).toHaveLength(12);
+  });
+});

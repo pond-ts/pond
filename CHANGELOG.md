@@ -79,6 +79,148 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
+  (number columns, count or duration windows), with the same answers bit for
+  bit. The range studies that stand on them speed up about 2×: at 1M bars
+  `donchian` 193 → 79 ms, `williamsR` 199 → 82 ms, `stochastic` 235 → 123 ms,
+  `choppinessIndex` 227 → 127 ms.
+
+### Added
+
+- **`@pond-ts/process`: basic steps and summary folds** — the pieces a finance
+  MCP server needs past "what is RSI now?". `BASIC_OPS`: `add`, `subtract`,
+  `multiply`, `divide`, `scale` (× factor + offset), `shift` (positive reads
+  the past, negative the future, for forward returns), `compare` /
+  `compareColumns` (write 1/0), `and`, `or`, `cumulative` (`sum` / `product`
+  / `max` / `min` — compounding, running peaks) and `hold` (carry the last
+  non-zero value, turning crossover events into a position). `SUMMARY_FOLDS`:
+  `mean`, `stdev` (population, as pond's reducer), `sum`, `count`,
+  `percentile` (`q` 0–100, linear), `shareTrue`, `lastTrue`, `lastChange`,
+  `events` (the newest `limit` dates plus the total), `meanWhere` (an average
+  over the rows a signal marks) and `change` (first, last, percent). Neither
+  set is pre-registered, so `createRegistry()` and what it describes to a
+  model are unchanged; `define` them to opt in. All are one pass over packed
+  columns (`percentile` sorts): 4–14 ms per op and 9–20 ms per fold at 1M rows
+  (`scripts/perf-kit.mjs`).
+- **`@pond-ts/financial/process`: the study catalog as process steps.**
+  `studyOps({ sessions? })` returns every study as an `OpDef` with its params
+  and ranges, input roles and output units — the bridge that until now lived
+  only in a test, with no params. A required tuning param takes its catalog
+  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`.
+  Four are left out and listed in `UNBRIDGED_STUDIES` with the reason:
+  `anchoredVwap` (its anchor is an instant, which a process param cannot be)
+  and `swingIndex`, `accumulativeSwingIndex`, `tradeVolumeIndex` (each needs
+  an instrument setting — limit move, tick size — with no honest default).
+  `@pond-ts/process` is an optional peer, needed for types only. A test runs
+  all 105 through a host request and checks each column cell for cell
+  against a direct study call.
+
+### Changed
+
+- **`@pond-ts/process`: a fact on an intraday row now carries its time.** The
+  folds' `at` (and `shape`'s points) used to print the UTC day only, so an
+  answer on 5-minute bars read `2026-11-07` with no time. The format is chosen
+  per series: a daily series (first and last rows on midnight UTC, first step
+  a whole number of days) still prints `YYYY-MM-DD`; anything finer prints the
+  UTC instant (`2026-11-07T14:35:00Z`) on every row, midnight included. Daily
+  bars stamped at midnight UTC read exactly as before; daily bars stamped at
+  another hour now show it.
+
+### Added
+
+- **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
+  `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
+  stretch's moving pace with the model named (`'acsm-running'`, the ACSM
+  running equation, by default for runs, with descents as level;
+  `'minetti-2002-walking'` for walks and hikes; `'minetti-2002-running'` by
+  name), the recorded pace
+  beside it, the level-equivalent `factor` and the share of distance with a
+  known grade. Grade is read over 100 m of distance and capped at ±45 %.
+  Steps with no elevation recorded count as level, and `coverage` says how
+  much distance had it. `aerobic.efficiency()` and `decoupling()` take
+  `output: 'grade-adjusted-speed'` (and `gradeModel`), so a steady effort
+  over hills isn't marked `variable`.
+
+- **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
+  `analysis.efforts.fromLaps()` reads the recorded laps (the device's
+  work/rest marks, a pool swim's laps with distance, or laps split into
+  faster and slower when they take turns), `efforts.detect({ powerAbove:
+Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
+  stretches above a threshold. Each effort is a section with the recovery
+  after it; warm-up and cool-down apart; `source` says where they came from.
+  `compare()` gives each metric's values, highest, lowest, typical, spread
+  and first-to-last change (best and worst for pace and power), and the
+  recoveries. The FIT reader keeps each lap's `intensity`.
+
+- **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
+  `section.analyze().technique` over the pool lengths whose middle is in a
+  section (drills and lengths counted as 0 left out, `uncounted` says how
+  many): `strokesPerLength`, `strokeRate`,
+  `distancePerStroke`, `swolf`, `timePerLength`, the `stroke` (or
+  `'mixed'`), and the counting `convention` (`'arm-cycles'` for Garmin, else
+  `'unknown'`, with the maker).
+- **`@pond-ts/fit`: `analyze()` without an athlete.** `athlete` is now
+  optional; left out, only the readings that need no settings come back.
+
+- **`@pond-ts/fit`: running dynamics** (RFC §15.7). `section.dynamics` has
+  `cadence` in steps per minute (a new `StepRate` quantity; on-foot cadence
+  is recorded per leg, so it is doubled unless the new `cadenceUnit: 'steps'`
+  stream flag or a median above 120 says it's already steps), `stepLength` and `verticalRatio` (worked out), and
+  `groundContactTime` and `verticalOscillation` (as recorded), each with its
+  `source`, plus `stats()` (time-weighted over moving time). The FIT reader
+  reads `stance_time` and `vertical_oscillation` into the new streams
+  `groundContactMs` and `verticalOscillationMm`.
+
+- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
+  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
+  `output.series`). Each push returns `Output::Columns { node, series }`, a
+  batch `TimeSeries` of the rows it added, in key order. Watched alone on
+  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
+  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
+  `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
+  matches on `Output` / `OutputKind` without a wildcard arm (new variant):
+  pond-rs's next release is 0.2.0.
+
+### Changed
+
+- **`fromArrow` reads text columns straight from Arrow's buffers**
+  ([PND-ARROWTEXT]) instead of through apache-arrow's `toArray()`. Each
+  distinct string is decoded once (a `Dictionary<Utf8>` column decodes only
+  its dictionary). Same strings, same column storage, same all-null rule.
+  `TimeSeries.fromArrow` / `ValueSeries.fromArrow` on 1M rows with a text
+  column of 100 labels: ~480 → ~50 ms; `Dictionary<Utf8>` 123 → ~20 ms;
+  every row distinct ~1.1 s → ~500 ms. Applies to interval label columns
+  too. A vector without a `type` / `data` (a hand-made stand-in), and
+  `LargeUtf8` / `Utf8View`, keep the old path.
+- **Building a string column stops counting distinct values once it knows
+  the column will be stored plain** (`stringColumnFromArray`, used by every
+  text-column door). Same result; a mostly-distinct column skips most of
+  the work.
+- **`@pond-ts/fit`: the FIT reader adds `fractional_cadence` to `cadence`.**
+  A run recorded as 85 plus half a cycle now reads 85.5, not 85. Average
+  cadence on files that record the fraction goes up by up to one cycle per
+  minute.
+
+- **`@pond-ts/fit`: distributions and coasting on any section** (RFC
+  §14.1). `analysis.distribution(channel, { binWidth, time })` gives the time
+  at each level of `'power'`, `'heartRate'`, `'cadence'`, `'speed'` or
+  `'pace'` (s/km, or s/100 m in open water; stops left out, slow paces held
+  in one bin), binned with pond's `byColumn`, every bin
+  in between kept; power and cadence start at 0. `analysis.coasting` is a
+  ride's moving time with zero cadence (or zero power without cadence), with
+  its share of moving time.
+
+- **`@pond-ts/fit`: aerobic efficiency and decoupling on any section**
+  (RFC §14.1, §15.2). `section.analyze({ athlete }).aerobic` has
+  `efficiency({ output })` (normalized power ÷ average heart rate on a ride
+  with power, else speed ÷ heart rate in metres per heartbeat; both on
+  moving time), `efficiencyFactor`, and `decoupling({ output, method:
+'halves' })`: the first half against the second, split by moving time,
+  with `change`, `coverage`, and `cautions` (`'short'`, `'low-coverage'`,
+  `'variable'`) so an interval session doesn't read as a steady effort.
+
 ### Fixed
 
 - **`editRecording` (and `Activity.edit`): a cropped open water swim keeps
