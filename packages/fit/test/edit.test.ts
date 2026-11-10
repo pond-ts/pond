@@ -259,6 +259,60 @@ describe('editRecording', () => {
   });
 });
 
+describe('an open water swim', () => {
+  it('keeps moving by speed after a crop, not by its laps', () => {
+    const r = recording();
+    r.activity.sportType = 'Swim';
+    // treading water from 10 to 30 s; the watch's laps and swim time count
+    // all of it as swimming
+    const d = (s: number) => 3 * (s < 10 ? s : s < 30 ? 10 : s - 20);
+    const t = r.streams.timeSeconds!;
+    r.streams = {
+      ...r.streams,
+      openWater: true,
+      latlng: t.map((s) => [37 + d(s) / 111195, -122] as [number, number]),
+      distanceMeters: t.map(d),
+    };
+    r.swim = { movingSeconds: 100 };
+    r.activity.distanceMeters = 240;
+    r.activity.movingTimeSeconds = 80;
+    const v = editRecording(r, { to: 50 });
+    // 50 s kept, 20 of them still: about 30 s moving, as the samples say
+    expect(v.activity.movingTimeSeconds).toBeGreaterThanOrEqual(29);
+    expect(v.activity.movingTimeSeconds).toBeLessThanOrEqual(31);
+    expect(v.activity.movingTimeSeconds).toBeLessThan(
+      r.activity.movingTimeSeconds,
+    );
+  });
+});
+
+describe('a swim whose GPS is all in the part cropped off', () => {
+  it('takes the kept part’s rule: the watch’s swim time', () => {
+    const r = recording();
+    r.activity.sportType = 'Swim';
+    const t = r.streams.timeSeconds!;
+    // a fix for the first 50 s only, then none
+    r.streams = {
+      ...r.streams,
+      latlng: r.streams.latlng.map((p, i) => (t[i]! < 50 ? p : null)),
+    };
+    // the watch counts 80 % of each lap as swimming
+    r.laps = r.laps!.map((l) => ({
+      ...l,
+      movingSeconds: l.elapsedSeconds * 0.8,
+    }));
+    r.swim = { movingSeconds: 80 };
+    r.activity.movingTimeSeconds = 80;
+    const v = editRecording(r, { from: 50 });
+    // 80 % of the 50 s kept; by the whole recording's speed rule it read 32
+    expect(v.activity.movingTimeSeconds).toBe(40);
+    expect(v.swim).toBeDefined();
+    expect(v.activity.movingTimeSeconds).toBe(
+      Math.round(v.swim!.movingSeconds),
+    );
+  });
+});
+
 describe('a swim with no laps', () => {
   it('shares its swim time out by time, or by the lengths kept', () => {
     const r = recording();
