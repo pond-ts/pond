@@ -889,6 +889,7 @@ const weight = Metric.of('weight', {
 weight.on('2026-11-02T19:00:00Z'); // { value: 71.25, readings: 2, age: Duration, sources: [...] } | null
 weight.entries; // as stored, date order
 weight.between({ from, to }); // a pond series, for charts
+weight.smoothed(days(7)).on(date); // the week's average, what analysis reads
 ```
 
 - **Rules.** `'hold'` (the last value stays in force until the next: FTP,
@@ -948,7 +949,9 @@ directly:
   `{ bounds }` entries → typed boundaries.
 
 `TrainingHistory` reads W/kg and heart-rate load from these, with the value
-in force (or interpolated) on each activity's date, as it does now.
+in force on each activity's date, as it does now. For weight (and other
+measured metrics) that value is the rolling week's average, not the day's
+reading.
 
 ### 18.5 Decided
 
@@ -956,6 +959,16 @@ in force (or interpolated) on each activity's date, as it does now.
   after the last reading (2026-11-10). This replaces an averaging window and
   its question of whether to use readings after the date. Interpolating does
   use the next reading when there is one; the answer's `sources` names both.
+- **Analysis reads measured metrics smoothed** (Peter, 2026-11-10: "I do
+  like the idea of consumers of weight data taking a rolling week avg though,
+  otherwise i could imagine the underlying variability causing issues
+  elsewhere"). The metric keeps every reading and interpolates between them,
+  for charts and for `on(date)`; the profile, and so W/kg and anything else
+  derived, reads `smoothed(days(7))`: the average of the interpolated line
+  over the 7 days up to the date. A day-to-day swing of a kilo then moves a
+  W/kg by a seventh as much. The window is part of the metric's definition
+  (default a week for weight, resting HR and HRV), so every consumer gets the
+  same number.
 - **Power and pace zones store boundaries** like heart-rate zones
   (2026-11-10). A new FTP or 5 k time writes new boundaries on its date.
 
