@@ -878,7 +878,7 @@ date.
 ```ts
 const weight = Metric.of('weight', {
   unit: 'kg',
-  rule: { average: days(7) }, // readings within the window, averaged
+  rule: 'interpolate', // a line between readings; the last value after the last
   entries: [
     { at: '2026-11-02T07:10:00Z', value: 71.4, source: 'apple-health' },
     { at: '2026-11-03T07:05:00Z', value: 71.1, source: 'apple-health' },
@@ -886,16 +886,18 @@ const weight = Metric.of('weight', {
   ],
 });
 
-weight.on('2026-11-03'); // { value: 71.25, readings: 2, age: Duration, sources: [...] } | null
+weight.on('2026-11-02T19:00:00Z'); // { value: 71.25, readings: 2, age: Duration, sources: [...] } | null
 weight.entries; // as stored, date order
 weight.between({ from, to }); // a pond series, for charts
 ```
 
 - **Rules.** `'hold'` (the last value stays in force until the next: FTP,
-  max HR, 5 k time); `{ average: window }` (weight, resting HR, HRV);
-  `'interpolate'` (a straight line between readings). The rule is part of the
-  metric, with a default per known metric, so callers ask `on(date)` and don't
-  repeat it.
+  max HR, 5 k time) and `'interpolate'` (weight, resting HR, HRV). Interpolate
+  draws a straight line between the readings either side of the date; with
+  no later reading it uses the last value (Peter, 2026-11-10: "If there's no
+  future value then last value, otherwise interpolated"). The rule is part of
+  the metric, with a default per known metric, so callers ask `on(date)` and
+  don't repeat it.
 - **Before the first entry.** `before: 'first' | 'none'`. Estela's
   `reachBack` (the first value covers everything earlier) becomes this option
   instead of app code.
@@ -919,6 +921,8 @@ Zones are groups of their **boundaries**:
 | Power zones      | the boundaries, in watts         | FTP, or typed      |
 | Pace zones       | the boundaries, as speed         | 5 k time, or typed |
 
+All three store their boundaries, the same way (Peter, 2026-11-10).
+
 - The boundaries are the stored truth. An input such as max HR is a metric
   of its own; entering one **computes the boundaries and stores them** in the
   group on that date, with the source saying how (`{ from: 'maxHr', value:
@@ -939,24 +943,27 @@ HR, and the three zone groups. Today's `AthleteProfileJson` maps over
 directly:
 
 - `weightKg`, `ftpWatts`, `paceThreshold` → metrics with `rule: 'hold'`
-  (weight moves to `average` once readings arrive).
+  (weight moves to `interpolate` once readings arrive).
 - `hrZone` `{ maxHr }` entries → a max HR entry plus the computed boundaries;
   `{ bounds }` entries → typed boundaries.
 
 `TrainingHistory` reads W/kg and heart-rate load from these, with the value
-in force (or averaged) on each activity's date, as it does now.
+in force (or interpolated) on each activity's date, as it does now.
 
-### 18.5 Open questions
+### 18.5 Decided
 
-1. **The average window**: centred on the date, or only readings before it?
-   Centred is the better estimate for a past activity; before-only is what
-   was known then.
-2. **Power and pace zones**: store the boundaries when FTP or the 5 k time
-   changes (consistent with heart rate), or keep working them out, since
-   their method rarely changes?
-3. **Where the entries live** for a large history: raw weigh-ins for ten
+- **Measured metrics interpolate** between readings, and keep the last value
+  after the last reading (2026-11-10). This replaces an averaging window and
+  its question of whether to use readings after the date. Interpolating does
+  use the next reading when there is one; the answer's `sources` names both.
+- **Power and pace zones store boundaries** like heart-rate zones
+  (2026-11-10). A new FTP or 5 k time writes new boundaries on its date.
+
+### 18.6 Open questions
+
+1. **Where the entries live** for a large history: raw weigh-ins for ten
    years are about 3,600 entries. Fine in one file or document; an app could
    still choose to keep one per day.
-4. **Estimated values** (FTP from rides, max HR seen in activities): entries
+2. **Estimated values** (FTP from rides, max HR seen in activities): entries
    with an `estimate` source the athlete accepts, or a separate suggestion
    the app shows? Accepting keeps the metric the single answer.
