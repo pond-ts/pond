@@ -178,6 +178,60 @@ describe('the builder emits a plan, it does not replace one', () => {
     expect(n.shape({ points: 20 }).slot).toBe(a.slot);
   });
 
+  it('passes how through to the run, not just into the slot', () => {
+    // 6 rows of px 10..15 into 2 bins: rows 0–2 and 3–5.
+    const registry = makeRegistry();
+    const graph = bind(series(6), { registry, units });
+    const g = plan('ACME');
+    const px = g.add('px2', 'scale', { by: 1 }, ['px']);
+    g.expose('sampled', px.shape({ points: 2 }));
+    g.expose('banded', px.shape({ points: 2, how: 'minMax' }));
+    g.expose('m4', px.shape({ points: 2, how: 'minMaxFirstLast' }));
+    // `how` alone, with points left to its default.
+    const mean = px.shape({ how: 'mean' });
+    expect(mean.slot).toBe('px2:shape(how=mean)');
+    expect(g.toJSON().nodes[mean.slot]).toEqual({
+      op: 'shape',
+      params: { how: 'mean' },
+      in: ['px2'],
+    });
+    g.expose('mean', mean);
+
+    const res = run(graph, g.toJSON());
+    expect(res.skipped).toEqual([]);
+    const byName = Object.fromEntries(
+      res.facts.map((f) => [f.name, f['series']]),
+    );
+    expect(byName).toEqual({
+      sampled: [
+        ['2026-01-03', 12],
+        ['2026-01-06', 15],
+      ],
+      banded: [
+        ['2026-01-03', 10, 12],
+        ['2026-01-06', 13, 15],
+      ],
+      m4: [
+        ['2026-01-03', 10, 12, 10, 12],
+        ['2026-01-06', 13, 15, 13, 15],
+      ],
+      // 6 rows under the default 40 points: one point per row.
+      mean: [10, 11, 12, 13, 14, 15].map((v, i) => [`2026-01-0${i + 1}`, v]),
+    });
+  });
+
+  it('lets the run refuse an unknown how', () => {
+    const registry = makeRegistry();
+    const graph = bind(series(6), { registry, units });
+    const g = plan('ACME');
+    const px = g.add('px2', 'scale', { by: 1 }, ['px']);
+    // @ts-expect-error `how` is one of core bin's reducer names.
+    g.expose('summed', px.shape({ how: 'sum' }));
+    const res = run(graph, { ...g.toJSON(), onError: 'collect' });
+    expect(res.facts).toEqual([]);
+    expect(res.skipped[0]!.reason).toMatch(/shape\.how must be one of/);
+  });
+
   it('refuses a duplicate slot before the request is ever sent', () => {
     const g = plan('ACME_5m');
     g.add('avg', 'sma', { period: 3 }, ['px']);
