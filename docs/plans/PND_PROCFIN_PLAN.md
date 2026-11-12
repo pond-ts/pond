@@ -74,18 +74,33 @@ from the start (`step = ceil(length / points)`), so:
 
 ### [PND-SHAPEEND] — a sparkline ends at the newest bar (S)
 
-`shape` always includes the first and the newest defined row and spaces the
-rest evenly between them. Never more than `points` points. Done when a test
-on a length that is not a multiple of the stride ends on the last row.
+`shape` splits the rows into equal row bins with core's `Float64Column.bin`
+(at most `points` bins, never more bins than rows), replacing today's
+every-Nth-row loop. Equal row bins cover every row, so the last bin always
+holds the newest row. With `how: 'sample'` (see [PND-SHAPEHOW]) each point is
+its bin's last defined value, read from the `last` channel of core's
+`minMaxFirstLast` reducer (core's `bin` has no scalar `last`). The first point
+is therefore the first bin's last value, not row 0. No sampling or reduction
+code in `@pond-ts/process`: if core lacks something, raise a core ticket.
+**Peter's call:** which time a point carries (proposed: the time of its bin's
+last row). Done when a test on a length that is not a multiple of `points`
+ends on the newest row and returns no more than `points` points.
 
 ### [PND-SHAPEHOW] — summarise each stretch (S)
 
-New `how` param: `sample` (today's behaviour), `mean` (average of each
-stretch) or `range` (low and high of each stretch, so a spike always
-shows). It is a param, so it lands in the spec id and two callers share one
-answer. **Peter's call:** the default. Proposed: `range` reads best for
-prices; keep `sample` as the default only if changing existing answers is
-unwanted.
+New `how` param, passed straight to core's `Float64Column.bin` over the row
+bins from [PND-SHAPEEND]. Values use core's reducer names: `sample` (each
+bin's last value; the default, decided by Peter), `mean`, `median`, `min`,
+`max`, `minMax` (low and high of each bin, so a spike always shows) and
+`minMaxFirstLast` (M4: low, high, first and last). It is a param, so it lands
+in the spec id and two callers share one answer.
+
+Each point follows `bin`'s output: a scalar reducer gives `[time, value]`,
+`minMax` gives `[time, lo, hi]`, `minMaxFirstLast` gives
+`[time, lo, hi, first, last]`. `points` counts bins. A bin with no defined
+value (NaN from `bin`) is left out. No reduction code in `@pond-ts/process`:
+if core lacks something, raise a core ticket. Time bins (core's `binBy`)
+come with date windows ([PND-WINOUT]), not here.
 
 ### [PND-SHAPESCALE] — carry the scale (S)
 
