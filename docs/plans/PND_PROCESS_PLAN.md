@@ -2104,5 +2104,5 @@ What it showed:
   min/max would lift stochastics/%R/Donchian ~2×"). **Done 2026-11-08** (see
   PND_FINANCIAL_PLAN, "Core rolling min/max fast path"): #26 237 → 118 ms.
 
-**Left open** as PLAN tasks: [PND-PROCWINDOW], [PND-PROCMULTI],
-[PND-PROCFAN].
+**Left open:** [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN], now
+broken into tasks in [PND_PROCFIN_PLAN.md](PND_PROCFIN_PLAN.md).
