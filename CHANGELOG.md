@@ -185,12 +185,12 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
 
 ### Changed
 
-- **Building every row's `Event` is ~2.7× faster** ([PND-EVENTMAP]).
+- **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
   `series.events` on a series whose events were not built yet (and so the
   first `filter`, `toArray`, `map`, … on it) built each row through two
   per-row `Map` caches; it now builds rows straight into the array, reusing
   any event already handed out. Same objects and identity rules. 1M rows:
-  `events` 1.37 s → 0.5 s, `filter` 1.45 s → 0.52 s.
+  `events` ~1.0 s → ~0.35 s, `filter` ~1.05 s → ~0.36 s.
 - **`arrayContains`, `arrayContainsAll` and `arrayContainsAny` read the
   array column** ([PND-ARRAYSLOW]) instead of building every `Event`. Same
   rows kept; a kept row's `Event` is still the source row's. 100k rows:

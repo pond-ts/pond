@@ -898,6 +898,25 @@ and was not caught; the reuse is kept so the two stay one object anyway.
 | filter a > 50               | 1419 / 1483 ms | 521 / 528 ms |
 | toArray then at(i) loop     | 1548 / 1564 ms | 534 / 578 ms |
 
+Rebuilt on main 2026-11-12, after [PND-TRIMCOL] (#902) gave `trim` results a
+`#keySource` (keys read from the source store). The one-pass build would
+have made fresh key objects there, so a `#keySource` store keeps the per-row
+path like a delegated one; a test pins the trimmed keys `===` the source's.
+`_hasBuiltEventsModulePrivate` / `_builtEventAtModulePrivate` (added since,
+for row export) also count the one-pass array. Old-vs-new oracle (3,000
+random series incl. `trim`, `dedupe`, `fromEvents`, `toPoints` / `groupBy`
+mid-way, identity to the source's events and keys): identical; without the
+`#keySource` guard 117/3000 differ.
+
+Re-run on that main, fresh series per run, two runs:
+
+| Case                        | Before         | After (ms) |
+| --------------------------- | -------------- | ---------- |
+| events, time key, 3 columns | 1140 / 992 ms  | 369 / 334  |
+| events, interval key        | 927 / 1001 ms  | 366 / 368  |
+| filter a > 50               | 983 / 1127 ms  | 373 / 347  |
+| toArray then at(i) loop     | 1207 / 1445 ms | 396 / 319  |
+
 What is left is the `Event` and key objects themselves (each copies and
 freezes its data) and the garbage they make. Making those cheaper means
 changing the public `Event` / `Time` constructors; not done.
