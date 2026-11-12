@@ -151,11 +151,12 @@ times), so a client can draw and label the line without a second fold.
 **Outcome (shipped, wave "Sparkline improvements").** The format the wave
 suggested: `first`, `last`, `min` and `max` are each `{ value, at }`, as
 `change` and `extremes` report them, measured over the whole series rather
-than the points, and each is `null` when the series has no defined value.
-The answer's keys are, in order, `points`, `first`, `last`, `min`, `max`,
-`series`. `min` and `max` come from calling the `extremes` fold; `first`
-and `last` from helpers (`firstDefined`, `lastDefined`, `valueAt`) that
-`last` and `change` now share. A high that no `sample` point landed on is still the `max`.
+than the points, and each is `null` when the series has no defined value. The
+answer's keys are, in order, `points`, `first`, `last`, `min`, `max`,
+`series`. `min` and `max` come from calling the `extremes` fold; `first` and
+`last` from helpers (`firstDefined`, `lastDefined`, `valueAt`) that `last` and
+`change` now share. A high that no `sample` point landed on is still the
+`max`.
 
 **Known follow-up:** the scale costs one `extremes` scan, and `extremes`
 reads each row through a closure, so `shape` went from ~2 ms to 6–11 ms at
@@ -163,15 +164,15 @@ reads each row through a closure, so `shape` went from ~2 ms to 6–11 ms at
 fix belongs in `extremes` (every caller gains), not in `shape`; no ticket
 yet.
 
-**Docs checked after the wave, left as they are:** the fold's `summary`
-(bins, bin end time, every `how`, the scale fields) and `label`
-(`shape(40, sample) of x`) in `folds.ts` match the code. `authoring.mdx`
+**Docs checked after the wave, left as they are:** in `folds.ts`, the
+fold's `summary` (bins, bin end time, every `how`, the scale fields) and
+its `label`, `shape(40, sample) of x`, match the code. `authoring.mdx`
 already shows `.shape({ points, how })` and the new slot
 `bandWidth:shape(how=sample,points=80)`. API.md's folds row already names
 `ShapeHow`; API.md maps exports only, so the answer's fields are described
-in `registry.mdx`. Graph 14 in `perf-graphs.mjs` sets only
-`points`, so it runs `how: 'sample'` and needs no change. The process
-README does not mention `shape`. The process-demo agent prompt
+in `registry.mdx`. Graph 14 in `perf-graphs.mjs` sets only `points`, so it
+runs `how: 'sample'` and needs no change. The process README does not
+mention `shape`. The process-demo agent prompt
 (`apps/process-demo/server/agent.ts`) names six of the seven `how` values,
 leaving out `minMaxFirstLast` (the prompt says nothing plots `shape`); the
 model still sees all seven in the `emit_request` tool schema

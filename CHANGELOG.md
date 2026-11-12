@@ -94,21 +94,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   row: about 2 ms at 1M rows, from 0.06 ms when it read 40
   (`scripts/perf-kit.mjs`).
 
-- `@pond-ts/process` (**breaking**: every `shape` id changes):
-  **`shape` takes `how`, what each point holds.** Values
-  are core `bin`'s reducer names: `sample` (each bin's last value, the
-  default and the behaviour above), `mean`, `median`, `min`, `max`, `minMax`
-  (`[time, lo, hi]`, so a spike between samples always shows) and
+- **`@pond-ts/process` (breaking): `shape` takes `how`, what each point
+  holds.** Values are core `bin`'s reducer names: `sample` (each bin's last
+  value, the default and the behaviour above), `mean`, `median`, `min`, `max`,
+  `minMax` (`[time, lo, hi]`, so a spike between samples always shows) and
   `minMaxFirstLast` (M4, `[time, lo, hi, first, last]`). A scalar `how` keeps
   `[time, value]`. `points` still counts bins, and a bin with no defined value
   is still left out. `sum` and `count` are not offered: their empty bin is 0,
   not a gap. Type `ShapeHow`; both builders' `.shape({ points, how })` pass it
-  through. **Ids and fluent slots change**: `how` is a param, so it lands in
-  every shape id (`p1:shape(px;points=40)` →
+  through. **Breaking: ids and fluent slots change.** `how` is a param, so it
+  lands in every shape id (`p1:shape(px;points=40)` →
   `p1:shape(px;how=sample,points=40)`) and in the registry-bound builder's
   slot (`x:shape(points=40)` → `x:shape(how=sample,points=40)`). A saved id,
-  slot or fact citation from before no longer matches. At 1M rows the binning costs: `minMax` /
-  M4 ~1.6 ms, `mean` ~0.7 ms, `median` ~9.6 ms (`scripts/perf-kit.mjs`).
+  slot or fact citation from before no longer matches. At 1M rows the binning
+  costs: `minMax` / M4 ~1.6 ms, `mean` ~0.7 ms, `median` ~9.6 ms
+  (`scripts/perf-kit.mjs`).
 
 - **`@pond-ts/process`: `shape` carries the line's scale.** The answer adds
   `first`, `last`, `min` and `max`, each `{ value, at }` as `change` and
