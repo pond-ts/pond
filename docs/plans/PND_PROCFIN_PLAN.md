@@ -86,6 +86,14 @@ code in `@pond-ts/process`: if core lacks something, raise a core ticket.
 last row). Done when a test on a length that is not a multiple of `points`
 ends on the newest row and returns no more than `points` points.
 
+**Decided (Peter, sparkline wave):** a point carries its **bin end time**, the
+time of the bin's last row, even when that row is a gap. Core's `bin` returns
+values only, so `shape` learns each bin's rows by repeating core's one-line
+split in `@pond-ts/process` (`binStart` in `folds.ts`: bin `i` is rows
+`floor(i·n/W)` to `floor((i+1)·n/W)`), with a test pinning it to core's
+`bin`. This is Peter's one exception to "raise a core ticket": a core
+bin-edges export was considered and not chosen for now.
+
 ### [PND-SHAPEHOW] — summarise each stretch (S)
 
 New `how` param, passed straight to core's `Float64Column.bin` over the row

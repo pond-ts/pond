@@ -202,7 +202,8 @@ export const shape: FoldDef = {
  * First row of bin `i` when `n` rows are cut into `bins` equal row bins,
  * so bin `i` is rows `[binStart(i), binStart(i + 1))`. This is core
  * `Float64Column.bin`'s own split, which core does not export; a test
- * pins the two together.
+ * pins the two together. Repeating it here rather than adding a core
+ * export was Peter's call ([PND-SHAPEEND] in PND_PROCFIN_PLAN.md).
  */
 export const binStart = (i: number, n: number, bins: number): number =>
   Math.floor((i * n) / bins);
