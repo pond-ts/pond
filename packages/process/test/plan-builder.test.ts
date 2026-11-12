@@ -163,10 +163,16 @@ describe('the builder emits a plan, it does not replace one', () => {
     const n = g.add('n', 'sma', { period: 3 }, ['px']);
     const a = n.shape({ points: 20 });
     const b = n.shape({ points: 100 });
+    const c = n.shape({ points: 20, how: 'minMax' });
     expect(a.slot).not.toBe(b.slot);
+    expect(c.slot).not.toBe(a.slot);
     expect(g.toJSON().nodes).toMatchObject({
       'n:shape(points=20)': { op: 'shape', params: { points: 20 } },
       'n:shape(points=100)': { op: 'shape', params: { points: 100 } },
+      'n:shape(how=minMax,points=20)': {
+        op: 'shape',
+        params: { points: 20, how: 'minMax' },
+      },
     });
     // Same params still dedupe to one node.
     expect(n.shape({ points: 20 }).slot).toBe(a.slot);

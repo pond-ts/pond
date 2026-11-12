@@ -70,6 +70,10 @@ const nodes = {
   change: { op: 'change', in: ['close'] },
   shape: { op: 'shape', in: ['close'] },
   shape400: { op: 'shape', params: { points: 400 }, in: ['close'] },
+  shapeMean: { op: 'shape', params: { how: 'mean' }, in: ['close'] },
+  shapeMedian: { op: 'shape', params: { how: 'median' }, in: ['close'] },
+  shapeMinMax: { op: 'shape', params: { how: 'minMax' }, in: ['close'] },
+  shapeM4: { op: 'shape', params: { how: 'minMaxFirstLast' }, in: ['close'] },
 };
 
 function time(series, column = 'close') {

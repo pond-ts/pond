@@ -94,16 +94,34 @@ pre-registered because every consumer wants them:
 | `last`           | The most recent defined value, with its date           |
 | `extremes`       | Lowest and highest over the series, each with its date |
 | `percentileRank` | Where the latest value sits in its own history (0–1)   |
-| `shape`          | The whole series in at most `points` bins (≤ 400)      |
+| `shape`          | The whole series in at most `points` bins, by `how`    |
 
 `shape` is the honest answer to "show me the series" for a caller paying
 by the token. It cuts the rows into at most `points` equal row bins with
-core's `Float64Column.bin` and gives one `[time, value]` point per bin: the
-bin's last defined value, at the **bin end time** (the time of the bin's
-last row, even when that row is a gap). The bins cover every row, so the
-line always ends on the newest one; a bin with no defined value is left
-out. The point count is a param rather than a selector field so it lands
-in the id and two callers asking for 40 points share one cached answer.
+core's `Float64Column.bin` and gives one point per bin, at the **bin end
+time** (the time of the bin's last row, even when that row is a gap). The
+bins cover every row, so the line always ends on the newest one; a bin with
+no defined value is left out, and `points` in the answer counts the bins
+that remain.
+
+`how` says what each point holds, using core `bin`'s reducer names:
+
+| `how`             | Point                         | Each bin's                                |
+| ----------------- | ----------------------------- | ----------------------------------------- |
+| `sample`          | `[time, value]`               | last defined value (the default)          |
+| `mean`, `median`  | `[time, value]`               | mean or median                            |
+| `min`, `max`      | `[time, value]`               | lowest or highest                         |
+| `minMax`          | `[time, lo, hi]`              | low and high, so a spike always shows     |
+| `minMaxFirstLast` | `[time, lo, hi, first, last]` | M4: low, high, first and last (see below) |
+
+`minMaxFirstLast` is what a client needs to draw a decimated line that stays
+continuous across bins: enter each bin at `first`, exit at `last`, and draw
+`lo`–`hi` between. `sum` and `count` are not offered, because their empty
+bin is 0 rather than a gap.
+
+`points` and `how` are params rather than selector fields, so they land in
+the id (`p1:shape(px;how=sample,points=40)`) and two callers asking for the
+same sparkline share one cached answer.
 
 A fold body reads its inputs through `ctx.numeric(role)` — a zero-copy
 columnar view — falling back to `ctx.values[role]`, a lazily densified

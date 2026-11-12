@@ -5,6 +5,7 @@ import {
   createRegistry,
   packColumn,
   run,
+  specId,
   type OpDef,
   type ParamValue,
 } from '../src/index.js';
@@ -28,19 +29,20 @@ const series = (n: number) =>
     rows: Array.from({ length: n }, (_, i) => [T0 + i * DAY, 10 + i]),
   });
 
-/** px with the rows `gap` names missing, packed or chunked. */
-const gappy = (gap: (i: number) => boolean, chunked = false): OpDef => ({
-  name: chunked ? 'chunkedGaps' : 'gaps',
+/** A column of `f(row)` (undefined is a gap), packed or chunked. */
+const derived = (
+  f: (i: number) => number | undefined,
+  chunked = false,
+): OpDef => ({
+  name: chunked ? 'chunkedDerived' : 'derived',
   family: 'transform',
-  summary: 'px with some rows missing.',
+  summary: 'A column made up per row.',
   params: {},
   inputs: [{ role: 'source' }],
   outputs: [{ id: '', unit: 'inherit' }],
   run: (ctx) => {
     const n = ctx.series.length;
-    const v = Array.from({ length: n }, (_, i) =>
-      gap(i) ? undefined : 10 + i,
-    );
+    const v = Array.from({ length: n }, (_, i) => f(i));
     if (!chunked) return v;
     // Two chunks, so the fold sees a column that is not packed and
     // takes the boxed path.
@@ -56,7 +58,7 @@ function shapeOf(
   n: number,
   params: Record<string, ParamValue>,
   over: OpDef | undefined = undefined,
-): { points: number; series: [string, number][] } {
+): { points: number; series: [string, ...number[]][] } {
   let registry = createRegistry();
   if (over !== undefined) registry = registry.define(over);
   const graph = bind(series(n), { registry, units: { px: '%' } });
@@ -68,7 +70,7 @@ function shapeOf(
   expect(res.skipped).toEqual([]);
   const { points, series: s } = res.facts[0] as unknown as {
     points: number;
-    series: [string, number][];
+    series: [string, ...number[]][];
   };
   return { points, series: s };
 }
@@ -133,20 +135,20 @@ describe('shape — equal row bins', () => {
 
 describe('shape — gaps', () => {
   // Bins of 4 rows over 12; row 3 is missing, rows 4–7 all are.
-  const gap = (i: number) => i === 3 || (i >= 4 && i <= 7);
+  const px = (i: number) => (i >= 3 && i <= 7 ? undefined : 10 + i);
 
   for (const chunked of [false, true]) {
     const path = chunked ? 'chunked' : 'packed';
 
     it(`a bin ending on a gap keeps the bin end time (${path})`, () => {
-      const out = shapeOf(12, { points: 3 }, gappy(gap, chunked));
+      const out = shapeOf(12, { points: 3 }, derived(px, chunked));
       // Bin 0 is rows 0–3: its last defined value is row 2's, stamped
       // with row 3's time, the bin's end.
       expect(out.series[0]).toEqual([day(3), 12]);
     });
 
     it(`drops a bin with no defined value (${path})`, () => {
-      const out = shapeOf(12, { points: 3 }, gappy(gap, chunked));
+      const out = shapeOf(12, { points: 3 }, derived(px, chunked));
       // Bin 1 (rows 4–7) is all gaps: left out, so `points` is 2.
       expect(out).toEqual({
         points: 2,
@@ -157,4 +159,113 @@ describe('shape — gaps', () => {
       });
     });
   }
+});
+
+describe('shape — how', () => {
+  // Two bins of 10 rows; row 5 is a spike that sampling misses.
+  const spiky = derived((i) => (i === 5 ? 1000 : 10 + i));
+  const cases: [string, [string, ...number[]][]][] = [
+    [
+      'sample',
+      [
+        [day(9), 19],
+        [day(19), 29],
+      ],
+    ],
+    [
+      'mean',
+      [
+        [day(9), 113],
+        [day(19), 24.5],
+      ],
+    ],
+    [
+      'median',
+      [
+        [day(9), 15],
+        [day(19), 24.5],
+      ],
+    ],
+    [
+      'min',
+      [
+        [day(9), 10],
+        [day(19), 20],
+      ],
+    ],
+    [
+      'max',
+      [
+        [day(9), 1000],
+        [day(19), 29],
+      ],
+    ],
+    [
+      'minMax',
+      [
+        [day(9), 10, 1000],
+        [day(19), 20, 29],
+      ],
+    ],
+    [
+      'minMaxFirstLast',
+      [
+        [day(9), 10, 1000, 10, 19],
+        [day(19), 20, 29, 20, 29],
+      ],
+    ],
+  ];
+
+  for (const [how, series] of cases) {
+    it(`${how}: one point per bin, shaped like core bin's output`, () => {
+      expect(shapeOf(20, { points: 2, how }, spiky)).toEqual({
+        points: 2,
+        series,
+      });
+    });
+  }
+
+  it('defaults to sample', () => {
+    expect(shapeOf(20, { points: 2 }, spiky)).toEqual(
+      shapeOf(20, { points: 2, how: 'sample' }, spiky),
+    );
+  });
+
+  // Bins of 4 rows over 12, the middle one all gaps.
+  const px = (i: number) => (i >= 4 && i <= 7 ? undefined : 10 + i);
+  for (const [how] of cases) {
+    for (const chunked of [false, true]) {
+      it(`${how}: drops an all-gap bin, so points counts bins (${chunked ? 'chunked' : 'packed'})`, () => {
+        const out = shapeOf(12, { points: 3, how }, derived(px, chunked));
+        expect(out.points).toBe(2);
+        expect(out.series.map((p) => p[0])).toEqual([day(3), day(11)]);
+        expect(out.series.flat()).not.toContain(NaN);
+      });
+    }
+  }
+
+  it('refuses a reducer whose empty bin is not a gap', () => {
+    for (const how of ['sum', 'count', 'p95', 'last']) {
+      const graph = bind(series(10), { registry: createRegistry() });
+      const res = run(graph, {
+        plan: [],
+        select: [{ on: { op: 'shape', params: { how }, inputs: ['px'] } }],
+        onError: 'collect',
+      });
+      expect(res.skipped[0]!.reason, how).toMatch(/shape\.how must be one of/);
+    }
+  });
+
+  it('lands in the id, so each how is its own answer', () => {
+    const registry = createRegistry();
+    const id = (params?: Record<string, ParamValue>) =>
+      specId(registry, {
+        op: 'shape',
+        ...(params && { params }),
+        inputs: ['px'],
+      });
+    expect(id()).toBe('p1:shape(px;how=sample,points=40)');
+    expect(id({ how: 'sample' })).toBe(id());
+    expect(id({ how: 'minMax' })).toBe('p1:shape(px;how=minMax,points=40)');
+  });
 });

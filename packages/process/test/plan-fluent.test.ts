@@ -174,10 +174,14 @@ describe('registry-bound fluent authoring', () => {
     // slot the same way, so they are one slot too.
     const graph = process(vocabulary(), 'prices');
     const scaled = graph.column('close').scale({ as: 'scaled', by: 3 });
-    graph.outputs({ a: scaled.shape(), b: scaled.shape({ points: 40 }) });
+    graph.outputs({
+      a: scaled.shape(),
+      b: scaled.shape({ points: 40 }),
+      c: scaled.shape({ how: 'sample' }),
+    });
     expect(Object.keys(graph.outputs({}).nodes)).toEqual([
       'scaled',
-      'scaled:shape(points=40)',
+      'scaled:shape(how=sample,points=40)',
     ]);
   });
 
@@ -189,11 +193,23 @@ describe('registry-bound fluent authoring', () => {
     graph.outputs({
       coarse: scaled.shape({ points: 20 }),
       fine: scaled.shape({ points: 100 }),
+      spiky: scaled.shape({ points: 20, how: 'minMax' }),
     });
     const request = graph.outputs({});
     expect(request.nodes).toMatchObject({
-      'scaled:shape(points=20)': { op: 'shape', params: { points: 20 } },
-      'scaled:shape(points=100)': { op: 'shape', params: { points: 100 } },
+      'scaled:shape(how=sample,points=20)': {
+        op: 'shape',
+        params: { points: 20 },
+      },
+      'scaled:shape(how=sample,points=100)': {
+        op: 'shape',
+        params: { points: 100 },
+      },
+      // `how` reaches the node; it used to be dropped on the way.
+      'scaled:shape(how=minMax,points=20)': {
+        op: 'shape',
+        params: { points: 20, how: 'minMax' },
+      },
     });
   });
 

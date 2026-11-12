@@ -92,6 +92,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   request. It now reads every row: about 2 ms at 1M rows, from 0.06 ms when it
   read 40 (`scripts/perf-kit.mjs`).
 
+- **`@pond-ts/process`: `shape` takes `how`, what each point holds.** Values
+  are core `bin`'s reducer names: `sample` (each bin's last value, the
+  default and the behaviour above), `mean`, `median`, `min`, `max`, `minMax`
+  (`[time, lo, hi]`, so a spike between samples always shows) and
+  `minMaxFirstLast` (M4, `[time, lo, hi, first, last]`). A scalar `how` keeps
+  `[time, value]`. `points` still counts bins, and a bin with no defined value
+  is still left out. `sum` and `count` are not offered: their empty bin is 0,
+  not a gap. Type `ShapeHow`; both builders' `.shape({ points, how })` pass it
+  through. **Ids and fluent slots change**: `how` is a param, so it lands in
+  every shape id (`p1:shape(px;points=40)` →
+  `p1:shape(px;how=sample,points=40)`) and in the registry-bound builder's
+  slot (`x:shape(points=40)` → `x:shape(how=sample,points=40)`). A saved id or
+  slot from before no longer matches. At 1M rows: `minMax` / M4 ~1.6 ms,
+  `mean` ~0.7 ms, `median` ~9.6 ms (`scripts/perf-kit.mjs`).
+
 - **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
   (number columns, count or duration windows), with the same answers bit for
   bit. The range studies that stand on them speed up about 2×: at 1M bars
