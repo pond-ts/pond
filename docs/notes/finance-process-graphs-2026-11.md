@@ -66,3 +66,4 @@ the 16 are expressible from shipped sets, except #46 (a gap-finding fold
 carrying a calendar, not built) and #30's time-since-open step (not built).
 The 24 map to [PND-PROCWINDOW] (7, 9, 11, 12, 25, 30, 33), [PND-PROCMULTI]
 (17–22) and [PND-PROCFAN] (31, 34–42, 47).
+The tasks that close them: [PND_PROCFIN_PLAN.md](../plans/PND_PROCFIN_PLAN.md).
