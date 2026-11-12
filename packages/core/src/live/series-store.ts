@@ -112,7 +112,9 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   #eventsArray?: ReadonlyArray<SeriesEvent>;
   /**
    * The snapshot when `toEvents()` built it row by row itself (no dense
-   * array, no delegate, no `#keySource`). Rows not yet cached were built straight into it,
+   * array, no delegate, no `#keySource`). Kept apart from `#eventsArray`
+   * because `keyAt` must not read a dense store's events: there it still
+   * builds keys from the columns, as before. Rows not yet cached were built straight into it,
    * skipping the per-row `Map`s, so `eventAt` / `keyAt` look here after
    * their `Map`s.
    */
@@ -463,7 +465,8 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
 
   /**
    * Module-internal ([PND-ROWSOUT]): whether any row's `Event` already
-   * exists (a dense event array, or entries in the per-row cache). When
+   * exists (a dense event array, entries in the per-row cache, or the
+   * array `toEvents()` built in one pass). When
    * false, every `eventAt(i)` would be built fresh from `keyAt(i)` and the
    * columns' `read(i)`, so a row export can read the columns instead and
    * give the same values.

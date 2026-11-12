@@ -862,6 +862,19 @@ describe('toEvents builds rows straight into its array', () => {
     ]);
   });
 
+  it('reuses events adopted through fromTrustedStore', () => {
+    const { store } = makeBasicSeriesStore();
+    const adopted = new Event(new Time(2000), { value: 20, load: 0.75 });
+    const series = SeriesStore.fromTrustedStore(store, {
+      eventCache: new Map([[1, adopted as SeriesEvent]]),
+    });
+    const events = series.toEvents();
+    expect(events[1]).toBe(adopted);
+    expect(series.eventAt(1)).toBe(adopted);
+    expect(series.eventAt(0)).toBe(events[0]);
+    expect(events.map((e) => e.begin())).toEqual([1000, 2000, 3000]);
+  });
+
   it("keeps a trimmed series' keys the source's own objects", () => {
     // `trim` on time keys reads its keys from the source store; building
     // the events in one pass must still use them, not fresh copies.
