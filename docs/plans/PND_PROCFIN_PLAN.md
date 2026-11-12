@@ -45,32 +45,39 @@ table) in this file when it ships, and remove it from the order table.
 
 ## Order
 
-| Step | Tasks                                                       | Catalogue questions answerable after    |
-| ---- | ----------------------------------------------------------- | --------------------------------------- |
-| 1    | [PND-SHAPEEND] [PND-SHAPEHOW] [PND-SHAPESCALE]              | 23 (sparklines end at now, show spikes) |
-| 2    | [PND-WINOUT] [PND-WINANCHOR]                                | 28                                      |
-| 3    | [PND-MULTIFROM] [PND-MULTIUNIT] [PND-MULTITEST]             | 34                                      |
-| 4    | [PND-WINSESSION] [PND-SESSMIN]                              | 36                                      |
-| 5    | [PND-ROLLBARS] [PND-GROUPBY]                                | 41                                      |
-| 6    | [PND-CALGAPS]                                               | 42                                      |
-| 7    | [PND-FANRUN] [PND-FANCOLLECT] [PND-FANLABEL] [PND-FANPAIRS] | 48                                      |
+| Step | Tasks                                                       | Catalogue questions answerable after |
+| ---- | ----------------------------------------------------------- | ------------------------------------ |
+| 2    | [PND-WINOUT] [PND-WINANCHOR]                                | 28                                   |
+| 3    | [PND-MULTIFROM] [PND-MULTIUNIT] [PND-MULTITEST]             | 34                                   |
+| 4    | [PND-WINSESSION] [PND-SESSMIN]                              | 36                                   |
+| 5    | [PND-ROLLBARS] [PND-GROUPBY]                                | 41                                   |
+| 6    | [PND-CALGAPS]                                               | 42                                   |
+| 7    | [PND-FANRUN] [PND-FANCOLLECT] [PND-FANLABEL] [PND-FANPAIRS] | 48                                   |
 
 [PND-PARAMKIND] can land at any point (it adds studies, not catalogue
-questions). Sparklines first because they are small and are what Peter asked
-for; then the steps that unlock the most questions for the least design
+questions). Sparklines went first because they were small and are what
+Peter asked for. Step 1, [PND-SHAPEEND] [PND-SHAPEHOW] [PND-SHAPESCALE], has
+shipped (wave "Sparkline improvements", 2026-11-12; outcomes under A below);
+it made sparklines end at now and show spikes, and left the count at 23.
+Then come the steps that unlock the most questions for the least design
 risk. Across-tickers is last: it is the largest piece and [PND-FANPAIRS]
 builds on [PND-MULTIFROM].
 
 ## A. Sparklines
 
+**All three tasks shipped** (wave "Sparkline improvements", 2026-11-12);
+each has an **Outcome** paragraph below. The text above each outcome is the
+task as planned. Until then:
+
 The `shape` fold (`packages/process/src/plan/folds.ts`) is the sparkline: up
-to 400 `[time, value]` points. Read on 2026-11-12, it takes every Nth row
+to 400 `[time, value]` points. Read on 2026-11-12, it took every Nth row
 from the start (`step = ceil(length / points)`), so:
 
-- the newest row is usually not included (1M rows, 40 points: the last
-  point is 25,000 rows before the end), so the line does not end at "now";
-- a spike between two sampled rows never shows;
-- it always covers the whole history (that part is [PND-WINOUT]).
+- the newest row was usually not included (1M rows, 40 points: the last
+  point is 25,000 rows before the end), so the line did not end at "now";
+- a spike between two sampled rows never showed;
+- it always covers the whole history (still true; that part is
+  [PND-WINOUT]).
 
 ### [PND-SHAPEEND] — a sparkline ends at the newest bar (S)
 
@@ -94,6 +101,19 @@ split in `@pond-ts/process` (`binStart` in `folds.ts`: bin `i` is rows
 `bin`. This is Peter's one exception to "raise a core ticket": a core
 bin-edges export was considered and not chosen for now.
 
+**Outcome (shipped, wave "Sparkline improvements").** As planned and decided.
+`shape` builds a core `Float64Column` from its input (`column(ctx)` in
+`folds.ts`: zero-copy over the packed view, packed once on the chunked path;
+`allFinite` is claimed only when no cell is a gap) and calls
+`bin(min(points, rows), 'minMaxFirstLast')`, keeping the `last` channel. The
+fold has no sampling or reduction code of its own. A series with no rows
+answers `points: 0` and an empty `series` (core's `bin` throws on zero
+bins; since [PND-SHAPESCALE] the scale fields are `null` too). Since
+a point's time is the bin's end, a `sample` point whose bin ends on a gap
+shows an earlier row's value at the gap row's time. Cost: `shape` now reads
+every row, 0.06 → 2.1 ms for 40 points at 1M rows (`perf-kit.mjs`, median
+of 5), still under one `extremes` scan.
+
 ### [PND-SHAPEHOW] — summarise each stretch (S)
 
 New `how` param, passed straight to core's `Float64Column.bin` over the row
@@ -110,10 +130,40 @@ value (NaN from `bin`) is left out. No reduction code in `@pond-ts/process`:
 if core lacks something, raise a core ticket. Time bins (core's `binBy`)
 come with date windows ([PND-WINOUT]), not here.
 
+**Outcome (shipped, wave "Sparkline improvements").** As planned. `how` is a
+`choice` param (exported type `ShapeHow`) with the seven values above and
+default `sample`; `sum` and `count` are refused, because their empty bin is
+0 rather than a gap. Both builders' `.shape({ points, how })` pass it
+through. Because every param lands in the id, **every `shape` id changed**,
+including ones that never set `how`: `p1:shape(px;points=40)` is now
+`p1:shape(px;how=sample,points=40)`, and the registry-bound builder's slot
+`x:shape(points=40)` is now `x:shape(how=sample,points=40)` (it names slots
+from all params after defaults). Saved ids and fact citations from before
+no longer match; the CHANGELOG marks this breaking. Cost at 1M rows: `mean`
+0.7 ms, `minMax` / `minMaxFirstLast` ~1.6 ms, `median` ~9.6 ms (before
+[PND-SHAPESCALE]).
+
 ### [PND-SHAPESCALE] — carry the scale (S)
 
 The fact also reports first, last, lowest and highest value (with their
 times), so a client can draw and label the line without a second fold.
+
+**Decided (Peter):** reuse the existing folds' format. `first`, `last`,
+`min` and `max` are each `{ value, at }`, as `change` and `extremes` report
+them, measured over the whole series rather than the points, and each is
+`null` when the series has no defined value.
+
+**Outcome (shipped, wave "Sparkline improvements").** As decided. The answer's
+keys are, in order, `points`, `first`, `last`, `min`, `max`, `series`. `min`
+and `max` come from calling the `extremes` fold; `first` and `last` from
+helpers (`firstDefined`, `lastDefined`, `valueAt`) that `last` and `change`
+now share. A high that no `sample` point landed on is still the `max`.
+
+**Known follow-up:** the scale costs one `extremes` scan, and `extremes`
+reads each row through a closure, so `shape` went from ~2 ms to 6–11 ms at
+1M rows (`median` ~18 ms). A plain `Float64Array` scan measured ~2 ms. The
+fix belongs in `extremes` (every caller gains), not in `shape`; no ticket
+yet.
 
 ## B. Date windows — [PND-PROCWINDOW]
 

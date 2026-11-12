@@ -672,6 +672,14 @@ deferrals. That constraint is about **core**, and it stands.
   `defineNode` and deliberately does **not** mirror the `TimeSeries` API
   as a node vocabulary — that would duplicate primitives and double the
   maintenance surface for no gain.
+- **Sparklines are core decimation.** The `shape` fold (a sparkline) is
+  a thin wrapper over core's `Float64Column.bin`, with no sampling or
+  reduction code of its own; if core lacks a piece, the fix is a core
+  ticket. The one exception, by the owner's decision: core's `bin`
+  returns values only, so `shape` repeats core's one-line row split
+  (`binStart` in `packages/process/src/plan/folds.ts`) to find each bin's
+  end time, with a test pinning it to core. (Other folds, such as
+  `extremes`, still scan their column in the process package.)
 - **Live stays incremental in the live layer.** `fromLive()` subscribes
   only to mark the node dirty; the `toTimeSeries()` snapshot happens at
   the next pull. Per-event incremental computation stays where it
