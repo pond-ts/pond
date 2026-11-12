@@ -20,6 +20,16 @@ const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 0, 1);
 const day = (i: number) => new Date(T0 + i * DAY).toISOString().slice(0, 10);
 
+const SHAPE_HOWS = [
+  'sample',
+  'mean',
+  'median',
+  'min',
+  'max',
+  'minMax',
+  'minMaxFirstLast',
+] as const;
+
 const series = (n: number) =>
   TimeSeries.fromJSON({
     name: 'px',
@@ -277,6 +287,192 @@ describe('shape — how', () => {
     expect(id()).toBe('p1:shape(px;how=sample,points=40)');
     expect(id({ how: 'sample' })).toBe(id());
     expect(id({ how: 'minMax' })).toBe('p1:shape(px;how=minMax,points=40)');
+  });
+});
+
+describe('shape — gaps inside bins, every how', () => {
+  // Bins of 4 rows over 12. Every bin has a gap but none is all gaps, so
+  // nothing is dropped and every reducer must skip the gaps itself. A
+  // column that claimed `allFinite` while holding gaps would let NaN into
+  // these values (and drop the bin), or count the gaps.
+  //   bin 0, rows 0–3:  5, –, 9, 1
+  //   bin 1, rows 4–7:  4, 8, –, –   (ends on two gaps)
+  //   bin 2, rows 8–11: –, 7, 3, 6   (starts on a gap)
+  const cells = [5, undefined, 9, 1, 4, 8, undefined, undefined];
+  const px = (i: number) => (i < 8 ? cells[i] : [undefined, 7, 3, 6][i - 8]);
+  const ends = [day(3), day(7), day(11)];
+  const cases: [string, number[][]][] = [
+    ['sample', [[1], [8], [6]]],
+    ['mean', [[5], [6], [5.333333]]],
+    ['median', [[5], [6], [6]]],
+    ['min', [[1], [4], [3]]],
+    ['max', [[9], [8], [7]]],
+    [
+      'minMax',
+      [
+        [1, 9],
+        [4, 8],
+        [3, 7],
+      ],
+    ],
+    [
+      'minMaxFirstLast',
+      [
+        [1, 9, 5, 1],
+        [4, 8, 4, 8],
+        [3, 7, 7, 6],
+      ],
+    ],
+  ];
+
+  for (const [how, values] of cases) {
+    for (const chunked of [false, true]) {
+      it(`${how} skips gaps inside a bin (${chunked ? 'chunked' : 'packed'})`, () => {
+        expect(shapeOf(12, { points: 3, how }, derived(px, chunked))).toEqual({
+          points: 3,
+          series: values.map((v, i) => [ends[i], ...v]),
+        });
+      });
+    }
+  }
+
+  for (const chunked of [false, true]) {
+    const path = chunked ? 'chunked' : 'packed';
+
+    it(`the newest point is stamped with the newest row even when it is a gap (${path})`, () => {
+      // Row 9, the newest, is a gap; row 8 is the last value. The point
+      // still ends the line at row 9's time, while the scale's `last`
+      // says where the value really came from.
+      const over = derived((i) => (i === 9 ? undefined : 10 + i), chunked);
+      const fact = factsOf(
+        10,
+        [{ op: 'shape', params: { points: 5 } }],
+        over,
+      )[0]!;
+      expect((fact['series'] as unknown[]).at(-1)).toEqual([day(9), 18]);
+      expect(fact['last']).toEqual({ value: 18, at: day(8) });
+    });
+
+    it(`an all-gap series gives no points for any how (${path})`, () => {
+      for (const [how] of cases) {
+        const fact = factsOf(
+          9,
+          [{ op: 'shape', params: { points: 3, how } }],
+          derived(() => undefined, chunked),
+        )[0]!;
+        expect(fact, how).toMatchObject({
+          points: 0,
+          first: null,
+          last: null,
+          min: null,
+          max: null,
+          series: [],
+        });
+      }
+    });
+
+    it(`an empty series gives no points for any how (${path})`, () => {
+      // Core `bin(0)` throws; shape must answer instead.
+      for (const [how] of cases) {
+        expect(
+          shapeOf(
+            0,
+            { points: 40, how },
+            derived(() => 1, chunked),
+          ),
+          how,
+        ).toEqual({ points: 0, series: [] });
+      }
+    });
+  }
+
+  it('the scale is the same whatever the how', () => {
+    const scales = cases.map(([how]) => {
+      const { first, last, min, max } = factsOf(
+        12,
+        [{ op: 'shape', params: { points: 3, how } }],
+        derived(px),
+      )[0]!;
+      return { first, last, min, max };
+    });
+    expect(scales[0]).toEqual({
+      first: { value: 5, at: day(0) },
+      last: { value: 6, at: day(11) },
+      min: { value: 1, at: day(3) },
+      max: { value: 9, at: day(2) },
+    });
+    for (const s of scales) expect(s).toEqual(scales[0]);
+  });
+});
+
+describe('shape — sizes', () => {
+  it('one row is one point, for every how', () => {
+    const widths: Record<string, number> = { minMax: 2, minMaxFirstLast: 4 };
+    for (const how of SHAPE_HOWS) {
+      const out = shapeOf(1, { points: 40, how });
+      expect(out.points, how).toBe(1);
+      expect(out.series, how).toEqual([
+        [day(0), ...Array<number>(widths[how] ?? 1).fill(10)],
+      ]);
+    }
+  });
+
+  it('exactly as many rows as points is one point per row', () => {
+    const out = shapeOf(40, { points: 40 });
+    expect(out.series).toEqual(
+      Array.from({ length: 40 }, (_, i) => [day(i), 10 + i]),
+    );
+  });
+
+  it('a prime row count splits the way core bin does', () => {
+    // 37 rows into 5 bins: core's split is [0,7) [7,14) [14,22) [22,29)
+    // [29,37), so the bins end on rows 6, 13, 21, 28 and 36.
+    const out = shapeOf(37, { points: 5, how: 'minMaxFirstLast' });
+    expect(out.series).toEqual([
+      [day(6), 10, 16, 10, 16],
+      [day(13), 17, 23, 17, 23],
+      [day(21), 24, 31, 24, 31],
+      [day(28), 32, 38, 32, 38],
+      [day(36), 39, 46, 39, 46],
+    ]);
+  });
+
+  it('takes points at either end of its range and refuses outside it', () => {
+    expect(shapeOf(500, { points: 2 }).points).toBe(2);
+    expect(shapeOf(500, { points: 400 }).points).toBe(400);
+    for (const points of [1, 401, 2.5]) {
+      const graph = bind(series(10), { registry: createRegistry() });
+      const res = run(graph, {
+        plan: [],
+        select: [{ on: { op: 'shape', params: { points }, inputs: ['px'] } }],
+        onError: 'collect',
+      });
+      expect(res.facts, String(points)).toEqual([]);
+      expect(res.skipped[0]!.reason, String(points)).toMatch(/shape\.points/);
+    }
+  });
+
+  it('stamps an intraday series with full instants at each bin end', () => {
+    const FIVE_MIN = 300_000;
+    const intraday = TimeSeries.fromJSON({
+      name: 'px',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: 7 }, (_, i) => [T0 + i * FIVE_MIN, i]),
+    });
+    const graph = bind(intraday, { registry: createRegistry() });
+    const res = run(graph, {
+      plan: [],
+      select: [{ on: { op: 'shape', params: { points: 3 }, inputs: ['px'] } }],
+    });
+    // 7 rows into 3 bins: [0,2) [2,4) [4,7).
+    expect(res.facts[0]!['series']).toEqual([
+      ['2026-01-01T00:05:00Z', 1],
+      ['2026-01-01T00:15:00Z', 3],
+      ['2026-01-01T00:30:00Z', 6],
+    ]);
   });
 });
 
