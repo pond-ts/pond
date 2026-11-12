@@ -119,6 +119,24 @@ continuous across bins: enter each bin at `first`, exit at `last`, and draw
 `lo`–`hi` between. `sum` and `count` are not offered, because their empty
 bin is 0 rather than a gap.
 
+Beside the points, the answer carries the line's **scale**: `first`, `last`,
+`min` and `max`, each `{ value, at }` in the format of `change` and
+`extremes` (`null` when the series has no defined value). They are measured
+over the whole series, not the points, so a high that no `sample` point
+landed on is still the `max`. A client can draw and label the line from one
+fact:
+
+```json
+{
+  "points": 40,
+  "first": { "value": 101.2, "at": "2025-11-12" },
+  "last": { "value": 118.4, "at": "2026-11-12" },
+  "min": { "value": 96.7, "at": "2026-01-03" },
+  "max": { "value": 121.9, "at": "2026-10-28" },
+  "series": [["2025-11-20", 101.9], "…"]
+}
+```
+
 `points` and `how` are params rather than selector fields, so they land in
 the id (`p1:shape(px;how=sample,points=40)`) and two callers asking for the
 same sparkline share one cached answer.
