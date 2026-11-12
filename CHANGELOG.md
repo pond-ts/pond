@@ -81,6 +81,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`@pond-ts/process`: `shape` ends at the newest row.** It used to take
+  every Nth row from row 0, so the line usually stopped short of the latest
+  value. It now cuts the rows into at most `points` equal row bins with
+  core's `Float64Column.bin` (never more bins than rows) and gives each bin's
+  last defined value, stamped with the **bin end time** (its last row's time,
+  even when that row is a gap). The bins cover every row, so the last point
+  is the newest row and the first is the first bin's last value, not row 0. A
+  bin with no defined value is left out, so `points` can be under the
+  request. It now reads every row: about 2 ms at 1M rows, from 0.06 ms when it
+  read 40 (`scripts/perf-kit.mjs`).
+
 - **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
   (number columns, count or duration windows), with the same answers bit for
   bit. The range studies that stand on them speed up about 2×: at 1M bars
