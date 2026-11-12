@@ -104,8 +104,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   every shape id (`p1:shape(px;points=40)` →
   `p1:shape(px;how=sample,points=40)`) and in the registry-bound builder's
   slot (`x:shape(points=40)` → `x:shape(how=sample,points=40)`). A saved id or
-  slot from before no longer matches. At 1M rows: `minMax` / M4 ~1.6 ms,
-  `mean` ~0.7 ms, `median` ~9.6 ms (`scripts/perf-kit.mjs`).
+  slot from before no longer matches. At 1M rows the binning costs: `minMax` /
+  M4 ~1.6 ms, `mean` ~0.7 ms, `median` ~9.6 ms (`scripts/perf-kit.mjs`).
+
+- **`@pond-ts/process`: `shape` carries the line's scale.** The answer adds
+  `first`, `last`, `min` and `max`, each `{ value, at }` as `change` and
+  `extremes` report them, measured over the whole series rather than the
+  points (a high no `sample` point landed on is still the `max`); `null` each
+  when there is no defined value. A client can draw and label a sparkline from
+  one fact. The scale is one `extremes` scan, so `shape` now costs 6–11 ms at
+  1M rows (`median` ~18 ms), up from 2 ms (`scripts/perf-kit.mjs`).
 
 - **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
   (number columns, count or duration windows), with the same answers bit for

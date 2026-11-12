@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ChunkedFloat64Column, Float64Column, TimeSeries } from 'pond-ts';
 import {
   bind,
+  change,
   createRegistry,
   packColumn,
   run,
@@ -54,25 +55,34 @@ const derived = (
   },
 });
 
-function shapeOf(
+/** The bodies of `folds` over px (or `over` of px), in order. */
+function factsOf(
   n: number,
-  params: Record<string, ParamValue>,
+  folds: { op: string; params?: Record<string, ParamValue> }[],
   over: OpDef | undefined = undefined,
-): { points: number; series: [string, ...number[]][] } {
-  let registry = createRegistry();
+): Record<string, unknown>[] {
+  let registry = createRegistry().define(change);
   if (over !== undefined) registry = registry.define(over);
   const graph = bind(series(n), { registry, units: { px: '%' } });
   const input = over === undefined ? 'px' : { op: over.name, inputs: ['px'] };
   const res = run(graph, {
     plan: [],
-    select: [{ on: { op: 'shape', params, inputs: [input] } }],
+    select: folds.map((f) => ({ on: { ...f, inputs: [input] } })),
   });
   expect(res.skipped).toEqual([]);
-  const { points, series: s } = res.facts[0] as unknown as {
-    points: number;
-    series: [string, ...number[]][];
+  return res.facts as unknown as Record<string, unknown>[];
+}
+
+function shapeOf(
+  n: number,
+  params: Record<string, ParamValue>,
+  over: OpDef | undefined = undefined,
+): { points: number; series: [string, ...number[]][] } {
+  const fact = factsOf(n, [{ op: 'shape', params }], over)[0]!;
+  return {
+    points: fact['points'] as number,
+    series: fact['series'] as [string, ...number[]][],
   };
-  return { points, series: s };
 }
 
 describe('shape — equal row bins', () => {
@@ -267,5 +277,75 @@ describe('shape — how', () => {
     expect(id()).toBe('p1:shape(px;how=sample,points=40)');
     expect(id({ how: 'sample' })).toBe(id());
     expect(id({ how: 'minMax' })).toBe('p1:shape(px;how=minMax,points=40)');
+  });
+});
+
+describe('shape — scale', () => {
+  const scaleOf = (n: number, over?: OpDef) => {
+    const { first, last, min, max } = factsOf(
+      n,
+      [{ op: 'shape', params: { points: 2 } }],
+      over,
+    )[0]!;
+    return { first, last, min, max };
+  };
+
+  it('reports first, last, min and max over the whole series', () => {
+    // Row 5's spike is in neither sampled point (rows 9 and 19), and is
+    // still the max: the scale is the series', not the points'.
+    const spiky = derived((i) => (i === 5 ? 1000 : 10 + i));
+    const fact = factsOf(
+      20,
+      [{ op: 'shape', params: { points: 2 } }],
+      spiky,
+    )[0]!;
+    expect(fact['series']).toEqual([
+      [day(9), 19],
+      [day(19), 29],
+    ]);
+    expect(scaleOf(20, spiky)).toEqual({
+      first: { value: 10, at: day(0) },
+      last: { value: 29, at: day(19) },
+      min: { value: 10, at: day(0) },
+      max: { value: 1000, at: day(5) },
+    });
+  });
+
+  for (const chunked of [false, true]) {
+    it(`skips gaps at either end (${chunked ? 'chunked' : 'packed'})`, () => {
+      const px = derived((i) => (i < 2 || i > 7 ? undefined : 10 - i), chunked);
+      expect(scaleOf(10, px)).toEqual({
+        first: { value: 8, at: day(2) },
+        last: { value: 3, at: day(7) },
+        min: { value: 3, at: day(7) },
+        max: { value: 8, at: day(2) },
+      });
+    });
+  }
+
+  it('is in the same format as change and extremes', () => {
+    const px = derived((i) => (i === 0 || i === 6 ? undefined : (i * 7) % 5));
+    const [shape, changed, range] = factsOf(
+      8,
+      [{ op: 'shape' }, { op: 'change' }, { op: 'extremes' }],
+      px,
+    );
+    expect(shape).toMatchObject({
+      first: changed!['first'],
+      last: changed!['last'],
+      min: range!['min'],
+      max: range!['max'],
+    });
+  });
+
+  it('is null per field with no defined value', () => {
+    const none = { first: null, last: null, min: null, max: null };
+    expect(
+      scaleOf(
+        6,
+        derived(() => undefined),
+      ),
+    ).toEqual(none);
+    expect(scaleOf(0)).toEqual(none);
   });
 });

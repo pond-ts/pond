@@ -75,11 +75,9 @@ export const last: FoldDef = {
     // The fold that makes [PND-PROCCOL] worth doing: it reads one cell,
     // and on the boxed path it paid to densify all 500,000 first.
     const v = read(ctx);
-    const fmt = stamper(ctx, v.length);
-    for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v.defined(i)) return { value: round(v.value(i)), at: fmt(ctx.at(i)) };
-    }
-    return { value: null };
+    const i = lastDefined(v);
+    if (i === -1) return { value: null };
+    return valueAt(ctx, v, stamper(ctx, v.length), i);
   },
 };
 
@@ -190,7 +188,7 @@ export const shape: FoldDef = {
   name: 'shape',
   family: 'read',
   summary:
-    'The whole series in at most `points` equal row bins, one point per bin at the bin end time. `how` sums up each bin: `sample` (its last value, the default), `mean`, `median`, `min`, `max`, `minMax` ([time, lo, hi], so a spike always shows) or `minMaxFirstLast` ([time, lo, hi, first, last]). The honest answer to "show me the series" for a caller paying by the token.',
+    'The whole series in at most `points` equal row bins, one point per bin at the bin end time. `how` sums up each bin: `sample` (its last value, the default), `mean`, `median`, `min`, `max`, `minMax` ([time, lo, hi], so a spike always shows) or `minMaxFirstLast` ([time, lo, hi, first, last]). Also reports `first`, `last`, `min` and `max` over the whole series, each { value, at }, to label the line. The honest answer to "show me the series" for a caller paying by the token.',
   // Params rather than selector fields, which is the difference that
   // matters: they land in the id, so two callers asking for 40 points
   // share one answer instead of computing it twice.
@@ -206,7 +204,7 @@ export const shape: FoldDef = {
     const col = column(ctx);
     const n = col.length;
     // Core's `bin` throws on zero bins.
-    if (n === 0) return { points: 0, series: [] };
+    if (n === 0) return { points: 0, ...noScale, series: [] };
     const fmt = stamper(ctx, n);
     const bins = Math.min(ctx.params['points'] as number, n);
     const how = ctx.params['how'] as ShapeHow;
@@ -235,9 +233,32 @@ export const shape: FoldDef = {
         ...channels.map((c) => round(c[i]!)),
       ]);
     }
-    return { points: series.length, series };
+    return { points: series.length, ...scale(ctx, fmt), series };
   },
 };
+
+/** `shape`'s scale fields when the series has no defined value. */
+const noScale = { first: null, last: null, min: null, max: null };
+
+/**
+ * First, last, lowest and highest value over the WHOLE series, each
+ * `{ value, at }` (the format of `change` and `extremes`), so a client can
+ * draw and label a sparkline without a second fold. Not over the points:
+ * a `sample` point can miss the high.
+ */
+function scale(
+  ctx: FoldContext,
+  fmt: (t: number) => string,
+): Record<string, unknown> {
+  const v = read(ctx);
+  const first = firstDefined(v);
+  if (first === -1) return noScale;
+  return {
+    first: valueAt(ctx, v, fmt, first),
+    last: valueAt(ctx, v, fmt, lastDefined(v)),
+    ...extremes.fold(ctx),
+  };
+}
 
 /**
  * First row of bin `i` when `n` rows are cut into `bins` equal row bins,
@@ -248,6 +269,31 @@ export const shape: FoldDef = {
  */
 export const binStart = (i: number, n: number, bins: number): number =>
   Math.floor((i * n) / bins);
+
+/** What {@link read} returns: `defined(i)` then `value(i)`. */
+export type Reader = ReturnType<typeof read>;
+
+/** Row of the first defined value, or -1 when there is none. */
+export function firstDefined(v: Reader): number {
+  for (let i = 0; i < v.length; i += 1) if (v.defined(i)) return i;
+  return -1;
+}
+
+/** Row of the last defined value, or -1 when there is none. */
+export function lastDefined(v: Reader): number {
+  for (let i = v.length - 1; i >= 0; i -= 1) if (v.defined(i)) return i;
+  return -1;
+}
+
+/** A defined row as `{ value, at }`, the format every fold reports in. */
+export function valueAt(
+  ctx: FoldContext,
+  v: Reader,
+  fmt: (t: number) => string,
+  i: number,
+): { value: number; at: string } {
+  return { value: round(v.value(i)), at: fmt(ctx.at(i)) };
+}
 
 /**
  * One reader over the `source` role, columnar where it can be.
