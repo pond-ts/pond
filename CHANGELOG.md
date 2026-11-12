@@ -185,6 +185,12 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
 
 ### Changed
 
+- **`arrayContains`, `arrayContainsAll` and `arrayContainsAny` read the
+  array column** ([PND-ARRAYSLOW]) instead of building every `Event`. Same
+  rows kept; a kept row's `Event` is still the source row's. 100k rows:
+  59–75 → 8–11 ms (`arrayContainsAny` on numbers 35 → 7 ms). A series
+  built from ready-made events (`fromEvents`, a `map` result) still reads
+  its events.
 - **`fromArrow` reads text columns straight from Arrow's buffers**
   ([PND-ARROWTEXT]) instead of through apache-arrow's `toArray()`. Each
   distinct string is decoded once (a `Dictionary<Utf8>` column decodes only

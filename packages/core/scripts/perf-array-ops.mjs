@@ -83,3 +83,13 @@ benchmark('aggregate 1s unique (array out)', () =>
 benchmark('filter half (array gather)', () =>
   series.filter((e) => e.get('v') % 2 === 0),
 );
+// `arrayContains*` read the array column instead of every `Event`. The
+// series is reused, so the old build's events are already cached after the
+// first warm-up: its numbers leave out building them.
+benchmark('arrayContains tags', () => series.arrayContains('tags', 'web'));
+benchmark('arrayContainsAll tags', () =>
+  series.arrayContainsAll('tags', ['web', 'db']),
+);
+benchmark('arrayContainsAny nums', () =>
+  series.arrayContainsAny('nums', [3, 7.5, 24]),
+);

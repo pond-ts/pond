@@ -1077,7 +1077,7 @@ after 2):
 The partitioned cases are now mostly `TimeSeries.concat` re-sorting the
 pieces ([PND-CONCATSORT], next).
 
-### [PND-ARRAYSLOW] — PARTLY SHIPPED (arrayAggregate / arrayExplode on columns)
+### [PND-ARRAYSLOW] — SHIPPED (arrayAggregate / arrayExplode / arrayContains\* on columns)
 
 From the Codex PR #810 investigation. `arrayAggregate` mapped `this.events`,
 built a frozen row per event and re-read the rows; `arrayExplode` built one
@@ -1139,8 +1139,45 @@ middle of 3 processes; busy machine):
 | aggregate 1s unique (array out) | 127 ms | 85 ms  |
 | filter half (array gather)      | 96 ms  | 17 ms  |
 
-Not done: `arrayContains*` (identity, see PLAN.md), and the packed list
+Not done here: `arrayContains*` (done later, below), and the packed list
 layout (offsets + one value buffer) Codex measured — a storage decision.
+
+**Later: `arrayContains*` on the column.** They returned the source's own
+`Event` objects, which looked like it needed every event built. The
+`SeriesStore` delegate added for `dedupe` ([PND-DEDUPEMAP]) keeps that
+without building them: each filter reads the array column's cells, runs
+the same `includes` test, and gathers the kept rows with
+`_selectRowsModulePrivate`. A missing column or a non-array cell keeps
+nothing, as before. Checked: 1,500 random series (number / text / true-false
+elements, `0` / `-0`, empty and missing arrays, text and unknown columns,
+sources from `slice` / `filter` / `concat`, events built result-first and
+source-first) give identical JSON and the same identity pattern (result
+event = source event, `get` array = source array, column cell copied)
+against the previous build. Planted bug caught: a non-array cell tested
+(12/1500). `includes` → `indexOf` was not caught, and can't differ: array
+cells refuse `NaN`.
+
+Fixed before merge (2026-11-08): a series built from ready-made events
+(`fromEvents`, a `map` result, rows selected from one) skips that check, so
+its events can carry an array with a `null` or `NaN` element that the column
+stores differently (the 1,500 series above were all built from rows). The
+filters now read the events whenever
+`_eventsMayDifferFromColumnsModulePrivate()` says so, as `smooth` does
+([PND-SMOOTHSLOW]). Checked against main on 9 such arrays × 7 needles × 3
+filters: identical; without the fallback 13 of 63 differ.
+
+Re-run 2026-11-08 on a faster machine (main build vs this one, medians):
+arrayContains 59 → 8 ms, arrayContainsAll 75 → 11 ms, arrayContainsAny
+35 → 7 ms.
+
+`scripts/perf-array-ops.mjs`, 100k rows, two runs (old build's events
+cached by the warm-up):
+
+| Case                  | Before       | After      |
+| --------------------- | ------------ | ---------- |
+| arrayContains tags    | 95 / 97 ms   | 20 / 13 ms |
+| arrayContainsAll tags | 133 / 101 ms | 13 / 13 ms |
+| arrayContainsAny nums | 51 / 51 ms   | 13 / 17 ms |
 
 ### [PND-REDUCECELLS] — SHIPPED (column kernels for keep / difference / unique / top / samples)
 
