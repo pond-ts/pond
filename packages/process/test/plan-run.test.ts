@@ -785,9 +785,10 @@ describe('run — reductions', () => {
   });
 
   it('shape holds its bound when the series is under 2× the request', () => {
-    // The floor() stride rounded to 1 whenever length < 2·points, so a
-    // 200-point request over 399 rows returned all 399 — the token bound
-    // is the fold's whole purpose.
+    // A regression pin from the old every-Nth-row loop: its floor() stride
+    // rounded to 1 whenever length < 2·points, so a 200-point request over
+    // 399 rows returned all 399. Row bins now cap the count at `points`;
+    // the token bound is the fold's whole purpose.
     const { registry } = makeRegistry();
     const graph = bind(series(399), { registry, units });
     const res = run(graph, {

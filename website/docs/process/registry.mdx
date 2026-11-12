@@ -97,12 +97,28 @@ pre-registered because every consumer wants them:
 | `shape`          | The whole series in at most `points` bins, by `how`    |
 
 `shape` is the honest answer to "show me the series" for a caller paying
-by the token. It cuts the rows into at most `points` equal row bins with
-core's `Float64Column.bin` and gives one point per bin, at the **bin end
-time** (the time of the bin's last row, even when that row is a gap). The
-bins cover every row, so the line always ends on the newest one; a bin with
+by the token. It cuts the rows into at most `points` row bins (stretches
+of the series with roughly equal numbers of rows) with core's
+`Float64Column.bin` and gives one point per bin, at the **bin end time**
+(the time of the bin's last row, even when that row is a gap). A bin with
 no defined value is left out, and `points` in the answer counts the bins
-that remain.
+that remain. A series with no rows answers `points: 0` and an empty
+`series`.
+
+The `points` param asks for 2 to 400 bins (default 40); a series shorter
+than that gets one bin per row. Bins hold roughly equal numbers of
+**rows**, not equal stretches of time: 5 rows in 2 bins split 2 and 3, and
+on data with uneven spacing one bin can cover a longer span than its
+neighbour.
+
+The bins cover every row, so the line ends on the newest row whenever the
+last bin has a defined value. Because the time is always the bin's end, it
+can be a little later than the row a value came from: with `sample`, if a
+bin's last row is a gap, the point shows the last defined value before it,
+stamped with the gap row's time. But a bin that is all gaps is dropped, so
+when the newest rows are all gaps the line stops earlier. For example,
+`[1, 2, gap, gap]` with `points: 2` gives one point, at the second row's
+time.
 
 `how` says what each point holds, using core `bin`'s reducer names:
 
