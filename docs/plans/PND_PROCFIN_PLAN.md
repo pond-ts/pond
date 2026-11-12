@@ -55,13 +55,13 @@ table) in this file when it ships, and remove it from the order table.
 | 7    | [PND-FANRUN] [PND-FANCOLLECT] [PND-FANLABEL] [PND-FANPAIRS] | 48                                   |
 
 [PND-PARAMKIND] can land at any point (it adds studies, not catalogue
-questions). Sparklines went first because they were small and are what
-Peter asked for. Step 1, [PND-SHAPEEND] [PND-SHAPEHOW] [PND-SHAPESCALE], has
-shipped (wave "Sparkline improvements", 2026-11-12; outcomes under A below);
-it made sparklines end at now and show spikes, and left the count at 23.
-Then come the steps that unlock the most questions for the least design
-risk. Across-tickers is last: it is the largest piece and [PND-FANPAIRS]
-builds on [PND-MULTIFROM].
+questions). Sparklines went first because they were small and are what Peter
+asked for. Step 1, [PND-SHAPEEND] [PND-SHAPEHOW] [PND-SHAPESCALE], has shipped
+(wave "Sparkline improvements", 2026-11-12; outcomes under A below); it made
+sparklines end at now (unless the newest bin is all gaps, which is dropped)
+and show spikes, and left the count at 23. Then come the steps that unlock the
+most questions for the least design risk. Across-tickers is last: it is the
+largest piece and [PND-FANPAIRS] builds on [PND-MULTIFROM].
 
 ## A. Sparklines
 
@@ -107,12 +107,14 @@ bin-edges export was considered and not chosen for now.
 `allFinite` is claimed only when no cell is a gap) and calls
 `bin(min(points, rows), 'minMaxFirstLast')`, keeping the `last` channel. The
 fold has no sampling or reduction code of its own. A series with no rows
-answers `points: 0` and an empty `series` (core's `bin` throws on zero
-bins; since [PND-SHAPESCALE] the scale fields are `null` too). Since
-a point's time is the bin's end, a `sample` point whose bin ends on a gap
-shows an earlier row's value at the gap row's time. Cost: `shape` now reads
-every row, 0.06 → 2.1 ms for 40 points at 1M rows (`perf-kit.mjs`, median
-of 5), still under one `extremes` scan.
+answers `points: 0` and an empty `series` (core's `bin` throws on zero bins;
+since [PND-SHAPESCALE] the scale fields are `null` too). Since a point's time
+is the bin's end, a `sample` point whose bin ends on a gap shows an earlier
+row's value at the gap row's time. A bin that is all gaps is dropped, so when
+the newest rows are all gaps the line ends at an earlier bin's end
+(`[1, 2, gap, gap]` at `points: 2` gives one point, at the second row's
+time). Cost: `shape` now reads every row, 0.06 → 2.1 ms for 40 points at 1M
+rows (`perf-kit.mjs`, median of 5), still under one `extremes` scan.
 
 ### [PND-SHAPEHOW] — summarise each stretch (S)
 

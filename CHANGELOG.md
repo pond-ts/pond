@@ -83,16 +83,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - **`@pond-ts/process`: `shape` ends at the newest row.** It used to take
   every Nth row from row 0, so the line usually stopped short of the latest
-  value. It now cuts the rows into at most `points` equal row bins with
-  core's `Float64Column.bin` (never more bins than rows) and gives each bin's
-  last defined value, stamped with the **bin end time** (its last row's time,
-  even when that row is a gap), so a point's time can be a little later than
-  the row its value came from. The bins cover every row, so the last point
-  is the newest row and the first is the first bin's last value, not row 0. A
-  bin with no defined value is left out, so `points` can be under the
-  request. A series with no rows answers `points: 0`. It now reads every
-  row: about 2 ms at 1M rows, from 0.06 ms when it read 40
-  (`scripts/perf-kit.mjs`).
+  value. It now cuts the rows into at most `points` row bins of roughly equal
+  size with core's `Float64Column.bin` (never more bins than rows) and gives
+  each bin's last defined value, stamped with the **bin end time** (its last
+  row's time, even when that row is a gap), so a point's time can be a little
+  later than the row its value came from. The bins cover every row, so the
+  last point is the newest row whenever the last bin has a defined value; the
+  first is the first bin's last value, not row 0. A bin with no defined value
+  is left out, so `points` can be under the request, and when the newest rows
+  are all gaps the line stops earlier (`[1, 2, gap, gap]` at `points: 2` gives
+  one point, at the second row's time). A series with no rows answers
+  `points: 0`. It now reads every row: about 2 ms at 1M rows, from 0.06 ms
+  when it read 40 (`scripts/perf-kit.mjs`).
 
 - **`@pond-ts/process` (breaking): `shape` takes `how`, what each point
   holds.** Values are core `bin`'s reducer names: `sample` (each bin's last

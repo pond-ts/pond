@@ -1240,9 +1240,10 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   remain, with their own ids, order and decisions for Peter in
   [PND_PROCFIN_PLAN.md](docs/plans/PND_PROCFIN_PLAN.md); it replaces the
   placeholders [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN]. The first
-  step, sparklines, has shipped (the `shape` fold now ends at the newest bar,
-  shows spikes and carries its scale; outcomes in the breakout plan). Next:
-  date windows ([PND-WINOUT], [PND-WINANCHOR]).
+  step, sparklines, has shipped (the `shape` fold now ends at the newest bar
+  whenever that bar's bin has a value, shows spikes and carries its scale;
+  outcomes in the breakout plan). Next: date windows ([PND-WINOUT],
+  [PND-WINANCHOR]).
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —
