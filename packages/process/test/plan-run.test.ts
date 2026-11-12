@@ -796,9 +796,9 @@ describe('run — reductions', () => {
     });
     const points = res.facts[0]!['points'] as number;
     expect(points).toBeLessThanOrEqual(200);
-    // Bounded, not starved: a stride of ceil(399/200)=2 still samples
-    // the whole series.
-    expect(points).toBeGreaterThan(150);
+    // Bounded, not starved: 200 row bins cover the whole series, and only
+    // the first, all warm-up, is dropped.
+    expect(points).toBe(199);
   });
 
   it('a facts-only response is JSON-safe by construction', () => {

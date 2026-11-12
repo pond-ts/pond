@@ -16,6 +16,8 @@
  * answer that was most of what the old reductions cost.
  */
 
+import { Float64Column } from 'pond-ts';
+import { packColumn } from '../column.js';
 import { int } from './params.js';
 import type { FoldContext, FoldDef, Params } from './types.js';
 
@@ -164,7 +166,7 @@ export const shape: FoldDef = {
   name: 'shape',
   family: 'read',
   summary:
-    'A bounded sample of the whole series — the honest answer to "show me the series" for a caller paying by the token.',
+    'The whole series in at most `points` equal row bins, one point per bin: its last value, at the bin end time. The honest answer to "show me the series" for a caller paying by the token.',
   // A param rather than a selector field, which is the difference that
   // matters: it lands in the id, so two callers asking for 40 points
   // share one answer instead of computing it twice.
@@ -175,21 +177,35 @@ export const shape: FoldDef = {
   unit: 'inherit',
   label: (p: Params, inputs) => `shape(${String(p['points'])}) of ${inputs}`,
   fold: (ctx) => {
-    const v = read(ctx);
-    const fmt = stamper(ctx, v.length);
-    const want = ctx.params['points'] as number;
-    // `ceil`, not `floor`: `floor` rounds the stride DOWN, which rounds
-    // the sample count UP — 200 points asked of 399 rows gave a stride
-    // of 1 and returned all 399, defeating the token bound this fold
-    // exists to keep. With `ceil` the sample never exceeds `points`.
-    const step = Math.max(1, Math.ceil(v.length / want));
-    const points: [string, number][] = [];
-    for (let i = 0; i < v.length; i += step) {
-      if (v.defined(i)) points.push([fmt(ctx.at(i)), round(v.value(i))]);
+    const col = column(ctx);
+    const n = col.length;
+    // Core's `bin` throws on zero bins.
+    if (n === 0) return { points: 0, series: [] };
+    const fmt = stamper(ctx, n);
+    const bins = Math.min(ctx.params['points'] as number, n);
+    // Equal row bins cover every row, so the last bin holds the newest
+    // row. Core `bin` has no scalar `last`; M4's `last` channel is it.
+    const { last } = col.bin(bins, 'minMaxFirstLast');
+    const series: [string, number][] = [];
+    for (let i = 0; i < bins; i += 1) {
+      const v = last[i]!;
+      // A bin with no defined value is NaN on every channel.
+      if (Number.isNaN(v)) continue;
+      // The bin END time: its last row's, even when that row is a gap.
+      series.push([fmt(ctx.at(binStart(i + 1, n, bins) - 1)), round(v)]);
     }
-    return { points: points.length, series: points };
+    return { points: series.length, series };
   },
 };
+
+/**
+ * First row of bin `i` when `n` rows are cut into `bins` equal row bins,
+ * so bin `i` is rows `[binStart(i), binStart(i + 1))`. This is core
+ * `Float64Column.bin`'s own split, which core does not export; a test
+ * pins the two together.
+ */
+export const binStart = (i: number, n: number, bins: number): number =>
+  Math.floor((i * n) / bins);
 
 /**
  * One reader over the `source` role, columnar where it can be.
@@ -224,6 +240,24 @@ export function read(
     defined: (i) => boxed[i] !== undefined,
     value: (i) => boxed[i]!,
   };
+}
+
+/**
+ * One input role as a core `Float64Column`, for folds that hand the work
+ * to core (`bin`). Zero-copy over the packed view; the boxed (chunked)
+ * path packs once. `allFinite` is claimed only when every cell is
+ * defined: a wrongly-true flag makes core reducers count the gaps.
+ */
+function column(ctx: FoldContext, role = 'source'): Float64Column {
+  const view = ctx.numeric(role);
+  if (view !== undefined) {
+    return new Float64Column(
+      view.values,
+      view.length,
+      view.definedCount === view.length,
+    );
+  }
+  return packColumn(ctx.values[role]!);
 }
 
 /** Registered by `createRegistry()`; nothing stops a consumer replacing one. */

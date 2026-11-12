@@ -68,6 +68,8 @@ const nodes = {
   events: { op: 'events', in: ['compareColumns'] },
   meanWhere: { op: 'meanWhere', in: ['close', 'compareColumns'] },
   change: { op: 'change', in: ['close'] },
+  shape: { op: 'shape', in: ['close'] },
+  shape400: { op: 'shape', params: { points: 400 }, in: ['close'] },
 };
 
 function time(series, column = 'close') {
