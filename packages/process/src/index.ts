@@ -89,6 +89,7 @@ export {
   percentileRank,
   shape,
 } from './plan/folds.js';
+export type { ShapeHow } from './plan/folds.js';
 export {
   SUMMARY_FOLDS,
   mean,

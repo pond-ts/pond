@@ -18,7 +18,7 @@
 
 import { Float64Column } from 'pond-ts';
 import { packColumn } from '../column.js';
-import { int } from './params.js';
+import { choice, int } from './params.js';
 import type { FoldContext, FoldDef, Params } from './types.js';
 
 const DAY_MS = 86_400_000;
@@ -161,21 +161,47 @@ export const percentileRank: FoldDef = {
   },
 };
 
+/**
+ * How `shape` sums up each bin: core `Float64Column.bin`'s reducer names,
+ * plus `sample` (the bin's last defined value). No `sum` or `count`: their
+ * empty bin is 0, not a gap.
+ */
+export type ShapeHow =
+  | 'sample'
+  | 'mean'
+  | 'median'
+  | 'min'
+  | 'max'
+  | 'minMax'
+  | 'minMaxFirstLast';
+
+const SHAPE_HOW: readonly ShapeHow[] = [
+  'sample',
+  'mean',
+  'median',
+  'min',
+  'max',
+  'minMax',
+  'minMaxFirstLast',
+];
+
 export const shape: FoldDef = {
   kind: 'fold',
   name: 'shape',
   family: 'read',
   summary:
-    'The whole series in at most `points` equal row bins, one point per bin: its last value, at the bin end time. The honest answer to "show me the series" for a caller paying by the token.',
-  // A param rather than a selector field, which is the difference that
-  // matters: it lands in the id, so two callers asking for 40 points
+    'The whole series in at most `points` equal row bins, one point per bin at the bin end time. `how` sums up each bin: `sample` (its last value, the default), `mean`, `median`, `min`, `max`, `minMax` ([time, lo, hi], so a spike always shows) or `minMaxFirstLast` ([time, lo, hi, first, last]). The honest answer to "show me the series" for a caller paying by the token.',
+  // Params rather than selector fields, which is the difference that
+  // matters: they land in the id, so two callers asking for 40 points
   // share one answer instead of computing it twice.
   params: {
     points: int({ min: 2, max: 400, suggest: [20, 120], default: 40 }),
+    how: choice({ of: SHAPE_HOW, default: 'sample' }),
   },
   inputs: source,
   unit: 'inherit',
-  label: (p: Params, inputs) => `shape(${String(p['points'])}) of ${inputs}`,
+  label: (p: Params, inputs) =>
+    `shape(${String(p['points'])}, ${String(p['how'])}) of ${inputs}`,
   fold: (ctx) => {
     const col = column(ctx);
     const n = col.length;
@@ -183,16 +209,31 @@ export const shape: FoldDef = {
     if (n === 0) return { points: 0, series: [] };
     const fmt = stamper(ctx, n);
     const bins = Math.min(ctx.params['points'] as number, n);
+    const how = ctx.params['how'] as ShapeHow;
     // Equal row bins cover every row, so the last bin holds the newest
-    // row. Core `bin` has no scalar `last`; M4's `last` channel is it.
-    const { last } = col.bin(bins, 'minMaxFirstLast');
-    const series: [string, number][] = [];
+    // row. Each point is one value per channel, in core `bin`'s order.
+    let channels: Float64Array[];
+    if (how === 'sample') {
+      // Core `bin` has no scalar `last`; M4's `last` channel is it.
+      channels = [col.bin(bins, 'minMaxFirstLast').last];
+    } else if (how === 'minMax') {
+      const { lo, hi } = col.bin(bins, 'minMax');
+      channels = [lo, hi];
+    } else if (how === 'minMaxFirstLast') {
+      const { lo, hi, first, last } = col.bin(bins, 'minMaxFirstLast');
+      channels = [lo, hi, first, last];
+    } else {
+      channels = [col.bin(bins, how)];
+    }
+    const series: [string, ...number[]][] = [];
     for (let i = 0; i < bins; i += 1) {
-      const v = last[i]!;
       // A bin with no defined value is NaN on every channel.
-      if (Number.isNaN(v)) continue;
+      if (Number.isNaN(channels[0]![i]!)) continue;
       // The bin END time: its last row's, even when that row is a gap.
-      series.push([fmt(ctx.at(binStart(i + 1, n, bins) - 1)), round(v)]);
+      series.push([
+        fmt(ctx.at(binStart(i + 1, n, bins) - 1)),
+        ...channels.map((c) => round(c[i]!)),
+      ]);
     }
     return { points: series.length, series };
   },
