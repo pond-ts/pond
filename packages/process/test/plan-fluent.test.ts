@@ -174,10 +174,14 @@ describe('registry-bound fluent authoring', () => {
     // slot the same way, so they are one slot too.
     const graph = process(vocabulary(), 'prices');
     const scaled = graph.column('close').scale({ as: 'scaled', by: 3 });
-    graph.outputs({ a: scaled.shape(), b: scaled.shape({ points: 40 }) });
+    graph.outputs({
+      a: scaled.shape(),
+      b: scaled.shape({ points: 40 }),
+      c: scaled.shape({ how: 'sample' }),
+    });
     expect(Object.keys(graph.outputs({}).nodes)).toEqual([
       'scaled',
-      'scaled:shape(points=40)',
+      'scaled:shape(how=sample,points=40)',
     ]);
   });
 
@@ -189,12 +193,82 @@ describe('registry-bound fluent authoring', () => {
     graph.outputs({
       coarse: scaled.shape({ points: 20 }),
       fine: scaled.shape({ points: 100 }),
+      spiky: scaled.shape({ points: 20, how: 'minMax' }),
     });
     const request = graph.outputs({});
     expect(request.nodes).toMatchObject({
-      'scaled:shape(points=20)': { op: 'shape', params: { points: 20 } },
-      'scaled:shape(points=100)': { op: 'shape', params: { points: 100 } },
+      'scaled:shape(how=sample,points=20)': {
+        op: 'shape',
+        params: { points: 20 },
+      },
+      'scaled:shape(how=sample,points=100)': {
+        op: 'shape',
+        params: { points: 100 },
+      },
+      // `how` reaches the node; it used to be dropped on the way.
+      'scaled:shape(how=minMax,points=20)': {
+        op: 'shape',
+        params: { points: 20, how: 'minMax' },
+      },
     });
+  });
+
+  it('runs each how to its own answer', () => {
+    // 8 five-minute rows of close 10..17, tripled to 30..51, into 2 bins:
+    // rows 0–3 and 4–7, stamped with each bin's last row.
+    const registry = vocabulary();
+    const graph = process(registry, 'prices');
+    const scaled = graph.column('close').scale({ as: 'scaled', by: 3 });
+    const request = graph.outputs({
+      plain: scaled.shape({ points: 2 }),
+      sampled: scaled.shape({ points: 2, how: 'sample' }),
+      mean: scaled.shape({ points: 2, how: 'mean' }),
+      m4: scaled.shape({ points: 2, how: 'minMaxFirstLast' }),
+    });
+    const host = createHost({ registry, units: { close: '$' } }).add(
+      'prices',
+      series(),
+    );
+    const result = host.run(request);
+    const byName = Object.fromEntries(
+      result.facts.map((f) => [f.name, f['series']]),
+    );
+    const ends = ['2026-01-01T00:15:00Z', '2026-01-01T00:35:00Z'];
+    expect(byName['plain']).toEqual([
+      [ends[0], 39],
+      [ends[1], 51],
+    ]);
+    // The default and an explicit `sample` are one node, one answer.
+    expect(byName['sampled']).toEqual(byName['plain']);
+    expect(byName['mean']).toEqual([
+      [ends[0], 34.5],
+      [ends[1], 46.5],
+    ]);
+    expect(byName['m4']).toEqual([
+      [ends[0], 30, 39, 30, 39],
+      [ends[1], 42, 51, 42, 51],
+    ]);
+    expect(result.facts.find((f) => f.name === 'm4')).toMatchObject({
+      points: 2,
+      first: { value: 30, at: '2026-01-01T00:00:00Z' },
+      last: { value: 51, at: ends[1] },
+      min: { value: 30, at: '2026-01-01T00:00:00Z' },
+      max: { value: 51, at: ends[1] },
+    });
+  });
+
+  it('lets the run refuse an unknown how', () => {
+    const registry = vocabulary();
+    const graph = process(registry, 'prices');
+    const close = graph.column('close');
+    const request = graph.outputs({
+      // @ts-expect-error `how` is one of core bin's reducer names.
+      summed: close.shape({ how: 'sum' }),
+    });
+    const host = createHost({ registry }).add('prices', series());
+    const result = host.run({ ...request, onError: 'collect' });
+    expect(result.facts).toEqual([]);
+    expect(result.skipped[0]!.reason).toMatch(/shape\.how must be one of/);
   });
 
   it("reserves 'as' for the fluent node slot", () => {

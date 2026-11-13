@@ -88,7 +88,7 @@ const width = bands.output('Upper').subtract({
 ## Facts
 
 The [standard folds](./registry#folds) hang off any column reference:
-`.last()`, `.extremes()`, `.percentileRank()`, `.shape({ points })`.
+`.last()`, `.extremes()`, `.percentileRank()`, `.shape({ points, how })`.
 Each **adds a terminal node** — a computation with an id that caches —
 not a post-processing callback.
 
@@ -143,7 +143,7 @@ away to the [slot request form](./requests#two-request-forms):
     "bands": { "op": "bands", "params": { "width": 2 }, "in": ["average"] },
     "bandWidth": { "op": "subtract", "in": ["bands#Upper", "bands#Lower"] },
     "bandWidth:last": { "op": "last", "in": ["bandWidth"] },
-    "bandWidth:shape(points=80)": {
+    "bandWidth:shape(how=sample,points=80)": {
       "op": "shape",
       "params": { "points": 80 },
       "in": ["bandWidth"]
@@ -153,7 +153,7 @@ away to the [slot request form](./requests#two-request-forms):
     "average": { "on": "average" },
     "bands": { "on": "bands" },
     "latestWidth": { "on": "bandWidth:last" },
-    "widthShape": { "on": "bandWidth:shape(points=80)" }
+    "widthShape": { "on": "bandWidth:shape(how=sample,points=80)" }
   }
 }
 ```

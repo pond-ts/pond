@@ -7,7 +7,8 @@
  * validation because requests may also arrive as JSON.
  */
 
-import type { OpDef, ParamDef } from './types.js';
+import type { OpDef, ParamDef, ParamValue } from './types.js';
+import type { ShapeHow } from './folds.js';
 import { isFold } from './types.js';
 import {
   BuilderError,
@@ -81,8 +82,8 @@ interface ColumnOps<Defs extends DefMap> {
   extremes(): FactRef;
   /** Where the latest value sits in its own history. */
   percentileRank(): FactRef;
-  /** A bounded sample of the complete series. */
-  shape(options?: { points?: number }): FactRef;
+  /** The whole series in at most `points` bins, each summed up by `how`. */
+  shape(options?: { points?: number; how?: ShapeHow }): FactRef;
 }
 
 export type FluentColumnRef<Defs extends DefMap> = ColumnOps<Defs> &
@@ -180,7 +181,7 @@ export class ProcessBuilder<
       last: () => this.#fold(input, 'last'),
       extremes: () => this.#fold(input, 'extremes'),
       percentileRank: () => this.#fold(input, 'percentileRank'),
-      shape: (options: { points?: number } = {}) =>
+      shape: (options: { points?: number; how?: ShapeHow } = {}) =>
         this.#fold(input, 'shape', options),
     };
     Object.defineProperty(target, INPUT, { value: input });
@@ -254,7 +255,7 @@ export class ProcessBuilder<
   #fold(
     input: InputRef,
     op: 'last' | 'extremes' | 'percentileRank' | 'shape',
-    params: { points?: number } = {},
+    params: { points?: number; how?: ShapeHow } = {},
   ): FactRef {
     const inputName =
       typeof input === 'string'
@@ -269,20 +270,25 @@ export class ProcessBuilder<
     // first, which this registry-bound layer can do and the plain
     // builder cannot: `shape()` and `shape({points: 40})` are one
     // computation to `specId`, so they must be one slot here too.
-    const given =
-      params.points === undefined ? undefined : { points: params.points };
+    const given = Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== undefined),
+    ) as Readonly<Record<string, ParamValue>>;
     const def = this.#registry.get(op);
-    const explicit: Readonly<Record<string, number>> | undefined = given;
     const canonical = Object.fromEntries(
       Object.entries(def.params).map(([key, d]) => [
         key,
-        explicit?.[key] ?? d.default,
+        given[key] ?? d.default,
       ]),
     );
     const slot = foldSlot(inputName, op, canonical);
     let handle = this.#folds.get(slot);
     if (handle === undefined) {
-      handle = this.#builder.add(slot, op, given, [input]);
+      handle = this.#builder.add(
+        slot,
+        op,
+        Object.keys(given).length === 0 ? undefined : given,
+        [input],
+      );
       this.#folds.set(slot, handle);
     }
     return { selection: { handle } };

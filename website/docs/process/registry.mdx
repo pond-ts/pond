@@ -94,12 +94,68 @@ pre-registered because every consumer wants them:
 | `last`           | The most recent defined value, with its date           |
 | `extremes`       | Lowest and highest over the series, each with its date |
 | `percentileRank` | Where the latest value sits in its own history (0–1)   |
-| `shape`          | A bounded sample of the whole series (`points`, ≤ 400) |
+| `shape`          | The whole series in at most `points` bins, by `how`    |
 
 `shape` is the honest answer to "show me the series" for a caller paying
-by the token — the sample never exceeds the requested `points`, and the
-point count is a param rather than a selector field so it lands in the id
-and two callers asking for 40 points share one cached answer.
+by the token. It cuts the rows into at most `points` row bins (stretches
+of the series with roughly equal numbers of rows) with core's
+`Float64Column.bin` and gives one point per bin, at the **bin end time**
+(the time of the bin's last row, even when that row is a gap). A bin with
+no defined value is left out, and `points` in the answer counts the bins
+that remain. A series with no rows answers `points: 0` and an empty
+`series`.
+
+The `points` param asks for 2 to 400 bins (default 40); a series shorter
+than that gets one bin per row. Bins hold roughly equal numbers of
+**rows**, not equal stretches of time: 5 rows in 2 bins split 2 and 3, and
+on data with uneven spacing one bin can cover a longer span than its
+neighbour.
+
+The bins cover every row, so the line ends on the newest row whenever the
+last bin has a defined value. Because the time is always the bin's end, it
+can be a little later than the row a value came from: with `sample`, if a
+bin's last row is a gap, the point shows the last defined value before it,
+stamped with the gap row's time. But a bin that is all gaps is dropped, so
+when the newest rows are all gaps the line stops earlier. For example,
+`[1, 2, gap, gap]` with `points: 2` gives one point, at the second row's
+time.
+
+`how` says what each point holds, using core `bin`'s reducer names:
+
+| `how`             | Point                         | Each bin's                                |
+| ----------------- | ----------------------------- | ----------------------------------------- |
+| `sample`          | `[time, value]`               | last defined value (the default)          |
+| `mean`, `median`  | `[time, value]`               | mean or median                            |
+| `min`, `max`      | `[time, value]`               | lowest or highest                         |
+| `minMax`          | `[time, lo, hi]`              | low and high, so a spike always shows     |
+| `minMaxFirstLast` | `[time, lo, hi, first, last]` | M4: low, high, first and last (see below) |
+
+`minMaxFirstLast` is what a client needs to draw a decimated line that stays
+continuous across bins: enter each bin at `first`, exit at `last`, and draw
+`lo`–`hi` between. `sum` and `count` are not offered, because their empty
+bin is 0 rather than a gap.
+
+Beside the points, the answer carries the line's **scale**: `first`, `last`,
+`min` and `max`, each `{ value, at }` in the format of `change` and
+`extremes` (`null` when the series has no defined value). They are measured
+over the whole series, not the points, so a high that no `sample` point
+landed on is still the `max`. A client can draw and label the line from one
+fact:
+
+```json
+{
+  "points": 40,
+  "first": { "value": 101.2, "at": "2025-11-12" },
+  "last": { "value": 118.4, "at": "2026-11-12" },
+  "min": { "value": 96.7, "at": "2026-01-03" },
+  "max": { "value": 121.9, "at": "2026-10-28" },
+  "series": [["2025-11-20", 101.9], "…"]
+}
+```
+
+`points` and `how` are params rather than selector fields, so they land in
+the id (`p1:shape(px;how=sample,points=40)`) and two callers asking for the
+same sparkline share one cached answer.
 
 A fold body reads its inputs through `ctx.numeric(role)` — a zero-copy
 columnar view — falling back to `ctx.values[role]`, a lazily densified
