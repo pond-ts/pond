@@ -14,6 +14,7 @@ import {
   timeRangeKeyColumnFromPairs,
 } from '../src/columnar/index.js';
 import { SeriesStore, type SeriesEvent } from '../src/live/series-store.js';
+import { TimeSeries } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
 /* Construction                                                               */
@@ -838,5 +839,64 @@ describe('Framework independence (pure substrate contract)', () => {
     expect(series.length).toBe(3);
     expect(series.eventAt(1).data().temperature).toBe(21);
     expect((series.toRows()[2]![0] as Time).begin()).toBe(2000);
+  });
+});
+
+describe('toEvents builds rows straight into its array', () => {
+  it('reuses events and keys handed out before, and serves later reads from it', () => {
+    const { series } = makeBasicSeriesStore();
+    const key0 = series.keyAt(0);
+    const event1 = series.eventAt(1);
+    const events = series.toEvents();
+    expect(events[1]).toBe(event1);
+    expect(events[0]!.key()).toBe(key0);
+    expect(series.eventAt(2)).toBe(events[2]);
+    expect(series.keyAt(2)).toBe(events[2]!.key());
+    expect(series.keyAt(2)).toBe(series.keyAt(2));
+    expect(series.toEvents()).toBe(events);
+    expect(Object.isFrozen(events)).toBe(true);
+    expect(events.map((e) => [e.begin(), e.data()])).toEqual([
+      [1000, { value: 10, load: 0.5 }],
+      [2000, { value: 20, load: 0.75 }],
+      [3000, { value: 30, load: 0.9 }],
+    ]);
+  });
+
+  it('reuses events adopted through fromTrustedStore', () => {
+    const { store } = makeBasicSeriesStore();
+    const adopted = new Event(new Time(2000), { value: 20, load: 0.75 });
+    const series = SeriesStore.fromTrustedStore(store, {
+      eventCache: new Map([[1, adopted as SeriesEvent]]),
+    });
+    const events = series.toEvents();
+    expect(events[1]).toBe(adopted);
+    expect(series.eventAt(1)).toBe(adopted);
+    expect(series.eventAt(0)).toBe(events[0]);
+    expect(events.map((e) => e.begin())).toEqual([1000, 2000, 3000]);
+  });
+
+  it("keeps a trimmed series' keys the source's own objects", () => {
+    // `trim` on time keys reads its keys from the source store; building
+    // the events in one pass must still use them, not fresh copies.
+    const src = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1],
+        [10, 2],
+        [20, 3],
+      ],
+    });
+    const t = src.trim(new TimeRange({ start: 5, end: 100 }));
+    const events = t.events;
+    expect(events.map((e) => e.key())).toEqual([
+      src.at(1)!.key(),
+      src.at(2)!.key(),
+    ]);
+    expect(events[0]!.key()).toBe(src.at(1)!.key());
+    expect(events[1]!.key()).toBe(src.at(2)!.key());
   });
 });
