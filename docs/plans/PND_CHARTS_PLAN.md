@@ -681,7 +681,7 @@ last:
   many rows wants both axes — a container-level change well beyond this layer,
   and the first real driver for it.
 
-**Still open:**
+**Still open** (tracked as [PND-HEATLABEL] on PLAN.md, 2026-11-17):
 
 - **Cell value labels** (the reference "heat map with labels"): draw the
   formatted value centred when it fits. Small; the fiddly part is text colour
@@ -4767,7 +4767,8 @@ whose only user was the area's log-axis special case — with nothing pulled in,
 there is nothing to leave out of a log fit. Bars still pull zero in
 (`barExtent`): a bar's length is its value.
 
-**Not done, raised with the owner:** when the baseline is off the plot, anchor
+**Not done, raised with the owner** ([PND-AREAFADE] on PLAN.md since
+2026-11-17)**.** When the baseline is off the plot, anchor
 the gradient at the real baseline rather than the clamped edge, so the fill
 visibly runs off the bottom instead of fading out at it. **Docs-site examples**
 that relied on the pull-in for a zero-based read now say `min={0}`: the stacked

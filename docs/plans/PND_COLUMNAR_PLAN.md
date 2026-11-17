@@ -174,7 +174,11 @@ from prefix sums/counts, fall back to the event-walked path. Friction-gated.
 `unique` / `top` / `samples` / grouped `count` over dictionary-encoded
 columns. Friction-gated.
 
-### [PND-WCNAN] — `withColumn` NaN-canonical `Float64Array` intake
+### [PND-WCNAN] — `withColumn` NaN-canonical `Float64Array` intake — SHIPPED (v0.54.0)
+
+_Status checked 2026-11-17: shipped in v0.54.0 (CHANGELOG `[0.54.0]`,
+"`withColumn` accepts a `Float64Array` where `NaN` means missing"). The text
+below is the task as planned._
 
 **Source:** dashboard-agent friction report (pond-ts-dashboard engine A/B,
 2026-07-21). `withColumn` rejects NaN today, so a consumer deriving a **gated**

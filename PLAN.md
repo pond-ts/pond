@@ -302,6 +302,25 @@ linearWindow>`, [PND-SYMLOG].)
   `ValueSeries` algebra only when a second consumer (geo) pulls.
 - **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var
   naming convention, no new plumbing).
+- **[PND-YFIT]** — `<YAxis>` can only fit the whole series, never the visible
+  window, so a narrow band (a 20-period Bollinger on 150k bars) is a few pixels
+  tall and zooming in can't recover it. The process demo works around it with
+  ~40 lines of its own (`apps/process-demo/web/Viz.tsx`, `useVisibleExtent`).
+  Likely shape: opt-in `<YAxis fit="visible">`, default unchanged; open
+  questions (pan stability, readout) in the breakout plan.
+- **[PND-LOGTICK-N18]** — Unexplained sixth log-axis label on Node 18 (CI only;
+  blocked the v0.56.0 publish twice). The test was loosened to a subsequence
+  check, which is a workaround, not a diagnosis. Next: run the charts suite on
+  Node 18 and dump every digit-bearing label to see whether the tick selector
+  depends on the environment.
+- **[PND-HEATLABEL]** — Heat map leftovers: the cell's value drawn in the cell
+  when it fits (text colour must stay readable at both ends of the ramp), and
+  smooth colour instead of steps if a consumer asks. (The grouped two-level x
+  axis it also listed belongs to [PND-AXES].)
+- **[PND-AREAFADE]** — When an area's zero line is off the plot, start the
+  colour fade at the real zero line rather than the clamped edge, so the fill
+  runs off the bottom instead of fading out at it. Raised with the owner when
+  the baseline stopped widening the axis (2026-10-08); not decided.
 - **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
   charts layers take only `TimeSeries`, forcing a fresh per-tick handle
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
@@ -1025,6 +1044,11 @@ consumer signal. Plan:
   Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
   [PND-NANREP] — so a `{ missing }` fill option is only worth adding if a
   consumer needs a value other than `NaN`.)
+- **[PND-DISTINCT]** — A column's distinct values
+  (`column(name).distinct()`, string and number), using the dictionary where
+  the column has one. Today an agent builds one `TimeSeries` per value via
+  `partitionBy(col).toMap().keys()` to read the names; only `uniqueCount()`
+  exists. Small. Surfaced by cold-start run 1b.
 - **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
   append; design settled, build when the binary WS feed consumer arrives.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:
@@ -1090,6 +1114,17 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
+- **[PND-PROCHELD]** — Let a caller ask what the host already holds before it
+  composes a request. In the demo a model refused to compare with its last
+  answer, though those results were still in memory, until the prompt told it
+  re-asking was cheap. A read-only view (not a cache API, not
+  [PND-PROCCACHE]); the hard part is a summary small enough for a model's
+  context.
+- **[PND-PROCDRAW]** — Let a request say "draw this". Today a model asking
+  for a chart adds `shape` folds and calls the numbers a plot, while the demo
+  quietly adds the real columns behind its back. Open: where the intent lives,
+  who renders (process must not depend on charts), and what `shape` is for
+  once a response can carry a chart.
 - **[PND-PROCFIN]** — Finance questions for an agent / MCP server: close the
   gaps the 48-question catalogue found after the finance kit. 23 of 48 are
   answerable today; the rest need date windows, several datasets per request,
@@ -1099,8 +1134,14 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   placeholders [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN]. The first
   step, sparklines, has shipped (the `shape` fold now ends at the newest bar
   whenever that bar's bin has a value, shows spikes and carries its scale;
-  outcomes in the breakout plan). Next: date windows ([PND-WINOUT],
-  [PND-WINANCHOR]).
+  outcomes in the breakout plan). The 16, in build order: date windows
+  [PND-WINOUT], [PND-WINANCHOR]; several datasets per request [PND-MULTIFROM],
+  [PND-MULTIUNIT], [PND-MULTITEST]; trading sessions [PND-WINSESSION],
+  [PND-SESSMIN]; roll-ups and grouping [PND-ROLLBARS], [PND-GROUPBY]; missing
+  bars [PND-CALGAPS]; across many tickers [PND-FANRUN], [PND-FANCOLLECT],
+  [PND-FANLABEL], [PND-FANPAIRS]; any time: [PND-PARAMKIND]; inside every
+  task: [PND-FINREC]. New request fields (WINOUT, MULTIFROM, ROLLBARS, FANRUN)
+  need Peter's OK to merge.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —
@@ -1134,6 +1175,11 @@ depend on. Plan:
   policy). Depends on [PND-FINAL] + [PND-KEYED].
 - **[PND-NODE]** — Node stream adapters + third-party chart bridge helpers
   (`toRecharts`, `toObservablePlot`).
+- **[PND-FITLEFT]** — Two small leftovers from moving Estela's activity code
+  into fit: the summary's `polyline` still uses the old metres-based
+  `simplify` instead of the outline code (folding them together was left for
+  later), and a lap split that falls inside a pool length is not moved to the
+  length's edge. Detail in the breakout plan.
 - **[PND-FITDEPTH]** — the sport layers after 0.76: pjm17971's first-release
   lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
   The one-activity layers on any `Section` are built (aerobic, distribution,
