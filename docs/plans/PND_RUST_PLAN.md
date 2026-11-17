@@ -830,6 +830,28 @@ writes, `packages/process/test/fixtures/parity.json`:
 
 Checked: changing one fact value in the committed file fails the test.
 
+### R5 step 2 — ids, registry, param checks, describe (DONE)
+
+New crate `crates/pond-process` (`publish = false` until the port is
+complete and a crates.io name is chosen). It holds:
+
+- `Registry` with `define` (same definition-time checks and messages as
+  `registry.ts`), `get`, `resolve_params` (strict and lenient),
+  `check_arity` and `describe`.
+- `Def` / `ParamDef` builders, and the definitions (with lineage labels) of
+  the standard folds, the basic ops and the summary folds. What each op
+  computes is step 3.
+- `spec_id` (strict and lenient), `explain`, `output_key`, `source_id`.
+- `js.rs`: the JavaScript text rules ids and messages depend on —
+  `String(v)`, `typeof`, `JSON.stringify`, `encodeURIComponent`, and
+  UTF-16 key order. Numbers go through pond-rs's `js_number`, made public
+  for this.
+
+`tests/parity.rs` reads the fixture: all 23 id cases (strict id or error
+code and message, lenient id, lineage text), `describe()` of both
+registries (compared as JSON values, not text), and the source ids. The
+fixture's four ops are defined in the test with the crate's own builders.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
