@@ -811,7 +811,8 @@ writes, `packages/process/test/fixtures/parity.json`:
   every malformed shape the lenient namer encodes.
 - **`describe()`** of the standard registry and of the full one.
 - **Source ids** with characters that need URL encoding.
-- **Seven host sessions**, each a sequence of `add` / `run` / `runAsync` /
+- **Eight host sessions** (seven at first; the eighth came from the step 2–5
+  review, below), each a sequence of `add` / `run` / `runAsync` /
   `remove` / `has` / `datasets` steps with every response recorded (node
   `ms` dropped, columns as numbers with `null` gaps): every basic op and
   fold on one plan, the same plan warm, columns and picked outputs, new
@@ -823,12 +824,99 @@ writes, `packages/process/test/fixtures/parity.json`:
   byte budget evicting least-recently-used nodes; folds over intraday,
   gappy and empty series; async sources across revisions, key order and
   the source cap; the standard registry alone.
-- **Four fixture-only ops** (`annualise` with a typed input, a three-output
+- **Five fixture-only ops** (`picky`, which fails with a coded
+  `ParamError`, came with the eighth session; `annualise` with a typed input, a three-output
   `band`, `boom` which throws, `short` which returns one row too few). The
   Rust harness defines the same four through its own op API, so the
   fixture also tests that API (step 6).
 
 Checked: changing one fact value in the committed file fails the test.
+
+### R5 step 2 — ids, registry, param checks, describe (DONE)
+
+New crate `crates/pond-process` (`publish = false` until the port is
+complete and a crates.io name is chosen). It holds:
+
+- `Registry` with `define` (same definition-time checks and messages as
+  `registry.ts`), `get`, `resolve_params` (strict and lenient),
+  `check_arity` and `describe`.
+- `Def` / `ParamDef` builders, and the definitions (with lineage labels) of
+  the standard folds, the basic ops and the summary folds. What each op
+  computes is step 3.
+- `spec_id` (strict and lenient), `explain`, `output_key`, `source_id`.
+- `js.rs`: the JavaScript text rules ids and messages depend on —
+  `String(v)`, `typeof`, `JSON.stringify`, `encodeURIComponent`, and
+  UTF-16 key order. Numbers go through pond-rs's `js_number`, made public
+  for this.
+
+`tests/parity.rs` reads the fixture: all 23 id cases (strict id or error
+code and message, lenient id, lineage text), `describe()` of both
+registries (compared as JSON values, not text), and the source ids. The
+fixture's four ops are defined in the test with the crate's own builders.
+
+### R5 steps 3 (part), 4 and 5 — ops, run engine, host (DONE)
+
+What landed:
+
+- **Ops and folds** (`basic_ops.rs`, `folds.rs`, `summary_folds.rs`): the
+  code behind every basic op, standard fold and summary fold. `shape`
+  bins reuse pond-rs's reducers through `Reducer::reduce`, made public for
+  this. `percentile` ports the TypeScript quickselect, including its
+  fallback, so ties and gaps pick the same value.
+- **Graph** (`graph.rs`): compile with the warm re-check, unit checks,
+  dirty marking by data generation, cached failures (a node that threw
+  keeps throwing until the data changes), the per-graph byte budget with
+  least-recently-used eviction that skips nodes something depends on.
+- **Run** (`run.rs`) and **slots** (`slots.rs`): nested and slot requests,
+  `throw` / `skip` / `collect`, selectors by spec or by id string, picked
+  outputs, facts, lineage, node timing, `to_wire`.
+- **Host** (`host.rs`): `add` / `has` / `remove` / `datasets` /
+  `graph_for` / `run`, and `run_async` with a `SourceRegistry` of async
+  loaders, revisions and the `max_sources` cap.
+
+`tests/parity.rs` replays all eight fixture sessions through the Rust host
+and compares every response with the TypeScript one as text, so key order
+counts too (numbers are compared as numbers first, since JavaScript has one
+number type). All match.
+
+The review (PR #938) found two orders the first seven sessions could not
+see, both now fixed and covered by an eighth session:
+
+- **Integer-like names come first.** `Object.keys` lists keys such as `"2"`
+  and `"10"` first and ascending, whatever order they were written in. That
+  decides slot order, output order and the "slots are …" message.
+- **Slots come back in the order they finish.** `expandSlots` returns its
+  map of finished slots, so a slot comes after the slots it reads.
+
+It also found malformed requests (no `process`, `nodes` not an object, a
+slot with no `in`) quietly succeeding. TypeScript fails those with the
+engine's own `TypeError`, which has no code. Rust now fails them with no
+code too, with its own message, and under the same error policy:
+the nested form fails whatever `onError` says. Op and fold code now returns
+a `ProcessError`, so a custom op can fail with a code as a TypeScript op
+can throw `ParamError`.
+
+Differences from TypeScript, on purpose:
+
+- **No widened series.** TypeScript's `assemble` appends the asked-for
+  columns to a copy of the input series for a chart. The Rust result
+  carries the columns (`RunResult::columns`) and no series; the first
+  consumer reads facts. `hasSeries` is true when columns were asked for,
+  which is what `toWire` reports on the requests a wire carries.
+- **No shared in-flight loads.** TypeScript shares one load between
+  concurrent `runAsync` calls for the same source, and a `remove` during a
+  load discards that load. `Host::run_async` takes `&mut self`, so two
+  calls cannot overlap and neither case can arise. A host shared across
+  threads would need both back.
+
+Not ported yet (scope decision 1): joins, ranged recompute
+(`setSourceFrom` / `runRange`), the live graph, the worker pool and the
+authoring APIs.
+
+Still to do in step 3: the studies through the pond-rs catalog (with a
+study parity fixture) and the new pointwise basics (`log`, `sqrt`, a ratio
+that gaps on a zero denominator), in both languages. The performance check
+is step 7.
 
 ## Next
 

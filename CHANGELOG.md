@@ -79,6 +79,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **pond-rs `js_number`** is public: JavaScript's `String(x)` for a number
+  (`1e-7`, `1.5e+21`, `-0` as `0`), for Rust code that must write numbers
+  into text exactly as pond-ts does. The Rust port of `@pond-ts/process`
+  ([PND-RUST-R5]) builds its ids with it.
+- **pond-rs `Reducer::reduce`**: one reducer over a slice of numbers
+  (`None` for the list reducers and for an out-of-range percentile), so
+  code outside the crate can bin a column the way `aggregate` does. The
+  Rust port of `@pond-ts/process` uses it for `shape`.
+
 ### Changed
 
 - **`@pond-ts/process`: `shape` ends at the newest row.** It used to take

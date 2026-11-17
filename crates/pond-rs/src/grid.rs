@@ -670,10 +670,14 @@ pub(crate) fn iso_time(ms: i64) -> String {
     )
 }
 
-/// JavaScript's `String(x)` for a finite number: the shortest digits that
-/// read back as `x`, in plain form from 1e-6 up to 1e21 and exponent form
-/// outside it.
-pub(crate) fn js_number(x: f64) -> String {
+/// JavaScript's `String(x)` for a number: the shortest digits that read
+/// back as `x`, in plain form from 1e-6 up to 1e21 and exponent form outside
+/// it (`1e-7`, `1.5e+21`); `-0` as `0`; `NaN`, `Infinity` and `-Infinity`
+/// spelled out.
+///
+/// For writing text that must match what pond-ts writes, such as names
+/// built from numbers.
+pub fn js_number(x: f64) -> String {
     if !x.is_finite() {
         return if x.is_nan() {
             "NaN".into()

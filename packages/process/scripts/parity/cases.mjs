@@ -167,6 +167,17 @@ function fixtureOps(proc, pond) {
       outputs: [{ id: '', unit: 'inherit' }],
       run: (ctx) => read(ctx, 'source').slice(1),
     },
+    {
+      name: 'picky',
+      family: 'fixture',
+      summary: 'Op code that fails with a coded error.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: () => {
+        throw new proc.ParamError('picky: needs at least 100 rows');
+      },
+    },
   ];
 }
 
@@ -814,6 +825,47 @@ function sessions() {
         { remove: 'd' },
         { remove: 'd' },
         { has: 'd' },
+      ],
+    },
+    {
+      // JavaScript lists integer-like keys first and ascending, whatever
+      // order they were written in; a port must follow that order.
+      name: 'number-like slot and output names, and coded op errors',
+      registry: 'all',
+      units: UNITS,
+      steps: [
+        { add: 'd', input: 'daily' },
+        {
+          run: facts(
+            'd',
+            {
+              b: { op: 'last', in: ['close'] },
+              10: { op: 'scale', in: ['close'], params: { factor: 2 } },
+              2: { op: 'last', in: ['10'] },
+              a: { op: 'mean', in: ['close'] },
+            },
+            {
+              z: { on: 'b' },
+              10: { on: 'a' },
+              2: { on: '2' },
+              1: { on: '10' },
+            },
+          ),
+        },
+        {
+          run: facts(
+            'd',
+            { 10: { op: 'last', in: ['clsoe'] }, 2: { op: 'last', in: ['x'] } },
+            {},
+          ),
+        },
+        {
+          run: facts(
+            'd',
+            { p: { op: 'picky', in: ['close'] }, l: { op: 'last', in: ['p'] } },
+            { p: { on: 'p' }, l: { on: 'l' } },
+          ),
+        },
       ],
     },
     {
