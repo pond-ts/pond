@@ -237,6 +237,16 @@ So the singular `hovered?: string | null` is the _deliberate_ shape, not a thing
 to widen later: it composes with a future list multi-select rather than
 competing with it (select is the set, hover is the one under the pointer).
 
+**Shipped in #618 (v0.58.0), under [PND-INTERACTCONF].** `<BarList>` and
+`<BoxList>` take a controlled `hovered` and an `onHover(row | null)`
+callback, so hover is two-way, as selection already was. One change from
+the shape above: `hovered` takes one row key **or a set**
+(`string | readonly string[] | null`), the same union `<ChartContainer
+hovered>` takes, because a sweep lights several rows at once. A plain
+pointer-over still carries 0 or 1 keys. `onHover` is deduped by row key and
+fires controlled or not. The PLAN.md "two families" note listed this as
+open until 2026-11-13.
+
 [#608]: https://github.com/pond-ts/pond/issues/608
 [#606]: https://github.com/pond-ts/pond/pull/606
 [#577]: https://github.com/pond-ts/pond/issues/577
@@ -1170,6 +1180,16 @@ the same contract when it gains selection (deferred — not requested by the
 report; the earlier "shared geometry helper" framing is superseded by the
 per-mark idiom the codebase already uses). **Still open in this wave:**
 `ValueSeries` widening, range-only mode polish, px `offset`, line-only shape.
+
+**Checked 2026-11-13 (PLAN.md pruning): three of those four had already
+shipped in v0.44.0** (CHANGELOG `[0.44.0]`, "`<BoxPlot>` finished for the
+value axis + range-only marks"): `<BoxPlot>` takes a `ValueSeries`, with
+box width from neighbour spacing for a point key; omitting `q1` + `q3` draws
+a range-only `lower → upper` mark; `offset` shifts a layer in pixels; and
+`capWidth` sets the whisker cap. No further "polish" item is written down
+anywhere, so none is carried. What is left is the **line-only /
+stem-without-caps shape**: `BoxShape` is still `'whisker' | 'solid' |
+'none'` (`packages/charts/src/box.ts`).
 
 **Crosshair snap — DONE (2026-09-23).** The crosshair now snaps to a box: x to
 the box centre, y to the quantile nearest the pointer, with the value pill and
@@ -2890,6 +2910,9 @@ was the easy half.
   category actually is. `<Region orientation="y" axis>` or a sibling
   `<ValueRegion>` closes it.
 
+  **Resolved by [PND-ZONE]:** `<Zone>` draws a band between two y values
+  across the plot (see its section above).
+
 - **`cursorFormat` is silently inert under the default cursor.** Set
   `cursorFormat="%-d %B"` expecting it to shape the readout; it does nothing,
   because `cursor="line"` renders no pill for it to shape (items 16 and 22).
@@ -4332,6 +4355,8 @@ compares label lists.
 **Implemented (wave "Path to 1.0") as sketched — awaiting owner sign-off
 (public widening of the selection currency).** An independent adversarial
 review agent checked it before hand-in. That was a review, not the owner gate.
+The wave merged to main as #836 (2026-11-06). The two questions below have
+no recorded answer yet, so they stay open on PLAN.md's [PND-CATID] entry.
 
 **Open for owner** (the sign-off should cover these):
 

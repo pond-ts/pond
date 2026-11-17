@@ -760,6 +760,12 @@ amortised O(1) whatever the window.
   (~230 vs ~155 ms): an object per row, and an array copy on almost every
   row. Parallel number arrays and compacting only past 1,024 used entries
   fixed that. `min` / `max` have the same cost ([PND-DEQUEALLOC]).
+  (Update 2026-11-13: #929 took batch `min` / `max` over number columns off
+  that state, onto `sweepRollingExtreme`, an `Int32Array` deque; write-up
+  and numbers in [PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md), "Core
+  rolling min/max fast path". The state itself is unchanged and still
+  serves live rolling and the generic batch sweep, so [PND-DEQUEALLOC]
+  stays open for those.)
 - **Measured** (`scripts/perf-rolling-difference.mjs`, 1M rows one second
   apart, values as pond-rs's `perf_reducers` example, median of 3
   processes):
@@ -2594,6 +2600,17 @@ Timings (`packages/core/scripts/perf-rolling-time.mjs`, median of 7, ms):
 [PND-ROLLGAP]'s slowdown with empty windows did not reproduce on main in
 this container (1M rows `rolling('5m', avg)`: 158 ms without outages, 145
 ms with three), so this PR does not claim it.
+
+**[PND-ROLLGAP] closed 2026-11-13 (PLAN.md pruning): it no longer
+reproduces.** Re-run on main (67afc1d) with the bench's data shape
+(1M rows 1 s apart, ~5% gaps, three 10-minute outages where the column is
+missing but the rows are present, as `crates/pond-rs/bench/gen_data.py`
+builds them), `rolling('5m', { c0: 'avg' })`, median of 15 in three
+processes: 40–42 ms without the outages, 34–35 ms with them. The ticket's
+400 → 650 ms was measured on the old generic sweep, which a number-only
+duration `rolling` no longer takes. Its cause was never found, so if a
+call that still takes the generic sweep (one with a text output, say) shows
+the same slowdown, reopen it with that repro.
 
 Left: `scan`'s remaining cost is the caller's step function allocating a
 tuple per row, which pond cannot remove; and pond-rs calls back into
