@@ -165,7 +165,7 @@ view**, viewer-local by default, with instants untouched underneath.
 
 #### [PND-TZCAL] — core: a public zone-calendar primitive, `quarter` / `year`, unit validation
 
-**In review as [#728](https://github.com/pond-ts/pond/pull/728) (opened
+**Shipped in [#728](https://github.com/pond-ts/pond/pull/728) (opened
 2026-09-13).** Landed as designed, with three decisions made in the build:
 the name is `TimeZone` (not `Zone` / `ZoneCalendar` — it reads as the noun
 `Sequence.calendar` and the charts' `timeZone` prop already use, and the
@@ -229,7 +229,7 @@ merging.
 
 #### [PND-TZAXIS] — charts: `timeZone` on `ChartContainer`, zone-aware ladder, labels and readouts
 
-**In review as [#732](https://github.com/pond-ts/pond/pull/732) (opened
+**Shipped in [#732](https://github.com/pond-ts/pond/pull/732) (opened
 2026-09-13), one PR rather than three — the seam, the formatting and the
 prop each stayed small enough.** Held to decisions 3–5: the local path is
 the pre-seam `Date` arithmetic verbatim behind a `TickCalendar` interface
@@ -311,8 +311,8 @@ React hook surface" rule.
 
 #### [PND-TZFIN] — financial: `TradingCalendar` keeps its zone
 
-**In review inside [#732](https://github.com/pond-ts/pond/pull/732)** —
-the Layer 2 review pointed out the docs already described it, so it rides
+**Shipped inside [#732](https://github.com/pond-ts/pond/pull/732)** —
+the Layer 2 review pointed out the docs already described it, so it rode
 with the axis. `fromRules` keeps `rules.timeZone`; `fromSessions(list, {
 timeZone })` takes it; the class exposes `timeZone`. #732 also grew a
 per-strip `<XAxis timeZone>` (two time axes in two zones over one mapping,
@@ -365,7 +365,7 @@ zone would show.
 
 #### [PND-TZDOCS] — docs: state the contract once, fix the contradiction
 
-**Done 2026-09-13 (`docs/timezones` PR).** `creating.mdx`'s "throws without
+**Done 2026-09-13 (#734).** `creating.mdx`'s "throws without
 `parse.timeZone`" became "read as UTC, silently" in the prose, the decision
 table and the pitfall, which now says how the shift shows up (buckets
 starting at 23:00 or 01:00 local, a peak an hour off its tick). The agent
@@ -423,6 +423,15 @@ asking, per the road-to-1.0 rule that discovery work waits for signal.
 
 #### [PND-TZLIVE] — calendar sequences on the live path
 
+**Partly shipped (2026-10-28, #844).** Live `aggregate` takes a calendar
+sequence: `live.aggregate(Sequence.calendar('day', { timeZone }), mapping)`
+buckets by day, week, month, quarter or year in the zone, so a day across a
+clock change is 23 or 25 hours; it used to throw. pond-rs's live aggregate
+takes calendar sequences too (R3 step 5). Still open: `Trigger.clock` refuses
+a calendar sequence ("requires a fixed-step Sequence"; checked on main
+2026-11-13), so a clock-triggered live rolling cannot fire on zone-local
+boundaries. The text below is the task as planned.
+
 `LiveAggregation`, `LiveRollingAggregation` and `Trigger.clock` accept a
 calendar sequence: bucket-of(ts) = `tz.startOf(unit, ts)`, next boundary =
 `tz.next(unit, ts)`, in place of the `floor((ts − anchor) / step)` arithmetic.
@@ -467,20 +476,16 @@ which is why this waits.
 
 ## Sequencing and size
 
-| Order | Task           | Size               | Depends on               |
-| ----- | -------------- | ------------------ | ------------------------ |
-| 1     | [PND-TZCAL]    | in review (#728)   | —                        |
-| 2     | [PND-TZAXIS] 1 | in review (#732)   | TZCAL                    |
-| 3     | [PND-TZAXIS] 2 | in #732            | TZAXIS 1                 |
-| 4     | [PND-TZFIN]    | hours              | —                        |
-| 5     | [PND-TZAXIS] 3 | in #732            | TZAXIS 2, TZFIN          |
-| 6     | [PND-TZTEST]   | done (#721 + #733) | TZCAL, TZAXIS (parallel) |
-| 7     | [PND-TZDOCS]   | done (docs PR)     | all of the above         |
+Phase 1 is done: [PND-TZCAL] (#728), [PND-TZAXIS] and [PND-TZFIN] (#732),
+[PND-TZTEST] (#721 + #733) and [PND-TZDOCS] (#734) have all merged
+(2026-09-12/13), so the order table that listed them is gone. Phase 2 has no
+order: each task waits for a consumer.
 
-Phase 1 is roughly one and a half weeks of focused work, five to six PRs, two
-human gates (TZCAL's export + `CalendarUnit`; TZAXIS's prop). Each code PR
-gets Layer 2 review; TZCAL and TZAXIS 1 should expect **medium** confidence
-(DST arithmetic, a refactor across ~10 helpers) and a Codex pass.
+The plan sized Phase 1 at about one and a half weeks of focused work, five
+to six PRs and two human gates (TZCAL's export + `CalendarUnit`; TZAXIS's
+prop), with **medium** review confidence expected on TZCAL and TZAXIS 1
+(DST arithmetic, a refactor across ~10 helpers). It landed as three code
+PRs (#728, #732, #733), the CI leg (#721) and the docs PR (#734).
 
 ## Risks
 

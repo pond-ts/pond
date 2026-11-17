@@ -87,6 +87,10 @@ window is `0`.
   `diff('nope')` throws a raw `Cannot read properties of undefined (reading
 'kind')`; `rolling` with an unknown column reports "aggregate mapping
   references unknown source column". Tracked as [PND-ERRMSG] in PLAN.md.
+  (2026-11-13: of the later [PND-ERRMSG] items, only the `cumulative` one
+  is fixed: since #906 `cumulative({ a: 'avg' })` names the unknown
+  accumulator, so that item left the PLAN.md entry. The rest still
+  reproduce on main.)
 
 ## R1a step 1 — baseline (DONE)
 
@@ -631,6 +635,14 @@ Done in the publish-prep PR:
 
 Version: Peter chose 0.1.0 with its own numbering, not lock-step with
 pond-ts (2026-10-29); this settles [PND-RUSTRFC]'s versioning question.
+[PND-RUSTRFC] had nothing else open, so it left PLAN.md on 2026-11-13.
+
+**First publish done.** crates.io lists `pond-rs` 0.1.0, created 2026-10-29
+(checked 2026-11-13), and the docs pages install it as `pond-rs = "0.1"`.
+`release-rs.yml` uses the `CARGO_REGISTRY_TOKEN` secret while it is set and
+crates.io trusted publishing (OIDC) once it is gone. Left on PLAN.md: set up
+trusted publishing for the crate on crates.io and delete the secret. Neither
+can be seen from the repo, so check crates.io before closing it.
 
 ## Codex review of the whole crate (2026-10-29)
 
@@ -698,6 +710,31 @@ Peter asked for the pond-rs counterpart of pond-ts `live.on('columns')`
   and Python all 79/79.
 - **Semver.** `Output` and `OutputKind` are not `#[non_exhaustive]`, so a
   new variant breaks exhaustive matches: the next pond-rs release is 0.2.0.
+
+## [PND-RUSTDOCS] — pond-rs pages on the docs site
+
+Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
+(run the snippet check in CI, and keep the pages in step).
+
+- **Pages.** `website/docs/pond-rs/`, added 2026-10-19, covering R1a, R1b
+  steps 1–6, 7a, 7b and 8a–8j (8d2, 8e2, 8f2, 8i2–8i4 included), R2 steps 1,
+  2a–2g, 3 and 4 (the finance studies page) and R3 steps 2–7 (the live
+  series page).
+- **Every Rust example is a whole program** checked by
+  `website/scripts/check-rust-snippets.sh`, which now covers every docs
+  page, not only `pond-rs/`. `rust ignore` fences (excerpts from other
+  repos) are skipped. Not yet run in CI.
+- **Rust beside TypeScript** (Peter, 2026-10-29): TypeScript / Rust tabs
+  (`groupId="language"`) on the introduction, getting started and financial
+  overview, an "also in Rust" note on the core overview pages, and process
+  marked TypeScript only (#850). Then 158 more tabs on the per-operator core
+  pages (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`): 252
+  snippets in all, each checked against pond-ts output.
+- **crates.io.** Install lines say `pond-rs = "0.1"` and the Rust pages link
+  docs.rs; all 252 snippets also pass against the published 0.1.0.
+- **Expressions page** (`pond-ts/transforms/expressions`, 2026-10-31):
+  `col` / `lit` / `when` with TypeScript, Rust and Python tabs, all checked
+  against pond-ts.
 
 ## Next
 
@@ -2648,6 +2685,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `map`, which already runs partitions in parallel (CLAUDE.md exempts
     operators that only delegate).
 
+  **R1b is complete** with step 8j (#807, 2026-10-21). Its PLAN.md entry,
+  a list of the steps above all marked done, was removed on 2026-11-13.
+
 - **[PND-RUST-R2]** — the financial studies (planned 2026-10-21, after R1b).
   - Exactness, chosen by pjm17971: every study matches pond-ts
     (`@pond-ts/financial`) bit for bit, checked against a new fixture
@@ -4571,6 +4611,14 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - Found by both probes, handed to the live speed review: pond-rs live
     filter + aggregate over 1M one-at-a-time pushes took 230-256 ms from
     Rust; a hand-written Python dict took 110-132 ms.
+
+  - Status 2026-11-13: every step is merged. JavaScript: J1 #859, J1b
+    #863, J2a #869, J2b #870, `toJSON` #871, J3 #875. Python: P1 #860, P2a
+    #862, P2b #864, P3 #882. Neither package is on its registry yet (npm
+    and PyPI both answer "not found" for `@pond-ts/rs` and `pond-rs`). Two
+    owner actions are left, and PLAN.md's [PND-RUST-R4] entry now holds only
+    those: the first `@pond-ts/rs` publish by hand, and PyPI's pending
+    trusted publisher for `pond-rs`.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

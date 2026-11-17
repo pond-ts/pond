@@ -96,6 +96,15 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
 - Not in the JS bridge: live `filter` (the bridge has no `LiveSeries` until
   J2).
 
+## Status (2026-11-13): E1 and E2 done, ticket closed
+
+The live `filter` gap above closed with bridge step J2b (#870):
+`@pond-ts/rs`'s `LiveSeries.filter` takes an expression, pinned in
+`packages/rs/test/live.mjs`. E1 and E2 were the whole adopted scope, so
+[PND-EXPR] left PLAN.md on 2026-11-13. E3 (more operations) has no ticket:
+open one when a friction report asks for a specific operation, as the maths
+below were added for `@pond-ts/fit`.
+
 ## Maths in expressions (2026-11-05, for `@pond-ts/fit`)
 
 - Added `sqrt`, `sin`, `cos`, `asin`, `atan2`, `pow` (pond-ts, pond-rs, both

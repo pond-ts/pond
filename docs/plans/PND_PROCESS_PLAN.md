@@ -508,6 +508,16 @@ dependsOn: ['period'] }, …]` is enough to generate it. Composes with
 **Done when:** the corpus's multi-output studies (bollinger, envelope)
 invalidate per-output, driven by declaration rather than by hand.
 
+**Outcome so far (checked 2026-11-13).** The hook shipped with the plan
+layer: `OutputDef.dependsOn` (`plan/types.ts`) names the params an output
+reads, `define` refuses a `dependsOn` that names an unknown param (#575),
+and `website/docs/process/registry.mdx` documents it, which covers the
+"document it" half. Not done: nothing declares it outside the tests. The
+finance bridge (`studyOps()` in `@pond-ts/financial/process`) registers
+`bollinger`, `envelope` and the other multi-output studies without
+`dependsOn`, so a param edit there still re-versions every output. That is
+what PLAN.md's entry now holds.
+
 ---
 
 ### [PND-PROCCOL] — Node values are columns, not JS arrays
@@ -826,6 +836,25 @@ real shift in the contract and should be weighed against pond's
 
 **Blocked by [PND-PROCKERN].**
 
+**Outcome (shipped, #571 then #573).** The mechanism shipped first
+(`graph.setSourceFrom(series, changedFrom)` plus an opt-in `OpDef.runRange`
+that receives the previous output as an argument): 209 → 55 ms/tick, 4×,
+bit-identical to a from-scratch pass. The rest of the projected win came
+from the capacity-buffer contract the PLAN.md entry still asked for:
+`ctx.out` (#573) hands an op a buffer that already holds the rows it keeps,
+values and validity both, so the op writes only `[from, to)`;
+`prepareRange` / `sealRange` / `RangeOutput` are on the package surface.
+500k rows × 5 studies: **209 → 6.5 ms/tick (32×)**, bit-identical every
+tick, past the 26× this section projected. Why it is a contract and not a
+convention: copying the prefix as a typed-array block got 13× and 1,875
+wrong cells, because packed storage then held `0` at a missing cell (since
+[PND-NANREP] a gap is `NaN` in the buffer, but the contract stands).
+Review fixes in the same PR: an unviewable prefix falls back to a full run
+instead of sealing `[0, from)` as missing; a multi-output op that leaves an
+output unwritten is a `ProcessError`; `ctx.out` is lazy. Detail in the
+CHANGELOG entry and the #573 commit. The PLAN.md entry was removed on
+2026-11-13; it still listed the contract as remaining.
+
 ---
 
 ### [PND-PROCKERN] — A ranged entry point for the financial kernels
@@ -1117,6 +1146,9 @@ column's name, and the reason names both sides. Cycles report as a path
 (`slot cycle: a → b → a`) rather than a stack overflow. `on` still
 accepts an id string, so a follow-up can cite what the last response
 returned without re-deriving it.
+
+The PLAN.md entry, which still called the slot-versus-column question open,
+was removed on 2026-11-13: the collision rule above settled it.
 
 ---
 
