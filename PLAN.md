@@ -599,6 +599,19 @@ pond-ts bugs found while porting.
   `pypi`) before the first upload. As of 2026-11-13 neither package is on
   its registry.
 
+- **[PND-RUST-R5]** — A Rust port of `@pond-ts/process` (adopted by
+  pjm17971, 2026-11-17), so a host can run process plans on pond-rs: the
+  long-lived `Host` with its byte budget and async sources, the registry and
+  `specId`, slot and nested requests, the basic ops, the standard and summary
+  folds, the 105 bridged studies and `toWire`. First consumer: a desktop
+  app's local MCP server. Scope is that consumer's subset; joins, the worker
+  pool, the authoring builders, the live graph and `toJsonSchema` are left
+  for later. Every answer is checked against
+  `packages/process/test/fixtures/parity.json`, which a test keeps in step
+  with the TypeScript package, so process keeps changing in TypeScript first
+  and the port follows. Also adds the pointwise basic ops a consumer needs to
+  write its own ratio and volatility steps as compositions. Steps and
+  decisions in the breakout plan.
 - **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
   no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
   give the `declare module` workaround). Write an `index.d.ts` from
