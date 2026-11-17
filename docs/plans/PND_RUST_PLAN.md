@@ -852,6 +852,48 @@ code and message, lenient id, lineage text), `describe()` of both
 registries (compared as JSON values, not text), and the source ids. The
 fixture's four ops are defined in the test with the crate's own builders.
 
+### R5 steps 3 (part), 4 and 5 — ops, run engine, host (DONE)
+
+What landed:
+
+- **Ops and folds** (`basic_ops.rs`, `folds.rs`, `summary_folds.rs`): the
+  code behind every basic op, standard fold and summary fold. `shape`
+  bins reuse pond-rs's reducers through `Reducer::reduce`, made public for
+  this. `percentile` ports the TypeScript quickselect, including its
+  fallback, so ties and gaps pick the same value.
+- **Graph** (`graph.rs`): compile with the warm re-check, unit checks,
+  dirty marking by data generation, cached failures (a node that threw
+  keeps throwing until the data changes), the per-graph byte budget with
+  least-recently-used eviction that skips nodes something depends on.
+- **Run** (`run.rs`) and **slots** (`slots.rs`): nested and slot requests,
+  `throw` / `skip` / `collect`, selectors by spec or by id string, picked
+  outputs, facts, lineage, node timing, `to_wire`.
+- **Host** (`host.rs`): `add` / `has` / `remove` / `datasets` /
+  `graph_for` / `run`, and `run_async` with a `SourceRegistry` of async
+  loaders, revisions and the `max_sources` cap.
+
+`tests/parity.rs` replays all seven fixture sessions through the Rust host
+and compares every response with the TypeScript one (numbers compared as
+numbers, since JavaScript has one number type). All match.
+
+Differences from TypeScript, on purpose:
+
+- **No widened series.** TypeScript's `assemble` appends the asked-for
+  columns to a copy of the input series for a chart. The Rust result
+  carries the columns (`RunResult::columns`) and no series; the first
+  consumer reads facts. `hasSeries` is true when columns were asked for,
+  which is what `toWire` reports on the requests a wire carries.
+- **No shared in-flight loads.** TypeScript shares one load between
+  concurrent `runAsync` calls for the same source, and a `remove` during a
+  load discards that load. `Host::run_async` takes `&mut self`, so two
+  calls cannot overlap and neither case can arise. A host shared across
+  threads would need both back.
+
+Still to do in step 3: the studies through the pond-rs catalog (with a
+study parity fixture) and the new pointwise basics (`log`, `sqrt`, a ratio
+that gaps on a zero denominator), in both languages. The performance check
+is step 7.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use pond_rs::js_number;
 use serde_json::{Map, Value, json};
 
+use crate::context::{FoldContext, FoldFn, OpContext, RunFn};
 use crate::error::{ErrorKind, ProcessError, Result};
 use crate::js::{js_string, js_typeof, json_stringify};
 
@@ -233,6 +234,11 @@ pub struct Def {
     pub inputs: Vec<InputDef>,
     pub shape: Shape,
     pub label: Option<Label>,
+    /// The op's code; `None` until set (a definition can be described
+    /// and named without it).
+    pub run: Option<RunFn>,
+    /// The fold's code.
+    pub fold: Option<FoldFn>,
 }
 
 impl fmt::Debug for Def {
@@ -267,6 +273,8 @@ impl Def {
             inputs: vec![],
             shape,
             label: None,
+            run: None,
+            fold: None,
         }
     }
 
@@ -313,6 +321,24 @@ impl Def {
                 depends_on,
             });
         }
+        self
+    }
+
+    /// Sets an op's code.
+    pub fn run(
+        mut self,
+        f: impl Fn(&OpContext) -> std::result::Result<Vec<Vec<f64>>, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.run = Some(Arc::new(f));
+        self
+    }
+
+    /// Sets a fold's code.
+    pub fn folds(
+        mut self,
+        f: impl Fn(&FoldContext) -> std::result::Result<Value, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.fold = Some(Arc::new(f));
         self
     }
 

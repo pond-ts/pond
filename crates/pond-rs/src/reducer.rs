@@ -90,6 +90,19 @@ impl Reducer {
         name.parse()
     }
 
+    /// Reduce a run of numbers, NaN and ±Infinity counting as missing: the
+    /// same kernel, and so the same bits, as pond-ts's `reduceColumn` and
+    /// pond-rs's own `aggregate`. `None` is a missing result (no present
+    /// values, or a sum that overflowed), and also the answer for the list
+    /// reducers (`unique`, `top<N>`, `samples`), which do not give one
+    /// number. A percentile outside `[0, 100]` gives `None`.
+    pub fn reduce(self, values: &[f64]) -> Option<f64> {
+        if self.gives_list() || self.check("reduce").is_err() {
+            return None;
+        }
+        reduce_range(self, values)
+    }
+
     /// `unique`, `top<N>` and `samples`: the result is a list.
     pub(crate) fn gives_list(self) -> bool {
         matches!(self, Reducer::Unique | Reducer::Top(_) | Reducer::Samples)
@@ -782,6 +795,17 @@ mod tests {
         assert_eq!(clamp_at_zero(-0.0).to_bits(), 0.0f64.to_bits());
         assert_eq!(clamp_at_zero(-1.0), 0.0);
         assert_eq!(clamp_at_zero(2.0), 2.0);
+    }
+
+    #[test]
+    fn reduce_over_a_slice() {
+        let v = [3.0, f64::NAN, 1.0, f64::INFINITY, 2.0];
+        assert_eq!(Reducer::Avg.reduce(&v), Some(2.0));
+        assert_eq!(Reducer::Median.reduce(&v), Some(2.0));
+        assert_eq!(Reducer::Count.reduce(&v), Some(3.0));
+        assert_eq!(Reducer::Avg.reduce(&[f64::NAN]), None);
+        assert_eq!(Reducer::Unique.reduce(&v), None);
+        assert_eq!(Reducer::Percentile(101.0).reduce(&v), None);
     }
 
     #[test]

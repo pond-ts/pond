@@ -1,9 +1,153 @@
 //! The basic ops (`basic-ops.ts`): row-by-row arithmetic and logic.
-//! Definitions only for now; what each one computes comes in R5 step 3.
 
 use pond_rs::js_number;
 
+use crate::context::OpContext;
 use crate::registry::{Def, ParamDef, param_text};
+
+type Out = Result<Vec<Vec<f64>>, String>;
+
+/// `x - x`: 0 for a present cell, NaN for a missing one. Adding it to a
+/// 1/0 result makes the result a gap wherever the input was one.
+#[inline]
+#[allow(clippy::eq_op)]
+fn mask(x: f64) -> f64 {
+    x - x
+}
+
+#[inline]
+fn bit(b: bool) -> f64 {
+    if b { 1.0 } else { 0.0 }
+}
+
+/// A row-by-row op over `left` and `right` (`binary` in `basic-ops.ts`).
+fn binary(ctx: &OpContext, how: &str) -> Out {
+    let a = ctx.input("left");
+    let b = ctx.input("right");
+    let m = |i: usize| mask(a[i]) + mask(b[i]);
+    let out: Vec<f64> = (0..a.len())
+        .map(|i| {
+            let (x, y) = (a[i], b[i]);
+            match how {
+                "add" => x + y,
+                "subtract" => x - y,
+                "multiply" => x * y,
+                "divide" => x / y,
+                "above" => bit(x > y) + m(i),
+                "below" => bit(x < y) + m(i),
+                "atLeast" => bit(x >= y) + m(i),
+                "atMost" => bit(x <= y) + m(i),
+                "equal" => bit(x == y) + m(i),
+                "and" => bit(x != 0.0) * bit(y != 0.0) + m(i),
+                "or" => bit(bit(x != 0.0) + bit(y != 0.0) != 0.0) + m(i),
+                _ => unreachable!("binary op '{how}'"),
+            }
+        })
+        .collect();
+    Ok(vec![out])
+}
+
+/// `source` tested against a fixed value (`against`).
+fn against(ctx: &OpContext) -> Out {
+    let v = ctx.input("source");
+    let value = ctx.number("value");
+    let test = ctx.text("test");
+    let out = v
+        .iter()
+        .map(|&x| {
+            let hit = match test {
+                "above" => x > value,
+                "below" => x < value,
+                "atLeast" => x >= value,
+                "atMost" => x <= value,
+                _ => x == value,
+            };
+            bit(hit) + mask(x)
+        })
+        .collect();
+    Ok(vec![out])
+}
+
+fn scale(ctx: &OpContext) -> Out {
+    let (factor, offset) = (ctx.number("factor"), ctx.number("offset"));
+    Ok(vec![
+        ctx.input("source")
+            .iter()
+            .map(|x| x * factor + offset)
+            .collect(),
+    ])
+}
+
+fn shift(ctx: &OpContext) -> Out {
+    let v = ctx.input("source");
+    let n = ctx.number("periods") as i64;
+    let len = v.len() as i64;
+    let out = (0..len)
+        .map(|i| {
+            let j = i - n;
+            if j >= 0 && j < len {
+                v[j as usize]
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    Ok(vec![out])
+}
+
+fn cumulative(ctx: &OpContext) -> Out {
+    let v = ctx.input("source");
+    let how = ctx.text("how");
+    let step = |acc: f64, x: f64| match how {
+        "product" => acc * x,
+        "max" => {
+            if x > acc {
+                x
+            } else {
+                acc
+            }
+        }
+        "min" => {
+            if x < acc {
+                x
+            } else {
+                acc
+            }
+        }
+        _ => acc + x,
+    };
+    let mut acc = f64::NAN;
+    let mut started = false;
+    let out = v
+        .iter()
+        .map(|&x| {
+            if !x.is_finite() {
+                return f64::NAN;
+            }
+            // `started`, not `acc.is_nan()`: a product that overflows to
+            // Infinity and then meets a 0 is NaN, and must stay so.
+            acc = if started { step(acc, x) } else { x };
+            started = true;
+            acc
+        })
+        .collect();
+    Ok(vec![out])
+}
+
+fn hold(ctx: &OpContext) -> Out {
+    let mut held = f64::NAN;
+    let out = ctx
+        .input("source")
+        .iter()
+        .map(|&x| {
+            if x.is_finite() && x != 0.0 {
+                held = x;
+            }
+            if held.is_nan() { x } else { held }
+        })
+        .collect();
+    Ok(vec![out])
+}
 
 const TESTS: &[&str] = &["above", "below", "atLeast", "atMost", "equal"];
 
@@ -23,28 +167,32 @@ pub fn basic_ops() -> Vec<Def> {
             "left + right, row by row. Carries the left input’s unit.",
             "inherit",
         )
-        .label(|_, inputs| format!("sum of {inputs}")),
+        .label(|_, inputs| format!("sum of {inputs}"))
+        .run(|c| binary(c, "add")),
         two(
             "subtract",
             "arithmetic",
             "left − right, row by row (a spread, or a price minus its average). Carries the left input’s unit.",
             "inherit",
         )
-        .label(|_, inputs| format!("difference of {inputs}")),
+        .label(|_, inputs| format!("difference of {inputs}"))
+        .run(|c| binary(c, "subtract")),
         two(
             "multiply",
             "arithmetic",
             "left × right, row by row (price × volume, or a return × a position). Carries the left input’s unit.",
             "inherit",
         )
-        .label(|_, inputs| format!("product of {inputs}")),
+        .label(|_, inputs| format!("product of {inputs}"))
+        .run(|c| binary(c, "multiply")),
         two(
             "divide",
             "arithmetic",
             "left ÷ right, row by row (a pair ratio, or ATR as a share of price). Division by zero is a gap.",
             "ratio",
         )
-        .label(|_, inputs| format!("ratio of {inputs}")),
+        .label(|_, inputs| format!("ratio of {inputs}"))
+        .run(|c| binary(c, "divide")),
         Def::op(
             "scale",
             "arithmetic",
@@ -56,7 +204,8 @@ pub fn basic_ops() -> Vec<Def> {
         .output("", "inherit")
         .label(|p, inputs| {
             format!("{inputs} × {} + {}", param_text(p, "factor"), param_text(p, "offset"))
-        }),
+        })
+        .run(scale),
         Def::op(
             "shift",
             "arithmetic",
@@ -75,7 +224,8 @@ pub fn basic_ops() -> Vec<Def> {
             } else {
                 format!("{inputs} {} rows later", js_number(-n))
             }
-        }),
+        })
+        .run(shift),
         Def::op(
             "compare",
             "logic",
@@ -87,7 +237,8 @@ pub fn basic_ops() -> Vec<Def> {
         .output("", "signal")
         .label(|p, inputs| {
             format!("{inputs} {} {}", param_text(p, "test"), param_text(p, "value"))
-        }),
+        })
+        .run(against),
         two(
             "compareColumns",
             "logic",
@@ -95,21 +246,24 @@ pub fn basic_ops() -> Vec<Def> {
             "signal",
         )
         .param("test", ParamDef::choice("above", TESTS))
-        .label(|p, inputs| format!("{} test of {inputs}", param_text(p, "test"))),
+        .label(|p, inputs| format!("{} test of {inputs}", param_text(p, "test")))
+        .run(|c| binary(c, c.text("test"))),
         two(
             "and",
             "logic",
             "1 where both signals are true (non-zero), 0 where not.",
             "signal",
         )
-        .label(|_, inputs| format!("all of {inputs}")),
+        .label(|_, inputs| format!("all of {inputs}"))
+        .run(|c| binary(c, "and")),
         two(
             "or",
             "logic",
             "1 where either signal is true (non-zero), 0 where neither is.",
             "signal",
         )
-        .label(|_, inputs| format!("any of {inputs}")),
+        .label(|_, inputs| format!("any of {inputs}"))
+        .run(|c| binary(c, "or")),
         Def::op(
             "cumulative",
             "arithmetic",
@@ -118,7 +272,8 @@ pub fn basic_ops() -> Vec<Def> {
         .param("how", ParamDef::choice("sum", &["sum", "product", "max", "min"]))
         .input("source")
         .output("", "inherit")
-        .label(|p, inputs| format!("running {} of {inputs}", param_text(p, "how"))),
+        .label(|p, inputs| format!("running {} of {inputs}", param_text(p, "how")))
+        .run(cumulative),
         Def::op(
             "hold",
             "logic",
@@ -126,6 +281,7 @@ pub fn basic_ops() -> Vec<Def> {
         )
         .input("source")
         .output("", "inherit")
-        .label(|_, inputs| format!("{inputs} held")),
+        .label(|_, inputs| format!("{inputs} held"))
+        .run(hold),
     ]
 }

@@ -14,17 +14,42 @@ pub enum ErrorKind {
     Param,
     /// A spec's input list does not match the op's inputs.
     Arity,
+    /// An op demands an input unit its source does not carry.
+    Unit,
+    /// A spec names a column the bound series does not have.
+    UnknownColumn,
+    /// A slot request does not expand (a collision, a cycle, a bad name).
+    Slot,
+    /// A request names a dataset the host has not been given.
+    UnknownDataset,
+    /// A request names a source the source registry does not have.
+    UnknownSource,
+    /// Thrown by code outside the plan layer: an op, a fold or a loader.
+    /// It carries no code, as in `@pond-ts/process`, which is itself the
+    /// signal that the op failed rather than the plan.
+    Thrown,
 }
 
 impl ErrorKind {
-    /// The code string, such as `"ParamError"`.
-    pub fn code(self) -> &'static str {
-        match self {
+    /// The code string, such as `"ParamError"`; `None` for [`ErrorKind::Thrown`].
+    pub fn code(self) -> Option<&'static str> {
+        Some(match self {
             ErrorKind::Process => "ProcessError",
             ErrorKind::UnknownOp => "UnknownOpError",
             ErrorKind::Param => "ParamError",
             ErrorKind::Arity => "ArityError",
-        }
+            ErrorKind::Unit => "UnitError",
+            ErrorKind::UnknownColumn => "UnknownColumnError",
+            ErrorKind::Slot => "SlotError",
+            ErrorKind::UnknownDataset => "UnknownDatasetError",
+            ErrorKind::UnknownSource => "UnknownSourceError",
+            ErrorKind::Thrown => return None,
+        })
+    }
+
+    /// The error's class name: the code, or `"Error"` for a thrown one.
+    pub fn name(self) -> &'static str {
+        self.code().unwrap_or("Error")
     }
 }
 
@@ -45,15 +70,25 @@ impl ProcessError {
         }
     }
 
-    /// The code string, such as `"ParamError"`.
-    pub fn code(&self) -> &'static str {
+    /// An error from an op's, fold's or loader's own code.
+    pub fn thrown(message: impl Into<String>) -> Self {
+        ProcessError::new(ErrorKind::Thrown, message)
+    }
+
+    /// The code string, such as `"ParamError"`; `None` for a thrown error.
+    pub fn code(&self) -> Option<&'static str> {
         self.kind.code()
+    }
+
+    /// The class name: the code, or `"Error"`.
+    pub fn name(&self) -> &'static str {
+        self.kind.name()
     }
 }
 
 impl fmt::Display for ProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code(), self.message)
+        write!(f, "{}: {}", self.name(), self.message)
     }
 }
 
