@@ -736,6 +736,100 @@ Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
   `col` / `lit` / `when` with TypeScript, Rust and Python tabs, all checked
   against pond-ts.
 
+## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
+
+Adopted by pjm17971 on 2026-11-17. R3 left this open ("a process port
+becomes its own phase").
+
+**Why.** A consumer's desktop app runs a local MCP server whose engine is
+`@pond-ts/process` (one long-lived `Host`, slot requests, facts back). Today
+the engine has to run in the app's web page. A Rust engine lets the app's
+own Rust process answer, with the page closed, and fetch its data itself.
+Speed is not the reason: that consumer caps a question at 2,520 daily bars
+and measures about 20 ms per question in TypeScript.
+
+**What exists.** pond-rs has the maths and none of the engine. The engine is
+~6,000 lines (`packages/process/src/plan/`). Its basic ops and folds are
+small loops over a number column, not calls into pond-ts analytics, so they
+port directly. The studies come through the pond-rs catalog
+(`StudyDescriptor::run`). Ids are text, not hashes (`p1:sma(close;period=20)`),
+so the Rust engine can mint the same ids and share a cache key with
+TypeScript.
+
+**Decisions (pjm17971, 2026-11-17).**
+
+1. **Scope: the first consumer's subset.** In: `Host` (datasets, byte budget,
+   async sources with revisions, `maxSources`), registry with param checks
+   and `describe()`, `specId` / `explain` / units, slot and nested requests
+   under every error policy, `toWire`, the basic ops, the standard and
+   summary folds, the bridged studies, and ops defined by the consumer in
+   Rust. Out for now: joins, the worker pool, the fluent / builder authoring
+   APIs, the live graph (`Graph` / `Node` / `fromLive`), ranged recompute
+   (`runRange`, always optional), `toJsonSchema`, and Python / WASM bindings
+   for the process layer.
+2. **Port against process as it is, with a drift guard.** Process keeps
+   changing in TypeScript first (PND-PROCFIN has 16 tasks queued).
+   `packages/process/test/fixtures/parity.json` records what the TypeScript
+   engine answers, and `test/parity-fixture.test.ts` fails when it goes
+   stale, the same guard R0 built for core. The Rust tests read that file,
+   so a TypeScript change that the port has not followed turns the Rust CI
+   red rather than drifting.
+3. **Pointwise basic ops in pond, not consumer ops in Rust.** The consumer
+   has four steps of its own (a realized vol, a difference, a ratio, a log
+   ratio). Rather than the consumer keeping Rust copies, pond adds the
+   missing pointwise basics (`log`, `sqrt`, a ratio that gaps on a zero
+   denominator) to `BASIC_OPS` in both languages, so those become
+   compositions.
+4. Where the data comes from is the consumer's call (it fetches from Rust).
+
+**Steps.** Each follows the R1b rules: parity cases checked exactly, property
+tests where an answer is easy to compute independently, the CLAUDE.md
+performance check for anything that walks rows.
+
+1. Parity fixture and drift guard (TypeScript side).
+2. Ids, registry, param checks and `describe()`.
+3. The ops: basic ops, the standard and summary folds, the studies, the new
+   pointwise basics.
+4. Graph, run, slots, error policies, `toWire`.
+5. The `Host`: long-lived graphs, byte budget, sources with revisions,
+   `maxSources`.
+6. Ops defined by a consumer in Rust.
+7. Measure TypeScript against Rust at the consumer's sizes and at 1M rows,
+   then an agent trial against the Rust host.
+
+### R5 step 1 — parity fixture (DONE)
+
+`packages/process/scripts/parity/cases.mjs` builds, and `generate.mjs`
+writes, `packages/process/test/fixtures/parity.json`:
+
+- **Inputs** as pond JSON: 60 daily bars with gaps (two variants, for a
+  data refresh), 48 five-minute bars (timestamps print as instants, not
+  dates), a 12-row gappy series with an all-gap column, and an empty one.
+- **Ids**: 23 specs, each named strictly and leniently (`validate: false`),
+  with its explanation: defaults, key order, JavaScript number spelling
+  (`1e-7`, `-0`, `1e+21`), escaped separators, picked outputs, nesting, and
+  every malformed shape the lenient namer encodes.
+- **`describe()`** of the standard registry and of the full one.
+- **Source ids** with characters that need URL encoding.
+- **Seven host sessions**, each a sequence of `add` / `run` / `runAsync` /
+  `remove` / `has` / `datasets` steps with every response recorded (node
+  `ms` dropped, columns as numbers with `null` gaps): every basic op and
+  fold on one plan, the same plan warm, columns and picked outputs, new
+  data under a warm graph; nested plans with inline and id-string
+  selectors; failures under `collect`, `skip` and `throw`
+  (unknown ops, each param error, arity, units, unknown columns, folds as
+  inputs, op code that throws or returns the wrong length, slot errors —
+  including F-charts-39, where one bad slot refuses the whole request); a
+  byte budget evicting least-recently-used nodes; folds over intraday,
+  gappy and empty series; async sources across revisions, key order and
+  the source cap; the standard registry alone.
+- **Four fixture-only ops** (`annualise` with a typed input, a three-output
+  `band`, `boom` which throws, `short` which returns one row too few). The
+  Rust harness defines the same four through its own op API, so the
+  fixture also tests that API (step 6).
+
+Checked: changing one fact value in the committed file fails the test.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
