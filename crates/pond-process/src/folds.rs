@@ -8,7 +8,7 @@ use crate::context::{
 };
 use crate::registry::{Def, ParamDef, param_text};
 
-type Fact = Result<Value, String>;
+type Fact = Result<Value, crate::error::ProcessError>;
 
 fn last(ctx: &FoldContext) -> Fact {
     let v = ctx.input("source");

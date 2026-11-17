@@ -327,7 +327,10 @@ impl Def {
     /// Sets an op's code.
     pub fn run(
         mut self,
-        f: impl Fn(&OpContext) -> std::result::Result<Vec<Vec<f64>>, String> + Send + Sync + 'static,
+        f: impl Fn(&OpContext) -> std::result::Result<Vec<Vec<f64>>, ProcessError>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         self.run = Some(Arc::new(f));
         self
@@ -336,7 +339,7 @@ impl Def {
     /// Sets a fold's code.
     pub fn folds(
         mut self,
-        f: impl Fn(&FoldContext) -> std::result::Result<Value, String> + Send + Sync + 'static,
+        f: impl Fn(&FoldContext) -> std::result::Result<Value, ProcessError> + Send + Sync + 'static,
     ) -> Self {
         self.fold = Some(Arc::new(f));
         self

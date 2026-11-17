@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+use crate::error::ProcessError;
 use crate::registry::{Params, number};
 
 /// A cell is missing when it is NaN or ±Infinity, as in `@pond-ts/process`
@@ -74,11 +75,14 @@ impl OpContext<'_> {
 }
 
 /// An op's code: one column per declared output, each as long as the
-/// input, NaN for a gap. An `Err` is the op's own failure message.
-pub type RunFn = Arc<dyn Fn(&OpContext) -> Result<Vec<Vec<f64>>, String> + Send + Sync>;
+/// input, NaN for a gap. An `Err` is the op's failure as the caller will
+/// see it: [`ProcessError::thrown`] for a plain failure (no `code`, like
+/// a thrown `Error` in `@pond-ts/process`), or any other kind to report a
+/// code such as `ParamError`.
+pub type RunFn = Arc<dyn Fn(&OpContext) -> Result<Vec<Vec<f64>>, ProcessError> + Send + Sync>;
 
-/// A fold's code: the fact, as JSON.
-pub type FoldFn = Arc<dyn Fn(&FoldContext) -> Result<Value, String> + Send + Sync>;
+/// A fold's code: the fact, as JSON. Errors as for [`RunFn`].
+pub type FoldFn = Arc<dyn Fn(&FoldContext) -> Result<Value, ProcessError> + Send + Sync>;
 
 /// JavaScript's `Math.round`: halves go up (toward +∞).
 pub fn js_round(x: f64) -> f64 {

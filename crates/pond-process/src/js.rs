@@ -8,7 +8,7 @@
 use std::cmp::Ordering;
 
 use pond_rs::js_number;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// JavaScript's `String(v)`.
 pub fn js_string(v: &Value) -> String {
@@ -112,12 +112,44 @@ pub fn encode_uri_component(s: &str) -> String {
 
 /// How JavaScript orders two strings: by UTF-16 code unit, which differs
 /// from Rust's byte order for characters above U+FFFF.
+/// An object's keys in the order JavaScript's `Object.keys` gives them:
+/// array-index keys (`"0"`, `"7"`, `"10"`, below 2^32 - 1) first and
+/// ascending, then the rest in the order they were written.
+pub fn js_keys(map: &Map<String, Value>) -> Vec<&String> {
+    let index = |k: &str| -> Option<u32> {
+        let canonical = k == "0" || (!k.starts_with('0') && k.bytes().all(|b| b.is_ascii_digit()));
+        if !canonical || k.is_empty() {
+            return None;
+        }
+        k.parse::<u32>().ok().filter(|n| *n != u32::MAX)
+    };
+    let mut indexed: Vec<(u32, &String)> = map
+        .keys()
+        .filter_map(|k| index(k).map(|n| (n, k)))
+        .collect();
+    indexed.sort_by_key(|(n, _)| *n);
+    let mut out: Vec<&String> = indexed.into_iter().map(|(_, k)| k).collect();
+    out.extend(map.keys().filter(|k| index(k).is_none()));
+    out
+}
+
 pub fn utf16_cmp(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn keys_in_object_keys_order() {
+        let m: Map<String, Value> =
+            serde_json::from_str(r#"{"b":0,"10":0,"2":0,"02":0,"a":0,"0":0,"4294967295":0}"#)
+                .unwrap();
+        let keys: Vec<&str> = js_keys(&m).into_iter().map(String::as_str).collect();
+        // "02" is not canonical and 2^32 - 1 is not an array index.
+        assert_eq!(keys, ["0", "2", "10", "b", "02", "a", "4294967295"]);
+    }
+
     use super::*;
     use serde_json::json;
 

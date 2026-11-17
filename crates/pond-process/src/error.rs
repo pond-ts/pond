@@ -63,7 +63,7 @@ pub struct ProcessError {
 }
 
 impl ProcessError {
-    pub(crate) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         ProcessError {
             kind,
             message: message.into(),

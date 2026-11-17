@@ -18,7 +18,7 @@ const MALFORMED: &str = "!malformed";
 
 /// Escapes the characters ids are built from (`\ ; , ( ) = +`), so a string
 /// param cannot forge one.
-pub fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if matches!(c, '\\' | ';' | ',' | '(' | ')' | '=' | '+') {
@@ -247,19 +247,4 @@ pub fn explain(registry: &Registry, spec: &Value) -> Result<String> {
     } else {
         format!("{}({p}) of {inputs}", op.name)
     })
-}
-
-/// Params cut down to the ones an output depends on: its cache key.
-pub fn output_key(params: &Map<String, Value>, keys: &[String]) -> String {
-    let mut keys: Vec<&String> = keys.iter().collect();
-    keys.sort_by(|a, b| utf16_cmp(a, b));
-    keys.iter()
-        .map(|k| {
-            let v = params
-                .get(k.as_str())
-                .map_or_else(|| "undefined".into(), js_string);
-            format!("{k}={}", esc(&v))
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }

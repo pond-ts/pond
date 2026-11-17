@@ -7,7 +7,7 @@ use crate::context::{
 };
 use crate::registry::{Def, ParamDef, param_text};
 
-type Fact = Result<Value, String>;
+type Fact = Result<Value, crate::error::ProcessError>;
 
 /// Plain running sum over present cells, in row order, and their count.
 fn sum_count(v: &[f64]) -> (f64, u64) {

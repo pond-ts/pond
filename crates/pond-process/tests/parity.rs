@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, Waker};
 
 use pond_process::{
-    Def, Host, LoadedSource, ParamDef, ProcessError, Registry, RunResult, SourceRef,
+    Def, ErrorKind, Host, LoadedSource, ParamDef, ProcessError, Registry, RunResult, SourceRef,
     SourceRegistry, basic_ops, explain, source_id, spec_id, summary_folds,
 };
 use pond_rs::{JsonOptions, TimeSeries};
@@ -52,12 +52,7 @@ fn fixture_ops() -> Vec<Def> {
                     .collect(),
             ])
         })
-        .label(|p, inputs| {
-            format!(
-                "annualised({}) {inputs}",
-                pond_process::js::js_string(&p["days"])
-            )
-        }),
+        .label(|p, inputs| format!("annualised({}) {inputs}", p["days"])),
         Def::op("band", "fixture", "source ± width.")
             .param("width", ParamDef::num(1.0).min(0.0))
             .input("source")
@@ -76,11 +71,20 @@ fn fixture_ops() -> Vec<Def> {
         Def::op("boom", "fixture", "Op code that throws.")
             .input("source")
             .output("", "inherit")
-            .run(|_| Err("boom: op code failed".into())),
+            .run(|_| Err(ProcessError::thrown("boom: op code failed"))),
         Def::op("short", "fixture", "Op code returning one row too few.")
             .input("source")
             .output("", "inherit")
             .run(|ctx| Ok(vec![ctx.input("source").iter().skip(1).copied().collect()])),
+        Def::op("picky", "fixture", "Op code that fails with a coded error.")
+            .input("source")
+            .output("", "inherit")
+            .run(|_| {
+                Err(ProcessError::new(
+                    ErrorKind::Param,
+                    "picky: needs at least 100 rows",
+                ))
+            }),
     ]
 }
 
@@ -345,7 +349,10 @@ fn sessions_match() {
         let want = session["results"].as_array().unwrap();
         assert_eq!(got.len(), want.len(), "{name}: step count");
         for (i, (g, w)) in got.iter().zip(want).enumerate() {
-            if norm(g) != norm(w) {
+            // As text, so key order counts: a JSON map compares equal
+            // whatever order its keys are in.
+            let (got_text, want_text) = (norm(g).to_string(), norm(w).to_string());
+            if got_text != want_text {
                 failures.push(format!(
                     "{name}, step {i}:\n  step: {}\n  want: {}\n  got:  {}",
                     session["steps"][i], w, g
@@ -358,5 +365,49 @@ fn sessions_match() {
         "{} steps differ:\n{}",
         failures.len(),
         failures.join("\n\n")
+    );
+}
+
+/// Request shapes TypeScript rejects with the engine's own `TypeError`: no
+/// fixture can record that text, so these check the part a port must
+/// match, that each fails with no code, and when the error policy applies.
+#[test]
+fn malformed_requests_fail_without_a_code() {
+    let mut host = Host::new(Arc::new(registry("all")), HashMap::new());
+    host.add("d", input("daily"));
+    let refused = |host: &mut Host, req: Value| {
+        let e = host.run(&req).expect_err("should fail");
+        assert_eq!(e.code(), None, "{req}");
+        assert_eq!(e.name(), "Error", "{req}");
+    };
+    // The nested form fails whatever `onError` says.
+    refused(&mut host, json!({ "from": "d", "onError": "collect" }));
+    refused(
+        &mut host,
+        json!({ "from": "d", "process": {}, "onError": "collect" }),
+    );
+    refused(
+        &mut host,
+        json!({ "from": "d", "process": [], "select": "x", "onError": "collect" }),
+    );
+    // The slot form fails under `throw`...
+    refused(&mut host, json!({ "from": "d", "nodes": null }));
+    refused(
+        &mut host,
+        json!({ "from": "d", "nodes": { "a": { "op": "last" } } }),
+    );
+    refused(
+        &mut host,
+        json!({ "from": "d", "nodes": {}, "outputs": [] }),
+    );
+    // ...and is reported without a code under `collect`.
+    let r = host
+        .run(&json!({ "from": "d", "nodes": { "a": { "op": "last" } }, "onError": "collect" }))
+        .unwrap();
+    assert_eq!(r.skipped.len(), 1);
+    assert!(r.skipped[0].get("code").is_none());
+    assert_eq!(
+        r.skipped[0]["reason"],
+        "slot 'a' needs an 'in' list of inputs"
     );
 }

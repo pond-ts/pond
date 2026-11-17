@@ -98,20 +98,31 @@ fn normalize(graph: &BoundGraph, request: &Value) -> Result<Normalized> {
             slot_of: HashMap::new(),
         });
     };
-    let empty = Map::new();
-    let expanded = expand_slots(nodes.as_object().unwrap_or(&empty), graph.columns())?;
+    let Some(nodes) = nodes.as_object() else {
+        return Err(ProcessError::thrown(
+            "'nodes' must be an object of named slots",
+        ));
+    };
+    let expanded = expand_slots(nodes, graph.columns())?;
     let mut slot_of = HashMap::new();
     for (slot, spec) in &expanded {
         let id = spec_id(&graph.registry, spec, true)?;
         slot_of.entry(id).or_insert_with(|| slot.clone());
     }
-    let outputs = request
-        .get("outputs")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let select = outputs
+    let empty = Map::new();
+    let outputs = match request.get("outputs") {
+        None | Some(Value::Null) => &empty,
+        Some(Value::Object(m)) => m,
+        Some(_) => {
+            return Err(ProcessError::thrown(
+                "'outputs' must be an object of named selectors",
+            ));
+        }
+    };
+    // In the order JavaScript lists the names, as `Object.entries` does.
+    let select = crate::js::js_keys(outputs)
         .into_iter()
+        .map(|name| (name.clone(), outputs[name.as_str()].clone()))
         .map(|(name, sel)| {
             let mut sel = sel.as_object().cloned().unwrap_or_default();
             if let Some(Value::String(on)) = sel.get("on")
@@ -250,6 +261,23 @@ pub fn run(graph: &mut BoundGraph, request: &Value) -> Result<RunResult> {
         Some("collect") => Policy::Collect,
         _ => Policy::Throw,
     };
+    // TypeScript walks a nested plan outside the error policy, so a
+    // missing or malformed one fails whatever `onError` says. Its error is
+    // the engine's own TypeError, with no code; the message here is ours.
+    if request.get("nodes").is_none() {
+        let plan = request.get("plan").or_else(|| request.get("process"));
+        if !plan.is_some_and(Value::is_array) {
+            return Err(ProcessError::thrown(
+                "a request needs 'nodes' (named slots) or 'process' (a list of specs)",
+            ));
+        }
+        if !matches!(
+            request.get("select"),
+            None | Some(Value::Null | Value::Array(_))
+        ) {
+            return Err(ProcessError::thrown("'select' must be a list of selectors"));
+        }
+    }
     let normalized = match normalize(graph, request) {
         Ok(n) => n,
         Err(e) if policy != Policy::Throw => {

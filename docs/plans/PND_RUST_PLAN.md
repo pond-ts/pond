@@ -811,7 +811,8 @@ writes, `packages/process/test/fixtures/parity.json`:
   every malformed shape the lenient namer encodes.
 - **`describe()`** of the standard registry and of the full one.
 - **Source ids** with characters that need URL encoding.
-- **Seven host sessions**, each a sequence of `add` / `run` / `runAsync` /
+- **Eight host sessions** (seven at first; the eighth came from the step 2–5
+  review, below), each a sequence of `add` / `run` / `runAsync` /
   `remove` / `has` / `datasets` steps with every response recorded (node
   `ms` dropped, columns as numbers with `null` gaps): every basic op and
   fold on one plan, the same plan warm, columns and picked outputs, new
@@ -823,7 +824,8 @@ writes, `packages/process/test/fixtures/parity.json`:
   byte budget evicting least-recently-used nodes; folds over intraday,
   gappy and empty series; async sources across revisions, key order and
   the source cap; the standard registry alone.
-- **Four fixture-only ops** (`annualise` with a typed input, a three-output
+- **Five fixture-only ops** (`picky`, which fails with a coded
+  `ParamError`, came with the eighth session; `annualise` with a typed input, a three-output
   `band`, `boom` which throws, `short` which returns one row too few). The
   Rust harness defines the same four through its own op API, so the
   fixture also tests that API (step 6).
@@ -872,9 +874,27 @@ What landed:
   `graph_for` / `run`, and `run_async` with a `SourceRegistry` of async
   loaders, revisions and the `max_sources` cap.
 
-`tests/parity.rs` replays all seven fixture sessions through the Rust host
-and compares every response with the TypeScript one (numbers compared as
-numbers, since JavaScript has one number type). All match.
+`tests/parity.rs` replays all eight fixture sessions through the Rust host
+and compares every response with the TypeScript one as text, so key order
+counts too (numbers are compared as numbers first, since JavaScript has one
+number type). All match.
+
+The review (PR #938) found two orders the first seven sessions could not
+see, both now fixed and covered by an eighth session:
+
+- **Integer-like names come first.** `Object.keys` lists keys such as `"2"`
+  and `"10"` first and ascending, whatever order they were written in. That
+  decides slot order, output order and the "slots are …" message.
+- **Slots come back in the order they finish.** `expandSlots` returns its
+  map of finished slots, so a slot comes after the slots it reads.
+
+It also found malformed requests (no `process`, `nodes` not an object, a
+slot with no `in`) quietly succeeding. TypeScript fails those with the
+engine's own `TypeError`, which has no code. Rust now fails them with no
+code too, with its own message, and under the same error policy:
+the nested form fails whatever `onError` says. Op and fold code now returns
+a `ProcessError`, so a custom op can fail with a code as a TypeScript op
+can throw `ParamError`.
 
 Differences from TypeScript, on purpose:
 
@@ -888,6 +908,10 @@ Differences from TypeScript, on purpose:
   load discards that load. `Host::run_async` takes `&mut self`, so two
   calls cannot overlap and neither case can arise. A host shared across
   threads would need both back.
+
+Not ported yet (scope decision 1): joins, ranged recompute
+(`setSourceFrom` / `runRange`), the live graph, the worker pool and the
+authoring APIs.
 
 Still to do in step 3: the studies through the pond-rs catalog (with a
 study parity fixture) and the new pointwise basics (`log`, `sqrt`, a ratio

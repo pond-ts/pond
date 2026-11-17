@@ -492,13 +492,13 @@ fn compute(node: &Compiled, inputs: &[Arc<Vec<f64>>], times: &[i64]) -> Result<H
             .fold
             .as_ref()
             .ok_or_else(|| ProcessError::thrown(format!("fold '{}' has no code", def.name)))?;
-        return fold(&ctx).map(Held::Fact).map_err(ProcessError::thrown);
+        return fold(&ctx).map(Held::Fact);
     }
     let run = def
         .run
         .as_ref()
         .ok_or_else(|| ProcessError::thrown(format!("op '{}' has no code", def.name)))?;
-    let produced = run(&ctx).map_err(ProcessError::thrown)?;
+    let produced = run(&ctx)?;
     let declared = def.outputs();
     if produced.len() != declared.len() {
         return Err(ProcessError::new(

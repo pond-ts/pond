@@ -5,7 +5,7 @@ use pond_rs::js_number;
 use crate::context::OpContext;
 use crate::registry::{Def, ParamDef, param_text};
 
-type Out = Result<Vec<Vec<f64>>, String>;
+type Out = Result<Vec<Vec<f64>>, crate::error::ProcessError>;
 
 /// `x - x`: 0 for a present cell, NaN for a missing one. Adding it to a
 /// 1/0 result makes the result a gap wherever the input was one.

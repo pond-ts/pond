@@ -1,8 +1,6 @@
 //! Slot requests (`slots.ts`): nodes named by the caller, wired by name,
 //! expanded into the nested specs they stand for.
 
-use std::collections::HashMap;
-
 use serde_json::{Map, Value, json};
 
 use crate::error::{ErrorKind, ProcessError, Result};
@@ -23,14 +21,20 @@ fn quoted(values: &[&str]) -> String {
     }
 }
 
-/// Expands `{ name: { op, in, params } }` into one spec per slot, in the
-/// order the slots were written. `columns` are the bound series' value
-/// columns.
+/// Expands `{ name: { op, in, params } }` into one spec per slot.
+///
+/// Slots are visited in the order JavaScript lists their names
+/// (`Object.keys`: integer-like names first, ascending, then the rest as
+/// written), and returned in the order they finish, so a slot always comes
+/// after the slots it reads. `columns` are the bound series' value columns.
 pub fn expand_slots(
     slots: &Map<String, Value>,
     columns: &[String],
 ) -> Result<Vec<(String, Value)>> {
-    let names: Vec<&str> = slots.keys().map(String::as_str).collect();
+    let names: Vec<&str> = crate::js::js_keys(slots)
+        .into_iter()
+        .map(String::as_str)
+        .collect();
     for name in &names {
         if columns.iter().any(|c| c == name) {
             return Err(slot_error(format!(
@@ -38,15 +42,14 @@ pub fn expand_slots(
             )));
         }
     }
-    let mut done: HashMap<String, Value> = HashMap::new();
+    // Insertion order is completion order (the crate builds serde_json
+    // with `preserve_order`).
+    let mut done = Map::new();
     let mut visiting: Vec<String> = Vec::new();
     for name in &names {
         expand(name, slots, columns, &names, &mut done, &mut visiting)?;
     }
-    Ok(names
-        .iter()
-        .map(|n| ((*n).to_string(), done[*n].clone()))
-        .collect())
+    Ok(done.into_iter().collect())
 }
 
 fn expand(
@@ -54,7 +57,7 @@ fn expand(
     slots: &Map<String, Value>,
     columns: &[String],
     names: &[&str],
-    done: &mut HashMap<String, Value>,
+    done: &mut Map<String, Value>,
     visiting: &mut Vec<String>,
 ) -> Result<Value> {
     if let Some(spec) = done.get(name) {
@@ -67,11 +70,13 @@ fn expand(
     }
     let def = &slots[name];
     visiting.push(name.to_string());
-    let refs: Vec<Value> = def
-        .get("in")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    // TypeScript fails here with the engine's own TypeError, which has no
+    // code; the message is ours.
+    let Some(refs) = def.get("in").and_then(Value::as_array).cloned() else {
+        return Err(ProcessError::thrown(format!(
+            "slot '{name}' needs an 'in' list of inputs"
+        )));
+    };
     let mut inputs = Vec::with_capacity(refs.len());
     for r in &refs {
         let text = r
