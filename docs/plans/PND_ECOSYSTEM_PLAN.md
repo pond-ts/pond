@@ -332,6 +332,26 @@ keys could, once types are free strings); repeated lap ids throw;
 Estela: the column sets, narrowing steps and chart-channel mapping (display),
 and the user's interval type list with its colours.
 
+## [PND-FITLEFT] — leftovers from [PND-FITESTELA]
+
+Opened 2026-11-17, when a check of the breakout plans against PLAN.md found
+the "Not done" notes under the [PND-FITESTELA] parts tracked nowhere. Each
+was checked against `main`:
+
+- **Still open — outline vs summary polyline** ([PND-FITOUTLINE]): the
+  summary's `polyline` still comes from the private metres-based
+  `geo.simplify` (`packages/fit/src/summary/index.ts`), not the outline code.
+  Output is unchanged either way; folding the two is a tidy-up.
+- **Still open — a split inside a pool length** ([PND-FITCUT]): a lap split
+  that falls inside a length is not moved to the length's edge; nothing in
+  `packages/fit/src/edit` snaps it.
+- **Done since — editing an `Activity`** ([PND-FITCUT] said the edit worked
+  only on the imported activity): `activity.edit({ crop, laps, parts })`
+  shipped with [PND-FITAPI] (#898).
+- **Done since — swim time inside a range or lap, and per-length sections**
+  ([PND-FITSWIM]): any section now has a `swimming` clock
+  (`activity/stats.ts`), and `activity.lengths` gives one section per length.
+
 ## [PND-FITAPI] — records, sections, analysis
 
 Design direction from pjm17971 (2026-11-04), recorded with a mapping to the
