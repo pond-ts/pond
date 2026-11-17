@@ -21,6 +21,9 @@ describe('process parity fixture', () => {
       readFileSync(new URL('./fixtures/parity.json', import.meta.url), 'utf8'),
     );
     const fresh = await buildFixture(pond, proc);
-    expect(fresh).toEqual(committed);
+    // Compare text, not values: key order is part of what a port must match.
+    expect(JSON.stringify(fresh, null, 2)).toBe(
+      JSON.stringify(committed, null, 2),
+    );
   });
 });

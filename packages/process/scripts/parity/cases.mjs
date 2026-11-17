@@ -794,6 +794,14 @@ function sessions() {
         { has: 'source:feed?bars=number%3A60&input=string%3A%22daily%22' },
         { has: 'source:feed?bars=number%3A48&input=string%3A%22intraday%22' },
         { runAsync: facts({ source: 'nope', params: {} }, {}, {}) },
+        // A loader that throws: the error reaches the caller.
+        {
+          runAsync: facts(
+            { source: 'feed', params: { input: 'broken' } },
+            { l: { op: 'last', in: ['close'] } },
+            { l: { on: 'l' } },
+          ),
+        },
         // A local envelope through runAsync is an ordinary run.
         { add: 'd', input: 'daily' },
         {
@@ -969,6 +977,7 @@ async function runSession(pond, proc, session) {
       proc.defineSource({
         name: 'feed',
         load: async (params) => {
+          if (params.input === 'broken') throw new Error('feed is down');
           const [revision, input] = revisions.get(params.input);
           return { value: series(input), revision: `r${revision}` };
         },
@@ -1031,11 +1040,10 @@ export async function buildFixture(pond, proc) {
         out[key] = { error: caught(e) };
       }
     }
-    try {
-      out.explain = proc.explain(all, spec);
-    } catch (e) {
-      out.explain = { error: caught(e) };
-    }
+    // Only a valid spec has an explanation: `explain` does not check a
+    // malformed one, and what it throws there is the JavaScript engine's own
+    // TypeError text, which no port should copy.
+    if (out.strict.id !== undefined) out.explain = proc.explain(all, spec);
     return out;
   });
   const sessionsOut = [];
