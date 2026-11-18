@@ -252,12 +252,12 @@ export interface ChartTheme {
      * `color` / `fillOpacity` / `dash` / `lineWidth` / `depth`, so distinct
      * marks can be styled at once without splitting the whole register: a
      * `<Baseline role="atm">` green, a `<Marker role="ref">` in another hue, a
-     * `<Zone role="good">` per band of a value-axis scale. A mark's `role` resolves
-     * each field as `roles[role].field ?? annotation.field` (an unknown/unset
-     * role is the base register). Colour stays a **theme** concern — there is
-     * no per-mark colour prop (the one-styling-channel discipline), which is
-     * why a *scale* of bands (AQI categories, HR zones) is a role map and not
-     * six colours at the call site.
+     * `<Zone role="good">` per band of a value-axis scale. A mark's `role`
+     * resolves each field as `roles[role].field ?? annotation.field` (an
+     * unknown/unset role is the base register). Colour stays a **theme**
+     * concern — there is no per-mark colour prop (the one-styling-channel
+     * discipline), which is why a *scale* of bands (AQI categories, HR zones)
+     * is a role map and not six colours at the call site.
      *
      * A role's `depth` replaces the register's ramp for that role — what a
      * mark is *for* decides how loud it rests, not one alpha for every mark.

@@ -141,8 +141,8 @@ const overlayStyle: CSSProperties = {
  * `fillOpacity`, `dash`, `lineWidth` and `depth`, each falling back to the base
  * register — so a smile can place a green ATM baseline, a neutral vertical, and
  * a distinct marker at once without splitting the whole register, and a quiet
- * `wash` and a loud `argument` can rest at different alphas. An unknown / unset role is the
- * base `annotation` register.
+ * `wash` and a loud `argument` can rest at different alphas. An unknown / unset
+ * role is the base `annotation` register.
  */
 function useAnnotationFrame(name: string, role?: string) {
   const container = useContext(ContainerContext);
@@ -673,9 +673,9 @@ export interface MarkerProps {
    *  (any of `color`, `fillOpacity`, `dash`, `lineWidth`, `depth`), so several
    *  marks can differ (a green ATM baseline, a distinct marker) without
    *  splitting the register. The shipped themes define `wash` (quiet, behind
-   *  data) and `argument` (loud, legible at rest). Omitted / unknown ⇒ the base
-   *  register.
-   *  Colour is a theme concern — there is no per-mark colour prop. */
+   *  data) and `argument` (loud, legible at rest).
+   *  Omitted / unknown ⇒ the base register. Colour is a theme concern — there
+   *  is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
@@ -861,9 +861,9 @@ export interface BaselineProps {
    *  (any of `color`, `fillOpacity`, `dash`, `lineWidth`, `depth`), so several
    *  marks can differ (a green ATM baseline, a distinct marker) without
    *  splitting the register. The shipped themes define `wash` (quiet, behind
-   *  data) and `argument` (loud, legible at rest). Omitted / unknown ⇒ the base
-   *  register.
-   *  Colour is a theme concern — there is no per-mark colour prop. */
+   *  data) and `argument` (loud, legible at rest).
+   *  Omitted / unknown ⇒ the base register. Colour is a theme concern — there
+   *  is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */

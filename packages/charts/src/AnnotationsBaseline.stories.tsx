@@ -13,8 +13,8 @@ import { LineCursor } from './cursors.js';
  * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
  * register. These stories fan out its props one axis at a time: **label**
  * (auto / custom / off), the **indicator** axis-pill opt-in, **selection /
- * depth**, **line width**, and **dual-axis** binding. Interaction demos (drag-to-edit, create)
- * live under **Annotations/Scenarios**.
+ * depth**, **line width**, and **dual-axis** binding. Interaction demos
+ * (drag-to-edit, create) live under **Annotations/Scenarios**.
  */
 const W = 560;
 const H = 220;
