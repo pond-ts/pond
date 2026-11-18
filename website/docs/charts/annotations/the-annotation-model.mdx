@@ -67,10 +67,12 @@ const theme = cssVarTheme(defaultTheme, (v) => ({
 
 A role can set any of `color`, `fillOpacity`, `dash` (px on/off lengths for
 the mark's **lines** — fills are never dashed; `dash` can also be set once on
-the register to apply to every mark) and `depth` (see below). Each field the
-role leaves out comes from the base register, and an unknown or unset `role` is
-the base register. Colour stays a **theme** concern (there is no per-mark
-colour prop): the theme owns the palette, the mark just names a role.
+the register to apply to every mark), `lineWidth` (px stroke for a
+`Baseline`'s or `Marker`'s line; a mark's own `lineWidth` prop wins) and
+`depth` (see below). Each field the role leaves out comes from the base
+register, and an unknown or unset `role` is the base register. Colour stays a
+**theme** concern (there is no per-mark colour prop): the theme owns the
+palette, the mark just names a role.
 
 This is also how a **scale** is styled: a [`Zone`](./zone.mdx) set names one
 role per band (`good`, `moderate`, …) and the theme holds the whole palette in

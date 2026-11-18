@@ -58,6 +58,7 @@ at the line's height.
 | `labelSide`     | `'left' \| 'right'`       | `'left'`    | Which side the near-line label chip sits.                                             |
 | `labelPosition` | `'center' \| 'above'`     | `'center'`  | `center` rides on the line; `above` sits just on top of it.                           |
 | `indicator`     | `boolean`                 | `false`     | Also pin `value` to its **y-axis** as an on-axis pill.                                |
+| `lineWidth`     | `number`                  | `1`         | Stroke width in px. Wins over the theme role's / register's `lineWidth`.              |
 | `onChange`      | `(value: number) => void` | —           | Editable: drag vertically to report a new `value`.                                    |
 
 Plus the shared interaction props. Like `Marker`, the `indicator` pill shows
@@ -76,6 +77,7 @@ A vertical line at an x position (a time, a distance, a lap boundary).
 | `at`        | `number`               | —       | x position in axis units — epoch ms on a time axis, the value on a value axis.              |
 | `label`     | `string \| false`      | auto    | Chip label. Omit ⇒ auto-label with the shared x formatter; `false`/`''` ⇒ no chip.          |
 | `indicator` | `boolean`              | `false` | Also pin `at` to the **x-axis** as an on-axis pill (the axis-edge counterpart of the chip). |
+| `lineWidth` | `number`               | `1`     | Stroke width in px. Wins over the theme role's / register's `lineWidth`.                    |
 | `onChange`  | `(at: number) => void` | —       | Editable: drag the line to report a new `at` (controlled — wire it back).                   |
 
 Plus the shared interaction props. Note the [indicator law](./the-annotation-model.mdx#pills-vs-flags--the-indicator-law):
@@ -86,11 +88,25 @@ the `indicator` pill always shows the formatted `at`, never the custom `label`
 
 All three take an optional **`role`** — a name into the theme's
 `annotation.roles` map — to restyle that mark (any of `color`, `fillOpacity`,
-`dash` and `depth`) while staying in the annotation register. The built-in
-themes ship `wash` (quiet, behind data) and `argument` (stays legible at rest).
-See
+`dash`, `lineWidth` and `depth`) while staying in the annotation register.
+The built-in themes ship `wash` (quiet, behind data) and `argument` (stays
+legible at rest). See
 [Roles within the register](./the-annotation-model.mdx#roles-within-the-register).
 There is no per-mark colour prop; the theme owns the palette.
+
+## Line width
+
+`Baseline` and `Marker` draw a 1px line by default. Set `lineWidth` (px) on the
+mark, or `lineWidth` on a theme role (`annotation.roles[role].lineWidth`) or on
+the whole register (`annotation.lineWidth`). The mark's prop wins over the
+role, and the role wins over the register. The invisible grab area stays at
+least as wide as the line. Region edges, zone boundaries and the faint guides a
+mark casts on other rows stay 1px.
+
+```tsx
+<Baseline value={200} label="1px" />
+<Baseline value={180} label="3px" lineWidth={3} />
+```
 
 ## Auto-labels and suppression
 

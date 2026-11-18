@@ -89,6 +89,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   (`None` for the list reducers and for an out-of-range percentile), so
   code outside the crate can bin a column the way `aggregate` does. The
   Rust port of `@pond-ts/process` uses it for `shape`.
+- **`@pond-ts/charts`: `<Baseline lineWidth>` and `<Marker lineWidth>`**
+  ([PND-BASELINEWIDTH]) — the line's stroke width in px (default 1; both used
+  to be fixed at 1px). The theme can set it too, as `annotation.lineWidth` or
+  per role as `annotation.roles[role].lineWidth`; the prop wins over the role
+  and the role over the register. The invisible grab area widens to cover a
+  line thicker than its 10px. Region edges, zone boundaries and the cross-row
+  guides stay 1px.
 
 ### Changed
 
