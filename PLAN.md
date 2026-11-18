@@ -320,7 +320,8 @@ linearWindow>`, [PND-SYMLOG].)
 - **[PND-AREAFADE]** — When an area's zero line is off the plot, start the
   colour fade at the real zero line rather than the clamped edge, so the fill
   runs off the bottom instead of fading out at it. Raised with the owner when
-  the baseline stopped widening the axis (2026-10-08); not decided.
+  the baseline stopped widening the axis (2026-10-08); not decided. Gradient
+  fill only: a solid fill (`AreaStyle.flatFill`) has no fade to anchor.
 - **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
   charts layers take only `TimeSeries`, forcing a fresh per-tick handle
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or

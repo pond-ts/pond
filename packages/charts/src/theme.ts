@@ -693,8 +693,11 @@ export interface CandleStyle {
  * A resolved area style: an outline stroke plus a graded fill. `color`/`width`
  * stroke the value line on top; `fill` is the gradient base colour, opaque
  * (scaled by `fillOpacity`, 0–1) at the line and grading to transparent at the
- * baseline. `fill` must be a CSS hex (`#rgb` / `#rrggbb`) so the transparent
- * stop can be derived; other formats fall back to a flat fill.
+ * baseline. `fill` and `color` are independent, so the shade can be a
+ * different hue from the line. Any CSS colour works for `fill`: a hex has its
+ * transparent stop derived exactly, any other format fades to the keyword
+ * `transparent`, which canvas gradients blend in premultiplied alpha, so the
+ * fade looks the same (checked in Chromium).
  */
 export interface AreaStyle {
   readonly color: string;

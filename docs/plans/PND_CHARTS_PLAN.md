@@ -4775,6 +4775,25 @@ that relied on the pull-in for a zero-based read now say `min={0}`: the stacked
 traffic-by-interface chart, the dashboard's rps area, and the network-traffic
 one-direction snippet.
 
+### Area fill style: solid or gradient (2026-11-18)
+
+**Ask (owner):** "To area charts add a fill style if we can't do this already:
+solid or gradient."
+
+**Finding.** Already possible since v0.56.0: `flatFill: true` on an
+`AreaStyle` theme role gives a solid fill; omitted, the fill is the gradient.
+It was added for stacked areas, so it was never written up on the AreaChart
+docs page and had no story — that was the whole gap.
+
+**Done.** Docs page gained a "Fill style" entry with a theme snippet; Storybook
+gained `GradientFill`, `SolidFill` and `SolidFillAboveBelow` (theme extended by
+one `solid` role, since the option only lives on the theme).
+
+**Considered, not built:** a per-chart `fill="solid"` prop. Area styling is set
+only through the theme role (`as`), by design; a prop would be a second channel
+for one knob. Revisit if the owner asks for it. [PND-AREAFADE] touches the
+gradient only.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly
