@@ -383,6 +383,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | ------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `ChartTheme`                   | The one styling channel: role-keyed slots per draw layer + fixed chrome slots                | `packages/charts/src/theme.ts`                         |
 | `defaultTheme` / `estelaTheme` | Built-in themes (neutral light / dark estela palette)                                        | `packages/charts/src/theme.ts`                         |
+| `defaultAnnotation`            | Pond's default annotation register — a partial `annotation` fills its gaps from it           | `packages/charts/src/theme.ts`                         |
 | `cssVarTheme`                  | `(base, resolve, opts?) → ChartTheme` — static CSS-custom-property overlay                   | `packages/charts/src/css-theme.ts`                     |
 | `useChartTheme`                | Hook: re-resolves on `data-theme`/`class` flips (MutationObserver)                           | `packages/charts/src/useChartTheme.ts`                 |
 | Style types                    | `LineStyle`, `AreaStyle`, `BandStyle`, `ScatterStyle`, `BarStyle`, `BoxStyle`, `CandleStyle` | `packages/charts/src/theme.ts`                         |

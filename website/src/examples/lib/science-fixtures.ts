@@ -364,11 +364,9 @@ export function aqiBandTheme(base: ChartTheme): ChartTheme {
   return {
     ...base,
     annotation: {
-      ...(base.annotation ?? {
-        color: '#14b8a6',
-        fillOpacity: 0.1,
-        depth: [1, 0.7, 0.4],
-      }),
+      // Whatever `base` leaves out of its register comes from pond's
+      // `defaultAnnotation`, so there is nothing to copy here.
+      ...base.annotation,
       roles: {
         good: { color: '#00e400', fillOpacity: 0.16 },
         moderate: { color: '#ffff00', fillOpacity: 0.22 },

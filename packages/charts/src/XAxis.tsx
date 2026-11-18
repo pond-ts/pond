@@ -19,6 +19,7 @@ import {
 import { tickValues } from './yticks.js';
 import { xAxisCursorEntries } from './cursors.js';
 import { axisPillStyle } from './chip.js';
+import { resolveAnnotation } from './theme.js';
 import type { TradingTimeScale } from './tradingTimeScale.js';
 import {
   resolveAxisFormat,
@@ -550,7 +551,7 @@ export function XAxis({
     cursorX >= 0 &&
     cursorX <= plotWidth;
 
-  const annotationColor = theme.annotation?.color ?? '#0d9488';
+  const annotationColor = resolveAnnotation(theme.annotation).color;
 
   // Derived-unit (`transform`) layout: nice ticks in the derived unit at
   // mixed step sizes, admitted where they keep pixel room (see derivedTicks).

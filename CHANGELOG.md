@@ -96,8 +96,25 @@ include new features and type-level changes; patch bumps are strictly additive.
   and the role over the register. The invisible grab area widens to cover a
   line thicker than its 10px. Region edges, zone boundaries and the cross-row
   guides stay 1px.
+- **`@pond-ts/charts`: `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]) —
+  pond's default annotation register (`color` `#14b8a6`, `fillOpacity` 0.1,
+  `depth` `[1, 0.7, 0.4]`) is now exported. The marks, the cross-row guides,
+  the `<Marker indicator>` x-axis pills and the list's selected-row edge all
+  fall back to this one object, so a host no longer copies it into its theme.
 
 ### Changed
+
+- **`@pond-ts/charts`: a partial `theme.annotation` fills from
+  `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]). `color`, `fillOpacity`
+  and `depth` are now optional: a theme can set only `roles`, or only
+  `depth`, and every field it leaves out comes from `defaultAnnotation`
+  (no `annotation` at all is the same as `{}`). Type note: code that _reads_
+  `theme.annotation.color` (or `fillOpacity` / `depth`) now gets
+  `T | undefined`; write `theme.annotation?.color ?? defaultAnnotation.color`.
+  Two fallbacks change for a theme with no annotation colour: cross-row
+  guides used the grid colour and now use the register colour, and the
+  x-axis marker pill and list selected-row edge used a different turquoise
+  (`#0d9488`) and now use `defaultAnnotation.color`.
 
 - **`@pond-ts/process`: `shape` ends at the newest row.** It used to take
   every Nth row from row 0, so the line usually stopped short of the latest
