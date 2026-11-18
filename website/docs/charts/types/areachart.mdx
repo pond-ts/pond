@@ -48,6 +48,31 @@ the same `ChartSeries` a `LineChart` uses.
   to fill from zero, put zero on the axis with `<YAxis min={0}>`. The
   two-colour traffic look is two `<AreaChart>`s with `in` / `out` roles over
   the default zero.
+- **Fill style: gradient or solid** — set on the theme role, not a prop. By
+  default the fill is a **gradient**: strongest at the line, fading to
+  transparent at the baseline (each side fades toward it when values cross the
+  baseline). Set `flatFill: true` on the role for a **solid** fill — one even
+  shade at the role's `fillOpacity`. Solid is what stacked areas want, since a
+  fade lets every band below show through the one above it.
+
+  ```tsx
+  const theme = {
+    ...defaultTheme,
+    area: {
+      ...defaultTheme.area,
+      solid: { ...defaultTheme.area.default, flatFill: true },
+    },
+  };
+
+  <ChartContainer theme={theme} /* … */>
+    {/* … */}
+    <AreaChart series={s} column="value" as="solid" />
+  </ChartContainer>;
+  ```
+
+  An area coloured by `thresholds` is always solid: its colour bands already
+  show height, so a fade on top would say the same thing twice.
+
 - **`curve`** — `'linear'` (default) / `'monotone'` / `'natural'` / `'basis'` /
   `'step'`.
 - **`gaps`** — `'empty'` (default) / `'none'` / `'dashed'` / `'step'` /
@@ -72,9 +97,11 @@ the same `ChartSeries` a `LineChart` uses.
   plotted value — the dot has to sit on the line — so an off-chart consumer is
   the one that renders `readout ?? value`. A mistyped column name throws on both
   axis kinds.
-- **Selection:** not selectable.
+- **Selection:** opt in with `id`, as on `<LineChart>`; the pointer counts
+  as on the area anywhere between its line and its baseline.
 - **Theming:** the `theme.area` slot (`AreaStyle` =
-  `{ color, width, fill, fillOpacity }`); default roles `default` / `in` /
+  `{ color, width, fill, fillOpacity, flatFill? }` plus interaction and band
+  options); default roles `default` / `in` /
   `out`.
 
 ## Cautions
@@ -91,6 +118,6 @@ the same `ChartSeries` a `LineChart` uses.
 - [LineChart](./linechart.mdx) — the unfilled counterpart.
 - Storybook: [`Charts/AreaChart`](pathname:///storybook/?path=/story/charts-areachart--elevation)
   — `ZeroBaseline`, `Elevation`, `ReferenceLevel`, `AboveBelowAxis`,
-  `TrafficAreas`.
+  `TrafficAreas`, `GradientFill`, `SolidFill`, `SolidFillAboveBelow`.
 - The [API reference](/docs/api/charts/area-chart) — the full
   `AreaChartProps` type.

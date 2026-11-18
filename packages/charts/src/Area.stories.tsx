@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { LineCursor } from './cursors.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -306,4 +307,74 @@ export const TrafficAreas: Story = {
       </ChartContainer>
     );
   },
+};
+
+/**
+ * **Fill style** — the fan-out for `AreaStyle.flatFill`. The fill is either
+ * **gradient** (the default: strongest at the line, fading to transparent at
+ * the baseline) or **solid** (one even shade, `flatFill: true`). Like every
+ * area style it lives on the theme role, so these stories extend
+ * `defaultTheme` with one `solid` role that copies `area.default` and sets
+ * `flatFill` — theming is the subject here, so passing a theme is the point.
+ */
+const solidFill: ChartTheme = {
+  ...defaultTheme,
+  area: {
+    ...defaultTheme.area,
+    solid: { ...defaultTheme.area.default, flatFill: true },
+  },
+};
+
+function FillStyleArea({ as }: { as: 'default' | 'solid' }) {
+  const e = elevation();
+  return (
+    <ChartContainer range={TIME_RANGE} width={560} theme={solidFill}>
+      <LineCursor />
+      <ChartRow height={240}>
+        <YAxis id="m" label="m" />
+        <Layers>
+          <AreaChart
+            series={e}
+            column="elev"
+            as={as}
+            curve="monotone"
+            baseline="floor"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+}
+
+/** **Gradient fill (the default).** `area.default` as shipped: no `flatFill`. */
+export const GradientFill: Story = {
+  render: () => <FillStyleArea as="default" />,
+};
+
+/**
+ * **Solid fill.** The same profile with `flatFill: true` on its role: one even
+ * shade at the role's `fillOpacity`, no fade toward the floor.
+ */
+export const SolidFill: Story = {
+  render: () => <FillStyleArea as="solid" />,
+};
+
+/**
+ * **Solid fill either side of the baseline.** The $50 → −$100 price on the
+ * default zero baseline with the `solid` role: both the part above zero and
+ * the part below are one even shade (compare {@link ZeroBaseline}, where each
+ * side fades toward zero).
+ */
+export const SolidFillAboveBelow: Story = {
+  render: () => (
+    <ChartContainer range={TIME_RANGE} width={560} theme={solidFill}>
+      <LineCursor />
+      <ChartRow height={240}>
+        <YAxis id="usd" format="$,.0f" />
+        <Layers>
+          <AreaChart series={price(50, -100)} column="usd" as="solid" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
 };
