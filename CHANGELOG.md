@@ -286,6 +286,12 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
 
 ### Fixed
 
+- **`@pond-ts/charts`: `<Baseline>` hides off the y-range**
+  ([PND-BASELINELABELCULL]). When the axis is panned or zoomed so the
+  baseline's value is outside the row's visible y-range, its line and label
+  are no longer drawn; the label used to print outside its row. A level near
+  the edge keeps its label chip inside the row instead of letting it ride the
+  line out. An opt-in `indicator` pill still stays pinned at the nearest edge.
 - **`editRecording` (and `Activity.edit`): a cropped open water swim keeps
   its moving time by speed.** A crop took every swim's moving time from its
   kept laps, but a swim that moves by speed (open water, or a swim with GPS

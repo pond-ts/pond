@@ -35,6 +35,7 @@ const cases: Array<[string, Record<string, unknown>, string[]]> = [
       'LineWidth',
       'Multiple',
       'NoLabel',
+      'PannedOff',
       'Selected',
     ],
   ],
