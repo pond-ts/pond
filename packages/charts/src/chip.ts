@@ -13,6 +13,11 @@ import type { ChartTheme } from './theme.js';
  * ground, the borderless chip needs another delineator (a subtle shadow, or a
  * contrasting chip background) — a token to settle before this ships.
  */
+/** A flag chip's line height (× font size) — its rendered height, since the
+ *  chip has no vertical padding. Exported so a caller can keep a chip inside
+ *  its row. */
+export const FLAG_LINE_HEIGHT = 1.5;
+
 export function flagChipStyle(theme: ChartTheme): CSSProperties {
   return {
     position: 'absolute',
@@ -26,7 +31,7 @@ export function flagChipStyle(theme: ChartTheme): CSSProperties {
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
     pointerEvents: 'none',
-    lineHeight: 1.5,
+    lineHeight: FLAG_LINE_HEIGHT,
   };
 }
 

@@ -1084,3 +1084,85 @@ describe('a stronger inert line through a role [PND-INERTLINESTRENGTH]', () => {
     ).toEqual({ y60: 0.85 });
   });
 });
+
+describe('Baseline off the y-range [PND-BASELINELABELCULL]', () => {
+  // `renderAnn`: a 120 px row over a [0, 100] axis, so y = 120 − 1.2·value.
+  const H = 120;
+  const chipH = defaultTheme.font.size * 1.5;
+
+  /** The baseline's drawn line y (or null), its chip's `top` in px (or null),
+   *  and whether its hit rect and indicator pill are mounted. */
+  const look = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const line = container.querySelector('svg line');
+    const chip = within(container).queryByText('lvl') as HTMLElement | null;
+    const out = {
+      lineY: line ? Number(line.getAttribute('y1')) : null,
+      chipTop: chip ? parseFloat(chip.style.top) : null,
+      hit: container.querySelector('svg rect[fill="transparent"]') !== null,
+    };
+    unmount();
+    return out;
+  };
+
+  it('draws no line and no label for a level above the domain', () => {
+    expect(look(<Baseline value={150} axis="a" label="lvl" />)) //
+      .toMatchObject({ lineY: null, chipTop: null });
+  });
+
+  it('draws no line and no label for a level below the domain', () => {
+    expect(look(<Baseline value={-20} axis="a" label="lvl" />)) //
+      .toMatchObject({ lineY: null, chipTop: null });
+  });
+
+  it('keeps the hit area mounted off-row (a drag past the edge holds)', () => {
+    expect(look(<Baseline value={150} axis="a" label="lvl" />).hit).toBe(true);
+  });
+
+  it('a level in the row draws its line and label as before', () => {
+    expect(look(<Baseline value={50} axis="a" label="lvl" />)).toMatchObject({
+      lineY: 60,
+      chipTop: 60,
+    });
+  });
+
+  it('a level on the domain edge still draws, its label clamped inside', () => {
+    const top = look(<Baseline value={100} axis="a" label="lvl" />);
+    expect(top).toMatchObject({ lineY: 0, chipTop: chipH / 2 });
+    const bottom = look(<Baseline value={0} axis="a" label="lvl" />);
+    expect(bottom).toMatchObject({ lineY: H, chipTop: H - chipH / 2 });
+    // `above` hangs the chip's bottom on the line, so its top bound is chipH.
+    expect(
+      look(<Baseline value={100} axis="a" label="lvl" labelPosition="above" />)
+        .chipTop,
+    ).toBe(chipH);
+  });
+
+  it('every label it draws stays inside the row', () => {
+    for (const value of [-50, -1, 0, 1, 50, 99, 100, 101, 200]) {
+      for (const labelPosition of ['center', 'above'] as const) {
+        const { chipTop } = look(
+          <Baseline
+            value={value}
+            axis="a"
+            label="lvl"
+            labelPosition={labelPosition}
+          />,
+        );
+        if (chipTop === null) continue;
+        const chipTopEdge =
+          labelPosition === 'above' ? chipTop - chipH : chipTop - chipH / 2;
+        expect(chipTopEdge).toBeGreaterThanOrEqual(0);
+        expect(chipTopEdge + chipH).toBeLessThanOrEqual(H);
+      }
+    }
+  });
+
+  it('the opt-in indicator pill stays pinned at the nearest edge', () => {
+    const { container, unmount } = renderAnn(
+      <Baseline value={150} axis="a" label={false} indicator />,
+    );
+    expect(within(container).queryByText('150')).not.toBeNull();
+    unmount();
+  });
+});

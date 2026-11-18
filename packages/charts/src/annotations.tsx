@@ -17,6 +17,7 @@ import {
 } from './context.js';
 import type { ChartTheme } from './theme.js';
 import {
+  FLAG_LINE_HEIGHT,
   flagChipStyle,
   flagChipX,
   axisPillX,
@@ -890,7 +891,9 @@ export interface BaselineProps {
 }
 
 /** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
- *  Its label anchors at the left, at the line's height. */
+ *  Its label anchors at the left, at the line's height, kept inside the row. A
+ *  value outside the row's visible y-range draws no line and no label (an
+ *  `indicator` pill stays pinned at the nearest edge). */
 export function Baseline({
   value,
   axis,
@@ -952,6 +955,13 @@ export function Baseline({
   if (yScale === undefined) return null;
   const y = yScale(value);
   const w = container.plotWidth;
+  const h = row.height;
+  // A level outside the row's visible y-range (the axis panned / zoomed away
+  // from it, or a value past a fixed domain) has nowhere in the row to be, so
+  // its line, handle and label are not drawn — the label would otherwise float
+  // outside the row. The hit area stays mounted (clipped by the SVG) so a drag
+  // that carries the line past the edge keeps its pointer capture.
+  const onRow = y >= 0 && y <= h;
   const opacity = rampAt(
     ann.depth,
     lineLevel(selectable, editable, hovering, selected),
@@ -966,21 +976,32 @@ export function Baseline({
   // The mark's prop wins over the resolved register (role over base); else 1.
   const strokeWidth = lineWidth ?? ann.lineWidth ?? 1;
   const pad = hitPad(strokeWidth);
+  // Keep the chip's box inside the row: near an edge it stops at the edge
+  // instead of riding the line out of the row (as the indicator pill does).
+  const chipH = container.theme.font.size * FLAG_LINE_HEIGHT;
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, v));
+  const chipTop =
+    labelPosition === 'above'
+      ? clamp(y, chipH, h)
+      : clamp(y, chipH / 2, h - chipH / 2);
   return (
     <>
-      <svg width={w} height={row.height} style={overlayStyle}>
-        <line
-          x1={0}
-          y1={y}
-          x2={w}
-          y2={y}
-          stroke={ann.color}
-          strokeWidth={strokeWidth}
-          opacity={opacity}
-          strokeDasharray={dashArray(ann.dash)}
-          shapeRendering="crispEdges"
-        />
-        {showHandle && (
+      <svg width={w} height={h} style={overlayStyle}>
+        {onRow && (
+          <line
+            x1={0}
+            y1={y}
+            x2={w}
+            y2={y}
+            stroke={ann.color}
+            strokeWidth={strokeWidth}
+            opacity={opacity}
+            strokeDasharray={dashArray(ann.dash)}
+            shapeRendering="crispEdges"
+          />
+        )}
+        {onRow && showHandle && (
           <Pill
             cx={handleX}
             cy={y}
@@ -1005,12 +1026,12 @@ export function Baseline({
           />
         )}
       </svg>
-      {text && (
+      {text && onRow && (
         <Chip
           theme={container.theme}
           color={ann.color}
           style={{
-            top: `${y}px`,
+            top: `${chipTop}px`,
             [labelSide === 'right' ? 'right' : 'left']: '2px',
             // `center` rides on the line; `above` sits its bottom edge on the line.
             transform:

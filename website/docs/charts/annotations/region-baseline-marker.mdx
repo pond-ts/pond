@@ -64,6 +64,14 @@ at the line's height.
 Plus the shared interaction props. Like `Marker`, the `indicator` pill shows
 the formatted `value`, never the `label`.
 
+**Off the y-range.** When the axis is panned or zoomed so that `value` sits
+outside the row's visible y-range (or `value` is past a fixed `min`/`max`),
+the baseline draws neither its line nor its label, so no chip floats outside
+the row; both come back when the level returns. A level near the edge keeps its
+label inside the row: the chip stops at the edge instead of riding the line
+out. If you want an off-range level still flagged, opt in to `indicator`: the
+axis pill stays pinned at the nearest edge, showing the value.
+
 ## `Marker`
 
 A vertical line at an x position (a time, a distance, a lap boundary).
