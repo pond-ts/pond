@@ -980,3 +980,107 @@ describe('Baseline / Marker lineWidth [PND-BASELINEWIDTH]', () => {
     expect(draw(<Marker at={2} label={false} lineWidth={16} />).hitW).toBe(16);
   });
 });
+
+describe('a stronger inert line through a role [PND-INERTLINESTRENGTH]', () => {
+  // Built from scratch (not defaultTheme): the register's own ramp rests inert
+  // marks at 0.4, and one role carries a near-full ramp of its own.
+  const theme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: { reference: { depth: [1, 0.85, 0.8] } },
+    },
+  };
+
+  /** Render `children` in one row (y axis `[0, 100]` over 120 px, so value v
+   *  draws at y = 120 − 1.2·v) and return each SVG line's opacity, keyed by
+   *  `y<px>` for a horizontal line, `x` for the (single) vertical one. */
+  const opacities = (children: ReactNode, t: ChartTheme = theme) => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={t}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {children}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const out: Record<string, number> = {};
+    for (const l of Array.from(container.querySelectorAll('svg line'))) {
+      const y1 = l.getAttribute('y1');
+      const y2 = l.getAttribute('y2');
+      const key = y1 === y2 ? `y${y1}` : 'x';
+      out[key] = Number(l.getAttribute('opacity'));
+    }
+    unmount();
+    return out;
+  };
+
+  it("an inert baseline with the role rests at the role's depth[2]", () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="reference"
+          selectable={false}
+          label={false}
+        />,
+      ),
+    ).toEqual({ y60: 0.8 });
+  });
+
+  it('every other annotation keeps the base ramp', () => {
+    expect(
+      opacities(
+        <>
+          <Baseline
+            value={50}
+            axis="a"
+            role="reference"
+            selectable={false}
+            label={false}
+          />
+          <Baseline value={25} axis="a" selectable={false} label={false} />
+          <Baseline value={75} axis="a" label={false} />
+          <Marker at={2} selectable={false} label={false} />
+        </>,
+      ),
+    ).toEqual({ y60: 0.8, y90: 0.4, y30: 0.4, x: 0.4 });
+  });
+
+  it('inert ignores hover and selection, so the role alpha holds', () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="reference"
+          selectable={false}
+          selected
+          hovered
+          label={false}
+        />,
+      ),
+    ).toEqual({ y60: 0.8 });
+  });
+
+  it("defaultTheme's argument role gives a near-full inert line", () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="argument"
+          selectable={false}
+          label={false}
+        />,
+        defaultTheme,
+      ),
+    ).toEqual({ y60: 0.85 });
+  });
+});

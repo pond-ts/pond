@@ -8,6 +8,7 @@ import { YAxis } from './YAxis.js';
 import { Baseline } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
 import { LineCursor } from './cursors.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 
 /**
  * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
@@ -19,10 +20,17 @@ import { LineCursor } from './cursors.js';
 const W = 560;
 const H = 220;
 
-/** One price row with a right-hand USD axis; children are the annotation(s). */
-function Chart({ children }: { children: ReactNode }) {
+/** One price row with a right-hand USD axis; children are the annotation(s).
+ *  `theme` is for the stories whose subject is a theme role. */
+function Chart({
+  children,
+  theme,
+}: {
+  children: ReactNode;
+  theme?: ChartTheme;
+}) {
   return (
-    <ChartContainer range={RANGE} width={W}>
+    <ChartContainer range={RANGE} width={W} {...(theme ? { theme } : {})}>
       <LineCursor />
       <ChartRow height={H}>
         <Layers>
@@ -141,6 +149,58 @@ export const Inert: Story = {
   render: () => (
     <Chart>
       <Baseline value={200} axis="usd" label="context" selectable={false} />
+    </Chart>
+  ),
+};
+
+/** **Inert, strong** — an inert line rests at the role's level-3 alpha, so
+ *  `role="argument"` (shipped in the built-in themes, ramp `[1, 0.95, 0.85]`)
+ *  draws one reference line at 0.85 while the plain inert line beside it, and
+ *  every other mark, keeps the register's 0.4. No `depth` change needed. */
+export const InertStrong: Story = {
+  render: () => (
+    <Chart>
+      <Baseline
+        value={200}
+        axis="usd"
+        label="argument"
+        role="argument"
+        selectable={false}
+      />
+      <Baseline value={180} axis="usd" label="plain" selectable={false} />
+    </Chart>
+  ),
+};
+
+/** A theme that adds one `reference` role with its own near-full ramp; the
+ *  register's `[1, 0.7, 0.4]` is untouched. */
+const referenceTheme: ChartTheme = {
+  ...defaultTheme,
+  annotation: {
+    ...defaultTheme.annotation!,
+    roles: {
+      ...defaultTheme.annotation!.roles,
+      reference: { depth: [1, 0.85, 0.8] },
+    },
+  },
+};
+
+/** **Inert, custom role** — the same idea with a host's own role
+ *  (`reference: { depth: [1, 0.85, 0.8] }`): the inert `reference` line draws
+ *  at 0.8, the plain inert line and the selectable one stay on the base ramp.
+ *  Themed on purpose — the role lives in the theme. */
+export const InertCustomRole: Story = {
+  render: () => (
+    <Chart theme={referenceTheme}>
+      <Baseline
+        value={200}
+        axis="usd"
+        label="reference"
+        role="reference"
+        selectable={false}
+      />
+      <Baseline value={180} axis="usd" label="plain" selectable={false} />
+      <Baseline value={160} axis="usd" label="selectable" />
     </Chart>
   ),
 };
