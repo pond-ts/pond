@@ -898,3 +898,85 @@ describe('annotation dash (register + per-role)', () => {
     ]);
   });
 });
+
+describe('Baseline / Marker lineWidth [PND-BASELINEWIDTH]', () => {
+  /** A register with no `lineWidth` anywhere except one role — so the default
+   *  path is exercised against a theme that leaves the slot absent. */
+  const theme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: { thick: { lineWidth: 4 } },
+    },
+  };
+
+  /** Render one mark and report its line's stroke-width and the grab rect's
+   *  extent across the line (height for a baseline, width for a marker). */
+  const draw = (child: ReactNode, t: ChartTheme = theme) => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={t}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const line = container.querySelector('svg line');
+    const hit = container.querySelector('svg rect[fill="transparent"]');
+    const out = {
+      width: line?.getAttribute('stroke-width'),
+      hitH: Number(hit?.getAttribute('height')),
+      hitW: Number(hit?.getAttribute('width')),
+    };
+    unmount();
+    return out;
+  };
+
+  it('defaults to 1px when neither prop, role nor register sets it', () => {
+    expect(draw(<Baseline value={50} label={false} />).width).toBe('1');
+    expect(draw(<Marker at={2} label={false} />).width).toBe('1');
+  });
+
+  it('the lineWidth prop sets the stroke-width', () => {
+    expect(draw(<Baseline value={50} label={false} lineWidth={3} />).width) //
+      .toBe('3');
+    expect(draw(<Marker at={2} label={false} lineWidth={3} />).width) //
+      .toBe('3');
+  });
+
+  it('a role sets it, and the prop wins over the role', () => {
+    expect(draw(<Baseline value={50} label={false} role="thick" />).width) //
+      .toBe('4');
+    expect(
+      draw(<Baseline value={50} label={false} role="thick" lineWidth={2} />)
+        .width,
+    ).toBe('2');
+    expect(draw(<Marker at={2} label={false} role="thick" />).width).toBe('4');
+  });
+
+  it('a role wins over the register lineWidth', () => {
+    const base: ChartTheme = {
+      ...theme,
+      annotation: { ...theme.annotation!, lineWidth: 2 },
+    };
+    expect(draw(<Baseline value={50} label={false} />, base).width).toBe('2');
+    expect(
+      draw(<Baseline value={50} label={false} role="thick" />, base).width,
+    ).toBe('4');
+  });
+
+  it('keeps the grab area at least as wide as the drawn line', () => {
+    // The 5px-each-side pad covers thin lines; a thicker line widens it.
+    expect(draw(<Baseline value={50} label={false} />).hitH).toBe(10);
+    expect(draw(<Baseline value={50} label={false} lineWidth={3} />).hitH) //
+      .toBe(10);
+    expect(draw(<Baseline value={50} label={false} lineWidth={16} />).hitH) //
+      .toBe(16);
+    expect(draw(<Marker at={2} label={false} lineWidth={16} />).hitW).toBe(16);
+  });
+});

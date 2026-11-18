@@ -241,11 +241,18 @@ export interface ChartTheme {
      */
     readonly dash?: readonly number[];
     /**
+     * Optional stroke width (px) for a `<Baseline>`'s / `<Marker>`'s line.
+     * **Omitted ⇒ 1.** Set it per {@link roles | role} to thicken one kind of
+     * reference line only; a mark's own `lineWidth` prop wins over both. Region
+     * edges, zone boundaries and the cross-row guides stay 1 px.
+     */
+    readonly lineWidth?: number;
+    /**
      * **Optional per-role overrides** — a small map from a role name to any of
-     * `color` / `fillOpacity` / `dash` / `depth`, so distinct marks can be
-     * styled at once without splitting the whole register: a `<Baseline
-     * role="atm">` green, a `<Marker role="ref">` in another hue, a `<Zone
-     * role="good">` per band of a value-axis scale. A mark's `role` resolves
+     * `color` / `fillOpacity` / `dash` / `lineWidth` / `depth`, so distinct
+     * marks can be styled at once without splitting the whole register: a
+     * `<Baseline role="atm">` green, a `<Marker role="ref">` in another hue, a
+     * `<Zone role="good">` per band of a value-axis scale. A mark's `role` resolves
      * each field as `roles[role].field ?? annotation.field` (an unknown/unset
      * role is the base register). Colour stays a **theme** concern — there is
      * no per-mark colour prop (the one-styling-channel discipline), which is
@@ -272,6 +279,7 @@ export interface ChartTheme {
         readonly color?: string;
         readonly fillOpacity?: number;
         readonly dash?: readonly number[];
+        readonly lineWidth?: number;
         readonly depth?: readonly [number, number, number];
       };
     };

@@ -25,6 +25,7 @@ const cases: Array<[string, Record<string, unknown>, string[]]> = [
       'IndicatorOnly',
       'IndicatorWithLabel',
       'Inert',
+      'LineWidth',
       'Multiple',
       'NoLabel',
       'RoleArgument',

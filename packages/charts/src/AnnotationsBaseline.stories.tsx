@@ -13,7 +13,7 @@ import { LineCursor } from './cursors.js';
  * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
  * register. These stories fan out its props one axis at a time: **label**
  * (auto / custom / off), the **indicator** axis-pill opt-in, **selection /
- * depth**, and **dual-axis** binding. Interaction demos (drag-to-edit, create)
+ * depth**, **line width**, and **dual-axis** binding. Interaction demos (drag-to-edit, create)
  * live under **Annotations/Scenarios**.
  */
 const W = 560;
@@ -141,6 +141,18 @@ export const Inert: Story = {
   render: () => (
     <Chart>
       <Baseline value={200} axis="usd" label="context" selectable={false} />
+    </Chart>
+  ),
+};
+
+/** **Line width** — `lineWidth` sets the stroke in px: the default 1px line
+ *  (`200`) against a 3px one (`180`). A theme role can set the same field
+ *  (`annotation.roles[role].lineWidth`); the prop wins over it. */
+export const LineWidth: Story = {
+  render: () => (
+    <Chart>
+      <Baseline value={200} axis="usd" label="1px" />
+      <Baseline value={180} axis="usd" label="3px" lineWidth={3} />
     </Chart>
   ),
 };
