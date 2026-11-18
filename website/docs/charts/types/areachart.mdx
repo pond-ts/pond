@@ -55,6 +55,11 @@ the same `ChartSeries` a `LineChart` uses.
   shade at the role's `fillOpacity`. Solid is what stacked areas want, since a
   fade lets every band below show through the one above it.
 
+  The shade's colour is the role's `fill`, separate from the line's `color`,
+  so a black line over a grey fill is just `{ color: '#1a1a1a', fill:
+'#d6d3ce', fillOpacity: 1 }`. Raise `fillOpacity` to 1 for a fully opaque
+  shade.
+
   ```tsx
   const theme = {
     ...defaultTheme,
@@ -110,8 +115,6 @@ the same `ChartSeries` a `LineChart` uses.
   both; `'dashed'` / `'step'` / `'fade'` keep the **fill** broken and only
   connect the **outline** (`'fade'` drops the outline to this area's baseline).
   See [Missing data & gaps](../gaps.mdx).
-- **`fill` must be CSS hex** (`#rgb` / `#rrggbb`) so the transparent gradient
-  stop can be derived — a non-hex fill falls back to flat.
 
 ## See also
 
