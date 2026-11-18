@@ -74,6 +74,11 @@ register, and an unknown or unset `role` is the base register. Colour stays a
 **theme** concern (there is no per-mark colour prop): the theme owns the
 palette, the mark just names a role.
 
+The base register can be partial too. A theme can set only `roles` (as above)
+or only `depth`; every field it leaves out comes from pond's exported
+`defaultAnnotation`. See
+[the annotation register](../theming.mdx#the-annotation-register-set-only-what-you-change).
+
 This is also how a **scale** is styled: a [`Zone`](./zone.mdx) set names one
 role per band (`good`, `moderate`, …) and the theme holds the whole palette in
 one place, rather than six colours spread across call sites.

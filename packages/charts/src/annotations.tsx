@@ -15,7 +15,7 @@ import {
   type ContainerFrame,
   type LabelPlacement,
 } from './context.js';
-import type { ChartTheme } from './theme.js';
+import { resolveAnnotation, type ChartTheme } from './theme.js';
 import {
   FLAG_LINE_HEIGHT,
   flagChipStyle,
@@ -60,13 +60,6 @@ import { useSlotKey } from './use-slot-key.js';
  * ({@link ContainerFrame.annotations}), which draws each mark's **guide** across the
  * other rows and lets a drag **snap** to other marks' x-positions.
  */
-
-/** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
-const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
-  color: '#14b8a6',
-  fillOpacity: 0.1,
-  depth: [1, 0.7, 0.4],
-};
 
 /** Handle-pill geometry (px) — long axis vs short axis. */
 const HANDLE_LONG = 18;
@@ -154,7 +147,9 @@ function useAnnotationFrame(name: string, role?: string) {
   if (row === null) {
     throw new Error(`<${name}> must be rendered inside a <ChartRow>`);
   }
-  const base = container.theme.annotation ?? DEFAULT_ANNOTATION;
+  // The theme's register over pond's default — a partial `annotation` (only
+  // `roles`, say) fills the rest from `defaultAnnotation`.
+  const base = resolveAnnotation(container.theme.annotation);
   const roleStyle = role !== undefined ? base.roles?.[role] : undefined;
   // Each field the role sets wins; the rest is the base register. The level
   // logic (selected / hover / edit / resting) is shared — a role's `depth` only
