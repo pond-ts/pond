@@ -44,6 +44,54 @@ describe('TimeSeries.fromColumns', () => {
     expect(ts.at(2)?.data().close).toBe(3.5);
   });
 
+  it('[PND-COLSREQ] marks a required column with gaps optional, so toJSON → fromJSON reloads', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'a', kind: 'number' },
+      { name: 'b', kind: 'number' },
+      { name: 'host', kind: 'string' },
+      { name: 'site', kind: 'string' },
+    ] as const;
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema,
+      columns: {
+        time: [0, 1000, 2000],
+        a: [1, null, 3],
+        b: Float64Array.from([1, 2, 3]),
+        host: ['x', null, 'z'],
+        site: ['p', 'q', 'r'],
+      },
+    });
+    expect(ts.schema.map((c) => c.required)).toEqual([
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+    ]);
+    // The caller's schema is not touched.
+    expect(schema[1]).toEqual({ name: 'a', kind: 'number' });
+    const back = TimeSeries.fromJSON(ts.toJSON());
+    expect(back.toRows()).toEqual(ts.toRows());
+  });
+
+  it('[PND-COLSREQ] holds on the sorted path and for a NaN in a Float64Array', () => {
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: Float64Array.from([2000, 1000]),
+        open: Float64Array.from([NaN, 10]),
+        close: [1, 2],
+      },
+      ordering: 'reorder',
+    });
+    expect(ts.schema[1]!.required).toBe(false);
+    expect(ts.schema[2]!.required).toBe(false); // declared so, kept
+    expect([0, 1].map((i) => ts.column('open').at(i))).toEqual([10, undefined]);
+  });
+
   it('matches the row-tuple constructor for the same data', () => {
     const cols = TimeSeries.fromColumns({
       name: 't',

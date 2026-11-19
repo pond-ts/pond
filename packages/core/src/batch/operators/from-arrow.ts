@@ -95,6 +95,13 @@ export interface ArrowFieldLike {
    * which carries far more — satisfy the shape.
    */
   readonly type: ArrowTypeLike;
+  /**
+   * Whether the field may hold nulls. A value column read from a field that
+   * says `true` is optional (`required: false`); otherwise it is required
+   * unless it holds a gap ([PND-ARROWREQ]). Optional, so a bare structural
+   * stand-in without it satisfies the shape.
+   */
+  readonly nullable?: boolean | null;
 }
 
 /** Structural view of an Arrow `Schema`. */
@@ -688,6 +695,7 @@ export function arrowToColumns(
   const schema: Array<{
     name: string;
     kind: 'time' | 'timeRange' | 'interval' | 'number' | 'string';
+    required?: false;
   }> = [{ name: timeName, kind: keyKind }];
   readValueColumns({
     table,
@@ -737,6 +745,7 @@ function readValueColumns(input: {
   schema: Array<{
     name: string;
     kind: 'time' | 'timeRange' | 'interval' | 'value' | 'number' | 'string';
+    required?: false;
   }>;
 }): void {
   const { table, fields, valueNames, keyNames, keyNoun, allowAdopt } = input;
@@ -753,19 +762,22 @@ function readValueColumns(input: {
         `fromArrow: column '${name}' not found in the table`,
       );
     }
+    const field = fields.find((f) => f.name === name);
     // Refuse a type the shape reader below would misread rather than reject.
-    assertReadableArrowType(
-      fields.find((f) => f.name === name)?.type,
-      name,
-      'value',
-    );
+    assertReadableArrowType(field?.type, name, 'value');
     // Sorting permutes rows into fresh buffers, so there would be nothing
     // left to adopt — decide it here, once, rather than handing the ingest
     // engine a column it would have to take apart again.
     const result = readColumn(vector, name, allowAdopt);
     if ('column' in result) input.adopted.set(name, result.column);
     else input.columns[name] = result.values;
-    input.schema.push({ name, kind: result.kind });
+    // A nullable field is optional; any other column is made optional
+    // after ingest only if it holds a gap (`optionalWhereGaps`).
+    input.schema.push(
+      field?.nullable === true
+        ? { name, kind: result.kind, required: false }
+        : { name, kind: result.kind },
+    );
   }
 }
 
@@ -920,9 +932,11 @@ export function arrowToValueColumns(
     [axisName]: readAxisColumn(axisVector, axisName),
   };
   const adopted = new Map<string, ColumnarColumn>();
-  const schema: Array<{ name: string; kind: 'value' | 'number' | 'string' }> = [
-    { name: axisName, kind: 'value' },
-  ];
+  const schema: Array<{
+    name: string;
+    kind: 'value' | 'number' | 'string';
+    required?: false;
+  }> = [{ name: axisName, kind: 'value' }];
   readValueColumns({
     table,
     fields,

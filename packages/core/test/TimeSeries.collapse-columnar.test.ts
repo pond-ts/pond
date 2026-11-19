@@ -128,6 +128,57 @@ describe('column-native collapse()', () => {
     );
   });
 
+  describe('[PND-COLLAPSEREQ] the output is required only when it has no gaps', () => {
+    const pair = () =>
+      new TimeSeries({
+        name: 'p',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'a', kind: 'number' },
+          { name: 'b', kind: 'number' },
+        ] as const,
+        rows: [
+          [0, 1, 2],
+          [1000, 0, 0],
+        ],
+      });
+
+    it('a non-finite result (0 / 0) makes it optional, so toJSON → fromJSON reloads', () => {
+      const c = pair().collapse(['a', 'b'], 'ratio', ({ a, b }) => a / b);
+      expect(c.schema[1]).toEqual({
+        name: 'ratio',
+        kind: 'number',
+        required: false,
+      });
+      const back = TimeSeries.fromJSON(c.toJSON());
+      expect(back.toRows()).toEqual(c.toRows());
+    });
+
+    it('an undefined result makes a text output optional too', () => {
+      const c = pair().collapse(['a'], 'label', ({ a }) =>
+        a === 0 ? (undefined as unknown as string) : 'one',
+      );
+      expect(c.schema[2]).toEqual({
+        name: 'label',
+        kind: 'string',
+        required: false,
+      });
+      expect(TimeSeries.fromJSON(c.toJSON()).length).toBe(2);
+    });
+
+    it('an output without gaps stays required', () => {
+      const c = pair().collapse(['a', 'b'], 'sum', ({ a, b }) => a + b, {
+        append: true,
+      });
+      expect(c.schema.map((d) => d.required)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    });
+  });
+
   it('passes a missing keyed cell to the reducer as undefined', () => {
     const s = new TimeSeries({
       name: 'gappy',
