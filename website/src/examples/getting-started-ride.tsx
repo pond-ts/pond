@@ -47,7 +47,9 @@ const traces = rideSeries.withColumn('pedalling', pedalling).withColumn(
 // Samples are 1 Hz, so counting rows in a watt band *is* seconds in that band.
 const bins = rideSeries
   .byColumn('watts', { width: 25 }, { secs: { from: 'watts', using: 'count' } })
-  .map((b) => ({ ...b, minutes: b.secs / 60 }));
+  // `count` is never undefined at runtime (an empty bin counts 0), but the
+  // reducer result type is `number | undefined`.
+  .map((b) => ({ ...b, minutes: (b.secs ?? 0) / 60 }));
 
 // The 0–25 W bucket is half an hour of coasting — three times any other bar.
 // Cap the axis at the tallest *pedalling* bar so it doesn't flatten the part of
