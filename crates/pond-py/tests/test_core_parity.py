@@ -883,15 +883,6 @@ def test_core_case(case):
         assert case.get("expected") is not None
         assert isinstance(actual, Exception), "pond_rs should refuse"
         return
-    if case["op"] == "collapse" and case.get("expected") is not None:
-        # [PND-COLLAPSEREQ]: pond-ts marks collapse's output required even
-        # with gaps; pond-rs marks it optional then.
-        case = json.loads(json.dumps(case))
-        exp = case["expected"]
-        at = next(i for i, c in enumerate(exp["schema"]) if c["name"] == case["args"][1])
-        if any(r[at] is None for r in exp["rows"]):
-            assert "required" not in exp["schema"][at], "pond-ts fixed [PND-COLLAPSEREQ]"
-            exp["schema"][at]["required"] = False
     why = check(case, actual)
     assert why is None, why
 

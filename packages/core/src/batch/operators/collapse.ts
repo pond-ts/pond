@@ -9,6 +9,7 @@ import {
   withColumnsSelected,
 } from '../../columnar/index.js';
 import type { ScalarValue, SeriesSchema } from '../../schema/index.js';
+import { optionalWhereGaps } from './ingest-columns.js';
 
 /** The reducer's row input — the keyed columns' values for one row. */
 export type CollapseReducer = (values: Record<string, unknown>) => ScalarValue;
@@ -50,6 +51,8 @@ function buildScalarColumn(
  *   (or an empty series) yields a `string` output column. Until
  *   [PND-COLLAPSEKIND] the first row alone decided, so an `undefined`
  *   there made the column text and every later number was lost;
+ * - the output column is required unless it holds a gap (an `undefined`
+ *   or non-finite result), when it is marked `required: false`;
  * - **`append: false`** (default) drops the keyed columns and appends
  *   `output`; **`append: true`** keeps every value column and appends
  *   `output`.
@@ -133,11 +136,17 @@ export function collapseOp<
   );
   const result = withColumnAppended(selected, output, outColumn);
 
-  const outSchema = Object.freeze([
-    schema[0],
-    ...keptDefs,
-    { name: output, kind: outKind },
-  ]) as unknown as OutSchema;
+  // The output is required only when it has no gaps: a non-finite number
+  // or an `undefined` result is a gap, and a required column holding one
+  // would make `fromJSON` refuse the series' own `toJSON` ([PND-COLLAPSEREQ]).
+  // Run time only; `OutSchema` is unchanged.
+  const outSchema = Object.freeze(
+    optionalWhereGaps(
+      [schema[0]!, ...keptDefs, { name: output, kind: outKind }],
+      result,
+      new Set([output]),
+    ),
+  ) as unknown as OutSchema;
 
   return {
     store: result as unknown as ColumnarStore<OutSchema>,

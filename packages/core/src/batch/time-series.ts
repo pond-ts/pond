@@ -6239,7 +6239,13 @@ export class TimeSeries<S extends SeriesSchema> {
     return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
   }
 
-  /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */
+  /**
+   * Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series.
+   * The output column is required unless a result is a gap (`undefined`, or a
+   * non-finite number such as `0 / 0`); then the runtime schema marks it
+   * `required: false`, so the series reloads through its own `fromJSON`. The
+   * TypeScript type is unchanged.
+   */
   collapse<
     const Keys extends readonly (keyof EventDataForSchema<S>)[],
     Name extends string,
