@@ -293,12 +293,6 @@ function check(c, got) {
 }
 
 function adjust(c) {
-  // [PND-MAPREQ]: pond-rs marks a mapped column that gained a gap optional.
-  if (c.id === 'mapColumns-overflow' || c.id === 'mapColumns-expr-overflow') {
-    const expected = structuredClone(c.expected);
-    expected.schema[1].required = false;
-    return { ...c, expected };
-  }
   // [PND-COLLAPSEREQ]: pond-rs marks a collapse output with gaps optional.
   if (c.op !== 'collapse' || !c.expected) return c;
   const expected = structuredClone(c.expected);
