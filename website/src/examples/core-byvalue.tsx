@@ -135,7 +135,6 @@ export default function CoreByValue() {
   }, [playing]);
 
   const chart = (isTime: boolean) => {
-    const top = isTime ? run : runByDist;
     const range: readonly [number, number] | ReturnType<typeof run.timeRange> =
       isTime ? run.timeRange() : [0, distMax];
     // Pace is plotted reflected (faster up), so its absolute tick numbers would
@@ -154,8 +153,38 @@ export default function CoreByValue() {
             format={blank}
           />
           <Layers>
-            <AreaChart series={top} column="ele" axis="ele" baseline="floor" />
-            <LineChart series={top} column="pace" axis="pace" as="secondary" />
+            {/* One element per axis kind: `run` and `runByDist` are different
+                series types, so each chart gets the one it is keyed on. */}
+            {isTime ? (
+              <AreaChart
+                series={run}
+                column="ele"
+                axis="ele"
+                baseline="floor"
+              />
+            ) : (
+              <AreaChart
+                series={runByDist}
+                column="ele"
+                axis="ele"
+                baseline="floor"
+              />
+            )}
+            {isTime ? (
+              <LineChart
+                series={run}
+                column="pace"
+                axis="pace"
+                as="secondary"
+              />
+            ) : (
+              <LineChart
+                series={runByDist}
+                column="pace"
+                axis="pace"
+                as="secondary"
+              />
+            )}
           </Layers>
         </ChartRow>
         <ChartRow height={80}>
