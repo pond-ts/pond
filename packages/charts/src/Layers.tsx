@@ -27,6 +27,7 @@ import {
 } from './brush.js';
 import { resolveSelection } from './select.js';
 import { isDev } from './dev.js';
+import { resolveAnnotation } from './theme.js';
 import { useIndexedChildren } from './child-index.js';
 import {
   panRange,
@@ -1928,7 +1929,7 @@ export function Layers({ children }: LayersProps) {
     .filter((a) => a.rowKey !== row.rowKey)
     .flatMap((a) => a.xs)
     .map((xv) => xScale(xv));
-  const guideColor = container.theme.annotation?.color ?? gridColor;
+  const guideColor = resolveAnnotation(container.theme.annotation).color;
 
   // Create preview: while a tool is armed, the hovered row (the one with
   // `createPt`) shows a cursor-style line tracking the pointer — vertical for

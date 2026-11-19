@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -8,21 +8,30 @@ import { YAxis } from './YAxis.js';
 import { Baseline } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
 import { LineCursor } from './cursors.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 
 /**
  * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
  * register. These stories fan out its props one axis at a time: **label**
  * (auto / custom / off), the **indicator** axis-pill opt-in, **selection /
- * depth**, and **dual-axis** binding. Interaction demos (drag-to-edit, create)
- * live under **Annotations/Scenarios**.
+ * depth**, **line width**, **dual-axis** binding, and a level **panned off**
+ * the y range. Interaction demos (drag-to-edit, create) live under
+ * **Annotations/Scenarios**.
  */
 const W = 560;
 const H = 220;
 
-/** One price row with a right-hand USD axis; children are the annotation(s). */
-function Chart({ children }: { children: ReactNode }) {
+/** One price row with a right-hand USD axis; children are the annotation(s).
+ *  `theme` is for the stories whose subject is a theme role. */
+function Chart({
+  children,
+  theme,
+}: {
+  children: ReactNode;
+  theme?: ChartTheme;
+}) {
   return (
-    <ChartContainer range={RANGE} width={W}>
+    <ChartContainer range={RANGE} width={W} {...(theme ? { theme } : {})}>
       <LineCursor />
       <ChartRow height={H}>
         <Layers>
@@ -145,6 +154,70 @@ export const Inert: Story = {
   ),
 };
 
+/** **Inert, strong** — an inert line rests at the role's level-3 alpha, so
+ *  `role="argument"` (shipped in the built-in themes, ramp `[1, 0.95, 0.85]`)
+ *  draws one reference line at 0.85 while the plain inert line beside it, and
+ *  every other mark, keeps the register's 0.4. No `depth` change needed. */
+export const InertStrong: Story = {
+  render: () => (
+    <Chart>
+      <Baseline
+        value={200}
+        axis="usd"
+        label="argument"
+        role="argument"
+        selectable={false}
+      />
+      <Baseline value={180} axis="usd" label="plain" selectable={false} />
+    </Chart>
+  ),
+};
+
+/** A theme that adds one `reference` role with its own near-full ramp; the
+ *  register's `[1, 0.7, 0.4]` is untouched. */
+const referenceTheme: ChartTheme = {
+  ...defaultTheme,
+  annotation: {
+    ...defaultTheme.annotation!,
+    roles: {
+      ...defaultTheme.annotation!.roles,
+      reference: { depth: [1, 0.85, 0.8] },
+    },
+  },
+};
+
+/** **Inert, custom role** — the same idea with a host's own role
+ *  (`reference: { depth: [1, 0.85, 0.8] }`): the inert `reference` line draws
+ *  at 0.8, the plain inert line and the selectable one stay on the base ramp.
+ *  Themed on purpose — the role lives in the theme. */
+export const InertCustomRole: Story = {
+  render: () => (
+    <Chart theme={referenceTheme}>
+      <Baseline
+        value={200}
+        axis="usd"
+        label="reference"
+        role="reference"
+        selectable={false}
+      />
+      <Baseline value={180} axis="usd" label="plain" selectable={false} />
+      <Baseline value={160} axis="usd" label="selectable" />
+    </Chart>
+  ),
+};
+
+/** **Line width** — `lineWidth` sets the stroke in px: the default 1px line
+ *  (`200`) against a 3px one (`180`). A theme role can set the same field
+ *  (`annotation.roles[role].lineWidth`); the prop wins over it. */
+export const LineWidth: Story = {
+  render: () => (
+    <Chart>
+      <Baseline value={200} axis="usd" label="1px" />
+      <Baseline value={180} axis="usd" label="3px" lineWidth={3} />
+    </Chart>
+  ),
+};
+
 /** **Multiple** — several baselines (a band of levels) on one axis. */
 export const Multiple: Story = {
   render: () => (
@@ -176,9 +249,11 @@ export const DualAxis: Story = {
   ),
 };
 
-/** **Domain extreme** — a baseline `value` at (past) the axis's `max`: the
- *  `indicator` pill (showing the value) clamps inside the row (like the y-tick
- *  labels), instead of overflowing above the plot. */
+/** **Domain extreme** — a baseline `value` at the axis's `max`: the line sits
+ *  on the top edge, and the `indicator` pill (showing the value) and the label
+ *  chip clamp inside the row (like the y-tick labels), instead of overflowing
+ *  above the plot. Past the `max` the line and label are hidden, but the pill
+ *  stays pinned at the edge (see {@link PannedOff}). */
 export const DomainExtreme: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -192,4 +267,43 @@ export const DomainExtreme: Story = {
       </ChartRow>
     </ChartContainer>
   ),
+};
+
+/** A 40-unit y window the slider pans across the price range. */
+function PannedOffDemo() {
+  const [min, setMin] = useState(170);
+  return (
+    <div>
+      <ChartContainer range={RANGE} width={W}>
+        <LineCursor />
+        <ChartRow height={H}>
+          <Layers>
+            <LineChart series={priceSeries()} column="price" axis="usd" />
+            <Baseline value={205} axis="usd" label="resistance" />
+            <Baseline value={165} axis="usd" label="support" />
+          </Layers>
+          <YAxis id="usd" side="right" min={min} max={min + 40} format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+      <label style={{ display: 'block', font: '12px sans-serif' }}>
+        y window {min}–{min + 40}{' '}
+        <input
+          type="range"
+          min={140}
+          max={190}
+          value={min}
+          onChange={(e) => setMin(Number(e.target.value))}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** **Panned off** — slide the y window: a baseline whose level leaves the
+ *  visible range draws neither its line nor its label (no chip floating
+ *  outside the row), and both come back when the level returns. At the
+ *  start `support` (165) is below the window and hidden. A label near an edge
+ *  stops at the edge rather than riding out of the row. */
+export const PannedOff: Story = {
+  render: () => <PannedOffDemo />,
 };

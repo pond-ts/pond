@@ -24,11 +24,7 @@ import {
 } from 'react';
 import type { SelectModifiers } from './context.js';
 import type { ListCellSpec, ListRow } from './list.js';
-import type { ChartTheme } from './theme.js';
-
-/** The turquoise the selected-row edge falls back to when the theme has no
- *  annotation register — the same built-in the annotation layer uses. */
-const FALLBACK_ACCENT = '#0d9488';
+import { resolveAnnotation, type ChartTheme } from './theme.js';
 
 /**
  * Stable identity for "nothing hovered" — the same module-constant trick
@@ -444,7 +440,7 @@ export function ListTable<R extends ListRow>({
   };
 
   const ink = listInk(theme);
-  const accent = theme.annotation?.color ?? FALLBACK_ACCENT;
+  const accent = resolveAnnotation(theme.annotation).color;
   // The row-chart register. Absent ⇒ the pre-token look exactly: a hover band
   // borrowed from `legend.border`, a selection rail from the annotation
   // register, and no dimmed state — so a hand-built theme's rows do not

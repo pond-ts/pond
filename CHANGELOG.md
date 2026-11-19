@@ -89,8 +89,32 @@ include new features and type-level changes; patch bumps are strictly additive.
   (`None` for the list reducers and for an out-of-range percentile), so
   code outside the crate can bin a column the way `aggregate` does. The
   Rust port of `@pond-ts/process` uses it for `shape`.
+- **`@pond-ts/charts`: `<Baseline lineWidth>` and `<Marker lineWidth>`**
+  ([PND-BASELINEWIDTH]) — the line's stroke width in px (default 1; both used
+  to be fixed at 1px). The theme can set it too, as `annotation.lineWidth` or
+  per role as `annotation.roles[role].lineWidth`; the prop wins over the role
+  and the role over the register. The invisible grab area widens to cover a
+  line thicker than its 10px. Region edges, zone boundaries and the cross-row
+  guides stay 1px.
+- **`@pond-ts/charts`: `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]) —
+  pond's default annotation register (`color` `#14b8a6`, `fillOpacity` 0.1,
+  `depth` `[1, 0.7, 0.4]`) is now exported. The marks, the cross-row guides,
+  the `<Marker indicator>` x-axis pills and the list's selected-row edge all
+  fall back to this one object, so a host no longer copies it into its theme.
 
 ### Changed
+
+- **`@pond-ts/charts`: a partial `theme.annotation` fills from
+  `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]). `color`, `fillOpacity`
+  and `depth` are now optional: a theme can set only `roles`, or only
+  `depth`, and every field it leaves out comes from `defaultAnnotation`
+  (no `annotation` at all is the same as `{}`). Type note: code that _reads_
+  `theme.annotation.color` (or `fillOpacity` / `depth`) now gets
+  `T | undefined`; write `theme.annotation?.color ?? defaultAnnotation.color`.
+  Two fallbacks change for a theme with no annotation colour: cross-row
+  guides used the grid colour and now use the register colour, and the
+  x-axis marker pill and list selected-row edge used a different turquoise
+  (`#0d9488`) and now use `defaultAnnotation.color`.
 
 - **`@pond-ts/process`: `shape` ends at the newest row.** It used to take
   every Nth row from row 0, so the line usually stopped short of the latest
@@ -279,6 +303,12 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
 
 ### Fixed
 
+- **`@pond-ts/charts`: `<Baseline>` hides off the y-range**
+  ([PND-BASELINELABELCULL]). When the axis is panned or zoomed so the
+  baseline's value is outside the row's visible y-range, its line and label
+  are no longer drawn; the label used to print outside its row. A level near
+  the edge keeps its label chip inside the row instead of letting it ride the
+  line out. An opt-in `indicator` pill still stays pinned at the nearest edge.
 - **`editRecording` (and `Activity.edit`): a cropped open water swim keeps
   its moving time by speed.** A crop took every swim's moving time from its
   kept laps, but a swim that moves by speed (open water, or a swim with GPS

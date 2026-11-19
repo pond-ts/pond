@@ -298,13 +298,13 @@ schema columns). Because the union splits per series _kind_, a value typed as
 
 ### Components — annotations & indicators
 
-| Component        | Key props                                             | Purpose                                                                                                                | Source                                |
-| ---------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `Region`         | `from`, `to`, `label?`, `id?`, `onChange?`            | Shaded x-span; draggable when `onChange` given                                                                         | `packages/charts/src/annotations.tsx` |
-| `Baseline`       | `value`, `axis?`, `label?`, `indicator?`, `onChange?` | Horizontal value line                                                                                                  | `packages/charts/src/annotations.tsx` |
-| `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                                                                                        | `packages/charts/src/annotations.tsx` |
-| `Zone`           | `from`, `to`, `axis?`, `role?`, `label?`, `edges?`    | Shaded y-span — a value-axis scale (AQI categories, HR zones); inert + edge-less by default, `±Infinity` for open ends | `packages/charts/src/annotations.tsx` |
-| `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge                                                                                | `packages/charts/src/indicators.tsx`  |
+| Component        | Key props                                                           | Purpose                                                                                                                | Source                                |
+| ---------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `Region`         | `from`, `to`, `label?`, `id?`, `onChange?`                          | Shaded x-span; draggable when `onChange` given                                                                         | `packages/charts/src/annotations.tsx` |
+| `Baseline`       | `value`, `axis?`, `label?`, `indicator?`, `lineWidth?`, `onChange?` | Horizontal value line                                                                                                  | `packages/charts/src/annotations.tsx` |
+| `Marker`         | `at`, `label?`, `indicator?`, `lineWidth?`, `onChange?`             | Vertical x line                                                                                                        | `packages/charts/src/annotations.tsx` |
+| `Zone`           | `from`, `to`, `axis?`, `role?`, `label?`, `edges?`                  | Shaded y-span — a value-axis scale (AQI categories, HR zones); inert + edge-less by default, `±Infinity` for open ends | `packages/charts/src/annotations.tsx` |
+| `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`                           | Live value pill pinned to a y-axis edge                                                                                | `packages/charts/src/indicators.tsx`  |
 
 ### Components — cursors (mounted presets)
 
@@ -383,6 +383,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | ------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `ChartTheme`                   | The one styling channel: role-keyed slots per draw layer + fixed chrome slots                | `packages/charts/src/theme.ts`                         |
 | `defaultTheme` / `estelaTheme` | Built-in themes (neutral light / dark estela palette)                                        | `packages/charts/src/theme.ts`                         |
+| `defaultAnnotation`            | Pond's default annotation register — a partial `annotation` fills its gaps from it           | `packages/charts/src/theme.ts`                         |
 | `cssVarTheme`                  | `(base, resolve, opts?) → ChartTheme` — static CSS-custom-property overlay                   | `packages/charts/src/css-theme.ts`                     |
 | `useChartTheme`                | Hook: re-resolves on `data-theme`/`class` flips (MutationObserver)                           | `packages/charts/src/useChartTheme.ts`                 |
 | Style types                    | `LineStyle`, `AreaStyle`, `BandStyle`, `ScatterStyle`, `BarStyle`, `BoxStyle`, `CandleStyle` | `packages/charts/src/theme.ts`                         |

@@ -18,7 +18,7 @@
  * above were ΔE 4–5; every pairing below clears 25+.
  */
 import { describe, expect, it } from 'vitest';
-import { defaultTheme } from '../src/theme.js';
+import { defaultTheme, resolveAnnotation } from '../src/theme.js';
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -74,7 +74,7 @@ const dataHues: ReadonlyArray<readonly [string, string]> = [
 
 describe('defaultTheme colour collisions', () => {
   it('annotation register clears every data hue (a placed mark never reads as data)', () => {
-    const register = defaultTheme.annotation!.color;
+    const register = resolveAnnotation(defaultTheme.annotation).color;
     for (const [name, hue] of dataHues) {
       const d = deltaE(register, hue);
       expect(

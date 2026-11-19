@@ -2,18 +2,43 @@ import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import type { StoryObj } from '@storybook/react-vite';
+import * as baseline from '../src/AnnotationsBaseline.stories.js';
 import * as marker from '../src/AnnotationsMarker.stories.js';
 import * as region from '../src/AnnotationsRegion.stories.js';
 
 afterEach(cleanup);
 
 /**
- * Render smoke test for the `<Marker>` and `<Region>` stories, with the list
- * pinned so a knob that loses its dedicated story fails here rather than
- * quietly thinning coverage. The `Role*` entries are the [PND-ANNROLE] fan-out:
- * one story per shipped role, since a role nobody can see is one nobody adopts.
+ * Render smoke test for the `<Baseline>`, `<Marker>` and `<Region>` stories,
+ * with the list pinned so a knob that loses its dedicated story fails here
+ * rather than quietly thinning coverage. The `Role*` entries are the
+ * [PND-ANNROLE] fan-out: one story per shipped role, since a role nobody can
+ * see is one nobody adopts.
  */
 const cases: Array<[string, Record<string, unknown>, string[]]> = [
+  [
+    'Baseline',
+    baseline,
+    [
+      'CustomLabel',
+      'Default',
+      'DomainExtreme',
+      'DualAxis',
+      'Indicator',
+      'IndicatorOnly',
+      'IndicatorWithLabel',
+      'Inert',
+      'InertCustomRole',
+      'InertStrong',
+      'LabelAbove',
+      'LabelRight',
+      'LineWidth',
+      'Multiple',
+      'NoLabel',
+      'PannedOff',
+      'Selected',
+    ],
+  ],
   [
     'Marker',
     marker,
@@ -25,6 +50,7 @@ const cases: Array<[string, Record<string, unknown>, string[]]> = [
       'IndicatorOnly',
       'IndicatorWithLabel',
       'Inert',
+      'LineWidth',
       'Multiple',
       'NoLabel',
       'RoleArgument',

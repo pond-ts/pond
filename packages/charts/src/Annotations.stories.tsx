@@ -837,9 +837,7 @@ export const Roles: Story = {
     const theme = {
       ...defaultTheme,
       annotation: {
-        color: defaultTheme.annotation?.color ?? '#b45309',
-        fillOpacity: defaultTheme.annotation?.fillOpacity ?? 0.1,
-        depth: defaultTheme.annotation?.depth ?? ([1, 0.7, 0.4] as const),
+        ...defaultTheme.annotation,
         roles: {
           atm: { color: '#16a34a' }, // green
           ref: { color: '#7c3aed' }, // violet
