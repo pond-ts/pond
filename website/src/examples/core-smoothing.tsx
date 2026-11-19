@@ -155,7 +155,7 @@ export default function CoreSmoothing() {
     // follows local curvature through them.
     const w = Math.round(lerp(4, 48, s));
     const alpha = 2 / (w + 1);
-    const window = `${w}d`;
+    const window = `${w}d` as const;
     const span = Math.min(1, Math.max(0.02, w / SUNSPOTS.length));
     return source
       .smooth('value', 'ema', { alpha, output: 'ema' })

@@ -274,6 +274,13 @@ jobs:
         working-directory: website
         run: npm ci
 
+      - name: Typecheck website
+        # Must come after the website `npm ci`: without website/node_modules
+        # tsc can't find @docusaurus/tsconfig, loses `noEmit`, and writes .js
+        # files next to the sources.
+        working-directory: website
+        run: npm run typecheck
+
       - name: Check the fit guide examples
         # Runs every TypeScript example on the @pond-ts/fit pages and checks
         # it prints what the page shows. The Python examples need a pond_rs
