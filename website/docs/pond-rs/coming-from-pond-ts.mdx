@@ -201,11 +201,8 @@ bug is logged in `PLAN.md` to fix there.
 
 ## Small differences
 
-- **`collapse`'s output is optional when it has gaps.** pond-ts marks it
-  required even then, so its own `fromJSON` refuses the result (logged
-  as a pond-ts issue, [PND-COLLAPSEREQ]). Decimal groups in
-  `pivot_by_group`, which pond-ts has no kind for, are named in full
-  (`1.50_cpu`).
+- **Decimal groups in `pivot_by_group`**, which pond-ts has no kind for,
+  are named in full (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
   (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom

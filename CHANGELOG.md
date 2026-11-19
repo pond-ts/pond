@@ -344,6 +344,13 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   round trip threw. Such a column is now `required: false` in the series'
   schema; gaps are still accepted, not refused. As pond-rs. Run time only:
   the schema's TypeScript type is unchanged.
+- **`collapse`: the output column is required only when it has no gaps**
+  ([PND-COLLAPSEREQ]). A non-finite result (`0 / 0`) or a reducer returning
+  `undefined` left gaps in a column marked required, so the series' own
+  `toJSON` → `fromJSON` round trip threw. The output is now
+  `required: false` when it holds a gap, and stays required otherwise. As
+  pond-rs. Run time only: the reducer's type and the schema's TypeScript
+  type are unchanged.
 
 ## [0.76.0] — 2026-11-06
 
