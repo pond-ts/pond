@@ -329,6 +329,14 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   Run time only: the schema's TypeScript type is unchanged. Note that
   pyarrow and polars mark fields nullable by default, so their columns now
   read as optional.
+- **`mapColumns`: a required column that gains a gap is marked optional**
+  ([PND-MAPREQ]). A non-finite mapper result (`v => v * 1e308 + 1e308`) is
+  stored as a gap, but the column stayed `required`, so the series' own
+  `toJSON` → `fromJSON` round trip threw ("row 3 col 1 (value) is
+  required"). Such a column is now `required: false` in the result's
+  schema, for functions and expressions alike; a mapping that leaves no gap,
+  and columns not mapped, keep their flag. As pond-rs. Run time only: the
+  schema's TypeScript type is unchanged.
 
 ## [0.76.0] — 2026-11-06
 

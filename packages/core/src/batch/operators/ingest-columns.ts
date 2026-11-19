@@ -382,18 +382,22 @@ export function ingestColumnsToStore(input: {
  * `required: false`. A columnar door packs whatever the buffers hold, so a
  * column the schema calls required can come out with gaps; left marked
  * required, the series' own `toJSON` → `fromJSON` round trip then throws
- * ([PND-ARROWREQ]). Run-time only — the caller's type parameter is unchanged.
+ * ([PND-ARROWREQ]). An operator that rewrote only some columns passes their
+ * `names` (`mapColumns`, [PND-MAPREQ]); the rest are left as they are.
+ * Run-time only — the caller's type parameter is unchanged.
  * Returns `schema` itself when nothing changes. A number column's gap count
  * is cached, and free when ingest already proved it gap-free.
  */
 export function optionalWhereGaps<S extends ColumnSchema>(
   schema: S,
   store: ColumnarStore<ColumnSchema>,
+  names?: ReadonlySet<string>,
 ): S {
   let out: ColumnDef[] | undefined;
   for (let i = 1; i < schema.length; i += 1) {
     const def = schema[i]!;
     if (def.required === false) continue;
+    if (names !== undefined && !names.has(def.name)) continue;
     const column = store.columns.get(def.name);
     if (column === undefined) continue;
     const gaps =

@@ -198,9 +198,6 @@ bug is logged in `PLAN.md` to fix there.
   pond-ts compares the lists as objects, so two equal lists in different
   rows count as different and give a gap ([PND-ARRAYKEY]). pond-rs compares
   the elements exactly, so `[0]` and `[-0]` count as different.
-- After `map_numbers` turns values into gaps, a required column becomes
-  optional. pond-ts keeps it marked required, which its own `fromJSON` then
-  refuses ([PND-MAPREQ]).
 
 ## Small differences
 

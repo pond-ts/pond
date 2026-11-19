@@ -2347,7 +2347,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * **Missing cells carry:** the mapper is called only on defined
    * values; a missing (`undefined`) cell stays missing. On a `number`
    * column a mapper result of `NaN` / `±Infinity` is stored as missing
-   * (a non-finite number in a number column means missing).
+   * (a non-finite number in a number column means missing). A required
+   * column that gains a gap this way is marked `required: false` in the
+   * result's runtime schema, so the series still reloads through its own
+   * `toJSON` → `fromJSON`; the TypeScript type is unchanged.
    *
    * **Expressions** ({@link col}) may replace a function and may read
    * other columns (`{ w: col('w').add(col('v')) }`), as they were before
@@ -2417,7 +2420,14 @@ export class TimeSeries<S extends SeriesSchema> {
     for (const [name, column] of replaced) {
       out = withColumnReplaced(out, name, column);
     }
-    return TimeSeries.#fromTrustedStore(this.name, schema, out);
+    // A mapped column that gained a gap (a non-finite result) is optional
+    // from here on, or `fromJSON` would refuse the series' own `toJSON`
+    // ([PND-MAPREQ]). Run time only; `S` is unchanged.
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      optionalWhereGaps(schema, out, new Set(all.map(([name]) => name))),
+      out,
+    );
   }
 
   /** Example: `series.asTime({ at: "center" })`. Converts the series key type to `"time"` using the supplied anchor within each event extent. */
