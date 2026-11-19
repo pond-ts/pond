@@ -1820,17 +1820,11 @@ fn columns_and_points_json_match_pond_ts() {
             failures.push(format!("{label}: the text and value doors disagree"));
         }
         let refused = COLUMNS_REFUSED.contains(&case.id.as_str());
-        let expected = case.expected.as_ref().filter(|_| !refused).map(|v| {
-            let mut s: SeriesJson = serde_json::from_value(v.clone()).expect("a series");
-            // pond-ts keeps a column with gaps marked required here; pond-rs
-            // marks it optional (a known difference).
-            for (c, def) in s.schema.iter_mut().enumerate().skip(1) {
-                if def.required.is_none() && s.rows.iter().any(|r| r[c].is_null()) {
-                    def.required = Some(false);
-                }
-            }
-            s
-        });
+        let expected = case
+            .expected
+            .as_ref()
+            .filter(|_| !refused)
+            .map(|v| serde_json::from_value::<SeriesJson>(v.clone()).expect("a series"));
         if let Err(why) = judge(&label, refused, expected, &case.error, &got) {
             failures.push(why);
         }
@@ -1992,25 +1986,7 @@ fn value_series_match_pond_ts() {
                 Err("the text and value doors disagree".into()),
             );
         }
-        // pond-ts keeps a column with gaps marked required here; pond-rs
-        // marks it optional (a known difference, as for TimeSeries).
-        let expected = case.expected.clone().map(|mut v| {
-            let rows = v["rows"].clone();
-            for (c, def) in v["schema"]
-                .as_array_mut()
-                .unwrap()
-                .iter_mut()
-                .enumerate()
-                .skip(1)
-            {
-                let gap = rows.as_array().unwrap().iter().any(|r| r[c].is_null());
-                if def.get("required").is_none() && gap {
-                    def["required"] = json!(false);
-                }
-            }
-            v
-        });
-        check(label, judge(&expected, &got));
+        check(label, judge(&case.expected, &got));
     }
     let total = vs.by_value.len() + vs.from_json.len() + vs.from_columns.len();
     report("core ValueSeries parity", total, total, &failures);

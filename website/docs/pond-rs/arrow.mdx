@@ -306,8 +306,8 @@ Where pond-rs's JSON differs from pond-ts's:
 - **Columns JSON is read strictly.** A cell of the wrong kind is an error;
   pond-ts turns `"5"` in a number column into 5, `true` into 1, and a
   number in a text column into a gap. A number too big to store (`1e400`)
-  is an error too, where pond-ts stores a gap. pond-ts also ignores
-  `required` here; pond-rs makes any column with gaps optional.
+  is an error too, where pond-ts stores a gap. Both make any column with
+  gaps optional.
 - **A value column named `ts`** is refused by both points calls, since it
   would clash with the time.
 
@@ -344,8 +344,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 As in pond-ts, only number and text value columns read back in: a
 true/false or list column kept by `by_value` is written out but refused on
 the way back. The differences listed above for a time series apply here
-too (a missing `name` and wrongly typed cells are refused, and a column
-with gaps read from columns JSON is optional).
+too (a missing `name` and wrongly typed cells are refused).
 
 Arrow files work too. `write_ipc` / `to_arrow` write the axis first, as a
 `Float64` field with no nulls, then each value column as a time series

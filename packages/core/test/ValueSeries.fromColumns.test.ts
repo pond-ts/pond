@@ -157,6 +157,21 @@ describe('ValueSeries.fromColumns', () => {
     expect(viaTyped.column('oi')?.read(2)).toBeUndefined();
   });
 
+  it('[PND-COLSREQ] marks a required column with gaps optional, so toJSON → fromJSON reloads', () => {
+    const vs = ValueSeries.fromColumns({
+      name: 'gaps',
+      schema: SMILE,
+      columns: { strike: [90, 95, 100], iv: [0.3, null, 0.25], oi: [1, 2, 3] },
+    });
+    expect(vs.schema.map((c) => c.required)).toEqual([
+      undefined,
+      false,
+      undefined,
+    ]);
+    const back = ValueSeries.fromJSON(vs.toJSON());
+    expect(back.toRows()).toEqual(vs.toRows());
+  });
+
   it('adopts (does not copy) Float64Array columns — mutation is visible', () => {
     const iv = Float64Array.from([0.3, 0.27, 0.25]);
     const vs = ValueSeries.fromColumns({
