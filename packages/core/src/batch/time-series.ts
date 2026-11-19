@@ -1189,6 +1189,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * non-finite (`NaN`/`Infinity`) — identical rule regardless of which array
    * type supplied it. Note this is looser than `fromJSON`, which *rejects* a
    * non-finite provided number outright rather than treating it as a gap.
+   * Likewise a gap in a column the schema marks required is not refused: the
+   * column comes out `required: false` in the series' runtime schema (its
+   * TypeScript type is unchanged), so the series reloads through its own
+   * `toJSON` → `fromJSON`.
    *
    * Skips the row-tuple materialization + per-row intake a columnar caller
    * otherwise pays (transpose → `fromJSON`): each column packs directly, the key
@@ -1296,7 +1300,14 @@ export class TimeSeries<S extends SeriesSchema> {
       columns,
       ordering,
     });
-    return TimeSeries.#fromTrustedStore(name, schema, store);
+    // A column the schema calls required may still hold gaps here; mark it
+    // optional so the series reloads through its own `fromJSON`
+    // ([PND-COLSREQ]). Run time only; `S` is unchanged.
+    return TimeSeries.#fromTrustedStore(
+      name,
+      optionalWhereGaps(schema, store),
+      store,
+    );
   }
 
   /**

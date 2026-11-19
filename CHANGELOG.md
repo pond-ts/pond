@@ -337,6 +337,13 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   schema, for functions and expressions alike; a mapping that leaves no gap,
   and columns not mapped, keep their flag. As pond-rs. Run time only: the
   schema's TypeScript type is unchanged.
+- **`TimeSeries.fromColumns` / `ValueSeries.fromColumns`: a required column
+  with gaps is marked optional** ([PND-COLSREQ]). Both read a gap (`null`,
+  `NaN`, an infinity) in a column the schema marks required (the default)
+  and kept it marked required, so the series' own `toJSON` → `fromJSON`
+  round trip threw. Such a column is now `required: false` in the series'
+  schema; gaps are still accepted, not refused. As pond-rs. Run time only:
+  the schema's TypeScript type is unchanged.
 
 ## [0.76.0] — 2026-11-06
 
