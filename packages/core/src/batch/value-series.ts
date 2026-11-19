@@ -11,7 +11,10 @@ import {
   type ArrowTableLike,
   type FromArrowValueOptions,
 } from './operators/from-arrow.js';
-import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import {
+  ingestColumnsToStore,
+  optionalWhereGaps,
+} from './operators/ingest-columns.js';
 import { resolveOrdering } from './operators/out-of-order.js';
 import type { BatchOrderingMode } from '../schema/events.js';
 import { storeToColumns } from './operators/to-columns.js';
@@ -296,7 +299,11 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
-    return new ValueSeries(name, schema as unknown as VS, store);
+    return new ValueSeries(
+      name,
+      optionalWhereGaps(schema, store) as unknown as VS,
+      store,
+    );
   }
 
   private constructor(

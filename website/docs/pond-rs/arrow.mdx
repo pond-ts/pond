@@ -384,12 +384,10 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
-Three differences from pond-ts's `ValueSeries.fromArrow`:
+Two differences from pond-ts's `ValueSeries.fromArrow`:
 
 - **A time-typed axis** (an Arrow `Timestamp`, say) is refused. pond-ts
   reads its stored numbers, which are in the field's unit, not
   milliseconds.
 - **True/false, decimal and list value fields** are read. pond-ts refuses
   them.
-- **A value field with nulls** is optional. pond-ts marks it required,
-  which its own JSON reader then refuses ([PND-ARROWREQ]).

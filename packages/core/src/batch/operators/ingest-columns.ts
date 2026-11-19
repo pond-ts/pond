@@ -1,6 +1,7 @@
 import {
   ColumnarStore,
   type Column as ColumnarColumn,
+  type ColumnDef,
   type ColumnSchema,
   Float64Column,
   IntervalKeyColumn,
@@ -374,6 +375,36 @@ export function ingestColumnsToStore(input: {
   }
 
   return ColumnarStore.fromTrustedStore(schema, keys, columnMap);
+}
+
+/**
+ * The schema with every value column that holds a gap in `store` marked
+ * `required: false`. A columnar door packs whatever the buffers hold, so a
+ * column the schema calls required can come out with gaps; left marked
+ * required, the series' own `toJSON` → `fromJSON` round trip then throws
+ * ([PND-ARROWREQ]). Run-time only — the caller's type parameter is unchanged.
+ * Returns `schema` itself when nothing changes. A number column's gap count
+ * is cached, and free when ingest already proved it gap-free.
+ */
+export function optionalWhereGaps<S extends ColumnSchema>(
+  schema: S,
+  store: ColumnarStore<ColumnSchema>,
+): S {
+  let out: ColumnDef[] | undefined;
+  for (let i = 1; i < schema.length; i += 1) {
+    const def = schema[i]!;
+    if (def.required === false) continue;
+    const column = store.columns.get(def.name);
+    if (column === undefined) continue;
+    const gaps =
+      column.kind === 'number'
+        ? column.missingCount > 0
+        : column.validity !== undefined;
+    if (!gaps) continue;
+    out ??= schema.slice();
+    out[i] = { ...def, required: false };
+  }
+  return (out ?? schema) as S;
 }
 
 /**

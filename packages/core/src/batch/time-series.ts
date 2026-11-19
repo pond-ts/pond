@@ -90,7 +90,10 @@ import {
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
-import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import {
+  ingestColumnsToStore,
+  optionalWhereGaps,
+} from './operators/ingest-columns.js';
 import { resolveOrdering } from './operators/out-of-order.js';
 import {
   arrowToColumns,
@@ -1319,6 +1322,9 @@ export class TimeSeries<S extends SeriesSchema> {
    *   through; a plain int/float is taken as ms. `timeUnit` overrides.
    * - **Value columns** — every non-time field by default, or the subset named
    *   by `columns` (in order). A null in the time key throws.
+   * - **`required`** — a value column is `required: false` when its field is
+   *   nullable or it holds a gap, so the series reloads through its own
+   *   `toJSON` → `fromJSON`. Run time only; `S` is taken as given.
    *
    * **The readable types, and only these** (checked against each field's
    * *declared* Arrow type, so an unreadable one is refused by name rather than
@@ -1374,7 +1380,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
-    return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
+    return timeSeriesFromTrustedStore(
+      name,
+      optionalWhereGaps(schema, store) as unknown as S,
+      store,
+    );
   }
 
   /**

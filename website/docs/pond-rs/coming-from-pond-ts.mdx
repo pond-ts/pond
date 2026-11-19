@@ -201,10 +201,6 @@ bug is logged in `PLAN.md` to fix there.
 - After `map_numbers` turns values into gaps, a required column becomes
   optional. pond-ts keeps it marked required, which its own `fromJSON` then
   refuses ([PND-MAPREQ]).
-- A column read from Arrow with nulls in it is optional. pond-ts's
-  `fromArrow` marks every column required, even one with nulls, so its own
-  save-and-reload then fails ([PND-ARROWREQ]). pond-rs takes the flag from
-  the Arrow field's nullability.
 
 ## Small differences
 
