@@ -318,6 +318,17 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   moving time from 2,315 s to 2,555 s. It now shares out the recording's own
   moving time, as other sports do (1,489 s; the samples say 1,492 s). Pool
   swims, and swims timed by the watch's swim time, are unchanged.
+- **`TimeSeries.fromArrow` / `ValueSeries.fromArrow`: a value column with
+  nulls is marked optional** ([PND-ARROWREQ]). Every value column used to
+  come out required, even one holding nulls, so the series' own `toJSON` →
+  `fromJSON` round trip threw ("row 1 col 1 (v) is required"). A column is
+  now `required: false` when its Arrow field is nullable, or when it holds a
+  gap (a null, `NaN` or an infinity); otherwise it stays required. A field
+  that says nothing about nullability (a hand-built stand-in) is optional
+  only if it holds a gap. pond-rs reads the same file to the same schema.
+  Run time only: the schema's TypeScript type is unchanged. Note that
+  pyarrow and polars mark fields nullable by default, so their columns now
+  read as optional.
 
 ## [0.76.0] — 2026-11-06
 

@@ -65,6 +65,24 @@ describe('ValueSeries.fromArrow', () => {
     expect(readCol(vs as never, 'venue')).toEqual(['cme', 'cme', 'ice']);
   });
 
+  it('[PND-ARROWREQ] marks a value column optional when nullable or gapped', () => {
+    const table = tableFromArrays({
+      strike: Float64Array.from([90, 95, 100]),
+      dense: Float64Array.from([1, 2, 3]),
+      nan: Float64Array.from([1, NaN, 3]),
+      venue: ['cme', null, 'ice'],
+    });
+    const vs = ValueSeries.fromArrow(table as never, { axis: 'strike' });
+    expect(vs.schema.map((c) => [c.name, c.required])).toEqual([
+      ['strike', undefined],
+      ['dense', undefined],
+      ['nan', false],
+      ['venue', false],
+    ]);
+    const back = ValueSeries.fromJSON(vs.toJSON() as never);
+    expect(back.toRows()).toEqual(vs.toRows());
+  });
+
   it("defaults the name to 'arrow'", () => {
     const table = tableFromArrays({ strike: Float64Array.from([1, 2]) });
     expect(ValueSeries.fromArrow(table as never, { axis: 'strike' }).name).toBe(

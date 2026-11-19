@@ -2056,10 +2056,10 @@ fn value_series_match_pond_ts() {
 /// `ValueSeries::from_ipc_bytes` reads the Arrow files pond-ts
 /// `ValueSeries.fromArrow` reads (integer, float, dictionary, empty and
 /// two-batch tables) to the same series, and refuses what it refuses.
-/// pond-rs marks a nullable value field optional where pond-ts leaves the
-/// schema bare. Known differences, checked as such: pond-ts reads a
-/// Timestamp axis as its raw count (pond-rs refuses a time-typed axis) and
-/// refuses a true/false value field (pond-rs reads it). Also reads back
+/// Both mark a nullable value field optional. Known differences, checked
+/// as such: pond-ts reads a Timestamp axis as its raw count (pond-rs
+/// refuses a time-typed axis) and refuses a true/false value field
+/// (pond-rs reads it). Also reads back
 /// `parity-export-value.arrow`, pond-ts's own `toArrow` output.
 #[test]
 fn value_series_arrow_match_pond_ts() {
@@ -2067,24 +2067,13 @@ fn value_series_arrow_match_pond_ts() {
     let mut failures = Vec::new();
     for case in &cases {
         let bytes = hex(&case.ipc);
-        let schema = arrow_ipc::reader::FileReader::try_new(std::io::Cursor::new(&bytes), None)
-            .unwrap()
-            .schema();
         let got = ValueSeries::from_ipc_bytes("va", bytes, &case.axis);
         let outcome = match (case.id.as_str(), &case.expected, &got) {
             ("timestampAxis", Some(_), Err(_)) | ("boolValues", None, Ok(_)) => Ok(()),
             ("timestampAxis" | "boolValues", ..) => {
                 Err("expected the known difference".to_string())
             }
-            (_, Some(e), Ok(g)) => {
-                let mut e = e.clone();
-                for def in e.schema.iter_mut().skip(1) {
-                    if schema.field_with_name(&def.name).unwrap().is_nullable() {
-                        def.required.get_or_insert(false);
-                    }
-                }
-                compare_series(&e, &value_json(g), None)
-            }
+            (_, Some(e), Ok(g)) => compare_series(e, &value_json(g), None),
             (_, Some(_), Err(err)) => Err(format!("pond-ts reads it, pond-rs errored: {err}")),
             (_, None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
             (_, None, Err(_)) => Ok(()),

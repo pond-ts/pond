@@ -185,13 +185,7 @@ def test_value_series_arrow_match_pond_ts():
             if not ok:
                 failures.append(f"{cid}: expected the known difference")
             continue
-        expected = case.get("expected")
-        if expected is not None:
-            expected = json.loads(json.dumps(expected))
-            for d in expected["schema"][1:]:
-                if table.schema.field(d["name"]).nullable:
-                    d.setdefault("required", False)
-        _judge_value(cid, expected, got, failures)
+        _judge_value(cid, case.get("expected"), got, failures)
     assert not failures, "\n".join(failures)
 
 
