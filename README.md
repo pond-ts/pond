@@ -1,43 +1,82 @@
-# pond-ts
+# pond
 
 [![npm](https://img.shields.io/npm/v/pond-ts?label=pond-ts)](https://www.npmjs.com/package/pond-ts)
+[![crates.io](https://img.shields.io/crates/v/pond-rs?label=pond-rs)](https://crates.io/crates/pond-rs)
+[![PyPI](https://img.shields.io/pypi/v/pond-rs?label=pip%20pond-rs)](https://pypi.org/project/pond-rs/)
 [![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/npm/l/pond-ts)](https://github.com/pond-ts/pond/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org)
 
-**Highly optimised, fully typed Timeseries library for TypeScript**
+**Time series you can trust, from a batch of history to a live stream to the chart on screen.**
 
-Schema-driven events, composable batch transforms, push-based streaming
-ingest, multi-entity partitioning — and, optionally, React hooks and
-canvas charts that read the series directly. All strict TypeScript end to
-end, all immutable.
+pond is for data that is a list of readings over time: server metrics, prices,
+sensor and meter readings, heart rate on a run. You describe your columns once,
+then ask the questions you actually have: the average per minute, a rolling
+five-minute window, the same thing per host, one row per calendar day in New
+York (including the 23-hour day when the clocks change), which readings are
+out of the ordinary. The same operations work on a fixed batch of history and
+on a live stream that keeps itself up to date as events arrive, and the chart
+package draws the results directly, with no conversion step.
 
-**pond-ts** is the TypeScript-first successor to
-[pondjs](https://github.com/esnet/pond), rewritten from scratch with a
-focus on type safety, composability, and the live-streaming patterns
-that pondjs never grew.
+It is written in TypeScript, fully typed, and has a Rust twin, **pond-rs**,
+that gives the same answers bit for bit and can be used from Rust, from
+JavaScript (as WebAssembly) and from Python. pond-ts is the from-scratch
+successor to [pondjs](https://github.com/esnet/pond).
 
-## The packages
+<p align="center">
+  <img src="docs/readme/live-demo.gif" alt="A live dashboard drawn by pond: api-1 latency with its normal range shaded and anomalies marked in red, CPU per host, and requests per five seconds as bars, all scrolling as new events arrive while a cursor reads values off every row" width="880">
+</p>
 
-Three packages carry most projects. The core has no dependency on the other
-two; add them only if you render.
+<sub>The real library, recorded in a headless browser. Every frame pushes one
+more second of events into a `LiveSeries`; `baseline` and `outliers` find the
+normal range and the anomalies, `partitionBy('host').rolling('10s', …)` gives
+the per-host CPU lines, `aggregate(Sequence.every('5s'), …)` gives the bars, and
+`@pond-ts/charts` draws them. Source and recorder:
+[`docs/readme/demo/`](docs/readme/demo/).</sub>
 
-| Package                                                                           | What it is                                                                                                                                                                                         | Needs                                    |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **[`pond-ts`](https://www.npmjs.com/package/pond-ts)** — core                     | `TimeSeries` (batch) and `LiveSeries` (streaming) with one operator vocabulary: aggregate, rolling, align, fill, partition, join, typed columns. Node or browser, no React.                        | nothing                                  |
-| **[`@pond-ts/charts`](https://www.npmjs.com/package/@pond-ts/charts)** — optional | Declarative React charts on a canvas data plane that consume a pond series with no adapter: line, area, band, bar, scatter, box, candlestick, heat map; cursors, selection, pan/zoom, annotations. | `pond-ts`, `@pond-ts/react`, React 18/19 |
-| **[`@pond-ts/react`](https://www.npmjs.com/package/@pond-ts/react)** — optional   | Hooks to own a series in a component and read live views on a throttled snapshot cadence (`useLiveSeries`, `useSnapshot`, …).                                                                      | `pond-ts`, React 18/19                   |
+## What's in this repository
+
+**TypeScript packages** (npm, all released together under one version):
+
+| Package                                                                  | What it's for                                                                                                                                               | Folder               |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| [`pond-ts`](https://www.npmjs.com/package/pond-ts)                       | The core. `TimeSeries` for data you have, `LiveSeries` for data still arriving, one set of operations for both. Runs in Node or the browser.                | `packages/core`      |
+| [`@pond-ts/charts`](https://www.npmjs.com/package/@pond-ts/charts)       | React charts drawn on canvas that take a pond series as-is: line, area, band, bar, scatter, box, candlestick, heat map; cursors, selection, pan and zoom.   | `packages/charts`    |
+| [`@pond-ts/react`](https://www.npmjs.com/package/@pond-ts/react)         | React hooks that hold a live series in a component and re-render it at a steady pace however fast events arrive.                                            | `packages/react`     |
+| [`@pond-ts/financial`](https://www.npmjs.com/package/@pond-ts/financial) | 109 technical studies (moving averages, RSI, MACD, Bollinger, VWAP, Ichimoku, …), each checked against a pandas / TA-Lib reference, plus trading calendars. | `packages/financial` |
+| [`@pond-ts/fit`](https://www.npmjs.com/package/@pond-ts/fit)             | Activity data: reads FIT / GPX / TCX files; distance, elevation, power, heart-rate zones, splits.                                                           | `packages/fit`       |
+| [`@pond-ts/process`](https://www.npmjs.com/package/@pond-ts/process)     | **Experimental.** A whole calculation written down as data (JSON), so a program or an AI model can build one, run it, and cache the result.                 | `packages/process`   |
+
+**pond-rs, the Rust version** — same operations, same results as pond-ts (a
+test suite checks every operation against output written by pond-ts):
+
+| Package                                                    | What it's for                                                                                                     | Folder           |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
+| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)  | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
+| [`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
+| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)      | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
+
+How fast: across the 173 benchmark cases measured while building it, pond-rs
+on 4 cores was faster than pond-ts in 170, with a median of 7.5× (6.8× on a
+single core), and was about even with polars overall
+([full comparison](crates/pond-rs/bench/COMPARISON.md)). pond-ts itself is
+20.7× faster than its predecessor pondjs on average across 54 shared
+operations ([Performance](#performance) below).
+
+**Also here:** the docs site [pond-ts.org](https://pond-ts.org) (`website/`), a
+Claude Code plugin with skills for using pond (`plugins/pond-ts`), worked
+example apps (`apps/`: a live chart drawn off the main thread, and a demo of
+`@pond-ts/process`), and the roadmap and design notes ([PLAN.md](PLAN.md),
+`docs/`).
 
 ```sh
-npm install pond-ts                                   # core — enough for Node pipelines and non-React apps
+npm install pond-ts                                   # core: enough for Node pipelines and non-React apps
 npm install @pond-ts/charts @pond-ts/react pond-ts    # add the React chart stack
+cargo add pond-rs                                     # Rust
+pip install pond-rs                                   # Python
 ```
 
-Two domain packages ([`@pond-ts/financial`](#domain-packages) for markets,
-[`@pond-ts/fit`](#domain-packages) for activity data) and one experimental
-runtime ([`@pond-ts/process`](#domain-packages)) sit on top — see
-[Domain packages](#domain-packages) below. All six release together under
-one version; keep them in step.
+## What the core does
 
 - **Typed schemas** — declare once, every transform downstream narrows
   off it. `event.get('cpu')` returns `number | undefined` straight from
@@ -249,7 +288,7 @@ npm run build && node packages/core/bench/vs-pondjs.cjs
 Optional, domain-specific, all on plain pond series:
 
 - **[`@pond-ts/financial`](https://www.npmjs.com/package/@pond-ts/financial)**
-  — sixty-plus oracle-verified technical studies (SMA, EMA, RSI, MACD,
+  — 109 oracle-verified technical studies (SMA, EMA, RSI, MACD,
   Bollinger, ATR, VWAP, …) that append columns to a bar series, a fluent
   `bars.sma({ period: 20 }).rsi({ period: 14 })` form, and a
   `TradingCalendar` so session-aligned bars, rolling windows and chart axes
