@@ -36,7 +36,7 @@ const PART = 100; // frames per part
 const daily = ninoDaily();
 const full = daily.timeRange()!;
 const FULL: [number, number] = [full.begin(), full.end()];
-const SOURCE = 'daily Pacific temperature 1982-2026 (NOAA)';
+const SOURCE = 'Pacific temperature, NOAA';
 
 const theme = {
   ...defaultTheme,
@@ -117,7 +117,7 @@ function zoomPart(f: number) {
         code={
           raw
             ? `nino.within(view)  // every day, as recorded`
-            : `nino.within(view).aggregate(Sequence.every('${days}d'), { avg, min, max })`
+            : `nino.within(view).aggregate(Sequence.every('${days}d'), {…})`
         }
         stats={[
           ['in view', spanLabel(view[1] - view[0])],

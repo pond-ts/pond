@@ -93,11 +93,11 @@ mount(
       <>
         <Header
           title="Zoom with level of detail"
-          sub="44 years of daily Pacific temperature (NOAA)"
+          sub="Pacific temperature, NOAA"
           code={
             raw
               ? `nino.within(view)  // every day, as recorded`
-              : `nino.within(view).aggregate(Sequence.every('${days}d'), { avg, min, max })`
+              : `nino.within(view).aggregate(Sequence.every('${days}d'), {…})`
           }
           stats={[
             ['in view', spanLabel(view[1] - view[0])],

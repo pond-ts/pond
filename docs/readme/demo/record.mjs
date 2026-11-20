@@ -41,13 +41,13 @@ const css = `
   body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; color: #0f172a; }
   .card { width: 880px; padding: 14px 16px 10px; box-sizing: border-box; background: #fff; }
   .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .title { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+  .title { display: flex; align-items: center; gap: 8px; font-size: 15px; white-space: nowrap; }
   .sub { color: #64748b; font-weight: 400; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #d64545; box-shadow: 0 0 0 3px rgba(214,69,69,0.18); }
-  .stats { display: flex; gap: 22px; }
+  .stats { display: flex; gap: 22px; flex-shrink: 0; white-space: nowrap; }
   .stat { text-align: right; }
   .stat .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .call { display: inline-block; margin-top: 5px; font: 12px ui-monospace, 'SF Mono', Menlo, monospace; color: #0f172a; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
+  .call { display: inline-block; white-space: nowrap; margin-top: 5px; font: 12px ui-monospace, 'SF Mono', Menlo, monospace; color: #0f172a; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
   .stat .l { font-size: 10.5px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
 `;
 writeFileSync(
@@ -104,6 +104,22 @@ for (let f = 0; f < frames; f++) {
     pointerIn = false;
   }
   await paint();
+  // Header text must stay on one line and clear of the stats on every frame:
+  // a wrap or an overlap on even one frame shows as a jump in the GIF.
+  const clash = await page.evaluate(() => {
+    const head = document.querySelector('.head');
+    if (!head) return null;
+    const left = head.firstElementChild.getBoundingClientRect();
+    const stats = head.querySelector('.stats').getBoundingClientRect();
+    const title = head.querySelector('.title').getBoundingClientRect();
+    if (title.height > 24) return 'title wraps';
+    if (left.right > stats.left - 12) return 'title or call runs into stats';
+    return null;
+  });
+  if (clash) {
+    console.error(`frame ${f}: ${clash}`);
+    process.exit(1);
+  }
   await card.screenshot({
     path: join(work, `f${String(f).padStart(4, '0')}.png`),
   });
