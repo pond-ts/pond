@@ -126,5 +126,7 @@ execFileSync(
   ],
   { stdio: 'inherit' },
 );
-rmSync(work, { recursive: true, force: true });
+// KEEP=1 keeps the frame PNGs and prints where they are.
+if (!process.env.KEEP) rmSync(work, { recursive: true, force: true });
+else console.log(work);
 console.log(`wrote ${out}`);

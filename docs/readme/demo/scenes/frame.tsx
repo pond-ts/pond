@@ -11,6 +11,9 @@ export const CHART_WIDTH = WIDTH - 32;
 export interface Scene {
   frames: number;
   fps?: number;
+  /** Fixed card height in CSS pixels, for scenes whose parts differ in
+   *  height (every frame of a GIF must be the same size). */
+  height?: number;
   step(f: number): void;
   pointer?(f: number, width: number): { x: number; y: number } | null;
 }
@@ -58,12 +61,20 @@ export function mount(
   scene: Omit<Scene, 'step'> & { step?: (f: number) => void },
 ) {
   const root = createRoot(document.getElementById('root')!);
-  flushSync(() => root.render(<div className="card">{view(0)}</div>));
+  const style = scene.height
+    ? { height: scene.height, overflow: 'hidden' as const }
+    : undefined;
+  const card = (f: number) => (
+    <div className="card" style={style}>
+      {view(f)}
+    </div>
+  );
+  flushSync(() => root.render(card(0)));
   const full: Scene = {
     ...scene,
     step(f) {
       scene.step?.(f);
-      flushSync(() => root.render(<div className="card">{view(f)}</div>));
+      flushSync(() => root.render(card(f)));
     },
   };
   (window as unknown as { scene: Scene }).scene = full;

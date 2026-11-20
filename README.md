@@ -24,14 +24,15 @@ JavaScript (as WebAssembly) and from Python. pond-ts is the from-scratch
 successor to [pondjs](https://github.com/esnet/pond).
 
 <p align="center">
-  <img src="docs/readme/live.gif" alt="A live dashboard drawn by pond: api-1 latency with its normal range shaded and anomalies marked in red, CPU per host, and requests per five seconds as bars, all scrolling as new events arrive while a cursor reads values off every row" width="880">
+  <img src="docs/readme/tour.gif" alt="44 years of daily Pacific sea temperature in three parts: zooming from the whole record down to individual days and back, a one-year rolling window sweeping across the record and back, and bars of temperature against normal re-bucketed from one month to two years and back, with El Niño years in red and La Niña years in blue" width="880">
 </p>
 
-<sub>The real library, recorded in a headless browser. Every frame pushes one
-more second of events into a `LiveSeries`; `baseline` and `outliers` find the
-normal range and the anomalies, `partitionBy('host').rolling('10s', …)` gives
-the per-host CPU lines, `aggregate(Sequence.every('5s'), …)` gives the bars, and
-`@pond-ts/charts` draws them. Source and recorder:
+<sub>The real library on real data: 16,275 days of sea-surface temperature in
+the Niño 3.4 region of the Pacific (NOAA OISST v2.1), the record that defines
+El Niño. Every frame is recomputed by pond, using the call shown at the top of
+the card: `within` plus `aggregate` to keep the zoom at about one bucket per
+few pixels, `rolling` for the moving window, and `aggregate(Sequence.every(…))`
+for the bars, drawn by `@pond-ts/charts`. Source and recorder:
 [`docs/readme/demo/`](docs/readme/demo/).</sub>
 
 ## What's in this repository
