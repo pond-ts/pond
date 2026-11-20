@@ -1,13 +1,15 @@
-// Records docs/readme/live-demo.gif from demo.tsx running in headless
+// Records a README GIF from one scene in ./scenes, running in headless
 // Chromium. Needs the core, react and charts packages built first:
 //
 //   npm run build --workspace=pond-ts --workspace=@pond-ts/react --workspace=@pond-ts/charts
-//   node docs/readme/demo/record.mjs
+//   node docs/readme/demo/record.mjs live      # -> docs/readme/live.gif
 //
-// Each frame: call window.step() (pushes one second of events and
-// re-renders), wait for two animation frames so the canvases have painted,
-// then screenshot the card. ffmpeg turns the PNGs into a GIF with one
-// shared palette.
+// A scene renders into #root and sets `window.scene = { frames, fps?,
+// step(f), pointer?(f, width) }`. Each frame: call step(f) (the scene moves
+// its data or parameters on and re-renders synchronously), move the pointer
+// if the scene asks, wait for two animation frames so the canvases have
+// painted, then screenshot the card. ffmpeg turns the PNGs into a GIF with
+// one shared palette.
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -17,18 +19,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const out = join(here, '..', 'live-demo.gif');
-const FRAMES = 150;
-const FPS = 12;
+const name = process.argv[2] ?? 'live';
+const out = join(here, '..', `${name}.gif`);
 const work = mkdtempSync(join(tmpdir(), 'pond-readme-'));
 
 const bundle = await build({
-  entryPoints: [join(here, 'demo.tsx')],
+  entryPoints: [join(here, 'scenes', `${name}.tsx`)],
   bundle: true,
   write: false,
   format: 'iife',
   jsx: 'automatic',
   minify: true,
+  // The website's tsconfig extends a package this build doesn't install.
+  tsconfigRaw: {},
   define: { 'process.env.NODE_ENV': '"production"' },
   logLevel: 'warning',
 });
@@ -44,6 +47,7 @@ const css = `
   .stats { display: flex; gap: 22px; }
   .stat { text-align: right; }
   .stat .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .call { display: inline-block; margin-top: 5px; font: 12px ui-monospace, 'SF Mono', Menlo, monospace; color: #0f172a; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
   .stat .l { font-size: 10.5px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
 `;
 writeFileSync(
@@ -79,17 +83,25 @@ const paint = () =>
       ),
   );
 
-for (let f = 0; f < FRAMES; f++) {
-  await page.evaluate(() => window.step());
-  // The pointer sweeps across the middle stretch of the recording, so the
-  // crosshair reads values off all three rows; then it leaves.
-  if (f >= 55 && f < 125) {
-    const p = (f - 55) / 70;
-    const x = box.x + 120 + p * (box.width - 200);
-    const y = box.y + 70 + 60 + 25 * Math.sin(p * Math.PI * 2);
-    await page.mouse.move(x, y);
-  } else if (f === 125) {
+const { frames, fps } = await page.evaluate(() => ({
+  frames: window.scene.frames,
+  fps: window.scene.fps ?? 12,
+}));
+let pointerIn = false;
+for (let f = 0; f < frames; f++) {
+  const p = await page.evaluate(
+    ([f, w]) => {
+      window.scene.step(f);
+      return window.scene.pointer ? window.scene.pointer(f, w) : null;
+    },
+    [f, box.width],
+  );
+  if (p) {
+    await page.mouse.move(box.x + p.x, box.y + p.y);
+    pointerIn = true;
+  } else if (pointerIn) {
     await page.mouse.move(box.x + box.width + 50, box.y + 10);
+    pointerIn = false;
   }
   await paint();
   await card.screenshot({
@@ -105,7 +117,7 @@ execFileSync(
     '-loglevel',
     'error',
     '-framerate',
-    String(FPS),
+    String(fps),
     '-i',
     join(work, 'f%04d.png'),
     '-vf',

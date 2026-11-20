@@ -24,7 +24,7 @@ JavaScript (as WebAssembly) and from Python. pond-ts is the from-scratch
 successor to [pondjs](https://github.com/esnet/pond).
 
 <p align="center">
-  <img src="docs/readme/live-demo.gif" alt="A live dashboard drawn by pond: api-1 latency with its normal range shaded and anomalies marked in red, CPU per host, and requests per five seconds as bars, all scrolling as new events arrive while a cursor reads values off every row" width="880">
+  <img src="docs/readme/live.gif" alt="A live dashboard drawn by pond: api-1 latency with its normal range shaded and anomalies marked in red, CPU per host, and requests per five seconds as bars, all scrolling as new events arrive while a cursor reads values off every row" width="880">
 </p>
 
 <sub>The real library, recorded in a headless browser. Every frame pushes one

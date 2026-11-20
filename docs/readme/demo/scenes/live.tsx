@@ -253,11 +253,25 @@ for (let k = 0; k < 180; k++) pushTick();
 const root = createRoot(document.getElementById('root')!);
 flushSync(() => root.render(<App />));
 
-let frameNo = 0;
-/** Advance one second of data and re-render synchronously. */
-(window as unknown as { step: () => void }).step = () => {
-  pushTick();
-  pushTick();
-  frameNo++;
-  flushSync(() => setFrame(frameNo));
+/** The recorder's contract: see ../record.mjs. */
+(window as unknown as { scene: unknown }).scene = {
+  frames: 150,
+  /** Advance one second of data and re-render synchronously. */
+  step(f: number) {
+    pushTick();
+    pushTick();
+    flushSync(() => setFrame(f + 1));
+  },
+  /** The pointer sweeps across the middle stretch, so the cursor reads values
+   *  off all three rows; then it leaves. */
+  pointer(f: number, w: number) {
+    if (f >= 55 && f < 125) {
+      const p = (f - 55) / 70;
+      return {
+        x: 120 + p * (w - 200),
+        y: 130 + 25 * Math.sin(p * Math.PI * 2),
+      };
+    }
+    return null;
+  },
 };
