@@ -913,10 +913,36 @@ Not ported yet (scope decision 1): joins, ranged recompute
 (`setSourceFrom` / `runRange`), the live graph, the worker pool and the
 authoring APIs.
 
-Still to do in step 3: the studies through the pond-rs catalog (with a
-study parity fixture) and the new pointwise basics (`log`, `sqrt`, a ratio
+Still to do in step 3: the new pointwise basics (`log`, `sqrt`, a ratio
 that gaps on a zero denominator), in both languages. The performance check
 is step 7.
+
+### R5 step 3 (part) — the studies as ops (DONE)
+
+`crates/pond-process/src/studies.rs` ports `@pond-ts/financial/process`:
+`study_ops()` turns every study in pond-rs's catalog into an op by the
+bridge's own rules (column inputs become roles, a param with no default
+takes its `example`, `optional` params and the params that `requires` them
+are dropped, outputs are named by the spec id, a bare suffix on a
+multi-output study becomes `"value"`). `UNBRIDGED_STUDIES` is the same list
+with the same reasons. The op runs the catalog study itself
+(`StudyDescriptor::run`), so the maths is the code pond-rs's own study
+parity already checks bit for bit.
+
+The check is a second fixture, written by TypeScript:
+`packages/financial/scripts/parity/process.mjs` builds
+`test/fixtures/process-parity.json` (from `generate.mjs`, with a drift test
+`test/process-parity.test.ts`). It holds the `describe()` of the standard
+folds plus all 103 study ops, the unbridged list, and 108 runs: every study
+once with its defaults over 80 daily bars with a gap in `close` and one in
+`volume`, three with other params, and two the registry must refuse
+(`period: 0`, `period: 2.5`). `tests/studies.rs` checks every `describe()`
+entry, every id or refusal and every response, columns included, exactly
+(a change of 1e-12 in one cell fails it). All match.
+
+Left out, on purpose: the session studies (two in the catalog), which take
+a trading calendar through `studyOps({ sessions })`. The Rust bridge has
+no way to be handed one yet; `study_op` refuses them by name.
 
 ## Next
 

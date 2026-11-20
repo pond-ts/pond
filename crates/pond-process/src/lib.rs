@@ -25,6 +25,7 @@ pub mod registry;
 pub mod run;
 pub mod slots;
 pub mod source;
+pub mod studies;
 pub mod summary_folds;
 
 pub use basic_ops::basic_ops;
@@ -38,4 +39,5 @@ pub use registry::{Def, InputDef, Label, OutputDef, ParamDef, Params, Registry, 
 pub use run::{RunResult, run};
 pub use slots::expand_slots;
 pub use source::{SourceRef, source_id};
+pub use studies::{UNBRIDGED_STUDIES, study_op, study_ops};
 pub use summary_folds::summary_folds;

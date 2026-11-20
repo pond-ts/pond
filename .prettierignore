@@ -39,3 +39,4 @@ packages/financial/test/fixtures/study-parity.json
 packages/financial/test/fixtures/calendar-parity.json
 packages/financial/test/fixtures/catalog-parity.json
 packages/process/test/fixtures/parity.json
+packages/financial/test/fixtures/process-parity.json
