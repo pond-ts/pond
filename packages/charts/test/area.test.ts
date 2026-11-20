@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { drawArea, columnFiniteExtent } from '../src/area.js';
+import { drawArea, columnFiniteExtent, areaStateStyle } from '../src/area.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -751,6 +751,12 @@ describe('drawArea outline dash', () => {
       const { ctx, calls } = areaContext();
       drawArea(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, st, 0);
       expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    }
+  });
+
+  it('keeps the dash in every interaction state', () => {
+    for (const state of ['rest', 'hover', 'selected', 'dimmed'] as const) {
+      expect(areaStateStyle(dashed, state)[0].dash).toEqual([6, 4]);
     }
   });
 
