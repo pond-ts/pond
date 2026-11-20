@@ -731,3 +731,44 @@ describe('drawArea sessionBreaks (boundaries)', () => {
     );
   });
 });
+
+describe('drawArea outline dash', () => {
+  const dashed: AreaStyle = { ...style, dash: [6, 4] };
+
+  it('dashes only the outline: the fill is drawn first, undashed', () => {
+    const { ctx, calls } = areaContext();
+    drawArea(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, dashed, 0);
+    const order = calls
+      .filter((c) => ['fill', 'stroke', 'setLineDash'].includes(c.name))
+      .map((c) =>
+        c.name === 'setLineDash' ? `dash ${String(c.args[0])}` : c.name,
+      );
+    expect(order).toEqual(['fill', 'dash 6,4', 'stroke', 'dash ']);
+  });
+
+  it('never touches setLineDash for a solid or empty dash', () => {
+    for (const st of [style, { ...style, dash: [] }]) {
+      const { ctx, calls } = areaContext();
+      drawArea(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, st, 0);
+      expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    }
+  });
+
+  it('resets the outline dash before the dashed gap bridge sets its own', () => {
+    const { ctx, calls } = areaContext();
+    drawArea(
+      ctx,
+      cs([0, 1, 2, 3], [20, 20, NaN, 40]),
+      identity,
+      flipScale(),
+      dashed,
+      0,
+      undefined,
+      'dashed',
+    );
+    const dashSeq = calls
+      .filter((c) => c.name === 'setLineDash')
+      .map((c) => c.args[0]);
+    expect(dashSeq).toEqual([[6, 4], [], [4, 4]]);
+  });
+});

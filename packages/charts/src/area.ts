@@ -309,7 +309,17 @@ export function drawArea(
   });
   ctx.strokeStyle = banding !== undefined ? fill : style.color;
   ctx.lineWidth = style.width;
-  ctx.stroke();
+  // The outline's own dash, as `drawLine` applies `LineStyle.dash`: only when
+  // set (a solid edge never touches `setLineDash`), then reset to solid right
+  // after the stroke so it cannot reach the gap-bridge overlay below.
+  const dash = style.dash;
+  if (dash && dash.length > 0) {
+    ctx.setLineDash(dash.slice());
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Inferred bridges for the line edge (fill stays broken). `dashed` / `step`

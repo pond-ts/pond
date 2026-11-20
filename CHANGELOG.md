@@ -80,6 +80,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's
+  outline (its top edge), the same shape and meaning as `LineStyle.dash`
+  (`[6, 4]` = 6px on, 4px off). The fill is never dashed. Set it on an area
+  role in the theme, as with colour and width. The legend swatch shows the
+  dashed outline over the fill. Asked for by a consumer drawing a comparison
+  area in the same hue as the series it compares to.
+
 ## [0.77.0] — 2026-11-19
 
 ### Added
