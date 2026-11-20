@@ -231,10 +231,10 @@ pub fn basic_ops() -> Vec<Def> {
         Def::op(
             "sqrt",
             "arithmetic",
-            "Square root of source, row by row (a variance into a volatility). A negative value is a gap. Keeps the input’s unit label, which it cannot know the root changes.",
+            "Square root of source, row by row (a variance into a volatility). A negative value is a gap. Its unit is `sqrt`, not the input’s: the root of a variance is no longer a variance.",
         )
         .input("source")
-        .output("", "inherit")
+        .output("", "sqrt")
         .label(|_, inputs| format!("square root of {inputs}"))
         .run(sqrt),
         Def::op(

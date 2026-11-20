@@ -87,6 +87,22 @@ fn unbridged_matches() {
     }
 }
 
+/// A `describe()` entry with the keys inside each param's own entry
+/// sorted. Their order carries nothing and differs between TypeScript's
+/// ops (each lists them as its author wrote them), while the order of the
+/// params themselves is what a reader sees and must match.
+fn sorted_param_keys(entry: &Value) -> Value {
+    let mut out = entry.clone();
+    if let Some(params) = out.get_mut("params").and_then(Value::as_object_mut) {
+        for p in params.values_mut() {
+            if let Value::Object(m) = p {
+                m.sort_keys();
+            }
+        }
+    }
+    out
+}
+
 #[test]
 fn describe_matches() {
     let want = fixture()["describe"].as_array().unwrap();
@@ -94,7 +110,14 @@ fn describe_matches() {
     let names = |v: &[Value]| v.iter().map(|d| d["name"].clone()).collect::<Vec<_>>();
     assert_eq!(names(&got), names(want), "op names, in order");
     for (g, w) in got.iter().zip(want) {
-        assert_eq!(norm(g), norm(w), "describe of {}", w["name"]);
+        // As text, so the order of the params, and of every key outside a
+        // param's own entry, counts too.
+        assert_eq!(
+            sorted_param_keys(&norm(g)).to_string(),
+            sorted_param_keys(&norm(w)).to_string(),
+            "describe of {}",
+            w["name"]
+        );
     }
 }
 
@@ -105,6 +128,8 @@ fn runs_match() {
         .expect("input series");
     let mut host = Host::new(registry.clone(), HashMap::new());
     host.add("d", Arc::new(input));
+    // Columns with no numbers in them, which compare nothing but shape.
+    let mut empty = vec![];
     for case in fixture()["runs"].as_array().unwrap() {
         let spec = &case["spec"];
         let label = spec.to_string();
@@ -128,8 +153,27 @@ fn runs_match() {
             Err(e) => json!({ "error": caught(&e) }),
         };
         match case.get("result") {
-            Some(want) => assert_eq!(norm(&got["result"]), norm(want), "run of {label}"),
+            Some(want) => {
+                assert_eq!(norm(&got["result"]), norm(want), "run of {label}");
+                for (name, cells) in want["columns"].as_object().into_iter().flatten() {
+                    if cells.as_array().unwrap().iter().all(Value::is_null) {
+                        empty.push(name.clone());
+                    }
+                }
+            }
             None => assert_eq!(got["error"], case["error"], "run error of {label}"),
         }
     }
+    // Only zigZag's default run: the bars never swing 5%, and a 1% run
+    // covers its numbers.
+    let zz = "p1:zigZag(high+low;deviation=5)";
+    assert_eq!(
+        empty,
+        [
+            format!("{zz}Pivot"),
+            format!("{zz}Direction"),
+            format!("{zz}Line")
+        ],
+        "every other column has numbers to compare"
+    );
 }

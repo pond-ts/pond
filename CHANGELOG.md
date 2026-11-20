@@ -91,7 +91,9 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - **`@pond-ts/process`: `log` and `sqrt` basic steps.** The natural log
   and the square root of a column, row by row; a gap where either is
-  undefined (log of zero or below, the root of a negative). With `divide`
+  undefined (log of zero or below, the root of a negative). Their units are
+  `log` and `sqrt`: neither keeps its input's, so an op that demands a
+  `variance` refuses the root of one. With `divide`
   (already a gap on a zero denominator) and `scale`, they make a log return
   (`log(divide(close, shift(close)))`) and an annualised volatility from a
   daily variance (`scale(sqrt(scale(var, 252)), 100)`) without custom code.

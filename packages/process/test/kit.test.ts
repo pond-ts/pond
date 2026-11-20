@@ -147,7 +147,7 @@ describe('basic steps', () => {
     expect(cells(result, 'l')).toEqual([1, 0, undefined, undefined, undefined]);
     expect(cells(result, 'r')).toEqual([2, 0, 1.5, undefined, undefined]);
     expect(unitOf(result, 'l')).toBe('log');
-    expect(unitOf(result, 'r')).toBeNull();
+    expect(unitOf(result, 'r')).toBe('sqrt');
   });
 
   it('a log return and an annualised vol compose from the basics', () => {

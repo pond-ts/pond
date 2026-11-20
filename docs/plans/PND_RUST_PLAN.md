@@ -922,7 +922,9 @@ need: `log`, `sqrt` and a ratio that gaps on a zero denominator. The ratio
 was already there: `divide` writes `x / 0` as ±Infinity and `0 / 0` as NaN,
 and both are gaps. So two steps were added to `BASIC_OPS` in TypeScript and
 Rust: `log` (natural log; zero or below is a gap, unit `log`) and `sqrt`
-(below zero is a gap; keeps the input's unit label, as `scale` does).
+(below zero is a gap, unit `sqrt`). Neither keeps its input's unit: the
+review of #945 pointed out that an inherited `variance` would let an op
+demanding a variance accept the root of one.
 
 How the consumer's four ops compose from them:
 
@@ -955,12 +957,16 @@ The check is a second fixture, written by TypeScript:
 `packages/financial/scripts/parity/process.mjs` builds
 `test/fixtures/process-parity.json` (from `generate.mjs`, with a drift test
 `test/process-parity.test.ts`). It holds the `describe()` of the standard
-folds plus all 103 study ops, the unbridged list, and 108 runs: every study
-once with its defaults over 80 daily bars with a gap in `close` and one in
-`volume`, three with other params, and two the registry must refuse
-(`period: 0`, `period: 2.5`). `tests/studies.rs` checks every `describe()`
+folds plus all 103 study ops, the unbridged list, and 109 runs: every study
+once with its defaults over 800 daily bars with a gap in `close` and one in
+`volume`, four with other params, and two the registry must refuse
+(`period: 0`, `period: 2.5`). 800 bars is past every warm-up (`specialK`
+needs 724), so every output column has numbers in it except zigZag's
+default run, since the bars never swing 5%; a 1% run covers it, and the
+test fails if any other column comes back empty. `tests/studies.rs` checks every `describe()`
 entry, every id or refusal and every response, columns included, exactly
-(a change of 1e-12 in one cell fails it). All match.
+(a change of 1e-12 in one cell fails it), and `describe()` as text, so the
+order of params counts. All match.
 
 Left out, on purpose: the session studies (two in the catalog), which take
 a trading calendar through `studyOps({ sessions })`. The Rust bridge has
