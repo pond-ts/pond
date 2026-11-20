@@ -30,6 +30,8 @@ export type SwatchSpec =
       readonly line: string;
       readonly fill: string;
       readonly fillOpacity: number;
+      /** The outline's dash (`AreaStyle.dash`); the fill is never dashed. */
+      readonly dash?: readonly number[] | undefined;
     }
   | { readonly kind: 'band'; readonly fill: string; readonly opacity: number }
   | {

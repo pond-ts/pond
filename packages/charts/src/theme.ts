@@ -730,6 +730,15 @@ export interface AreaStyle {
    */
   readonly flatFill?: boolean;
   /**
+   * Optional dash pattern for the area's **outline** (its top edge) — px
+   * on/off lengths, the same shape and meaning as {@link LineStyle.dash}
+   * (`[6, 4]` = 6 on, 4 off). Omit or `[]` for a solid edge. The fill is
+   * never dashed: it stays whole, so a dashed area reads as the same shape
+   * with a dashed rim. Use it to set one area apart from another drawn in
+   * the same hue, such as a comparison against the series it compares to.
+   */
+  readonly dash?: readonly number[];
+  /**
    * Interaction state, the area's counterpart of `LineStyle`'s
    * ([PND-TRACESEL]) — and the channels differ because what carries the mark
    * differs. An area's mark is its **fill**, so state is the fill's *strength*

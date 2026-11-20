@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { drawArea, columnFiniteExtent } from '../src/area.js';
+import { drawArea, columnFiniteExtent, areaStateStyle } from '../src/area.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -729,5 +729,52 @@ describe('drawArea sessionBreaks (boundaries)', () => {
         ).toBe(false);
       },
     );
+  });
+});
+
+describe('drawArea outline dash', () => {
+  const dashed: AreaStyle = { ...style, dash: [6, 4] };
+
+  it('dashes only the outline: the fill is drawn first, undashed', () => {
+    const { ctx, calls } = areaContext();
+    drawArea(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, dashed, 0);
+    const order = calls
+      .filter((c) => ['fill', 'stroke', 'setLineDash'].includes(c.name))
+      .map((c) =>
+        c.name === 'setLineDash' ? `dash ${String(c.args[0])}` : c.name,
+      );
+    expect(order).toEqual(['fill', 'dash 6,4', 'stroke', 'dash ']);
+  });
+
+  it('never touches setLineDash for a solid or empty dash', () => {
+    for (const st of [style, { ...style, dash: [] }]) {
+      const { ctx, calls } = areaContext();
+      drawArea(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, st, 0);
+      expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    }
+  });
+
+  it('keeps the dash in every interaction state', () => {
+    for (const state of ['rest', 'hover', 'selected', 'dimmed'] as const) {
+      expect(areaStateStyle(dashed, state)[0].dash).toEqual([6, 4]);
+    }
+  });
+
+  it('resets the outline dash before the dashed gap bridge sets its own', () => {
+    const { ctx, calls } = areaContext();
+    drawArea(
+      ctx,
+      cs([0, 1, 2, 3], [20, 20, NaN, 40]),
+      identity,
+      flipScale(),
+      dashed,
+      0,
+      undefined,
+      'dashed',
+    );
+    const dashSeq = calls
+      .filter((c) => c.name === 'setLineDash')
+      .map((c) => c.args[0]);
+    expect(dashSeq).toEqual([[6, 4], [], [4, 4]]);
   });
 });
