@@ -191,6 +191,7 @@ a non-finite result (a division by zero) is a gap.
 | --------------------------------------- | -------------------------------------------------------------------------------- |
 | `add`, `subtract`, `multiply`, `divide` | `left ∘ right`; inputs `left`, `right`                                           |
 | `scale`                                 | `source × factor + offset` — ×100 for percent, offset −1 for a change            |
+| `log`, `sqrt`                           | natural log (zero or below is a gap) and square root (below zero is a gap)       |
 | `shift`                                 | `periods` rows back; negative reads the future (forward returns)                 |
 | `compare`                               | `source` against a `value`: `above`, `below`, `atLeast`, `atMost`, `equal` → 1/0 |
 | `compareColumns`                        | the same tests, `left` against `right`                                           |

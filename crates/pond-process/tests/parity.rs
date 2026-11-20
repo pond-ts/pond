@@ -411,3 +411,49 @@ fn malformed_requests_fail_without_a_code() {
         "slot 'a' needs an 'in' list of inputs"
     );
 }
+
+/// `log` must give JavaScript's `Math.log` bits, not the system `ln`'s.
+/// These inputs are ones where the two differ in the last bit (from
+/// pond-rs's own `js_log` test); the fixture's 57 log cells happen to
+/// include none.
+#[test]
+fn log_gives_javascript_bits() {
+    let cases = [
+        (0x40a3452893a2f8c3_u64, 0x401f3e0aa9bcec18_u64),
+        (0x40aa9d835d743864, 0x4020445c3465a0be),
+        (0x4004c8faecb2f9c3, 0x3fee8dabc63fc0b2),
+    ];
+    let rows: Vec<Value> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (x, _))| json!([i as f64 * 86_400_000.0, f64::from_bits(*x)]))
+        .collect();
+    let series = TimeSeries::from_json_value(
+        &json!({
+            "name": "x",
+            "schema": [{ "name": "time", "kind": "time" }, { "name": "v", "kind": "number" }],
+            "rows": rows,
+        }),
+        &JsonOptions::default(),
+    )
+    .expect("series");
+    let mut registry = Registry::new();
+    for def in basic_ops() {
+        registry.define(def).unwrap();
+    }
+    let mut host = Host::new(Arc::new(registry), HashMap::new());
+    host.add("d", Arc::new(series));
+    let spec = json!({ "op": "log", "inputs": ["v"] });
+    let result = host
+        .run(&json!({ "from": "d", "process": [spec], "select": [{ "on": spec }], "assemble": false }))
+        .expect("run");
+    let (_, column) = &result.columns.expect("columns")[0];
+    for ((x, want), got) in cases.iter().zip(column.iter()) {
+        assert_ne!(
+            f64::from_bits(*x).ln().to_bits(),
+            *want,
+            "{x:#x} is a case where ln differs"
+        );
+        assert_eq!(got.to_bits(), *want, "log of {x:#x}");
+    }
+}

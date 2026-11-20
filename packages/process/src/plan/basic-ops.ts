@@ -243,6 +243,44 @@ export const scale: OpDef = {
   },
 };
 
+export const log: OpDef = {
+  name: 'log',
+  family: 'arithmetic',
+  summary:
+    'Natural log of source, row by row. Zero or a negative value is a gap. The log of a price ratio is a log return; the difference of two logs is a log spread.',
+  params: {},
+  inputs: one,
+  outputs: [{ id: '', unit: 'log' }],
+  lookback: none,
+  label: (_p, inputs) => `log of ${inputs}`,
+  run: (ctx) => {
+    const v = readNumbers(ctx, 'source');
+    const out = new Float64Array(v.length);
+    // `Math.log(0)` is −Infinity and a negative is NaN: both read as gaps.
+    for (let i = 0; i < v.length; i += 1) out[i] = Math.log(v[i]!);
+    return seal(out);
+  },
+};
+
+export const sqrt: OpDef = {
+  name: 'sqrt',
+  family: 'arithmetic',
+  summary:
+    'Square root of source, row by row (a variance into a volatility). A negative value is a gap. Keeps the input’s unit label, which it cannot know the root changes.',
+  params: {},
+  inputs: one,
+  outputs: [{ id: '', unit: 'inherit' }],
+  lookback: none,
+  label: (_p, inputs) => `square root of ${inputs}`,
+  run: (ctx) => {
+    const v = readNumbers(ctx, 'source');
+    const out = new Float64Array(v.length);
+    // A negative is NaN: a gap.
+    for (let i = 0; i < v.length; i += 1) out[i] = Math.sqrt(v[i]!);
+    return seal(out);
+  },
+};
+
 export const shift: OpDef = {
   name: 'shift',
   family: 'arithmetic',
@@ -409,6 +447,8 @@ export const BASIC_OPS: readonly OpDef[] = [
   multiply,
   divide,
   scale,
+  log,
+  sqrt,
   shift,
   compare,
   compareColumns,

@@ -111,6 +111,8 @@ export {
   multiply,
   divide,
   scale,
+  log,
+  sqrt,
   shift,
   compare,
   compareColumns,

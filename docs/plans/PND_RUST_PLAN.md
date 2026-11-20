@@ -913,9 +913,31 @@ Not ported yet (scope decision 1): joins, ranged recompute
 (`setSourceFrom` / `runRange`), the live graph, the worker pool and the
 authoring APIs.
 
-Still to do in step 3: the new pointwise basics (`log`, `sqrt`, a ratio
-that gaps on a zero denominator), in both languages. The performance check
-is step 7.
+The performance check is step 7.
+
+### R5 step 3 (end) — `log` and `sqrt` (DONE)
+
+Scope decision 3 asked pond for the pointwise basics a consumer's own ops
+need: `log`, `sqrt` and a ratio that gaps on a zero denominator. The ratio
+was already there: `divide` writes `x / 0` as ±Infinity and `0 / 0` as NaN,
+and both are gaps. So two steps were added to `BASIC_OPS` in TypeScript and
+Rust: `log` (natural log; zero or below is a gap, unit `log`) and `sqrt`
+(below zero is a gap; keeps the input's unit label, as `scale` does).
+
+How the consumer's four ops compose from them:
+
+- `diff` is `subtract`; `ratio` is `divide`, with the same gaps.
+- `realizedVol` (√(var·252)·100) is `scale(sqrt(scale(var, 252)), 100)`,
+  the same arithmetic in the same order, so the same bits.
+- `logRatio` is `log(divide(a, b))`, the same bits where both legs are
+  positive. One difference: where both legs are negative the ratio is
+  positive, so the composition gives a number where the consumer's op
+  gives a gap. Prices are positive, so it does not arise on prices.
+
+Rust's `log` uses pond-rs's `js_log` (now public), V8's fdlibm routine,
+because the system `ln` is one bit off on about 2% of inputs. The kitchen
+session's 57 log cells happen to include none of those, so
+`tests/parity.rs` also checks three inputs where the two differ.
 
 ### R5 step 3 (part) — the studies as ops (DONE)
 
