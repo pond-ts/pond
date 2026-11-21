@@ -92,6 +92,8 @@ pub struct BoundGraph {
     /// Threads `prepare` may use; 1 computes nothing ahead of `pull`.
     threads: usize,
     parallel_min_rows: usize,
+    /// The most steps one wave of the last `prepare` held (tests read it).
+    pub(crate) widest_wave: usize,
     /// Nodes `prepare` computed in this run, with how long each took, so
     /// the run reports them as computed (not cached) with their own time.
     prepared: HashMap<String, f64>,
@@ -145,6 +147,7 @@ impl BoundGraph {
             budget_bytes,
             threads: 1,
             parallel_min_rows: 0,
+            widest_wave: 0,
             prepared: HashMap::new(),
             series: series.clone(),
             columns: vec![],
@@ -435,7 +438,7 @@ impl BoundGraph {
     /// Lets [`BoundGraph::prepare`] compute independent nodes on up to
     /// `threads` threads, once the bound series has at least `min_rows`
     /// rows. Below that, starting the threads costs more than they save.
-    pub fn set_threads(&mut self, threads: usize, min_rows: usize) {
+    pub(crate) fn set_threads(&mut self, threads: usize, min_rows: usize) {
         self.threads = threads.max(1);
         self.parallel_min_rows = min_rows;
     }
@@ -459,6 +462,7 @@ impl BoundGraph {
     /// cached.
     pub(crate) fn prepare(&mut self, ids: &[String]) {
         self.prepared.clear();
+        self.widest_wave = 0;
         if self.threads < 2 || self.series.len() < self.parallel_min_rows {
             return;
         }
@@ -521,28 +525,33 @@ impl BoundGraph {
                 }
                 jobs.push((id.clone(), inputs));
             }
+            self.widest_wave = self.widest_wave.max(jobs.len());
             let next = std::sync::atomic::AtomicUsize::new(0);
             let done: std::sync::Mutex<Vec<Finished>> = std::sync::Mutex::new(vec![]);
-            let workers = self.threads.min(jobs.len());
-            std::thread::scope(|scope| {
-                for _ in 0..workers {
-                    scope.spawn(|| {
-                        loop {
-                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let Some((id, inputs)) = jobs.get(i) else {
-                                break;
-                            };
-                            let t0 = std::time::Instant::now();
-                            let result =
-                                compute(&self.nodes[id], inputs, &self.series).map(Arc::new);
-                            let ms = t0.elapsed().as_secs_f64() * 1e3;
-                            done.lock()
-                                .expect("no worker panicked")
-                                .push((i, result, ms));
-                        }
-                    });
+            let work = || {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((id, inputs)) = jobs.get(i) else {
+                        break;
+                    };
+                    let t0 = std::time::Instant::now();
+                    let result = compute(&self.nodes[id], inputs, &self.series).map(Arc::new);
+                    let ms = t0.elapsed().as_secs_f64() * 1e3;
+                    done.lock()
+                        .expect("no worker panicked")
+                        .push((i, result, ms));
                 }
-            });
+            };
+            if jobs.len() < 2 {
+                // One step alone: no thread to start.
+                work();
+            } else {
+                std::thread::scope(|scope| {
+                    for _ in 0..self.threads.min(jobs.len()) {
+                        scope.spawn(work);
+                    }
+                });
+            }
             let generation = self.generation;
             for (i, result, ms) in done.into_inner().expect("no worker panicked") {
                 let id = &jobs[i].0;

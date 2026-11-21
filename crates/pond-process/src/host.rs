@@ -117,7 +117,8 @@ pub struct Host {
 
 /// Below this many rows a source runs on one thread even when the host
 /// allows more. Measured on 4 cores with the market workload
-/// (`examples/measure.rs`): at 2,520 rows four threads were slower than
+/// (`examples/measure.rs`, with `MIN_ROWS=0` so threads ran at every
+/// size): at 2,520 rows four threads were slower than
 /// one (2.5 ms vs 2.0 ms), at 10,000 they broke even, and from 25,000 up
 /// they won (4.5 ms vs 3.2 ms, and 19 ms vs 9.6 ms at 100,000).
 pub const PARALLEL_MIN_ROWS: usize = 10_000;
@@ -337,5 +338,62 @@ impl Host {
             }
             self.remove(&oldest);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Registry, basic_ops};
+    use pond_rs::JsonOptions;
+    use serde_json::json;
+
+    /// Two steps that do not depend on each other share a wave, and the
+    /// step that reads both waits for the next one.
+    #[test]
+    fn independent_steps_share_a_wave() {
+        let rows: Vec<Value> = (0..20)
+            .map(|i| json!([i as f64 * 1000.0, i as f64, 2.0 * i as f64]))
+            .collect();
+        let series = TimeSeries::from_json_value(
+            &json!({
+                "name": "x",
+                "schema": [
+                    { "name": "time", "kind": "time" },
+                    { "name": "a", "kind": "number" },
+                    { "name": "b", "kind": "number" },
+                ],
+                "rows": rows,
+            }),
+            &JsonOptions::default(),
+        )
+        .expect("series");
+        let mut registry = Registry::new();
+        for def in basic_ops() {
+            registry.define(def).unwrap();
+        }
+        let registry = Arc::new(registry);
+        let a = json!({ "op": "scale", "params": { "factor": 2 }, "inputs": ["a"] });
+        let b = json!({ "op": "scale", "params": { "factor": 3 }, "inputs": ["b"] });
+        let both = json!({ "op": "add", "inputs": [a, b] });
+        let request = json!({
+            "from": "d",
+            "process": [both],
+            "select": [{ "on": both }, { "on": a }],
+            "assemble": false,
+        });
+        let answer = |threads: usize| {
+            let mut host = Host::new(registry.clone(), HashMap::new())
+                .with_threads(threads)
+                .with_parallel_min_rows(0);
+            host.add("d", Arc::new(series.clone()));
+            let result = host.run(&request).expect("run");
+            let widest = host.graphs.values().map(|g| g.widest_wave).max();
+            (result.columns, widest)
+        };
+        let (one, _) = answer(1);
+        let (four, widest) = answer(4);
+        assert_eq!(widest, Some(2));
+        assert_eq!(one, four);
     }
 }

@@ -1009,7 +1009,7 @@ host, median of 7, 5 or 3 runs; a 4-core cloud machine.
 
 | Data | TypeScript | Rust, 1 thread | Rust, 4 threads |
 |---|---|---|---|
-| market, 2,520 rows | 8.4 ms | 1.2 ms | 1.4 ms |
+| market, 2,520 rows | 8.4 ms | 1.2 ms | 1.4 ms (one thread: under `PARALLEL_MIN_ROWS`) |
 | market, 1M rows | 599 ms | 207 ms | 91 ms |
 | telemetry, 1M rows | 451 ms | 181 ms | 77 ms |
 | telemetry, 10M rows | 5.4 s | 2.8 s | 1.06 s |
@@ -1030,12 +1030,15 @@ What it took:
 - **Parallel steps.** `Host::with_threads(n)` computes the steps that do
   not depend on each other at the same time: steps are grouped into waves
   by how deep they sit, and each wave runs on up to `n` scoped threads.
-  Answers and timing entries (all but `ms`) match one thread; the parity
+  Answers and timing entries (all but `ms`) match one thread. A step's
+  `ms` is its own time while other steps share the machine, so under
+  threads the `ms` values no longer add up to the run's time. The parity
   sessions and the study runs are checked on 1 and 4 threads. One
   difference: with `onError: "throw"`, steps that one thread would never
   have reached (because an earlier one threw) may already have been
   computed. The answer is the same error.
-- **Short data stays on one thread.** At 2,520 rows four threads were
+- **Short data stays on one thread.** Measured with the limit set to 0
+  (so threads ran at every size): at 2,520 rows four threads were
   slower (2.5 ms vs 2.0 ms); they broke even at 10,000 rows and won from
   25,000 (4.5 vs 3.2 ms; 19 vs 9.6 ms at 100,000). `PARALLEL_MIN_ROWS` is
   10,000 and `with_parallel_min_rows` moves it.
