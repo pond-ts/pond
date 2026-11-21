@@ -254,7 +254,7 @@ fn response(result: &RunResult) -> Value {
     out
 }
 
-fn run_session(session: &Value) -> Vec<Value> {
+fn run_session(session: &Value, threads: usize) -> Vec<Value> {
     let units: HashMap<String, String> = session
         .get("units")
         .and_then(Value::as_object)
@@ -267,7 +267,8 @@ fn run_session(session: &Value) -> Vec<Value> {
     let mut host = Host::new(
         Arc::new(registry(session["registry"].as_str().unwrap())),
         units,
-    );
+    )
+    .with_threads(threads);
     if let Some(b) = session.get("budgetBytes").and_then(Value::as_u64) {
         host = host.with_budget_bytes(b as usize);
     }
@@ -344,10 +345,21 @@ fn run_session(session: &Value) -> Vec<Value> {
 
 #[test]
 fn sessions_match() {
+    sessions_match_on(1);
+}
+
+/// Independent nodes computed at once give every answer, and every timing
+/// entry but `ms`, exactly as one thread does.
+#[test]
+fn sessions_match_on_four_threads() {
+    sessions_match_on(4);
+}
+
+fn sessions_match_on(threads: usize) {
     let mut failures = vec![];
     for session in fixture()["sessions"].as_array().unwrap() {
         let name = session["name"].as_str().unwrap();
-        let got = run_session(session);
+        let got = run_session(session, threads);
         let want = session["results"].as_array().unwrap();
         assert_eq!(got.len(), want.len(), "{name}: step count");
         for (i, (g, w)) in got.iter().zip(want).enumerate() {

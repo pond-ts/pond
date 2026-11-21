@@ -104,6 +104,7 @@ pub struct Host {
     registry: Arc<Registry>,
     units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
+    threads: usize,
     max_sources: Option<usize>,
     /// In the order they were first added.
     sources: Vec<(String, Arc<TimeSeries>)>,
@@ -121,6 +122,7 @@ impl Host {
             registry,
             units: Arc::new(units),
             budget_bytes: None,
+            threads: 1,
             max_sources: None,
             sources: vec![],
             graphs: HashMap::new(),
@@ -133,6 +135,17 @@ impl Host {
     /// callers it does not control should set this.
     pub fn with_budget_bytes(mut self, bytes: usize) -> Self {
         self.budget_bytes = Some(bytes);
+        self
+    }
+
+    /// Lets a run compute the steps that do not depend on each other at
+    /// the same time, on up to `n` threads (1, the default, computes them
+    /// one by one as TypeScript does). The answers are the same either way.
+    pub fn with_threads(mut self, n: usize) -> Self {
+        self.threads = n.max(1);
+        for graph in self.graphs.values_mut() {
+            graph.set_threads(self.threads);
+        }
         self
     }
 
@@ -211,12 +224,13 @@ impl Host {
                     format!("unknown dataset '{id}'{have}"),
                 ));
             };
-            let graph = BoundGraph::new(
+            let mut graph = BoundGraph::new(
                 series.clone(),
                 self.registry.clone(),
                 self.units.clone(),
                 self.budget_bytes,
             );
+            graph.set_threads(self.threads);
             self.graphs.insert(id.to_string(), graph);
         }
         Ok(self.graphs.get_mut(id).expect("just inserted"))

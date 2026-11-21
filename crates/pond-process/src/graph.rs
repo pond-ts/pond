@@ -74,6 +74,9 @@ enum Raw {
     Converted(Arc<Vec<f64>>),
 }
 
+/// One node `prepare` computed: its job index, result and milliseconds.
+type Finished = (usize, Result<Arc<Held>>, f64);
+
 /// One input as `compute` reads it.
 enum Input {
     Column(usize),
@@ -86,6 +89,11 @@ pub struct BoundGraph {
     pub(crate) registry: Arc<Registry>,
     pub(crate) units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
+    /// Threads `prepare` may use; 1 computes nothing ahead of `pull`.
+    threads: usize,
+    /// Nodes `prepare` computed in this run, with how long each took, so
+    /// the run reports them as computed (not cached) with their own time.
+    prepared: HashMap<String, f64>,
     series: Arc<TimeSeries>,
     columns: Vec<String>,
     /// How each raw column is read: a number column in place, anything
@@ -134,6 +142,8 @@ impl BoundGraph {
             registry,
             units,
             budget_bytes,
+            threads: 1,
+            prepared: HashMap::new(),
             series: series.clone(),
             columns: vec![],
             raw: HashMap::new(),
@@ -418,6 +428,128 @@ impl BoundGraph {
         self.order.push(id.clone());
         self.touch(&id);
         Ok(id)
+    }
+
+    /// Lets [`BoundGraph::prepare`] compute independent nodes on up to
+    /// `threads` threads.
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads.max(1);
+    }
+
+    /// How long `prepare` took to compute `id` in this run, if it did.
+    pub(crate) fn take_prepared(&mut self, id: &str) -> Option<f64> {
+        self.prepared.remove(id)
+    }
+
+    /// Computes every stale node `ids` depend on, and `ids` themselves,
+    /// ahead of the run's own pulls, independent nodes at the same time on
+    /// up to `threads` threads. A node computes only once everything it
+    /// reads is ready, and not at all when something it reads failed, as
+    /// in [`BoundGraph::pull`]; each node's code is the same and sees the
+    /// same inputs, so every answer is the same as on one thread. The
+    /// run's pulls then find each node done.
+    ///
+    /// One thing differs from one thread: under `onError: "throw"` a run
+    /// stops at its first failure, and nodes it never reached stay
+    /// uncomputed; here they are computed, so a later run reports them as
+    /// cached.
+    pub(crate) fn prepare(&mut self, ids: &[String]) {
+        self.prepared.clear();
+        if self.threads < 2 {
+            return;
+        }
+        // Stale nodes in dependency order, inputs first.
+        let mut order: Vec<String> = vec![];
+        let mut seen: HashSet<String> = HashSet::new();
+        fn visit(g: &BoundGraph, id: &str, seen: &mut HashSet<String>, order: &mut Vec<String>) {
+            if !seen.insert(id.to_string()) || !g.is_dirty(id) {
+                return;
+            }
+            let Some(node) = g.nodes.get(id) else { return };
+            for b in &node.bound {
+                if let Some((up, _)) = &b.nested {
+                    visit(g, up, seen, order);
+                }
+            }
+            order.push(id.to_string());
+        }
+        for id in ids {
+            visit(self, id, &mut seen, &mut order);
+        }
+        // Each node's level: one past the deepest stale input.
+        let mut level: HashMap<String, usize> = HashMap::new();
+        for id in &order {
+            let l = self.nodes[id]
+                .bound
+                .iter()
+                .filter_map(|b| b.nested.as_ref().and_then(|(up, _)| level.get(up)))
+                .map(|l| l + 1)
+                .max()
+                .unwrap_or(0);
+            level.insert(id.clone(), l);
+        }
+        let depth = level.values().max().map_or(0, |l| l + 1);
+        for l in 0..depth {
+            let wave: Vec<&String> = order.iter().filter(|id| level[*id] == l).collect();
+            // Inputs for each node whose upstream all succeeded.
+            let mut jobs: Vec<(String, Vec<Input>)> = vec![];
+            'nodes: for id in wave {
+                let mut inputs = vec![];
+                for b in &self.nodes[id].bound {
+                    match &b.nested {
+                        None => inputs.push(match &self.raw[&b.column] {
+                            Raw::Column(i) => Input::Column(*i),
+                            Raw::Converted(v) => Input::Held(v.clone()),
+                        }),
+                        Some((up, index)) => match &self.nodes[up].state {
+                            State::Done {
+                                generation,
+                                result: Ok(held),
+                            } if *generation == self.generation => match &**held {
+                                Held::Columns(cols) => {
+                                    inputs.push(Input::Held(cols[*index].clone()))
+                                }
+                                Held::Fact(_) => unreachable!("a fold is never an input"),
+                            },
+                            _ => continue 'nodes,
+                        },
+                    }
+                }
+                jobs.push((id.clone(), inputs));
+            }
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let done: std::sync::Mutex<Vec<Finished>> = std::sync::Mutex::new(vec![]);
+            let workers = self.threads.min(jobs.len());
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|| {
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some((id, inputs)) = jobs.get(i) else {
+                                break;
+                            };
+                            let t0 = std::time::Instant::now();
+                            let result =
+                                compute(&self.nodes[id], inputs, &self.series).map(Arc::new);
+                            let ms = t0.elapsed().as_secs_f64() * 1e3;
+                            done.lock()
+                                .expect("no worker panicked")
+                                .push((i, result, ms));
+                        }
+                    });
+                }
+            });
+            let generation = self.generation;
+            for (i, result, ms) in done.into_inner().expect("no worker panicked") {
+                let id = &jobs[i].0;
+                let node = self.nodes.get_mut(id).expect("still compiled");
+                if let Ok(held) = &result {
+                    node.kept = Some(held.clone());
+                }
+                node.state = State::Done { generation, result };
+                self.prepared.insert(id.clone(), ms);
+            }
+        }
     }
 
     /// Brings a node up to date and returns its value, or the error it
