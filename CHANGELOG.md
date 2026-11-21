@@ -104,6 +104,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   about 2% of inputs). The Rust port of `@pond-ts/process` uses it for
   `log`.
 
+### Fixed
+
+- **`@pond-ts/process`: one step feeding both inputs of an op.**
+  `multiply(x, x)`, where `x` is a computed step rather than a source
+  column, was refused with "column name … already exists in the schema"
+  (or skipped, under `onError: 'collect'`): the step's column was added to
+  the op's input series once per role. It is now added once and both roles
+  read it. Found by an agent squaring its own log returns.
+
 ## [0.77.0] — 2026-11-19
 
 ### Added

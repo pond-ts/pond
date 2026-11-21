@@ -41,7 +41,9 @@ if (runsArg === 'ask') {
   const asked = JSON.parse(readFileSync(requestFile, 'utf8'));
   let out;
   try {
-    const wire = proc.toWire(proc.createHost({ registry }).add('d', series).run(asked));
+    const wire = proc.toWire(
+      proc.createHost({ registry }).add('d', series).run(asked),
+    );
     out = { ...wire, nodes: wire.nodes.map(({ ms: _ms, ...rest }) => rest) };
   } catch (e) {
     out = { error: `${e.name}: ${e.message}` };

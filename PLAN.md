@@ -600,19 +600,15 @@ pond-ts bugs found while porting.
   `pypi`) before the first upload. As of 2026-11-13 neither package is on
   its registry.
 
-- **[PND-RUST-R5]** — A Rust port of `@pond-ts/process` (adopted by
-  pjm17971, 2026-11-17), so a host can run process plans on pond-rs: the
-  long-lived `Host` with its byte budget and async sources, the registry and
-  `specId`, slot and nested requests, the basic ops, the standard and summary
-  folds, the 105 bridged studies and `toWire`. First consumer: a desktop
-  app's local MCP server. Scope is that consumer's subset; joins, the worker
-  pool, the authoring builders, the live graph and `toJsonSchema` are left
-  for later. Every answer is checked against
-  `packages/process/test/fixtures/parity.json`, which a test keeps in step
-  with the TypeScript package, so process keeps changing in TypeScript first
-  and the port follows. Also adds the pointwise basic ops a consumer needs to
-  write its own ratio and volatility steps as compositions. Steps and
-  decisions in the breakout plan.
+- **[PND-PROCAGENTDOCS]** — What agents writing process requests could not
+  learn from the docs, found by the R5 agent trial
+  (`crates/pond-process/bench/agent-trial/`): `requests.md` shows only
+  TypeScript calls, never a JSON request, and never says `from` names the
+  dataset; `describe()` lists `outputs: []` for every fold, so what a fact
+  holds is learned by asking; op summaries leave out definitions an answer
+  depends on (`historicalVolatility`'s n vs n − 1 and decimal, `rsi`'s seed,
+  `percentChange` already × 100, `extremes` on a tie); facts are rounded to
+  six significant digits without saying so. Detail in the trial README.
 - **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
   no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
   give the `declare module` workaround). Write an `index.d.ts` from

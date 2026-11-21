@@ -1043,7 +1043,22 @@ What it took:
   25,000 (4.5 vs 3.2 ms; 19 vs 9.6 ms at 100,000). `PARALLEL_MIN_ROWS` is
   10,000 and `with_parallel_min_rows` moves it.
 
-Still to do in step 7: the agent trial against the Rust engine.
+### R5 step 7 (second half) — agent trial (DONE)
+
+Ten fresh agents, five per engine, answered four questions about the
+market bars by writing process requests, blind to which engine answered
+(`crates/pond-process/bench/agent-trial/`, README there). All ten got all
+four right: Rust 10 requests, none failed; TypeScript 11, one refused for
+the agent's own slot name. Replaying all 21 distinct requests on both
+engines found one difference, a TypeScript bug: a computed step feeding
+both inputs of an op (`multiply(lr, lr)`) was appended twice and refused.
+Fixed in `@pond-ts/process` with a parity session; after it, every request
+answers identically. The docs gaps the agents hit are [PND-PROCAGENTDOCS].
+
+With this, the R5 subset (steps 1 to 7) is done and [PND-RUST-R5] is off
+PLAN.md. Left for later, as scoped: joins, ranged recompute, the worker
+pool, the authoring builders, the live graph, `toJsonSchema`, and a
+crates.io name for the crate.
 
 ## Next
 

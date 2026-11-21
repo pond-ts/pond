@@ -873,9 +873,13 @@ export class BoundGraph {
         }
         // Only a column-producing op needs the widened series, because the
         // corpus studies take `(series, { column })`.
+        // A node that feeds two roles (`multiply(x, x)`) is appended once:
+        // its column is named by its id, so both roles read the same one.
         let series = src;
+        const appended = new Set<string>();
         bound.forEach((b, i) => {
-          if (b.nested) {
+          if (b.nested && !appended.has(b.column)) {
+            appended.add(b.column);
             series = appendColumn(series, b.column, vals[`in${i}`] as Column);
           }
         });

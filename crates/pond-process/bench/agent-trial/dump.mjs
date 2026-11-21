@@ -13,7 +13,8 @@ const dir = process.argv[2];
 const c = COLUMNS.market(2520);
 const names = Object.keys(c);
 const lines = [names.join(',')];
-for (let i = 0; i < c.time.length; i += 1) lines.push(names.map((n) => c[n][i]).join(','));
+for (let i = 0; i < c.time.length; i += 1)
+  lines.push(names.map((n) => c[n][i]).join(','));
 writeFileSync(`${dir}/data.csv`, lines.join('\n') + '\n');
 
 let registry = proc.createRegistry();

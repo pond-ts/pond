@@ -384,6 +384,35 @@ function sessions() {
       ],
     },
     {
+      // Found by the R5 agent trial: TypeScript appended the shared input
+      // twice and refused `multiply(x, x)` where x is a computed step.
+      name: 'one step feeding both inputs of an op',
+      registry: 'all',
+      units: UNITS,
+      steps: [
+        { add: 'd', input: 'daily' },
+        {
+          run: {
+            from: 'd',
+            nodes: {
+              prev: { op: 'shift', in: ['close'] },
+              square: { op: 'multiply', in: ['prev', 'prev'] },
+              raw: { op: 'multiply', in: ['close', 'close'] },
+              lastSquare: { op: 'last', in: ['square'] },
+              lastRaw: { op: 'last', in: ['raw'] },
+            },
+            outputs: {
+              square: { on: 'square' },
+              lastSquare: { on: 'lastSquare' },
+              lastRaw: { on: 'lastRaw' },
+            },
+            onError: 'collect',
+            assemble: false,
+          },
+        },
+      ],
+    },
+    {
       name: 'nested plans and inline selectors',
       registry: 'all',
       units: UNITS,
