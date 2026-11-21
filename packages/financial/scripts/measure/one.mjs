@@ -8,7 +8,10 @@ import * as proc from '@pond-ts/process';
 import { studyOps } from '../../dist/process/index.js';
 import { COLUMNS, REQUESTS } from './workloads.mjs';
 
-const [workload, rowsArg, runsArg] = process.argv.slice(2);
+// With `ask` in place of <runs> and a request file after it, runs that
+// request once and prints the wire response without timings, or the error:
+// the agent trial's tool (crates/pond-process/bench/agent-trial/).
+const [workload, rowsArg, runsArg, requestFile] = process.argv.slice(2);
 const rows = Number(rowsArg);
 const runs = Number(runsArg ?? 3);
 const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6;
@@ -32,6 +35,20 @@ const series = TimeSeries.fromColumns({
   columns: cols,
 });
 const loadMs = ms(t);
+
+if (runsArg === 'ask') {
+  const { readFileSync } = await import('node:fs');
+  const asked = JSON.parse(readFileSync(requestFile, 'utf8'));
+  let out;
+  try {
+    const wire = proc.toWire(proc.createHost({ registry }).add('d', series).run(asked));
+    out = { ...wire, nodes: wire.nodes.map(({ ms: _ms, ...rest }) => rest) };
+  } catch (e) {
+    out = { error: `${e.name}: ${e.message}` };
+  }
+  console.log(JSON.stringify(out, null, 2));
+  process.exit(0);
+}
 
 const request = REQUESTS[workload];
 const cold = [];

@@ -1,0 +1,44 @@
+You are answering questions about a price series by sending requests to a
+computation service. Work only inside {DIR}.
+
+The service holds one dataset, `d`: 2,520 daily bars with a `time` column
+and number columns `open`, `high`, `low`, `close`, `volume`. You cannot read
+the data itself; you send the service a request (JSON) and it sends back
+facts about the data.
+
+To send a request, write it to a JSON file in {DIR} and run
+`{DIR}/ask.sh <that file>`. It prints the service's response.
+
+What you have to go on, all in {DIR}:
+- `requests.md`: how a request is written and what comes back.
+- `ops.json`: every operation the service knows, with its params, inputs
+  and outputs.
+
+The questions:
+
+1. The 14-bar RSI of `close` on the last bar.
+2. The 20-bar realized volatility on the last bar, defined as: the
+   population standard deviation (divide by n) of the last 20 daily log
+   returns of `close`, times √252, times 100 (so a percentage). A daily log
+   return is ln(close today / close yesterday).
+3. The share of days on which `close` was above its own 50-bar simple
+   moving average, counting only the days where that average exists. A
+   number between 0 and 1.
+4. The largest one-day fall in `close`, as a percentage change from the day
+   before (a negative number), and the date of the day it happened
+   (YYYY-MM-DD, as the service reports dates).
+
+Rules for this exercise:
+- Use only `{DIR}/ask.sh` to reach the data. Do not run anything else that
+  reads data or runs code, other than writing files and running ask.sh.
+- Read only files inside {DIR}. Do not use the web.
+
+When you are done, write `{DIR}/answers.json` in exactly this shape, with
+numbers as the service gave them:
+
+{"q1": <number>, "q2": <number>, "q3": <number>,
+ "q4": {"percent": <number>, "date": "<YYYY-MM-DD>"}}
+
+Then reply with: how sure you are of each answer, any problems you hit
+with the service or its documentation (be specific), and anything you were
+unsure about.
