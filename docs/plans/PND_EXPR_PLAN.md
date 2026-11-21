@@ -20,7 +20,7 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
   live `filter` accept an expression. Tests pin "expression gives the same
   answer as the function it replaces"; `scripts/perf-expr.mjs`.
 - **E2, pond-rs + bridges:** `Expr` in pond-rs, JSON form through
-  `@pond-ts/rs` and `pond_rs`; the core parity fixture gains expression
+  `@pond-ts/wasm` and `pond_rs`; the core parity fixture gains expression
   cases. Split: E2a pond-rs crate, E2b the two bridges (both done, below; one PR, #867).
 - **E3:** more operations only when a friction report asks.
 
@@ -74,7 +74,7 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
 
 ## E2b outcome (bridges, same PR #867)
 
-- `@pond-ts/rs`: `Expr` / `col` / `lit` / `when` in `index.js` (same
+- `@pond-ts/wasm`: `Expr` / `col` / `lit` / `when` in `index.js` (same
   builder as pond-ts), sent to Rust as `{"expr": tree}`; pond-wasm routes
   `filter` / `find` / `some` / `every` / `mapColumns` / `withColumn` to the
   pond-rs expression methods. `mapColumns` may mix expressions and
@@ -99,7 +99,7 @@ reasoning: [`docs/rfcs/expressions.md`](../rfcs/expressions.md).
 ## Status (2026-11-13): E1 and E2 done, ticket closed
 
 The live `filter` gap above closed with bridge step J2b (#870):
-`@pond-ts/rs`'s `LiveSeries.filter` takes an expression, pinned in
+`@pond-ts/wasm`'s `LiveSeries.filter` takes an expression, pinned in
 `packages/rs/test/live.mjs`. E1 and E2 were the whole adopted scope, so
 [PND-EXPR] left PLAN.md on 2026-11-13. E3 (more operations) has no ticket:
 open one when a friction report asks for a specific operation, as the maths
@@ -125,7 +125,7 @@ below were added for `@pond-ts/fit`.
 - Considered and not done: compiling a whole tree into one JS function so it
   runs as one loop. The column-at-a-time design costs one pass and one
   array per step; a haversine (about 22 steps) over 36,000 rows takes about 6 ms
-  in pond-ts, 4 ms in `@pond-ts/rs` (wasm), 1 ms as a hand loop. Fine for
+  in pond-ts, 4 ms in `@pond-ts/wasm` (wasm), 1 ms as a hand loop. Fine for
   fit today; revisit if a consumer needs it.
 - Speed notes: the maths loops sit in their own functions (`math1`,
   `math2`, `math2Scalar`) so each only sees a `Float64Array`; inside `walk`

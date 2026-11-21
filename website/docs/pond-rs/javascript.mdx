@@ -2,19 +2,19 @@
 id: javascript
 title: From JavaScript
 sidebar_position: 7.5
-description: "@pond-ts/rs is pond-rs compiled to WebAssembly, with pond-ts's method names, for Node and browsers. Install it, set up a bundler, and see where it differs from pond-ts."
+description: "@pond-ts/wasm is pond-rs compiled to WebAssembly, with pond-ts's method names, for Node and browsers. Install it, set up a bundler, and see where it differs from pond-ts."
 ---
 
-# From JavaScript: `@pond-ts/rs`
+# From JavaScript: `@pond-ts/wasm`
 
-`@pond-ts/rs` is pond-rs compiled to WebAssembly and called with pond-ts's
+`@pond-ts/wasm` is pond-rs compiled to WebAssembly and called with pond-ts's
 method names and argument shapes. Code written for pond-ts mostly runs as
 is; the work happens in Rust, with the same answers as pond-ts, to the bit
 (pond-ts's own test cases run through it in CI). It has pond-ts's version
 number and is released with every pond-ts release.
 
 ```sh
-npm install @pond-ts/rs
+npm install @pond-ts/wasm
 ```
 
 ## In Node
@@ -24,7 +24,7 @@ as Node loads an ES module with `require` from 20.19); the WebAssembly is loaded
 while the import runs, so there is nothing to wait for:
 
 ```js
-import { TimeSeries, Sequence, col } from '@pond-ts/rs';
+import { TimeSeries, Sequence, col } from '@pond-ts/wasm';
 
 const cpu = new TimeSeries({
   name: 'cpu',
@@ -61,7 +61,7 @@ for the browser take the browser one.
   // vite.config.js
   export default {
     build: { target: 'es2022' },
-    optimizeDeps: { exclude: ['@pond-ts/rs'] },
+    optimizeDeps: { exclude: ['@pond-ts/wasm'] },
   };
   ```
 
@@ -72,11 +72,11 @@ for the browser take the browser one.
   file; webpack 5 has top-level `await` on by default. **Rollup** needs a
   plugin for that, such as `@web/rollup-plugin-import-meta-assets`.
 - **esbuild**: bundle with `--format=esm --target=es2022`, then copy
-  `node_modules/@pond-ts/rs/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
+  `node_modules/@pond-ts/wasm/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
   (esbuild leaves the `new URL` as is, so the file is looked for next to
   the bundle).
-- **No bundler**: serve `node_modules/@pond-ts/rs` and map two names in
-  an import map, `"@pond-ts/rs"` to its `index.js` and `"#wasm"` to
+- **No bundler**: serve `node_modules/@pond-ts/wasm` and map two names in
+  an import map, `"@pond-ts/wasm"` to its `index.js` and `"#wasm"` to
   its `wasm.browser.js`.
 
 The `.wasm` file is about 7.5 MB, 1.4 MB with brotli (which most
@@ -94,11 +94,11 @@ under `script-src 'self' 'wasm-unsafe-eval'`.
 
 The package ships no type declarations yet (they are planned). In
 TypeScript under `strict`, importing it fails with TS7016 ("Could not find
-a declaration file for module '@pond-ts/rs'"). Until types ship, declare
+a declaration file for module '@pond-ts/wasm'"). Until types ship, declare
 the module in a `.d.ts` file of your own, which types it as `any`:
 
 ```ts
-declare module '@pond-ts/rs';
+declare module '@pond-ts/wasm';
 ```
 
 ## How it differs from pond-ts
@@ -128,14 +128,14 @@ The ones you meet first:
   `TypeError` or `RangeError`.
 
 Not included: `@pond-ts/react`, `@pond-ts/charts` and
-`@pond-ts/process`; a series from `@pond-ts/rs` is not a pond-ts
+`@pond-ts/process`; a series from `@pond-ts/wasm` is not a pond-ts
 `TimeSeries`, so pass data between them as JSON: `toJSON()` on one side,
-`TimeSeries.fromJSON` on the other. (`@pond-ts/rs` also reads and writes
+`TimeSeries.fromJSON` on the other. (`@pond-ts/wasm` also reads and writes
 Arrow IPC bytes: `TimeSeries.fromArrow`, `toArrow()`.)
 
 ## Speed
 
-Against pond-ts on one million rows, `@pond-ts/rs` is about 3–11× faster
+Against pond-ts on one million rows, `@pond-ts/wasm` is about 3–11× faster
 for studies, 2.6–4.3× for `toJSON`, 2–3.5× for expressions and 1.4–5.5×
 for live series, and much slower wherever a JavaScript function runs once
 per row. The table is on [Performance](./performance#from-javascript).

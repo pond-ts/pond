@@ -1,5 +1,5 @@
 {
-  "name": "@pond-ts/rs",
+  "name": "@pond-ts/wasm",
   "version": "0.77.0",
   "description": "pond-rs (Rust) compiled to WebAssembly, with pond-ts's method names",
   "type": "module",

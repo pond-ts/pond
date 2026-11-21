@@ -280,7 +280,7 @@ fn map_columns<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcom
             }
             Some(ColumnKind::Array) => {
                 return Err(format!(
-                    "mapColumns: array column '{column}' is not supported by @pond-ts/rs yet"
+                    "mapColumns: array column '{column}' is not supported by @pond-ts/wasm yet"
                 ));
             }
             // Numbers, and unknown names (pond-rs names the error).

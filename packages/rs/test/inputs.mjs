@@ -303,4 +303,4 @@ g.free();
 }
 
 assert.equal(alive(), 0, 'series left in memory');
-console.log('inputs through @pond-ts/rs: all match pond-ts');
+console.log('inputs through @pond-ts/wasm: all match pond-ts');

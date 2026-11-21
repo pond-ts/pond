@@ -129,7 +129,7 @@ pub enum Stats {
 
 fn invalid(message: String) -> PondError {
     PondError::InvalidData {
-        call: "@pond-ts/rs",
+        call: "@pond-ts/wasm",
         message,
     }
 }
@@ -544,7 +544,7 @@ fn build_node(
                         }
                         _ if fn_ref(r).is_some() => Err(format!(
                             "cumulative: a function for '{c}' must be the only column \
-                             (@pond-ts/rs runs one function column per cumulative)"
+                             (@pond-ts/wasm runs one function column per cumulative)"
                         )),
                         _ => Err(format!("cumulative: '{c}' needs a reducer name, got {r}")),
                     })
@@ -748,7 +748,7 @@ impl Live {
             }
             (_, Class::PartitionedFusedRolling | Class::PartitionedSyncRolling) => {
                 return Err(format!(
-                    "{op}: nothing builds on a {} in @pond-ts/rs",
+                    "{op}: nothing builds on a {} in @pond-ts/wasm",
                     from.class.name()
                 ));
             }

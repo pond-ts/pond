@@ -51,11 +51,11 @@ for the bars, drawn by `@pond-ts/charts`. Source and recorder:
 **pond-rs, the Rust version** — same operations, same results as pond-ts (a
 test suite checks every operation against output written by pond-ts):
 
-| Package                                                    | What it's for                                                                                                     | Folder           |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)  | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
-| [`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
-| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)      | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
+| Package                                                        | What it's for                                                                                                     | Folder           |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
+| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)      | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
+| [`@pond-ts/wasm`](https://www.npmjs.com/package/@pond-ts/wasm) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
+| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)          | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
 
 How fast: across the 173 benchmark cases measured while building it, pond-rs
 on 4 cores was faster than pond-ts in 170, with a median of 7.5× (6.8× on a
@@ -326,7 +326,7 @@ The full guide is at **<https://pond-ts.org/>**.
 
 ## Versioning
 
-All seven npm packages (the six above plus `@pond-ts/rs`, pond-rs compiled
+All seven npm packages (the six above plus `@pond-ts/wasm`, pond-rs compiled
 to WebAssembly) release together under one version — keep them in step.
 
 - **Today (0.x):** a minor release may contain breaking changes; each is

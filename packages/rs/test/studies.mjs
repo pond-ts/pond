@@ -1,4 +1,4 @@
-// Runs @pond-ts/financial's fixtures through @pond-ts/rs's public JS API:
+// Runs @pond-ts/financial's fixtures through @pond-ts/wasm's public JS API:
 //
 // - study-parity.json: @pond-ts/financial output, bit for bit (the Rust
 //   harness crates/pond-rs/tests/study_parity.rs runs the same cases).
@@ -652,7 +652,7 @@ function tagCase(c) {
 for (const c of calendars.values()) c.free();
 const leaked = alive() + calendarsAlive();
 console.log(
-  `studies through @pond-ts/rs: ${report.join('; ')}; ${leaked} series / calendars left in memory`,
+  `studies through @pond-ts/wasm: ${report.join('; ')}; ${leaked} series / calendars left in memory`,
 );
 for (const f of failures.slice(0, 60)) console.log('  ' + f);
 if (failures.length > 60) console.log(`  … and ${failures.length - 60} more`);

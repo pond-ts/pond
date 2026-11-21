@@ -1,4 +1,4 @@
-// Column expressions through @pond-ts/rs ([PND-EXPR] E2b): each rule as a
+// Column expressions through @pond-ts/wasm ([PND-EXPR] E2b): each rule as a
 // JavaScript function (called once per row from WebAssembly), as an
 // expression (runs inside pond-rs), and as pond-ts's expression. Same
 // data and cases as packages/core/scripts/perf-expr.mjs.

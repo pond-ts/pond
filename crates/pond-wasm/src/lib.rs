@@ -1,4 +1,4 @@
-//! pond-rs for JavaScript: the WebAssembly half of the `@pond-ts/rs` npm
+//! pond-rs for JavaScript: the WebAssembly half of the `@pond-ts/wasm` npm
 //! package (`packages/rs`), which wraps these exports in pond-ts-shaped
 //! classes.
 //!

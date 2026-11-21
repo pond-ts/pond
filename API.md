@@ -33,7 +33,7 @@ next door is the point.
 | `packages/financial` | `@pond-ts/financial` | `.`, `./fluent` (prototype augmentation), `./catalog`, `./process` (study catalog as `@pond-ts/process` steps) | `website/docs/financial/` |
 | `packages/fit`       | `@pond-ts/fit`       | `.`, `./files`, `./views`                                                                                      | `website/docs/fit/`       |
 | `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental**                                                         | `website/docs/process/`   |
-| `packages/rs`        | `@pond-ts/rs`        | `.` (pond-rs as WebAssembly; Node and browsers)                                                                | `website/docs/pond-rs/`   |
+| `packages/rs`        | `@pond-ts/wasm`      | `.` (pond-rs as WebAssembly; Node and browsers)                                                                | `website/docs/pond-rs/`   |
 
 ---
 
@@ -776,7 +776,7 @@ deleted builds green and breaks only downstream. If you mark something
 
 ---
 
-## @pond-ts/rs
+## @pond-ts/wasm
 
 pond-rs (below) compiled to WebAssembly, with pond-ts's class and method
 names and argument shapes; released with the other packages at the same

@@ -1,4 +1,4 @@
-// `toJSON()` through @pond-ts/rs against pond-ts's on the same 1M rows:
+// `toJSON()` through @pond-ts/wasm against pond-ts's on the same 1M rows:
 // (a) one number column, (b) four, (c) number + text (100 labels) +
 // boolean, (d) time-range keys + one number, (e) = (c) as object rows.
 // Median of 5 after 2 warm-ups; with `--expose-gc` each sample starts after
