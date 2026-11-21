@@ -58,6 +58,7 @@ console.log(
     coldMs: cold,
     warmMs,
     peakRssMb: process.resourceUsage().maxRSS / 1024,
+    nodes: wire.nodes.map((n) => [n.id, n.ms]),
     facts: wire.facts,
     skipped: wire.skipped,
   }),

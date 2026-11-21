@@ -63,6 +63,8 @@ fn market(n: usize) -> Columns {
     )
 }
 
+// `min(max(..))`, not `clamp`, to read as `workloads.mjs` does.
+#[allow(clippy::manual_clamp)]
 fn telemetry(n: usize) -> Columns {
     let mut rnd = Generator(0x7e1e);
     let (mut time, mut cpus, mut mems, mut latency, mut requests, mut errors) = (
@@ -183,6 +185,7 @@ fn main() {
             "coldMs": cold,
             "warmMs": warm_ms,
             "peakRssMb": peak_rss_mb(),
+            "nodes": wire["nodes"].as_array().unwrap().iter().map(|n| json!([n["id"], n["ms"]])).collect::<Vec<_>>(),
             "facts": wire["facts"],
             "skipped": wire["skipped"],
         })

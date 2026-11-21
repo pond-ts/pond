@@ -65,6 +65,21 @@ pub(crate) struct Compiled {
     kept: Option<Arc<Held>>,
 }
 
+/// Where a raw column's numbers live.
+#[derive(Debug, Clone)]
+enum Raw {
+    /// A number column of the bound series, read in place.
+    Column(usize),
+    /// Converted once from a boolean or other column.
+    Converted(Arc<Vec<f64>>),
+}
+
+/// One input as `compute` reads it.
+enum Input {
+    Column(usize),
+    Held(Arc<Vec<f64>>),
+}
+
 /// One dataset and the nodes compiled against it.
 #[derive(Debug)]
 pub struct BoundGraph {
@@ -72,9 +87,10 @@ pub struct BoundGraph {
     pub(crate) units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
     series: Arc<TimeSeries>,
-    times: Vec<i64>,
     columns: Vec<String>,
-    raw: HashMap<String, Arc<Vec<f64>>>,
+    /// How each raw column is read: a number column in place, anything
+    /// else converted once (`numbers_of`).
+    raw: HashMap<String, Raw>,
     generation: u64,
     nodes: HashMap<String, Compiled>,
     /// Compile order, for `ids`.
@@ -119,7 +135,6 @@ impl BoundGraph {
             units,
             budget_bytes,
             series: series.clone(),
-            times: vec![],
             columns: vec![],
             raw: HashMap::new(),
             generation: 0,
@@ -133,7 +148,6 @@ impl BoundGraph {
     }
 
     fn load(&mut self, series: Arc<TimeSeries>) {
-        self.times = series.key().begin().to_vec();
         self.columns = series
             .columns()
             .iter()
@@ -142,7 +156,15 @@ impl BoundGraph {
         self.raw = series
             .columns()
             .iter()
-            .map(|c| (c.name().to_string(), Arc::new(numbers_of(c, series.len()))))
+            .enumerate()
+            .map(|(i, c)| {
+                let raw = if c.kind() == ColumnKind::Number {
+                    Raw::Column(i)
+                } else {
+                    Raw::Converted(Arc::new(numbers_of(c, series.len())))
+                };
+                (c.name().to_string(), raw)
+            })
             .collect();
         self.series = series;
     }
@@ -411,18 +433,21 @@ impl BoundGraph {
         }
         let bound = node.bound.clone();
         // Upstream first. A failure there leaves this node as it was.
-        let mut inputs: Vec<Arc<Vec<f64>>> = Vec::with_capacity(bound.len());
+        let mut inputs: Vec<Input> = Vec::with_capacity(bound.len());
         for b in &bound {
             match &b.nested {
-                None => inputs.push(self.raw[&b.column].clone()),
+                None => inputs.push(match &self.raw[&b.column] {
+                    Raw::Column(i) => Input::Column(*i),
+                    Raw::Converted(v) => Input::Held(v.clone()),
+                }),
                 Some((up, index)) => match &*self.pull(up)? {
-                    Held::Columns(cols) => inputs.push(cols[*index].clone()),
+                    Held::Columns(cols) => inputs.push(Input::Held(cols[*index].clone())),
                     Held::Fact(_) => unreachable!("a fold is never an input"),
                 },
             }
         }
         let node = &self.nodes[id];
-        let result = compute(node, &inputs, &self.times).map(Arc::new);
+        let result = compute(node, &inputs, &self.series).map(Arc::new);
         let generation = self.generation;
         let node = self.nodes.get_mut(id).expect("still compiled");
         if let Ok(held) = &result {
@@ -477,15 +502,26 @@ impl BoundGraph {
 }
 
 /// Runs one node's op or fold over its inputs.
-fn compute(node: &Compiled, inputs: &[Arc<Vec<f64>>], times: &[i64]) -> Result<Held> {
+fn compute(node: &Compiled, inputs: &[Input], series: &TimeSeries) -> Result<Held> {
     let def = &node.def;
     let roles: Vec<String> = def.inputs.iter().map(|i| i.role.clone()).collect();
+    let times = series.key().begin();
     let ctx = OpContext {
         roles: &roles,
-        inputs: inputs.iter().map(|c| c.as_slice()).collect(),
+        inputs: inputs
+            .iter()
+            .map(|input| match input {
+                Input::Column(i) => series.columns()[*i]
+                    .numbers()
+                    .expect("a number column")
+                    .values(),
+                Input::Held(v) => v.as_slice(),
+            })
+            .collect(),
         params: &node.params,
         id: &node.id,
         times,
+        series,
     };
     if node.fold {
         let fold = def
