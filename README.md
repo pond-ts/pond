@@ -273,79 +273,70 @@ bounded.
 
 ## Performance
 
-There are three things to measure: drawing, the TypeScript library, and the
-Rust library. Each was measured on its own, on different dates and machines,
-so read each list by itself. The ratios do not multiply together.
-
-**In short:** pond-ts runs at about the speed of pandas. pond-rs runs at about
-the speed of polars. The charts draw a million-point series at 80 frames a second
-or more when the data is not changing every frame.
+Three things were measured, each on its own: drawing, the TypeScript library,
+and the Rust library. The dates and machines differ, so the ratios do not
+multiply together. Blue is pond. In the second and third figures, red is
+where pond is slower.
 
 ### Charts
 
-Apple M1 Pro, headless Chromium
-([first paint](website/docs/reference/charts-benchmarks.mdx),
-[scaling](website/docs/reference/charts-scale-benchmarks.mdx)).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-charts-dark.svg">
+  <img src="docs/readme/perf/perf-charts-light.svg" width="800" alt="First paint of 166,650 points in milliseconds: pond 11.4, uPlot 14.5, Chart.js 36.4. Area chart of 10 million points in frames a second: pond 117, SciChart on the graphics card 119, uPlot 18. 100,000 points changing every frame, in frames a second: pond 18, SciChart 119, uPlot 37.">
+</picture>
 
-- **First paint** of 166,650 points: 11.4 ms, against 14.5 ms for uPlot and
-  36.4 ms for Chart.js.
-- **Large data:** a 10-million-point area chart holds 117 frames a second.
-  uPlot holds 18, and SciChart, a commercial engine that draws on the graphics
-  card, holds 119.
-- **Where it is behind:** data that is rewritten on every frame. With 100,000
-  points all changing each frame pond draws 18 frames a second and uPlot 37.
-  Hovering costs more than in uPlot (352 ms against 107 ms over the same
-  10-second script, with both still at the display's frame rate), and the
-  charts add 50 KB compressed on top of React and pond-ts.
+<sub>Apple M1 Pro, headless Chromium.
+[First paint](website/docs/reference/charts-benchmarks.mdx),
+[scaling](website/docs/reference/charts-scale-benchmarks.mdx). Also behind:
+hovering costs more than in uPlot, and the charts add 50 KB compressed on top
+of React and pond-ts.</sub>
 
 ### pond-ts
 
-Node 22, Apple silicon, 30 July 2026; the pandas and polars figures are on
-500,000 rows
-([every figure, losses included](website/docs/reference/benchmarks.mdx)).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-pond-ts-dark.svg">
+  <img src="docs/readme/perf/perf-pond-ts-light.svg" width="800" alt="pond-ts against pandas: ema 1.7 times faster, mean 1.5 times faster, median 1.1 times faster, a pass of five studies 1.3 times slower, bollinger 1.4 times slower, envelope 1.9 times slower. pond-ts against polars on one core: ema 3.1 times faster, bollinger 1.9 times faster, five studies 1.2 times faster, sma 1.2 times slower, mean 3.8 times slower, stdev 8.9 times slower. Against polars on 10 cores, five studies is 3.5 times slower.">
+</picture>
+
+<sub>The same query on 500,000 rows. Node 22, Apple silicon, 30 July 2026.
+[Every figure, losses included](website/docs/reference/benchmarks.mdx).</sub>
 
 - **Against pondjs:** faster on all 54 operations the two share, 20.7× by
   geometric mean.
-- **Against pandas:** about even. pond-ts is ahead on `ema`, `mean`, `median`
-  and `percentile` and 1.1–1.9× behind on the rolling studies. A pass of five
-  studies takes 1.28× as long.
-- **Against polars on one core:** ahead on that five-study pass (0.85× the
-  time), on `bollinger` (0.53×) and on `ema` (0.32×). It is 4–9× behind on
-  simple whole-column sums, each of which still takes under 3 ms.
-- **Where it is behind:** pond-ts checks every row against the schema as it
-  loads, so loading 500,000 rows takes 6.3 ms where polars takes 0.03 ms. It
-  also runs on one thread: with all 10 cores polars finishes the five-study
-  pass 3.5× sooner. An opt-in worker mode for Node
+- **Loading rows** is where pond-ts is furthest behind: 6.3 ms for 500,000
+  rows against 0.03 ms for polars, because it checks every row against the
+  schema as it loads.
+- **One thread.** An opt-in worker mode for Node
   (`@pond-ts/financial/parallel`) speeds up three of the rolling studies, and
   pond-rs is the answer when you need every core.
-
-Live ingest, measured separately (one million events, one thread, 4-core Xeon
-at 2.10 GHz, 31 October 2026,
-[table](website/docs/pond-rs/performance.mdx#from-javascript)): pushing events
-one at a time into a series that keeps a rolling average and one-minute
-buckets handles about 350,000 events a second, and about one million a second
-when they are pushed in batches of 1,000.
+- **Live:** about 350,000 events a second pushed one at a time into a series
+  that keeps a rolling average and one-minute buckets, and about a million a
+  second in batches of 1,000
+  ([one thread, 4-core Xeon, 31 October 2026](website/docs/pond-rs/performance.mdx#from-javascript)).
 
 ### pond-rs
 
-22 October 2026, 173 cases
-([full comparison](crates/pond-rs/bench/COMPARISON.md)).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-pond-rs-dark.svg">
+  <img src="docs/readme/perf/perf-pond-rs-light.svg" width="800" alt="pond-rs is 7.5 times faster than pond-ts at the median on 4 cores, and faster in 170 of 173 cases. Against polars with 4 cores each it is faster in 73 cases, level in 9 and slower in 59.">
+</picture>
 
-- **Against pond-ts:** faster in 170 of the 173 cases, 7.5× at the median on 4
-  cores and 6.8× on one.
-- **Against polars:** about even. On 4 cores each, pond-rs is ahead in 73
-  cases, behind in 59 and level in 9. It is furthest ahead on rolling "top 3"
-  and "unique values" windows and on joins that keep every row. It is furthest
-  behind where pond calls a function once per row: polars is 6× faster on
-  `filter` and 13–18× on `collapse`.
-- **From JavaScript:** `@pond-ts/rs` runs the same engine as WebAssembly on
-  one thread. Against pond-ts on a million rows it is 3–11× faster on the
-  financial studies and 1.4–5.5× on live series. A filter written as a
-  JavaScript function is about 18× slower than in pond-ts; write it as an
-  expression (`col('v').gt(0)`) and it is about twice as fast instead
+<sub>22 October 2026.
+[Full comparison](crates/pond-rs/bench/COMPARISON.md).</sub>
+
+- **Against polars** it is furthest ahead on rolling "top 3" and "unique
+  values" windows and on joins that keep every row. It is furthest behind
+  where pond calls a function once per row: polars is 6× faster on `filter`
+  and 13–18× on `collapse`.
+- **From JavaScript,** `@pond-ts/rs` runs the same engine as WebAssembly on
+  one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
+  on live series. Write filters as expressions (`col('v').gt(0)`); a filter
+  written as a JavaScript function is about 18× slower than in pond-ts
   ([table](website/docs/pond-rs/performance.mdx#from-javascript)).
 
-To run the pondjs comparison yourself:
+The figures are drawn by
+[`docs/readme/perf/make-charts.mjs`](docs/readme/perf/make-charts.mjs) from
+the numbers on the linked pages. To run the pondjs comparison yourself:
 
 ```sh
 npm run build && node packages/core/bench/vs-pondjs.cjs
