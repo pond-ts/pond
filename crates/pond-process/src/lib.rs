@@ -18,6 +18,7 @@ pub mod context;
 pub mod error;
 pub mod folds;
 pub mod graph;
+pub mod history;
 pub mod host;
 pub mod identity;
 pub(crate) mod js;
@@ -33,9 +34,14 @@ pub use context::{FoldContext, FoldFn, OpContext, RunFn};
 pub use error::{ErrorKind, ProcessError, Result};
 pub use folds::standard_folds;
 pub use graph::BoundGraph;
-pub use host::{DatasetInfo, Host, LoadFn, LoadFuture, LoadedSource, SourceRegistry};
+pub use history::{History, required_history};
+pub use host::{
+    DatasetInfo, Host, LoadFn, LoadFuture, LoadedSource, PARALLEL_MIN_ROWS, SourceRegistry,
+};
 pub use identity::{explain, spec_id};
-pub use registry::{Def, InputDef, Label, OutputDef, ParamDef, Params, Registry, Shape};
+pub use registry::{
+    Def, InputDef, Label, LookbackFn, OutputDef, ParamDef, Params, Registry, Shape,
+};
 pub use run::{RunResult, run};
 pub use slots::expand_slots;
 pub use source::{SourceRef, source_id};

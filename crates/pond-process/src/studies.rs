@@ -15,10 +15,10 @@
 //!   ([`UNBRIDGED_STUDIES`]), and so are the session studies, which need a
 //!   calendar this port does not take yet.
 
+use pond_rs::Column;
 use pond_rs::financial::catalog::{
     ParamKind, STUDIES, StudyAnchor, StudyDescriptor, StudyNaming, StudyOutput,
 };
-use pond_rs::{Column, TimeSeries};
 use serde_json::{Map, json};
 
 use crate::context::OpContext;
@@ -121,18 +121,22 @@ fn kept_params(d: &StudyDescriptor) -> Vec<(&'static str, ParamDef)> {
 
 /// Runs one study on the op's inputs. The inputs become a series whose
 /// columns are named by role, so the study is told `"high": "high"`.
+fn thrown(e: pond_rs::PondError) -> ProcessError {
+    ProcessError::thrown(e.to_string())
+}
+
 fn run_study(
     d: &'static StudyDescriptor,
     keys: &[&'static str],
     ctx: &OpContext,
 ) -> Result<Vec<Vec<f64>>, ProcessError> {
-    let columns = d
-        .inputs
-        .iter()
-        .map(|i| Column::optional_raw(i.role, ctx.input(i.role).to_vec()))
-        .collect();
-    let series = TimeSeries::new("in", ctx.times.to_vec(), columns)
-        .map_err(|e| ProcessError::thrown(e.to_string()))?;
+    // The bound series' key is shared, not copied: only the inputs are.
+    let mut series = ctx.series.select(&[]).map_err(thrown)?;
+    for i in d.inputs {
+        series = series
+            .with_column(Column::optional_raw(i.role, ctx.input(i.role).to_vec()))
+            .map_err(thrown)?;
+    }
     let mut options = Map::new();
     for key in keys {
         if let Some(v) = ctx.params.get(*key) {
