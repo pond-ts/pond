@@ -915,6 +915,29 @@ authoring APIs.
 
 The performance check is step 7.
 
+### R5 step 6 — custom ops and lookbacks (DONE)
+
+A consumer could already define its own op in Rust (`Def::op` with params,
+inputs, outputs, a label and a `run` closure; the parity fixture's five
+fixture ops are defined that way). What was missing was the lookback:
+`Def::lookback(|params| rows)` now declares how many rows of history an op
+needs, and `required_history(registry, plan)` ports `requiredHistory`.
+Lookbacks add along a chain and take the largest across inputs and specs;
+an op with no lookback makes the answer unknown with the op named, never
+zero. The basic ops declare the same lookbacks as TypeScript (0, `shift`
+its positive `periods`, `cumulative` and `hold` none). The studies declare
+none, as the TypeScript bridge does.
+
+The fixture gains twelve `requiredHistory` plans (chains, branches, a
+picked output under a fold, undeclared ops in a known order, an empty
+plan, an unknown op, a bad param); `tests/parity.rs` matches them as text,
+`byOp`'s order included, and checks the message for a negative, NaN or
+infinite lookback.
+
+Decision 4 (Peter, 2026-11-21): the consumer's Rust side signs in and
+fetches its own data, so it works with the window closed. That is the
+host's `SourceRegistry` and `run_async` (step 5); pond needs nothing new.
+
 ### R5 step 3 (end) — `log` and `sqrt` (DONE)
 
 Scope decision 3 asked pond for the pointwise basics a consumer's own ops

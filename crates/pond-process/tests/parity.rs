@@ -14,7 +14,7 @@ use std::task::{Context, Poll, Waker};
 
 use pond_process::{
     Def, ErrorKind, Host, LoadedSource, ParamDef, ProcessError, Registry, RunResult, SourceRef,
-    SourceRegistry, basic_ops, explain, source_id, spec_id, summary_folds,
+    SourceRegistry, basic_ops, explain, required_history, source_id, spec_id, summary_folds,
 };
 use pond_rs::{JsonOptions, TimeSeries};
 use serde_json::{Map, Value, json};
@@ -43,6 +43,7 @@ fn fixture_ops() -> Vec<Def> {
         .param("days", ParamDef::int(252.0).min(1.0).max(366.0))
         .typed_input("variance", "variance")
         .output("", "%")
+        .lookback(|_| 0.0)
         .run(|ctx| {
             let days = ctx.number("days");
             Ok(vec![
@@ -59,6 +60,7 @@ fn fixture_ops() -> Vec<Def> {
             .output_on("Upper", "inherit", &["width"])
             .output_on("Mid", "inherit", &[])
             .output_on("Lower", "inherit", &["width"])
+            .lookback(|_| 0.0)
             .run(|ctx| {
                 let v = ctx.input("source");
                 let w = ctx.number("width");
@@ -455,5 +457,55 @@ fn log_gives_javascript_bits() {
             "{x:#x} is a case where ln differs"
         );
         assert_eq!(got.to_bits(), *want, "log of {x:#x}");
+    }
+}
+
+#[test]
+fn required_history_matches() {
+    let registry = registry("all");
+    for case in fixture()["history"].as_array().unwrap() {
+        let plan = case["plan"].as_array().unwrap();
+        let got = match required_history(&registry, plan) {
+            Ok(h) => json!({ "result": h.to_json() }),
+            Err(e) => json!({ "error": caught(&e) }),
+        };
+        let want = match case.get("result") {
+            Some(r) => json!({ "result": r }),
+            None => json!({ "error": case["error"] }),
+        };
+        // As text, so key order (`byOp` in the order each op finished) counts.
+        assert_eq!(
+            norm(&got).to_string(),
+            norm(&want).to_string(),
+            "plan {}",
+            case["plan"]
+        );
+    }
+}
+
+/// A lookback that is negative or not finite is the op's own mistake,
+/// reported with `requiredHistory`'s words.
+#[test]
+fn required_history_refuses_a_bad_lookback() {
+    for (n, text) in [(-1.0, "-1"), (f64::NAN, "NaN"), (f64::INFINITY, "Infinity")] {
+        let mut registry = Registry::new();
+        registry
+            .define(
+                Def::op("odd", "fixture", "A broken lookback.")
+                    .input("source")
+                    .output("", "inherit")
+                    .lookback(move |_| n)
+                    .run(|ctx| Ok(vec![ctx.input("source").to_vec()])),
+            )
+            .unwrap();
+        let err = required_history(&registry, &[json!({ "op": "odd", "inputs": ["close"] })])
+            .unwrap_err();
+        assert_eq!(
+            err.message,
+            format!(
+                "op 'odd' declared a lookback of {text}; it must be a non-negative finite row count"
+            )
+        );
+        assert_eq!(err.name(), "ProcessError");
     }
 }
