@@ -157,6 +157,11 @@ fn main() {
     let series = Arc::new(TimeSeries::new(workload.as_str(), time, columns).expect("series"));
     let load_ms = ms(t);
 
+    // THREADS sets how many steps may run at once (default 1).
+    let threads: usize = std::env::var("THREADS")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(1);
     let mut cold = vec![];
     let mut host = None;
     let mut result = None;
@@ -165,7 +170,7 @@ fn main() {
         // last host go: two graphs alive at once would double the peak.
         drop(host.take());
         drop(result.take());
-        let mut h = Host::new(registry.clone(), HashMap::new());
+        let mut h = Host::new(registry.clone(), HashMap::new()).with_threads(threads);
         h.add("d", series.clone());
         let t = Instant::now();
         result = Some(h.run(&request).expect("run"));
