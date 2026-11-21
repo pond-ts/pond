@@ -39,6 +39,8 @@ __pycache__/
 
 # @pond-ts/rs WebAssembly build output (packages/rs/build.sh)
 packages/rs/pkg/
+# Written by packages/rs/test/types/check.mjs from the parity fixtures
+packages/rs/test/types/generated/
 
 # Python bridge build/test leftovers
 __pycache__/

@@ -32,8 +32,12 @@ Docs: <https://pond-ts.org> · index for agents: <https://pond-ts.org/llms.txt>
 | OHLCV bars, SMA/EMA/RSI/MACD/Bollinger/ATR/VWAP…, market-hours calendar | `@pond-ts/financial`                 | `'@pond-ts/financial'`, `'@pond-ts/financial/fluent'` |
 | GPS / power / heart-rate activity analytics                             | `@pond-ts/fit`                       | `'@pond-ts/fit'`                                      |
 | Computations as JSON plans with caching + provenance (experimental)     | `@pond-ts/process`                   | `'@pond-ts/process'`                                  |
+| The same series operations, run in Rust compiled to WebAssembly         | `@pond-ts/rs`                        | `'@pond-ts/rs'`                                       |
 
-All six release together under one version and release often. Install with
+All seven release together under one version and release often. `@pond-ts/rs`
+keeps pond-ts's method names; its series live in WebAssembly memory, so call
+`free()` when done, and hand one to `@pond-ts/charts` with
+`TimeSeries.fromColumns(rsSeries.toColumns<'number'>())` from pond-ts. Install with
 `@latest` rather than a version written from memory (a cold-start agent once
 wrote `^0.3.0` and spent turns on a 2024 API); keep their ranges in step — a
 pre-1.0 caret (`^0.67.0`) does **not** span minors.

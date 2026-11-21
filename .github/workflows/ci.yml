@@ -133,8 +133,9 @@ jobs:
           node-version: 24
           cache: npm
 
-      # Only test/tojson.mjs needs these: it compares against pond-ts's
-      # own toJSON, from packages/core/dist.
+      # test/tojson.mjs compares against pond-ts's own toJSON (from
+      # packages/core/dist); test/types/check.mjs needs tsc, prettier and
+      # pond-ts's types.
       - name: Install dependencies
         run: npm ci
 
@@ -161,6 +162,11 @@ jobs:
 
       - name: toJSON against pond-ts
         run: node packages/rs/test/tojson.mjs
+
+      # index.d.ts: the study block is current, every runtime method is
+      # declared, and the parity fixtures' calls compile under tsc --strict.
+      - name: Type declarations
+        run: node packages/rs/test/types/check.mjs
 
       # The browser build (wasm.browser.js: fetch + top-level await), bundled
       # with esbuild and run in headless Chromium, with and without a CSP
