@@ -986,6 +986,37 @@ function idCases() {
   ];
 }
 
+/**
+ * Plans for `requiredHistory`: lookbacks add along a chain and take the
+ * largest across branches; an undeclared one makes the answer unknown.
+ */
+function historyCases() {
+  const shift = (periods, inputs = ['close']) => ({
+    op: 'shift',
+    params: { periods },
+    inputs,
+  });
+  const band = { op: 'band', params: { width: 2 }, inputs: [shift(4)] };
+  return [
+    [shift(5)],
+    [shift(-3)],
+    [shift(3, [shift(7)])],
+    [shift(2), shift(9), { op: 'scale', inputs: [shift(6)] }],
+    [{ op: 'subtract', inputs: [shift(2, [shift(3)]), shift(8)] }],
+    [{ op: 'last', inputs: [{ from: band, output: 'Lower' }] }],
+    [{ op: 'shift', inputs: ['close'] }],
+    [{ op: 'cumulative', inputs: [shift(4)] }],
+    [
+      { op: 'hold', inputs: [{ op: 'boom', inputs: [shift(1)] }] },
+      { op: 'cumulative', inputs: [{ op: 'hold', inputs: ['close'] }] },
+      shift(30),
+    ],
+    [],
+    [{ op: 'nope', inputs: ['close'] }],
+    [shift(2.5)],
+  ];
+}
+
 const SOURCE_REFS = [
   { source: 'feed', params: {} },
   { source: 'feed', params: { b: 2, a: 'x' } },
@@ -1126,6 +1157,13 @@ export async function buildFixture(pond, proc) {
       },
       ids,
       sourceIds: SOURCE_REFS.map((ref) => ({ ref, id: proc.sourceId(ref) })),
+      history: historyCases().map((plan) => {
+        try {
+          return { plan, result: proc.requiredHistory(all, plan) };
+        } catch (e) {
+          return { plan, error: caught(e) };
+        }
+      }),
       sessions: sessionsOut,
     }),
   );

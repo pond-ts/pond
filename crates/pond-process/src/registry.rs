@@ -239,7 +239,16 @@ pub struct Def {
     pub run: Option<RunFn>,
     /// The fold's code.
     pub fold: Option<FoldFn>,
+    /// Rows of history the op needs before its first answer, from its
+    /// params; `None` when undeclared, which [`required_history`] reports
+    /// as unknown rather than zero.
+    ///
+    /// [`required_history`]: crate::required_history
+    pub lookback: Option<LookbackFn>,
 }
+
+/// An op's lookback: its params (defaults applied) in, rows out.
+pub type LookbackFn = Arc<dyn Fn(&Params) -> f64 + Send + Sync>;
 
 impl fmt::Debug for Def {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -275,6 +284,7 @@ impl Def {
             label: None,
             run: None,
             fold: None,
+            lookback: None,
         }
     }
 
@@ -342,6 +352,14 @@ impl Def {
         f: impl Fn(&FoldContext) -> std::result::Result<Value, ProcessError> + Send + Sync + 'static,
     ) -> Self {
         self.fold = Some(Arc::new(f));
+        self
+    }
+
+    /// Declares how many rows of history the op needs before its first
+    /// answer. An element-wise op declares `|_| 0.0`; leaving it out means
+    /// "unknown", which is not the same thing.
+    pub fn lookback(mut self, f: impl Fn(&Params) -> f64 + Send + Sync + 'static) -> Self {
+        self.lookback = Some(Arc::new(f));
         self
     }
 
