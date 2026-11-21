@@ -21,11 +21,16 @@ const T0 = Date.UTC(2026, 0, 5);
 // A repeatable [0, 1) sequence (no Math.random).
 const unit = (i, mult) => ((i * mult) % 4294967291) / 4294967291;
 
-/** 80 daily OHLCV bars, with a gap in `close` and one in `volume`. */
+/**
+ * 800 daily OHLCV bars, with a gap in `close` and one in `volume`. Long
+ * enough that every study's warm-up ends (`specialK` needs 724 bars), so
+ * every output column has numbers to compare (zigZag's default run aside:
+ * the bars never swing 5%, so an extra run takes 1%).
+ */
 function bars() {
   let price = 100;
   const rows = [];
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 800; i += 1) {
     const open = price;
     price += (unit(i + 1, 2654435761) - 0.5) * 3;
     const close = price;
@@ -71,6 +76,8 @@ const EXTRA = [
   { op: 'sma', params: { period: 5 } },
   { op: 'ema', params: { period: 200 } },
   { op: 'rsi', params: { period: 2 } },
+  // The bars swing less than zigZag's default 5%, so give it a 1% one.
+  { op: 'zigZag', params: { deviation: 1 } },
   { op: 'sma', params: { period: 0 } },
   { op: 'sma', params: { period: 2.5 } },
 ];

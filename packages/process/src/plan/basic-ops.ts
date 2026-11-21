@@ -266,10 +266,10 @@ export const sqrt: OpDef = {
   name: 'sqrt',
   family: 'arithmetic',
   summary:
-    'Square root of source, row by row (a variance into a volatility). A negative value is a gap. Keeps the input’s unit label, which it cannot know the root changes.',
+    'Square root of source, row by row (a variance into a volatility). A negative value is a gap. Its unit is `sqrt`, not the input’s: the root of a variance is no longer a variance.',
   params: {},
   inputs: one,
-  outputs: [{ id: '', unit: 'inherit' }],
+  outputs: [{ id: '', unit: 'sqrt' }],
   lookback: none,
   label: (_p, inputs) => `square root of ${inputs}`,
   run: (ctx) => {
