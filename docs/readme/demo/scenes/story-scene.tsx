@@ -85,12 +85,17 @@ const rolledSeries = (to: number) => {
 };
 
 // Frame plan.
-const ZOOM_IN = [0, 50] as const;
-const HOLD_IN = 62;
-const ZOOM_OUT = [62, 100] as const;
-const SWEEP = [104, 160] as const;
-const STREAM = [166, 262] as const;
-const FRAMES = 284;
+const ZOOM_IN = [0, 46] as const;
+const HOLD_IN = 56;
+const ZOOM_OUT = [56, 90] as const;
+const SWEEP = [94, 142] as const;
+const STREAM = [148, 236] as const;
+/** Boxes: in over the first part of the stream, then out after it ends. */
+const BOX_IN = [8, 34] as const; // frames into the stream
+const BOX_OUT = [242, 262] as const;
+/** Back out to the whole record, ending on the opening frame so it loops. */
+const FINAL_ZOOM = [264, 299] as const;
+const FRAMES = 300;
 const PER_FRAME = Math.ceil((rows.length - midIndex) / (STREAM[1] - STREAM[0]));
 
 const FOCUS = Date.UTC(1997, 11, 1);
@@ -142,7 +147,20 @@ const alpha = (hex: string, a: number) => {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a.toFixed(3)})`;
 };
 
-function themeFor(boxFade: number) {
+const mixHex = (a: string, b: string, t: number) => {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const c = [16, 8, 0].map((sh) => {
+    const x = (pa >> sh) & 255;
+    return Math.round(x + (((pb >> sh) & 255) - x) * t);
+  });
+  return `#${c.map((x) => x.toString(16).padStart(2, '0')).join('')}`;
+};
+
+/** `boxFade` shows the yearly boxes; `endFade` (0 -> 1 as the stream wraps
+ *  up) hides the rolling line and turns the daily line into the opening
+ *  frame's line, so the cut to the final zoom doesn't show. */
+function themeFor(boxFade: number, endFade = 0) {
   return {
     ...defaultTheme,
     background: '#ffffff',
@@ -153,8 +171,14 @@ function themeFor(boxFade: number) {
     line: {
       ...defaultTheme.line,
       avg: { color: '#c2410c', width: 1.75 },
-      raw: { color: alpha('#f4b39b', 1 - 0.75 * boxFade), width: 1 },
-      trend: { color: alpha('#c2410c', 1 - 0.35 * boxFade), width: 2 },
+      raw: {
+        color: alpha(mixHex('#f4b39b', '#c2410c', endFade), 1 - 0.75 * boxFade),
+        width: 1 + 0.75 * endFade,
+      },
+      trend: {
+        color: alpha('#c2410c', (1 - 0.35 * boxFade) * (1 - endFade)),
+        width: 2,
+      },
     },
     scatter: {
       ...defaultTheme.scatter,
@@ -179,23 +203,36 @@ function themeFor(boxFade: number) {
 function Chart({
   view,
   boxFade = 0,
+  endFade = 0,
   fixedY = false,
+  y,
   children,
 }: {
   view: [number, number];
   boxFade?: number;
+  endFade?: number;
   fixedY?: boolean;
+  /** An explicit y domain, overriding `fixedY`. */
+  y?: [number, number];
   children: ReactNode;
 }) {
   return (
-    <ChartContainer range={view} width={CHART_WIDTH} theme={themeFor(boxFade)}>
+    <ChartContainer
+      range={view}
+      width={CHART_WIDTH}
+      theme={themeFor(boxFade, endFade)}
+    >
       <ChartRow height={280}>
         <YAxis
           id="c"
           label="sea surface (°C)"
           format=".1f"
           width={50}
-          {...(fixedY ? { min: 24, max: 30 } : {})}
+          {...(y
+            ? { min: y[0], max: y[1] }
+            : fixedY
+              ? { min: 24, max: 30 }
+              : {})}
         />
         <Layers>{children}</Layers>
       </ChartRow>
@@ -203,8 +240,25 @@ function Chart({
   );
 }
 
-function zoomFrame(f: number) {
-  const view = zoomView(f);
+/** The y domain for a zoom view: the fixed 24-30 °C used everywhere else
+ *  while the view is wide, blending into the data's own range as it narrows,
+ *  so the axis never jumps. */
+function zoomY(
+  view: [number, number],
+  lo: number,
+  hi: number,
+): [number, number] {
+  const span = (view[1] - view[0]) / DAY;
+  const w = Math.min(
+    1,
+    Math.max(0, Math.log(span / 400) / Math.log(3000 / 400)),
+  );
+  const pad = (hi - lo) * 0.08 || 0.1;
+  return [24 * w + (lo - pad) * (1 - w), 30 * w + (hi + pad) * (1 - w)];
+}
+
+function zoomFrame(f: number, at?: [number, number]) {
+  const view = at ?? zoomView(f);
   const visible = daily.within(view[0] - DAY, view[1] + DAY);
   const days = Math.floor((view[1] - view[0]) / DAY / TARGET_BUCKETS);
   const raw = days <= 1;
@@ -231,7 +285,18 @@ function zoomFrame(f: number) {
           ['drawn as', raw ? 'raw days' : `${fmtInt(buckets!.length)} buckets`],
         ]}
       />
-      <Chart view={view}>
+      <Chart
+        view={view}
+        y={zoomY(
+          view,
+          (buckets
+            ? buckets.column('lo').min()
+            : visible.column('sst').min()) as number,
+          (buckets
+            ? buckets.column('hi').max()
+            : visible.column('sst').max()) as number,
+        )}
+      >
         {buckets ? (
           <>
             <BandChart
@@ -303,7 +368,12 @@ function streamFrame(f: number, boxes: boolean) {
   const follow = ease(Math.min(1, s / 12));
   const right = HALF[1] + (Math.max(latest, HALF[1]) - HALF[1]) * follow;
   const view: [number, number] = [right - width, right];
-  const boxFade = boxes ? ease(Math.min(1, Math.max(0, (s - 10) / 30))) : 0;
+  const into = (f: number, [a, b]: readonly [number, number]) =>
+    Math.min(1, Math.max(0, (f - a) / (b - a)));
+  const boxFade = boxes
+    ? ease(into(s, BOX_IN)) * (1 - ease(into(f, BOX_OUT)))
+    : 0;
+  const endFade = ease(into(f, BOX_OUT));
   const yearBoxes = boxes ? years.snapshot() : null;
   return (
     <>
@@ -323,7 +393,7 @@ function streamFrame(f: number, boxes: boolean) {
             : ['rolling rows', fmtInt(rollTime.length)],
         ]}
       />
-      <Chart view={view} boxFade={boxFade} fixedY>
+      <Chart view={view} boxFade={boxFade} endFade={endFade} fixedY>
         <LineChart series={snap} column="sst" axis="c" as="raw" />
         {yearBoxes && boxFade > 0 ? (
           <BoxPlot
@@ -349,6 +419,15 @@ function streamFrame(f: number, boxes: boolean) {
   );
 }
 
+/** The live view at the end of the stream, widening back to the whole
+ *  record: the same drawing as the opening frame by the last frame. */
+function finalFrame(f: number) {
+  const z = ease((f - FINAL_ZOOM[0]) / (FINAL_ZOOM[1] - FINAL_ZOOM[0]));
+  const width = HALF[1] - HALF[0];
+  const a = FULL[1] - width + (FULL[0] - (FULL[1] - width)) * z;
+  return zoomFrame(f, [a, FULL[1]]);
+}
+
 export function story(boxes: boolean) {
   mount(
     (f) =>
@@ -356,7 +435,9 @@ export function story(boxes: boolean) {
         ? zoomFrame(f)
         : f < STREAM[0]
           ? sweepFrame(f)
-          : streamFrame(f, boxes),
+          : f < FINAL_ZOOM[0]
+            ? streamFrame(f, boxes)
+            : finalFrame(f),
     { frames: FRAMES, height: 400 },
   );
 }
