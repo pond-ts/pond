@@ -600,15 +600,6 @@ pond-ts bugs found while porting.
   `pypi`) before the first upload. As of 2026-11-13 neither package is on
   its registry.
 
-- **[PND-PROCAGENTDOCS]** — What agents writing process requests could not
-  learn from the docs, found by the R5 agent trial
-  (`crates/pond-process/bench/agent-trial/`): `requests.md` shows only
-  TypeScript calls, never a JSON request, and never says `from` names the
-  dataset; `describe()` lists `outputs: []` for every fold, so what a fact
-  holds is learned by asking; op summaries leave out definitions an answer
-  depends on (`historicalVolatility`'s n vs n − 1 and decimal, `rsi`'s seed,
-  `percentChange` already × 100, `extremes` on a tie); facts are rounded to
-  six significant digits without saying so. Detail in the trial README.
 - **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
   no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
   give the `declare module` workaround). Write an `index.d.ts` from
@@ -1135,6 +1126,16 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   (`spikes/parallel-scan/`, 3.14× measured, 99.91% bit-identical).
   Assessment:
   [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+- **[PND-PROCAGENTDOCS]** — What agents writing process requests could not
+  learn from the docs, found by the R5 agent trial: `requests.md` shows only
+  TypeScript calls, never a JSON request, and never says `from` names the
+  dataset; `describe()` lists `outputs: []` for every fold, so what a fact
+  holds is learned by asking; op summaries leave out definitions an answer
+  depends on (`historicalVolatility`'s n vs n − 1 and decimal, `rsi`'s seed,
+  `percentChange` already × 100, `extremes` on a tie); facts are rounded to
+  six significant digits without saying so; units mislead after `scale`; and
+  a slot named like a source column refuses the whole request, even under
+  `onError: 'collect'`. Detail in the breakout plan.
 
 ### Process demo — composer / request / results
 

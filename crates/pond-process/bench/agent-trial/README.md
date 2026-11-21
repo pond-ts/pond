@@ -19,8 +19,12 @@ TypeScript does?
   `ops.json` (the registry's `describe()`) and `requests.md` (the docs
   site's page on requests).
 - **Agents:** 10 fresh Claude subagents (same model), 5 per engine, all
-  started at once. Same prompt and files on both sides; nothing in a run
-  folder says which engine it talks to.
+  started at once, with the same prompt and files on both sides. The prompt
+  does not say which engine answers. **This run was not fully blind:** each
+  run's `ask.sh` held the engine's command line (the Rust binary or
+  `node …/one.mjs`), and agents could read files in their folder. No
+  agent's report mentions the engine. `setup.sh` now puts the command in
+  `.key/engine-<side>.sh`, outside the run folders.
 - **Setup:** [`setup.sh`](setup.sh) makes the folders and keeps the data and
   answers in `.key/`, outside every run folder.
 - **Answers:** [`truth.py`](truth.py) computes them with numpy, without
@@ -28,7 +32,9 @@ TypeScript does?
 - **Grading:** [`check.py`](check.py) grades each `answers.json` (to 1e-5,
   since facts carry six significant digits), counts requests and failed
   ones, then **replays every request any agent sent on both engines** and
-  lists those whose responses differ.
+  lists those whose responses differ (stdout and stderr together, as
+  `ask.sh` logs them). Each run's `answers.json` and request log, and the
+  graded table, are in [`results-2026-11-21/`](results-2026-11-21/).
 
 ## Results
 

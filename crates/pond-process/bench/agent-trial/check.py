@@ -56,7 +56,10 @@ for run in sorted(p for p in out.iterdir() if p.is_dir() and not p.name.startswi
         if (run / ".calls.jsonl").exists() else []
     requests += [c["request"] for c in calls]
     answers = run / "answers.json"
-    graded = grade(json.loads(answers.read_text())) if answers.exists() else None
+    try:
+        graded = grade(json.loads(answers.read_text()))
+    except (OSError, json.JSONDecodeError):
+        graded = None
     rows.append({
         "run": run.name,
         "engine": sides[run.name[0]],
@@ -66,11 +69,14 @@ for run in sorted(p for p in out.iterdir() if p.is_dir() and not p.name.startswi
     })
 
 print(json.dumps(rows, indent=1))
+(key / "results.json").write_text(json.dumps(rows, indent=1))
 tmp = key / "replay.json"
 differ = []
 for req in dict.fromkeys(requests):
     tmp.write_text(req)
-    got = {name: subprocess.run(cmd + [str(tmp)], capture_output=True, text=True).stdout
+    # stdout and stderr together, as ask.sh logs them.
+    got = {name: subprocess.run(cmd + [str(tmp)], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True).stdout
            for name, cmd in engines.items()}
     if got["rust"] != got["typescript"]:
         differ.append({"request": req, **got})

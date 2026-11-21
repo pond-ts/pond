@@ -15,8 +15,13 @@ python3 "$here/truth.py" "$key" > "$key/truth.json"
 rust="$repo/target/release/examples/measure market 2520 ask"
 ts="node $repo/packages/financial/scripts/measure/one.mjs market 2520 ask"
 echo "{\"a\": \"rust\", \"b\": \"typescript\"}" > "$key/sides.json"
+# Each side's engine command lives in .key, so a run folder's ask.sh does
+# not name it.
+printf '#!/usr/bin/env bash\nexec %s "$@"\n' "$rust" > "$key/engine-a.sh"
+printf '#!/usr/bin/env bash\nexec %s "$@"\n' "$ts" > "$key/engine-b.sh"
+chmod +x "$key/engine-a.sh" "$key/engine-b.sh"
 for side in a b; do
-  if [ "$side" = a ]; then engine=$rust; else engine=$ts; fi
+  engine="$key/engine-$side.sh"
   for i in $(seq -w 1 "$runs"); do
     dir="$out/$side$i"
     mkdir -p "$dir"
