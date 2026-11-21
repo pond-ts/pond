@@ -133,7 +133,13 @@ back, so a series from `@pond-ts/rs` reaches a chart with one call:
 
 ```tsx
 import { TimeSeries } from 'pond-ts';
-import { LineChart } from '@pond-ts/charts';
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
 import * as rs from '@pond-ts/rs';
 
 const cpu = rs.TimeSeries.fromArrow(bytes); // read in pond-rs
@@ -142,7 +148,14 @@ const forChart = TimeSeries.fromColumns(smoothed.toColumns<'number'>());
 smoothed.free();
 cpu.free();
 
-<LineChart series={forChart} column="value" />;
+<ChartContainer range={forChart.timeRange()} width={600}>
+  <ChartRow height={200}>
+    <YAxis id="v" />
+    <Layers>
+      <LineChart series={forChart} column="value" axis="v" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
 ```
 
 The type argument (`<'number'>`, or `<'number' | 'string'>`) says which kinds

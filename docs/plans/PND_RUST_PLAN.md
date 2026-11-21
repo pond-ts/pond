@@ -4602,7 +4602,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       34 fixture study calls pass options the study does not declare;
       pond-ts's own types refuse them too, so the check drops them.
       Same PR: `toColumns()` (pond-ts's columnar object, equal to pond-ts's
-      own `toColumns()` on 900 random cases, 116 fromColumns round trips),
+      own `toColumns()` on 300 random series, 116 fromColumns round trips),
       the route from the bridge to `@pond-ts/charts`. Chosen over a
       Float64Array variant (~20 ms vs ~75-105 ms at 1M rows) because equal
       output to pond-ts wins and `numbers()`/`times()` already cover the
