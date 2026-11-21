@@ -161,6 +161,10 @@ fn main() {
     let mut host = None;
     let mut result = None;
     for _ in 0..runs {
+        // Drop the last run's host first, as the TypeScript side lets its
+        // last host go: two graphs alive at once would double the peak.
+        drop(host.take());
+        drop(result.take());
         let mut h = Host::new(registry.clone(), HashMap::new());
         h.add("d", series.clone());
         let t = Instant::now();
@@ -185,6 +189,7 @@ fn main() {
             "coldMs": cold,
             "warmMs": warm_ms,
             "peakRssMb": peak_rss_mb(),
+            "retainedMb": host.graph_for("d").expect("graph").retained_bytes() as f64 / 1_048_576.0,
             "nodes": wire["nodes"].as_array().unwrap().iter().map(|n| json!([n["id"], n["ms"]])).collect::<Vec<_>>(),
             "facts": wire["facts"],
             "skipped": wire["skipped"],
