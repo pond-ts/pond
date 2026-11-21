@@ -4631,13 +4631,6 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - J3: Node + browser builds, npm `@pond-ts/wasm` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts. Built 2026-10-31 (see
       the J3 outcome above); waits on the first manual publish.
-    Name (2026-11-21, Peter's choice): npm name changed from
-    `@pond-ts/rs` to `@pond-ts/wasm` before anything was published
-    (`npm view` gave E404 for both). Why: the name says what a
-    JavaScript user installs (a WebAssembly build, browser-ready),
-    as `@duckdb/duckdb-wasm` does. Cost accepted: the crate and the
-    PyPI package stay `pond-rs`, so not one name everywhere. The folder
-    stays `packages/rs` (less churn; only the npm name is public).
       Review (PR #875) fixes: the rs publish step skips with a warning
       while `npm view @pond-ts/wasm` gives E404 (a tag pushed before the
       manual first publish no longer goes red after six packages ship;
@@ -4648,6 +4641,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       Rollup needs a plugin for `new URL(…, import.meta.url)` (docs said
       it did not); no types yet, documented with the `declare module`
       workaround.
+      Name (2026-11-21, Peter's choice): npm name changed from
+      `@pond-ts/rs` to `@pond-ts/wasm` before anything was published
+      (`npm view` gave E404 for both). Why: the name says what a
+      JavaScript user installs (a WebAssembly build, browser-ready),
+      as `@duckdb/duckdb-wasm` does. Cost accepted: the crate and the
+      PyPI package stay `pond-rs`, so not one name everywhere. The folder
+      stays `packages/rs` (less churn; only the npm name is public).
     - [PND-RSTYPES] (open): `index.d.ts` for `@pond-ts/wasm`. Types are
       not generated (the JS layer is hand-written over a JSON
       dispatcher), so they would be written by hand, reusing pond-ts's
@@ -4858,7 +4858,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - Status 2026-11-13: every step is merged. JavaScript: J1 #859, J1b
     #863, J2a #869, J2b #870, `toJSON` #871, J3 #875. Python: P1 #860, P2a
     #862, P2b #864, P3 #882. Neither package is on its registry yet (npm
-    and PyPI both answer "not found" for `@pond-ts/wasm` and `pond-rs`). Two
+    and PyPI both answer "not found" for `@pond-ts/rs` and `pond-rs`). Two
     owner actions are left, and PLAN.md's [PND-RUST-R4] entry now holds only
     those: the first `@pond-ts/wasm` publish by hand, and PyPI's pending
     trusted publisher for `pond-rs`.
