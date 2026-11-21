@@ -89,6 +89,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   dashed outline over the fill. Asked for by a consumer drawing a comparison
   area in the same hue as the series it compares to.
 
+- **`@pond-ts/process`: `log` and `sqrt` basic steps.** The natural log
+  and the square root of a column, row by row; a gap where either is
+  undefined (log of zero or below, the root of a negative). With `divide`
+  (already a gap on a zero denominator) and `scale`, they make a log return
+  (`log(divide(close, shift(close)))`) and an annualised volatility from a
+  daily variance (`scale(sqrt(scale(var, 252)), 100)`) without custom code.
+  Part of `BASIC_OPS`, so a registry built from it lists two more steps.
+
+- **pond-rs `js_log`** is public: JavaScript's `Math.log`, bit for bit
+  (V8's fdlibm routine; the system `f64::ln` differs in the last bit on
+  about 2% of inputs). The Rust port of `@pond-ts/process` uses it for
+  `log`.
+
 ## [0.77.0] — 2026-11-19
 
 ### Added

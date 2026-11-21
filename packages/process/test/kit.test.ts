@@ -129,6 +129,56 @@ describe('basic steps', () => {
     expect(unitOf(result, 'c')).toBe('signal');
   });
 
+  it('log and sqrt are row by row; zero or below is a gap for log, below zero for sqrt', () => {
+    const { result } = ask(
+      series([
+        [Math.E, 4],
+        [1, 0],
+        [undefined, 2.25],
+        [0, -1],
+        [-3, undefined],
+      ]),
+      {
+        l: { op: 'log', in: ['close'] },
+        r: { op: 'sqrt', in: ['other'] },
+      },
+      ['l', 'r'],
+    );
+    expect(cells(result, 'l')).toEqual([1, 0, undefined, undefined, undefined]);
+    expect(cells(result, 'r')).toEqual([2, 0, 1.5, undefined, undefined]);
+    expect(unitOf(result, 'l')).toBe('log');
+    expect(unitOf(result, 'r')).toBeNull();
+  });
+
+  it('a log return and an annualised vol compose from the basics', () => {
+    const { result } = ask(
+      series([
+        [100, 0.0001],
+        [110, 0.0004],
+        [99, -0.0001],
+      ]),
+      {
+        prev: { op: 'shift', in: ['close'] },
+        ratio: { op: 'divide', in: ['close', 'prev'] },
+        lr: { op: 'log', in: ['ratio'] },
+        days: { op: 'scale', in: ['other'], params: { factor: 252 } },
+        root: { op: 'sqrt', in: ['days'] },
+        vol: { op: 'scale', in: ['root'], params: { factor: 100 } },
+      },
+      ['lr', 'vol'],
+    );
+    expect(cells(result, 'lr')).toEqual([
+      undefined,
+      Math.log(110 / 100),
+      Math.log(99 / 110),
+    ]);
+    expect(cells(result, 'vol')).toEqual([
+      Math.sqrt(0.0001 * 252) * 100,
+      Math.sqrt(0.0004 * 252) * 100,
+      undefined,
+    ]);
+  });
+
   it('scale is x × factor + offset', () => {
     const { result } = ask(
       series(rows),

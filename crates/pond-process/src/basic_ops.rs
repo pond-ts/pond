@@ -1,6 +1,6 @@
 //! The basic ops (`basic-ops.ts`): row-by-row arithmetic and logic.
 
-use pond_rs::js_number;
+use pond_rs::{js_log, js_number};
 
 use crate::context::OpContext;
 use crate::registry::{Def, ParamDef, param_text};
@@ -76,6 +76,19 @@ fn scale(ctx: &OpContext) -> Out {
             .map(|x| x * factor + offset)
             .collect(),
     ])
+}
+
+/// `Math.log` per row: zero is −∞ and a negative NaN, both gaps.
+fn log(ctx: &OpContext) -> Out {
+    Ok(vec![
+        ctx.input("source").iter().map(|&x| js_log(x)).collect(),
+    ])
+}
+
+/// `Math.sqrt` per row: a negative is NaN, a gap. IEEE square root is
+/// exact, so it needs no JavaScript twin.
+fn sqrt(ctx: &OpContext) -> Out {
+    Ok(vec![ctx.input("source").iter().map(|x| x.sqrt()).collect()])
 }
 
 fn shift(ctx: &OpContext) -> Out {
@@ -206,6 +219,24 @@ pub fn basic_ops() -> Vec<Def> {
             format!("{inputs} × {} + {}", param_text(p, "factor"), param_text(p, "offset"))
         })
         .run(scale),
+        Def::op(
+            "log",
+            "arithmetic",
+            "Natural log of source, row by row. Zero or a negative value is a gap. The log of a price ratio is a log return; the difference of two logs is a log spread.",
+        )
+        .input("source")
+        .output("", "log")
+        .label(|_, inputs| format!("log of {inputs}"))
+        .run(log),
+        Def::op(
+            "sqrt",
+            "arithmetic",
+            "Square root of source, row by row (a variance into a volatility). A negative value is a gap. Keeps the input’s unit label, which it cannot know the root changes.",
+        )
+        .input("source")
+        .output("", "inherit")
+        .label(|_, inputs| format!("square root of {inputs}"))
+        .run(sqrt),
         Def::op(
             "shift",
             "arithmetic",
