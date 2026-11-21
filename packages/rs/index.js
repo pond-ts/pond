@@ -1,4 +1,4 @@
-// @pond-ts/rs: pond-rs (Rust) compiled to WebAssembly, behind pond-ts's
+// @pond-ts/wasm: pond-rs (Rust) compiled to WebAssembly, behind pond-ts's
 // method names and argument shapes. A series lives in WebAssembly memory;
 // call `free()` when done with it (a finalizer frees forgotten ones
 // eventually, but WebAssembly memory never shrinks, so do not rely on it).
@@ -1270,7 +1270,7 @@ const wrapMap = (f) => (row, schema) => {
     out.key().value !== e.key().value
   )
     throw new TypeError(
-      "map: the function changed the event's key; @pond-ts/rs keeps each event's key",
+      "map: the function changed the event's key; @pond-ts/wasm keeps each event's key",
     );
   return schema.slice(1).map((d) => out.get(d.name) ?? null);
 };
@@ -1485,7 +1485,7 @@ export class LiveSeries extends LiveNode {
   pushJson(rows, options = {}) {
     if (options.timeZone !== undefined && options.timeZone !== 'UTC')
       throw new TypeError(
-        'pushJson: @pond-ts/rs reads JSON times as ms or UTC text; timeZone is not supported',
+        'pushJson: @pond-ts/wasm reads JSON times as ms or UTC text; timeZone is not supported',
       );
     this.#rootOnly('pushJson');
     if (rows.length === 0) return;
@@ -1514,7 +1514,7 @@ export class LiveSeries extends LiveNode {
   #rootOnly(call) {
     if (this._handle !== 0)
       throw new TypeError(
-        `${call}: @pond-ts/rs pushes into (and clears) the root LiveSeries only, not one partition`,
+        `${call}: @pond-ts/wasm pushes into (and clears) the root LiveSeries only, not one partition`,
       );
   }
 

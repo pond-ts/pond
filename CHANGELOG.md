@@ -80,6 +80,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
+  `@pond-ts/rs` in the repo, but never reached npm under that name: the
+  release workflow skipped it until a first publish by hand). Same package,
+  same code: pond-rs compiled to WebAssembly for Node and browsers, with
+  pond-ts's method names. `npm install @pond-ts/wasm`. The Rust crate and the
+  Python package keep the name `pond-rs`; the source stays in `packages/rs`.
+
 ### Added
 
 - **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's

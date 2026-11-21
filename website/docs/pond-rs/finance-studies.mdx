@@ -78,7 +78,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ```js
 import assert from 'node:assert/strict';
-import { TimeSeries } from '@pond-ts/rs';
+import { TimeSeries } from '@pond-ts/wasm';
 
 const minute = 60_000;
 const bars = new TimeSeries({
@@ -113,7 +113,7 @@ assert.deepEqual(
 for (const s of [out, withSma, bars]) s.free();
 ```
 
-In JavaScript (`@pond-ts/rs`) every study is a method with `@pond-ts/financial`'s name and options, as `@pond-ts/financial/fluent` mounts them, or `s.study(name, options)`; `studies()` and `studyInfo(name)` give the catalog.
+In JavaScript (`@pond-ts/wasm`) every study is a method with `@pond-ts/financial`'s name and options, as `@pond-ts/financial/fluent` mounts them, or `s.study(name, options)`; `studies()` and `studyInfo(name)` give the catalog.
 
 </TabItem>
 </Tabs>

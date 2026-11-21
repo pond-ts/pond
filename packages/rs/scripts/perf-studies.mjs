@@ -1,4 +1,4 @@
-// Financial studies through @pond-ts/rs ([PND-RUST-R4] J2a) against
+// Financial studies through @pond-ts/wasm ([PND-RUST-R4] J2a) against
 // @pond-ts/financial on the same 1M one-minute bars (NYSE sessions, so
 // sessionVwap has real days). Series in, series out on both sides: the
 // bars are built once; each timing is one study call plus freeing its

@@ -1,4 +1,4 @@
-# @pond-ts/rs
+# @pond-ts/wasm
 
 pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
 pond-ts's method names and argument shapes, in Node and in browsers. It has
@@ -7,11 +7,11 @@ pond-ts's version number and is released with it on every pond-ts release
 <https://pond-ts.org/docs/pond-rs/javascript>.
 
 ```sh
-npm install @pond-ts/rs
+npm install @pond-ts/wasm
 ```
 
 ```js
-import { TimeSeries, Sequence } from '@pond-ts/rs';
+import { TimeSeries, Sequence } from '@pond-ts/wasm';
 
 const cpu = new TimeSeries({
   name: 'cpu',
@@ -42,7 +42,7 @@ cpu.free();
   ready. The `node` export condition picks the loader (`wasm.node.js` or
   `wasm.browser.js`, through the `#wasm` entry of package.json `imports`).
   - **Vite**: `build: { target: 'es2022' }` (top-level `await`) and
-    `optimizeDeps: { exclude: ['@pond-ts/rs'] }` (pre-bundling loses the
+    `optimizeDeps: { exclude: ['@pond-ts/wasm'] }` (pre-bundling loses the
     `.wasm` file). `vite build` copies the `.wasm` into `dist/assets`.
   - **webpack 5, Parcel**: they copy the file named by
     `new URL('./pkg/pond_wasm_bg.wasm', import.meta.url)` themselves.
@@ -50,7 +50,7 @@ cpu.free();
     `@web/rollup-plugin-import-meta-assets`.
   - **esbuild**: `--format=esm --target=es2022`, then copy
     `pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`.
-  - **No bundler**: an import map with `"@pond-ts/rs"` pointing at this
+  - **No bundler**: an import map with `"@pond-ts/wasm"` pointing at this
     package's `index.js` and `"#wasm"` at its `wasm.browser.js`.
   - **CSP**: WebAssembly needs `'wasm-unsafe-eval'` in `script-src`.
     Without `'unsafe-eval'`, `toJSON()` takes its plain-loop fallback (same
@@ -61,14 +61,14 @@ cpu.free();
 ## TypeScript
 
 No type declarations yet (a `.d.ts` is planned: [PND-RSTYPES] in
-`PLAN.md`). In TypeScript, `import … from '@pond-ts/rs'` fails with
+`PLAN.md`). In TypeScript, `import … from '@pond-ts/wasm'` fails with
 TS7016 ("Could not find a declaration file") under `strict` /
 `noImplicitAny`. Until then, declare the module yourself, which types it
 as `any`:
 
 ```ts
 // pond-rs.d.ts
-declare module '@pond-ts/rs';
+declare module '@pond-ts/wasm';
 ```
 
 ## How it differs from pond-ts
@@ -142,7 +142,7 @@ Where pond-rs and pond-ts give different answers on purpose, the list is in
 and argument shapes; the work runs inside pond-rs.
 
 ```js
-import { LiveSeries, Sequence } from '@pond-ts/rs';
+import { LiveSeries, Sequence } from '@pond-ts/wasm';
 
 const live = new LiveSeries({
   name: 'cpu',
@@ -239,18 +239,18 @@ publishes it after the workspaces. It is not an npm workspace, so the root
 for a package that already exists ("The package you're configuring must
 already exist on the npm registry",
 [`npm trust`](https://docs.npmjs.com/cli/v11/commands/npm-trust)). Until
-`@pond-ts/rs` is on npm, the workflow's publish step skips with a warning
+`@pond-ts/wasm` is on npm, the workflow's publish step skips with a warning
 (the other packages still publish, and the job stays green). To bootstrap:
 
 1. Publish once from a machine logged into npm with 2FA, as a member of
    the `@pond-ts` scope: a placeholder (a folder with a `package.json`
-   naming `@pond-ts/rs` at a version below the next release, e.g.
+   naming `@pond-ts/wasm` at a version below the next release, e.g.
    `0.0.1`), or this package (`./build.sh`, then
    `npm publish --access public`; that version then has no provenance).
-2. On npmjs.com, `@pond-ts/rs` → Settings → Trusted Publisher → GitHub
+2. On npmjs.com, `@pond-ts/wasm` → Settings → Trusted Publisher → GitHub
    Actions: organization `pond-ts`, repository `pond`, workflow
    `release.yml`, no environment. Or
-   `npm trust github @pond-ts/rs --file release.yml --allow-publish`.
+   `npm trust github @pond-ts/wasm --file release.yml --allow-publish`.
 3. Push the next `v*` tag within 2 days: npm expires a trusted publisher
    configuration that has not completed a publish within 2 days
    ([trusted publishers](https://docs.npmjs.com/trusted-publishers/)).

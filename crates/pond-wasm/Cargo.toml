@@ -1,7 +1,7 @@
 [package]
 name = "pond-wasm"
 version = "0.0.0"
-description = "pond-rs compiled to WebAssembly for the @pond-ts/rs npm package"
+description = "pond-rs compiled to WebAssembly for the @pond-ts/wasm npm package"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
