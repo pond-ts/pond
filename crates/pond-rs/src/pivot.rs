@@ -51,6 +51,12 @@ impl TimeSeries {
     /// a gap. The other columns are kept, in order, and `output` comes
     /// last. See [`TimeSeries::collapse_keep`] to keep `columns` too.
     ///
+    /// `f` is called once per row. When the result can be written as a
+    /// column expression (`col("in").add(col("out"))`),
+    /// [`TimeSeries::with_column_expr`] works it out over whole columns and
+    /// is much faster on a long series (`examples/perf_reshape.rs` times
+    /// both); follow it with [`TimeSeries::select`] to drop the inputs.
+    ///
     /// The output column's kind is the kind of `f`'s first value that is
     /// not a gap (a text column if every row is a gap), and every value
     /// must be that kind. A number that is not finite counts as a number

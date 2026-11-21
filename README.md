@@ -326,8 +326,9 @@ of React and pond-ts.</sub>
 
 - **Against polars** it is furthest ahead on rolling "top 3" and "unique
   values" windows and on joins that keep every row. It is furthest behind
-  where pond calls a function once per row: polars is 6× faster on `filter`
-  and 13–18× on `collapse`.
+  where a rule is written as a function that pond calls once per row
+  (`filter`, `collapse`). Write the rule as a column expression where you
+  can, and it runs over whole columns instead.
 - **From JavaScript,** `@pond-ts/rs` runs the same engine as WebAssembly on
   one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
   on live series. Write filters as expressions (`col('v').gt(0)`); a filter

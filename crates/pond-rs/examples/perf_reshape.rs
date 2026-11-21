@@ -7,7 +7,9 @@
 //!
 //! Cost, for N rows: `concat` of N rows sorts their keys (a radix sort, a
 //! few passes over N) and copies each column once (O(N)). `collapse` calls
-//! the closure once a row (O(N)). `pivot_by_group` names each distinct
+//! the closure once a row (O(N)); the `(expression)` cases work out the
+//! same sum with `with_column_expr`, one pass over whole columns, and
+//! `select` to drop the two inputs. `pivot_by_group` names each distinct
 //! group once (a hash lookup a row), places rows with a counting sort over
 //! the T × G cells for T times and G groups (O(N + T·G)), and reduces only
 //! the cells with two or more rows.
@@ -16,7 +18,7 @@ mod common;
 
 use std::time::Instant;
 
-use pond_rs::{Column, ColumnData, Pivot, Reducer, Scalar, TimeSeries};
+use pond_rs::{Column, ColumnData, Pivot, Reducer, Scalar, TimeSeries, col};
 
 fn median_ms(mut f: impl FnMut() -> TimeSeries) -> (f64, TimeSeries) {
     let out = f();
@@ -102,6 +104,7 @@ fn main() -> pond_rs::Result<()> {
             _ => None,
         })
     };
+    let add = col("v").add(col("w"));
     type Case<'a> = (&'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let cases: Vec<Case> = vec![
         (
@@ -119,6 +122,19 @@ fn main() -> pond_rs::Result<()> {
         (
             "collapse_keep sum",
             Box::new(|| wide.collapse_keep(&["v", "w"], "out", sum).unwrap()),
+        ),
+        (
+            "collapse sum (expression)",
+            Box::new(|| {
+                wide.with_column_expr("out", &add)
+                    .unwrap()
+                    .select(&["host", "out"])
+                    .unwrap()
+            }),
+        ),
+        (
+            "collapse_keep sum (expression)",
+            Box::new(|| wide.with_column_expr("out", &add).unwrap()),
         ),
         (
             "pivot 100 hosts",
