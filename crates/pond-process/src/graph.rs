@@ -91,6 +91,7 @@ pub struct BoundGraph {
     budget_bytes: Option<usize>,
     /// Threads `prepare` may use; 1 computes nothing ahead of `pull`.
     threads: usize,
+    parallel_min_rows: usize,
     /// Nodes `prepare` computed in this run, with how long each took, so
     /// the run reports them as computed (not cached) with their own time.
     prepared: HashMap<String, f64>,
@@ -143,6 +144,7 @@ impl BoundGraph {
             units,
             budget_bytes,
             threads: 1,
+            parallel_min_rows: 0,
             prepared: HashMap::new(),
             series: series.clone(),
             columns: vec![],
@@ -431,9 +433,11 @@ impl BoundGraph {
     }
 
     /// Lets [`BoundGraph::prepare`] compute independent nodes on up to
-    /// `threads` threads.
-    pub fn set_threads(&mut self, threads: usize) {
+    /// `threads` threads, once the bound series has at least `min_rows`
+    /// rows. Below that, starting the threads costs more than they save.
+    pub fn set_threads(&mut self, threads: usize, min_rows: usize) {
         self.threads = threads.max(1);
+        self.parallel_min_rows = min_rows;
     }
 
     /// How long `prepare` took to compute `id` in this run, if it did.
@@ -455,7 +459,7 @@ impl BoundGraph {
     /// cached.
     pub(crate) fn prepare(&mut self, ids: &[String]) {
         self.prepared.clear();
-        if self.threads < 2 {
+        if self.threads < 2 || self.series.len() < self.parallel_min_rows {
             return;
         }
         // Stale nodes in dependency order, inputs first.

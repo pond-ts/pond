@@ -162,6 +162,11 @@ fn main() {
         .ok()
         .and_then(|t| t.parse().ok())
         .unwrap_or(1);
+    // MIN_ROWS moves the row count below which threads are not used.
+    let min_rows: usize = std::env::var("MIN_ROWS")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(pond_process::PARALLEL_MIN_ROWS);
     let mut cold = vec![];
     let mut host = None;
     let mut result = None;
@@ -170,7 +175,9 @@ fn main() {
         // last host go: two graphs alive at once would double the peak.
         drop(host.take());
         drop(result.take());
-        let mut h = Host::new(registry.clone(), HashMap::new()).with_threads(threads);
+        let mut h = Host::new(registry.clone(), HashMap::new())
+            .with_threads(threads)
+            .with_parallel_min_rows(min_rows);
         h.add("d", series.clone());
         let t = Instant::now();
         result = Some(h.run(&request).expect("run"));

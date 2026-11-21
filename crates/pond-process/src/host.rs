@@ -105,6 +105,7 @@ pub struct Host {
     units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
     threads: usize,
+    parallel_min_rows: usize,
     max_sources: Option<usize>,
     /// In the order they were first added.
     sources: Vec<(String, Arc<TimeSeries>)>,
@@ -113,6 +114,13 @@ pub struct Host {
     /// Least recently used first: the order the source cap evicts in.
     loaded: Vec<(String, LoadedSource)>,
 }
+
+/// Below this many rows a source runs on one thread even when the host
+/// allows more. Measured on 4 cores with the market workload
+/// (`examples/measure.rs`): at 2,520 rows four threads were slower than
+/// one (2.5 ms vs 2.0 ms), at 10,000 they broke even, and from 25,000 up
+/// they won (4.5 ms vs 3.2 ms, and 19 ms vs 9.6 ms at 100,000).
+pub const PARALLEL_MIN_ROWS: usize = 10_000;
 
 impl Host {
     /// A host over a registry of ops. `units` gives a unit to raw columns
@@ -123,6 +131,7 @@ impl Host {
             units: Arc::new(units),
             budget_bytes: None,
             threads: 1,
+            parallel_min_rows: PARALLEL_MIN_ROWS,
             max_sources: None,
             sources: vec![],
             graphs: HashMap::new(),
@@ -141,12 +150,27 @@ impl Host {
     /// Lets a run compute the steps that do not depend on each other at
     /// the same time, on up to `n` threads (1, the default, computes them
     /// one by one as TypeScript does). The answers are the same either way.
+    /// Sources shorter than [`PARALLEL_MIN_ROWS`] still run on one thread;
+    /// [`Host::with_parallel_min_rows`] moves that line.
     pub fn with_threads(mut self, n: usize) -> Self {
         self.threads = n.max(1);
-        for graph in self.graphs.values_mut() {
-            graph.set_threads(self.threads);
-        }
+        self.retune();
         self
+    }
+
+    /// The fewest rows a source needs before [`Host::with_threads`] takes
+    /// effect on it. 0 always uses the threads (the tests do, to run the
+    /// parallel path on small data).
+    pub fn with_parallel_min_rows(mut self, rows: usize) -> Self {
+        self.parallel_min_rows = rows;
+        self.retune();
+        self
+    }
+
+    fn retune(&mut self) {
+        for graph in self.graphs.values_mut() {
+            graph.set_threads(self.threads, self.parallel_min_rows);
+        }
     }
 
     /// Caps how many loaded sources are kept, dropping the least recently
@@ -230,7 +254,7 @@ impl Host {
                 self.units.clone(),
                 self.budget_bytes,
             );
-            graph.set_threads(self.threads);
+            graph.set_threads(self.threads, self.parallel_min_rows);
             self.graphs.insert(id.to_string(), graph);
         }
         Ok(self.graphs.get_mut(id).expect("just inserted"))

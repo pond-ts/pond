@@ -35,7 +35,9 @@ pub use error::{ErrorKind, ProcessError, Result};
 pub use folds::standard_folds;
 pub use graph::BoundGraph;
 pub use history::{History, required_history};
-pub use host::{DatasetInfo, Host, LoadFn, LoadFuture, LoadedSource, SourceRegistry};
+pub use host::{
+    DatasetInfo, Host, LoadFn, LoadFuture, LoadedSource, PARALLEL_MIN_ROWS, SourceRegistry,
+};
 pub use identity::{explain, spec_id};
 pub use registry::{
     Def, InputDef, Label, LookbackFn, OutputDef, ParamDef, Params, Registry, Shape,

@@ -268,7 +268,8 @@ fn run_session(session: &Value, threads: usize) -> Vec<Value> {
         Arc::new(registry(session["registry"].as_str().unwrap())),
         units,
     )
-    .with_threads(threads);
+    .with_threads(threads)
+    .with_parallel_min_rows(0);
     if let Some(b) = session.get("budgetBytes").and_then(Value::as_u64) {
         host = host.with_budget_bytes(b as usize);
     }

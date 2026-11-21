@@ -135,7 +135,9 @@ fn runs_match_on(threads: usize) {
     let registry = registry();
     let input = TimeSeries::from_json_value(&fixture()["input"], &JsonOptions::default())
         .expect("input series");
-    let mut host = Host::new(registry.clone(), HashMap::new()).with_threads(threads);
+    let mut host = Host::new(registry.clone(), HashMap::new())
+        .with_threads(threads)
+        .with_parallel_min_rows(0);
     host.add("d", Arc::new(input));
     // Columns with no numbers in them, which compare nothing but shape.
     let mut empty = vec![];
