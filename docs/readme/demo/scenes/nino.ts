@@ -23,7 +23,8 @@ const schema = [
   { name: 'anom', kind: 'number' },
 ] as const;
 
-export function ninoDaily() {
+/** The record as plain columns: time (ms), sst and anom (°C). */
+export function ninoColumns() {
   const time: number[] = [];
   const sst: number[] = [];
   const slot: number[] = [];
@@ -50,9 +51,13 @@ export function ninoDaily() {
     }
   });
   const anom = sst.map((v, i) => v - normSum[slot[i]!]! / normCount[slot[i]!]!);
+  return { time, sst, anom };
+}
+
+export function ninoDaily() {
   return TimeSeries.fromColumns({
     name: 'nino34',
     schema,
-    columns: { time, sst, anom },
+    columns: ninoColumns(),
   });
 }
