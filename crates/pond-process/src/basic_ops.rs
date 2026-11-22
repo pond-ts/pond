@@ -1,6 +1,6 @@
 //! The basic ops (`basic-ops.ts`): row-by-row arithmetic and logic.
 
-use pond_rs::js_number;
+use pond_rs::{js_log, js_number};
 
 use crate::context::OpContext;
 use crate::registry::{Def, ParamDef, param_text};
@@ -76,6 +76,19 @@ fn scale(ctx: &OpContext) -> Out {
             .map(|x| x * factor + offset)
             .collect(),
     ])
+}
+
+/// `Math.log` per row: zero is −∞ and a negative NaN, both gaps.
+fn log(ctx: &OpContext) -> Out {
+    Ok(vec![
+        ctx.input("source").iter().map(|&x| js_log(x)).collect(),
+    ])
+}
+
+/// `Math.sqrt` per row: a negative is NaN, a gap. IEEE square root is
+/// exact, so it needs no JavaScript twin.
+fn sqrt(ctx: &OpContext) -> Out {
+    Ok(vec![ctx.input("source").iter().map(|x| x.sqrt()).collect()])
 }
 
 fn shift(ctx: &OpContext) -> Out {
@@ -156,6 +169,7 @@ fn two(name: &str, family: &str, summary: &str, unit: &str) -> Def {
         .input("left")
         .input("right")
         .output("", unit)
+        .lookback(|_| 0.0)
 }
 
 /// The basic ops, in `BASIC_OPS` order.
@@ -205,7 +219,28 @@ pub fn basic_ops() -> Vec<Def> {
         .label(|p, inputs| {
             format!("{inputs} × {} + {}", param_text(p, "factor"), param_text(p, "offset"))
         })
+        .lookback(|_| 0.0)
         .run(scale),
+        Def::op(
+            "log",
+            "arithmetic",
+            "Natural log of source, row by row. Zero or a negative value is a gap. The log of a price ratio is a log return; the difference of two logs is a log spread.",
+        )
+        .input("source")
+        .output("", "log")
+        .label(|_, inputs| format!("log of {inputs}"))
+        .lookback(|_| 0.0)
+        .run(log),
+        Def::op(
+            "sqrt",
+            "arithmetic",
+            "Square root of source, row by row (a variance into a volatility). A negative value is a gap. Its unit is `sqrt`, not the input’s: the root of a variance is no longer a variance.",
+        )
+        .input("source")
+        .output("", "sqrt")
+        .label(|_, inputs| format!("square root of {inputs}"))
+        .lookback(|_| 0.0)
+        .run(sqrt),
         Def::op(
             "shift",
             "arithmetic",
@@ -225,6 +260,9 @@ pub fn basic_ops() -> Vec<Def> {
                 format!("{inputs} {} rows later", js_number(-n))
             }
         })
+        // Only the backward half is history: a negative shift reads rows
+        // after each row, which a lookback cannot describe.
+        .lookback(|p| p["periods"].as_f64().unwrap_or(0.0).max(0.0))
         .run(shift),
         Def::op(
             "compare",
@@ -238,6 +276,7 @@ pub fn basic_ops() -> Vec<Def> {
         .label(|p, inputs| {
             format!("{inputs} {} {}", param_text(p, "test"), param_text(p, "value"))
         })
+        .lookback(|_| 0.0)
         .run(against),
         two(
             "compareColumns",

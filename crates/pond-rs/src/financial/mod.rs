@@ -67,6 +67,11 @@ mod trend;
 mod volatility;
 mod volume;
 
+/// JavaScript's `Math.log`, bit for bit. V8 computes it with fdlibm's
+/// routine, which differs from the system `f64::ln` in the last bit on about
+/// 2% of inputs; code that must give the same numbers as pond-ts uses this.
+pub use kernels::js_log;
+
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
     PriceOscillator, Rainbow, RainbowOscillator, SchaffTrendCycle, SpecialK, Trix,

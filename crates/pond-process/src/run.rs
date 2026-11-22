@@ -224,10 +224,20 @@ impl Run<'_> {
         };
         self.explain_once(id, &spec)?;
         let upstream = self.upstream_of(&spec, true)?;
-        let was_dirty = self.graph.is_dirty(id);
-        let t0 = Instant::now();
-        self.graph.pull(id)?;
-        let ms = crate::context::js_round(t0.elapsed().as_secs_f64() * 1e6) / 1000.0;
+        let (was_dirty, ms) = match self.graph.take_prepared(id) {
+            // Computed ahead by `prepare`, on its own clock.
+            Some(ms) => {
+                self.graph.pull(id)?;
+                (true, ms)
+            }
+            None => {
+                let was_dirty = self.graph.is_dirty(id);
+                let t0 = Instant::now();
+                self.graph.pull(id)?;
+                (was_dirty, t0.elapsed().as_secs_f64() * 1e3)
+            }
+        };
+        let ms = crate::context::js_round(ms * 1e3) / 1000.0;
         let t = self.timing(id, true, !was_dirty, ms, upstream);
         self.timings.push(t);
         Ok(())
@@ -345,6 +355,19 @@ pub fn run(graph: &mut BoundGraph, request: &Value) -> Result<RunResult> {
             needed.push(id);
         }
     }
+
+    // With threads to spare, compute what the selection will pull ahead,
+    // independent nodes at once. Only what the loops below pull: a column
+    // selector naming an output its node lacks pulls nothing.
+    let mut ahead: Vec<String> = vec![];
+    for (sel, id) in &selectors {
+        let Some(c) = r.graph.get(id) else { continue };
+        let wanted = sel.get("output").map(crate::js::js_string);
+        if c.fold || wanted.is_none_or(|w| c.def.outputs().iter().any(|o| o.id == w)) {
+            ahead.push(id.clone());
+        }
+    }
+    r.graph.prepare(&ahead);
 
     let mut outputs = Map::new();
     let mut drawn: Option<Vec<(String, Arc<Vec<f64>>)>> = None;

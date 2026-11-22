@@ -65,16 +65,43 @@ pub(crate) struct Compiled {
     kept: Option<Arc<Held>>,
 }
 
+/// Where a raw column's numbers live.
+#[derive(Debug, Clone)]
+enum Raw {
+    /// A number column of the bound series, read in place.
+    Column(usize),
+    /// Converted once from a boolean or other column.
+    Converted(Arc<Vec<f64>>),
+}
+
+/// One node `prepare` computed: its job index, result and milliseconds.
+type Finished = (usize, Result<Arc<Held>>, f64);
+
+/// One input as `compute` reads it.
+enum Input {
+    Column(usize),
+    Held(Arc<Vec<f64>>),
+}
+
 /// One dataset and the nodes compiled against it.
 #[derive(Debug)]
 pub struct BoundGraph {
     pub(crate) registry: Arc<Registry>,
     pub(crate) units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
+    /// Threads `prepare` may use; 1 computes nothing ahead of `pull`.
+    threads: usize,
+    parallel_min_rows: usize,
+    /// The most steps one wave of the last `prepare` held (tests read it).
+    pub(crate) widest_wave: usize,
+    /// Nodes `prepare` computed in this run, with how long each took, so
+    /// the run reports them as computed (not cached) with their own time.
+    prepared: HashMap<String, f64>,
     series: Arc<TimeSeries>,
-    times: Vec<i64>,
     columns: Vec<String>,
-    raw: HashMap<String, Arc<Vec<f64>>>,
+    /// How each raw column is read: a number column in place, anything
+    /// else converted once (`numbers_of`).
+    raw: HashMap<String, Raw>,
     generation: u64,
     nodes: HashMap<String, Compiled>,
     /// Compile order, for `ids`.
@@ -118,8 +145,11 @@ impl BoundGraph {
             registry,
             units,
             budget_bytes,
+            threads: 1,
+            parallel_min_rows: 0,
+            widest_wave: 0,
+            prepared: HashMap::new(),
             series: series.clone(),
-            times: vec![],
             columns: vec![],
             raw: HashMap::new(),
             generation: 0,
@@ -133,7 +163,6 @@ impl BoundGraph {
     }
 
     fn load(&mut self, series: Arc<TimeSeries>) {
-        self.times = series.key().begin().to_vec();
         self.columns = series
             .columns()
             .iter()
@@ -142,7 +171,15 @@ impl BoundGraph {
         self.raw = series
             .columns()
             .iter()
-            .map(|c| (c.name().to_string(), Arc::new(numbers_of(c, series.len()))))
+            .enumerate()
+            .map(|(i, c)| {
+                let raw = if c.kind() == ColumnKind::Number {
+                    Raw::Column(i)
+                } else {
+                    Raw::Converted(Arc::new(numbers_of(c, series.len())))
+                };
+                (c.name().to_string(), raw)
+            })
             .collect();
         self.series = series;
     }
@@ -398,6 +435,136 @@ impl BoundGraph {
         Ok(id)
     }
 
+    /// Lets [`BoundGraph::prepare`] compute independent nodes on up to
+    /// `threads` threads, once the bound series has at least `min_rows`
+    /// rows. Below that, starting the threads costs more than they save.
+    pub(crate) fn set_threads(&mut self, threads: usize, min_rows: usize) {
+        self.threads = threads.max(1);
+        self.parallel_min_rows = min_rows;
+    }
+
+    /// How long `prepare` took to compute `id` in this run, if it did.
+    pub(crate) fn take_prepared(&mut self, id: &str) -> Option<f64> {
+        self.prepared.remove(id)
+    }
+
+    /// Computes every stale node `ids` depend on, and `ids` themselves,
+    /// ahead of the run's own pulls, independent nodes at the same time on
+    /// up to `threads` threads. A node computes only once everything it
+    /// reads is ready, and not at all when something it reads failed, as
+    /// in [`BoundGraph::pull`]; each node's code is the same and sees the
+    /// same inputs, so every answer is the same as on one thread. The
+    /// run's pulls then find each node done.
+    ///
+    /// One thing differs from one thread: under `onError: "throw"` a run
+    /// stops at its first failure, and nodes it never reached stay
+    /// uncomputed; here they are computed, so a later run reports them as
+    /// cached.
+    pub(crate) fn prepare(&mut self, ids: &[String]) {
+        self.prepared.clear();
+        self.widest_wave = 0;
+        if self.threads < 2 || self.series.len() < self.parallel_min_rows {
+            return;
+        }
+        // Stale nodes in dependency order, inputs first.
+        let mut order: Vec<String> = vec![];
+        let mut seen: HashSet<String> = HashSet::new();
+        fn visit(g: &BoundGraph, id: &str, seen: &mut HashSet<String>, order: &mut Vec<String>) {
+            if !seen.insert(id.to_string()) || !g.is_dirty(id) {
+                return;
+            }
+            let Some(node) = g.nodes.get(id) else { return };
+            for b in &node.bound {
+                if let Some((up, _)) = &b.nested {
+                    visit(g, up, seen, order);
+                }
+            }
+            order.push(id.to_string());
+        }
+        for id in ids {
+            visit(self, id, &mut seen, &mut order);
+        }
+        // Each node's level: one past the deepest stale input.
+        let mut level: HashMap<String, usize> = HashMap::new();
+        for id in &order {
+            let l = self.nodes[id]
+                .bound
+                .iter()
+                .filter_map(|b| b.nested.as_ref().and_then(|(up, _)| level.get(up)))
+                .map(|l| l + 1)
+                .max()
+                .unwrap_or(0);
+            level.insert(id.clone(), l);
+        }
+        let depth = level.values().max().map_or(0, |l| l + 1);
+        for l in 0..depth {
+            let wave: Vec<&String> = order.iter().filter(|id| level[*id] == l).collect();
+            // Inputs for each node whose upstream all succeeded.
+            let mut jobs: Vec<(String, Vec<Input>)> = vec![];
+            'nodes: for id in wave {
+                let mut inputs = vec![];
+                for b in &self.nodes[id].bound {
+                    match &b.nested {
+                        None => inputs.push(match &self.raw[&b.column] {
+                            Raw::Column(i) => Input::Column(*i),
+                            Raw::Converted(v) => Input::Held(v.clone()),
+                        }),
+                        Some((up, index)) => match &self.nodes[up].state {
+                            State::Done {
+                                generation,
+                                result: Ok(held),
+                            } if *generation == self.generation => match &**held {
+                                Held::Columns(cols) => {
+                                    inputs.push(Input::Held(cols[*index].clone()))
+                                }
+                                Held::Fact(_) => unreachable!("a fold is never an input"),
+                            },
+                            _ => continue 'nodes,
+                        },
+                    }
+                }
+                jobs.push((id.clone(), inputs));
+            }
+            self.widest_wave = self.widest_wave.max(jobs.len());
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let done: std::sync::Mutex<Vec<Finished>> = std::sync::Mutex::new(vec![]);
+            let work = || {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((id, inputs)) = jobs.get(i) else {
+                        break;
+                    };
+                    let t0 = std::time::Instant::now();
+                    let result = compute(&self.nodes[id], inputs, &self.series).map(Arc::new);
+                    let ms = t0.elapsed().as_secs_f64() * 1e3;
+                    done.lock()
+                        .expect("no worker panicked")
+                        .push((i, result, ms));
+                }
+            };
+            if jobs.len() < 2 {
+                // One step alone: no thread to start.
+                work();
+            } else {
+                std::thread::scope(|scope| {
+                    for _ in 0..self.threads.min(jobs.len()) {
+                        scope.spawn(work);
+                    }
+                });
+            }
+            let generation = self.generation;
+            for (i, result, ms) in done.into_inner().expect("no worker panicked") {
+                let id = &jobs[i].0;
+                let node = self.nodes.get_mut(id).expect("still compiled");
+                if let Ok(held) = &result {
+                    node.kept = Some(held.clone());
+                }
+                node.state = State::Done { generation, result };
+                self.prepared.insert(id.clone(), ms);
+            }
+        }
+    }
+
     /// Brings a node up to date and returns its value, or the error it
     /// (or something upstream of it) failed with.
     pub(crate) fn pull(&mut self, id: &str) -> Result<Arc<Held>> {
@@ -411,18 +578,21 @@ impl BoundGraph {
         }
         let bound = node.bound.clone();
         // Upstream first. A failure there leaves this node as it was.
-        let mut inputs: Vec<Arc<Vec<f64>>> = Vec::with_capacity(bound.len());
+        let mut inputs: Vec<Input> = Vec::with_capacity(bound.len());
         for b in &bound {
             match &b.nested {
-                None => inputs.push(self.raw[&b.column].clone()),
+                None => inputs.push(match &self.raw[&b.column] {
+                    Raw::Column(i) => Input::Column(*i),
+                    Raw::Converted(v) => Input::Held(v.clone()),
+                }),
                 Some((up, index)) => match &*self.pull(up)? {
-                    Held::Columns(cols) => inputs.push(cols[*index].clone()),
+                    Held::Columns(cols) => inputs.push(Input::Held(cols[*index].clone())),
                     Held::Fact(_) => unreachable!("a fold is never an input"),
                 },
             }
         }
         let node = &self.nodes[id];
-        let result = compute(node, &inputs, &self.times).map(Arc::new);
+        let result = compute(node, &inputs, &self.series).map(Arc::new);
         let generation = self.generation;
         let node = self.nodes.get_mut(id).expect("still compiled");
         if let Ok(held) = &result {
@@ -477,15 +647,26 @@ impl BoundGraph {
 }
 
 /// Runs one node's op or fold over its inputs.
-fn compute(node: &Compiled, inputs: &[Arc<Vec<f64>>], times: &[i64]) -> Result<Held> {
+fn compute(node: &Compiled, inputs: &[Input], series: &TimeSeries) -> Result<Held> {
     let def = &node.def;
     let roles: Vec<String> = def.inputs.iter().map(|i| i.role.clone()).collect();
+    let times = series.key().begin();
     let ctx = OpContext {
         roles: &roles,
-        inputs: inputs.iter().map(|c| c.as_slice()).collect(),
+        inputs: inputs
+            .iter()
+            .map(|input| match input {
+                Input::Column(i) => series.columns()[*i]
+                    .numbers()
+                    .expect("a number column")
+                    .values(),
+                Input::Held(v) => v.as_slice(),
+            })
+            .collect(),
         params: &node.params,
         id: &node.id,
         times,
+        series,
     };
     if node.fold {
         let fold = def

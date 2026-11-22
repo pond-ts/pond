@@ -913,10 +913,137 @@ Not ported yet (scope decision 1): joins, ranged recompute
 (`setSourceFrom` / `runRange`), the live graph, the worker pool and the
 authoring APIs.
 
-Still to do in step 3: the studies through the pond-rs catalog (with a
-study parity fixture) and the new pointwise basics (`log`, `sqrt`, a ratio
-that gaps on a zero denominator), in both languages. The performance check
-is step 7.
+The performance check is step 7.
+
+### R5 step 6 — custom ops and lookbacks (DONE)
+
+A consumer could already define its own op in Rust (`Def::op` with params,
+inputs, outputs, a label and a `run` closure; the parity fixture's five
+fixture ops are defined that way). What was missing was the lookback:
+`Def::lookback(|params| rows)` now declares how many rows of history an op
+needs, and `required_history(registry, plan)` ports `requiredHistory`.
+Lookbacks add along a chain and take the largest across inputs and specs;
+an op with no lookback makes the answer unknown with the op named, never
+zero. The basic ops declare the same lookbacks as TypeScript (0, `shift`
+its positive `periods`, `cumulative` and `hold` none). The studies declare
+none, as the TypeScript bridge does.
+
+The fixture gains twelve `requiredHistory` plans (chains, branches, a
+picked output under a fold, undeclared ops in a known order, an empty
+plan, an unknown op, a bad param); `tests/parity.rs` matches them as text,
+`byOp`'s order included, and checks the message for a negative, NaN or
+infinite lookback.
+
+Decision 4 (Peter, 2026-11-21): the consumer's Rust side signs in and
+fetches its own data, so it works with the window closed. That is the
+host's `SourceRegistry` and `run_async` (step 5); pond needs nothing new.
+
+### R5 step 3 (end) — `log` and `sqrt` (DONE)
+
+Scope decision 3 asked pond for the pointwise basics a consumer's own ops
+need: `log`, `sqrt` and a ratio that gaps on a zero denominator. The ratio
+was already there: `divide` writes `x / 0` as ±Infinity and `0 / 0` as NaN,
+and both are gaps. So two steps were added to `BASIC_OPS` in TypeScript and
+Rust: `log` (natural log; zero or below is a gap, unit `log`) and `sqrt`
+(below zero is a gap, unit `sqrt`). Neither keeps its input's unit: the
+review of #945 pointed out that an inherited `variance` would let an op
+demanding a variance accept the root of one.
+
+How the consumer's four ops compose from them:
+
+- `diff` is `subtract`; `ratio` is `divide`, with the same gaps.
+- `realizedVol` (√(var·252)·100) is `scale(sqrt(scale(var, 252)), 100)`,
+  the same arithmetic in the same order, so the same bits.
+- `logRatio` is `log(divide(a, b))`, the same bits where both legs are
+  positive. One difference: where both legs are negative the ratio is
+  positive, so the composition gives a number where the consumer's op
+  gives a gap. Prices are positive, so it does not arise on prices.
+
+Rust's `log` uses pond-rs's `js_log` (now public), V8's fdlibm routine,
+because the system `ln` is one bit off on about 2% of inputs. The kitchen
+session's 57 log cells happen to include none of those, so
+`tests/parity.rs` also checks three inputs where the two differ.
+
+### R5 step 3 (part) — the studies as ops (DONE)
+
+`crates/pond-process/src/studies.rs` ports `@pond-ts/financial/process`:
+`study_ops()` turns every study in pond-rs's catalog into an op by the
+bridge's own rules (column inputs become roles, a param with no default
+takes its `example`, `optional` params and the params that `requires` them
+are dropped, outputs are named by the spec id, a bare suffix on a
+multi-output study becomes `"value"`). `UNBRIDGED_STUDIES` is the same list
+with the same reasons. The op runs the catalog study itself
+(`StudyDescriptor::run`), so the maths is the code pond-rs's own study
+parity already checks bit for bit.
+
+The check is a second fixture, written by TypeScript:
+`packages/financial/scripts/parity/process.mjs` builds
+`test/fixtures/process-parity.json` (from `generate.mjs`, with a drift test
+`test/process-parity.test.ts`). It holds the `describe()` of the standard
+folds plus all 103 study ops, the unbridged list, and 109 runs: every study
+once with its defaults over 800 daily bars with a gap in `close` and one in
+`volume`, four with other params, and two the registry must refuse
+(`period: 0`, `period: 2.5`). 800 bars is past every warm-up (`specialK`
+needs 724), so every output column has numbers in it except zigZag's
+default run, since the bars never swing 5%; a 1% run covers it, and the
+test fails if any other column comes back empty. `tests/studies.rs` checks every `describe()`
+entry, every id or refusal and every response, columns included, exactly
+(a change of 1e-12 in one cell fails it), and `describe()` as text, so the
+order of params counts. All match.
+
+Left out, on purpose: the session studies (two in the catalog), which take
+a trading calendar through `studyOps({ sessions })`. The Rust bridge has
+no way to be handed one yet; `study_op` refuses them by name.
+
+### R5 step 7 (first half) — measured against TypeScript (DONE)
+
+`packages/financial/scripts/measure/run.mjs` runs the same process request
+on both sides and checks the facts come back identical as text. Two
+workloads (`workloads.mjs`, the same seeded generator in JS and in
+`examples/measure.rs`): daily market bars (30 slots, 15 outputs: studies,
+basic steps, folds) and 1-second telemetry (cpu, memory, latency,
+requests, errors; 27 slots, 16 outputs). The telemetry sizes are there
+because telemetry was named as the workload where data gets an order of
+magnitude bigger (Peter, 2026-11-21). Times are the first run on a fresh
+host, median of 7, 5 or 3 runs; a 4-core cloud machine.
+
+| Data | TypeScript | Rust, 1 thread | Rust, 4 threads |
+|---|---|---|---|
+| market, 2,520 rows | 8.4 ms | 1.2 ms | 1.4 ms (one thread: under `PARALLEL_MIN_ROWS`) |
+| market, 1M rows | 599 ms | 207 ms | 91 ms |
+| telemetry, 1M rows | 451 ms | 181 ms | 77 ms |
+| telemetry, 10M rows | 5.4 s | 2.8 s | 1.06 s |
+
+A repeat run of the same request costs about 1 ms on both sides (results
+are kept). Peak memory at 10M rows: TypeScript 1.85 GB, Rust 1.65 GB.
+
+What it took:
+
+- **Reading columns in place.** The graph read each raw number column
+  into a fresh `Vec<f64>` and copied the key for each study. It now reads
+  a number column where it lies (`Raw::Column`) and a study's input series
+  shares the source's key (`series.select(&[])`).
+- **The first touch of new memory is most of what is left.** Writing
+  80 MB into a fresh allocation took about 40 ms against 14 ms into memory
+  already touched (measured directly). Each output column is fresh memory,
+  so on one thread the gain shrank from 7× at 2,520 rows to 2× at 10M.
+- **Parallel steps.** `Host::with_threads(n)` computes the steps that do
+  not depend on each other at the same time: steps are grouped into waves
+  by how deep they sit, and each wave runs on up to `n` scoped threads.
+  Answers and timing entries (all but `ms`) match one thread. A step's
+  `ms` is its own time while other steps share the machine, so under
+  threads the `ms` values no longer add up to the run's time. The parity
+  sessions and the study runs are checked on 1 and 4 threads. One
+  difference: with `onError: "throw"`, steps that one thread would never
+  have reached (because an earlier one threw) may already have been
+  computed. The answer is the same error.
+- **Short data stays on one thread.** Measured with the limit set to 0
+  (so threads ran at every size): at 2,520 rows four threads were
+  slower (2.5 ms vs 2.0 ms); they broke even at 10,000 rows and won from
+  25,000 (4.5 vs 3.2 ms; 19 vs 9.6 ms at 100,000). `PARALLEL_MIN_ROWS` is
+  10,000 and `with_parallel_min_rows` moves it.
+
+Still to do in step 7: the agent trial against the Rust engine.
 
 ## Next
 
