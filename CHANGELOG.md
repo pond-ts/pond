@@ -83,6 +83,25 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [0.78.0] — 2026-11-22
 
+- **pond-rs: `align`, `materialize` and `dedupe` are faster.** The walks keep
+  4-byte row numbers that go straight to the column gathers, fixed-step
+  bucket edges are built in 64-bit after one range check, whole-millisecond
+  points are compared in 64-bit, and `dedupe` no longer builds a list per run
+  of equal keys. Same answers, bit for bit. On 1M rows and one core, `align`
+  hold onto a 1-second grid went from about 22 ms to 15 ms, linear from about
+  34 ms to 23 ms, `materialize` last from about 32 ms to 13 ms, and `dedupe`
+  keeping the last row from about 20 ms to 15 ms.
+
+- **pond-rs: rolling `stdev`, and rolling `count` / `sum` / `avg` onto a grid,
+  are faster.** Rolling standard deviation keeps its running sums in
+  registers (20-row window over 1M rows: about 46 ms to 27 ms). `rolling_over`
+  of a number column reads each window's count from a prefix count and adds a
+  copy of the column with gaps as zero, in the same eight lanes as before, so
+  there is no test per value (5-minute average onto a 1-second grid over 1M
+  rows: about 222 ms to 71 ms). Same answers, bit for bit. Row-count rolling
+  averages are unchanged: their time is the exact running sum, which cannot
+  be reordered without changing the last bit.
+
 ### Added
 
 - **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's
