@@ -89,6 +89,47 @@ include new features and type-level changes; patch bumps are strictly additive.
   dashed outline over the fill. Asked for by a consumer drawing a comparison
   area in the same hue as the series it compares to.
 
+- **`@pond-ts/process`: `log` and `sqrt` basic steps.** The natural log
+  and the square root of a column, row by row; a gap where either is
+  undefined (log of zero or below, the root of a negative). Their units are
+  `log` and `sqrt`: neither keeps its input's, so an op that demands a
+  `variance` refuses the root of one. With `divide`
+  (already a gap on a zero denominator) and `scale`, they make a log return
+  (`log(divide(close, shift(close)))`) and an annualised volatility from a
+  daily variance (`scale(sqrt(scale(var, 252)), 100)`) without custom code.
+  Part of `BASIC_OPS`, so a registry built from it lists two more steps.
+
+- **pond-rs `js_log`** is public: JavaScript's `Math.log`, bit for bit
+  (V8's fdlibm routine; the system `f64::ln` differs in the last bit on
+  about 2% of inputs). The Rust port of `@pond-ts/process` uses it for
+  `log`.
+
+### Changed
+
+- **pond-rs: per-entity work no longer copies every column per entity.**
+  After `partition_by`, the operations that keep each row and work on number
+  columns (`diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`,
+  `rolling`, `rolling_rows` and their `_with` forms) run on each entity's
+  rows in place and write back in the original row order; columns they do
+  not read are shared with the source. Same answers, bit for bit. A 20-row
+  rolling average over 1M rows and 8 hosts went from about 134 ms to 29 ms on
+  one core, and per-symbol `diff` and linear `fill` with `collect` from about
+  53 ms to 13 ms. `partition_by` itself is now lazy: the per-entity series
+  are built the first time they are asked for (`iter`, `get`,
+  `into_groups`, `map`), so that cost moves there. Partition values are
+  numbered with a seeded multiply hash in place of `HashMap`'s default.
+
+- **pond-rs: list columns read from Arrow stay in Arrow's layout.** A list
+  column of non-null numbers or text read with `from_arrow` or from an Arrow
+  file is kept as read, and its per-row cells are built the first time one
+  is read. `samples` over a number or decimal column writes its list
+  directly, and `array_aggregate` number reducers no longer allocate per
+  row. Same answers, bit for bit. On 100k rows, reading two list columns
+  from Arrow went from about 35 ms to 1.2 ms and from an Arrow file from
+  about 38 ms to 2.3 ms; a caller who then reads every cell saves less
+  (about 34 ms to 27 ms). `samples` over 1M rows went from about 21 ms to
+  1.8 ms. Writing list columns to Arrow went from about 6.9 ms to 3.8 ms.
+
 ## [0.77.0] — 2026-11-19
 
 ### Added

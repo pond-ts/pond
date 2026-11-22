@@ -104,6 +104,8 @@ pub struct Host {
     registry: Arc<Registry>,
     units: Arc<HashMap<String, String>>,
     budget_bytes: Option<usize>,
+    threads: usize,
+    parallel_min_rows: usize,
     max_sources: Option<usize>,
     /// In the order they were first added.
     sources: Vec<(String, Arc<TimeSeries>)>,
@@ -113,6 +115,14 @@ pub struct Host {
     loaded: Vec<(String, LoadedSource)>,
 }
 
+/// Below this many rows a source runs on one thread even when the host
+/// allows more. Measured on 4 cores with the market workload
+/// (`examples/measure.rs`, with `MIN_ROWS=0` so threads ran at every
+/// size): at 2,520 rows four threads were slower than
+/// one (2.5 ms vs 2.0 ms), at 10,000 they broke even, and from 25,000 up
+/// they won (4.5 ms vs 3.2 ms, and 19 ms vs 9.6 ms at 100,000).
+pub const PARALLEL_MIN_ROWS: usize = 10_000;
+
 impl Host {
     /// A host over a registry of ops. `units` gives a unit to raw columns
     /// (`{"close": "price"}`).
@@ -121,6 +131,8 @@ impl Host {
             registry,
             units: Arc::new(units),
             budget_bytes: None,
+            threads: 1,
+            parallel_min_rows: PARALLEL_MIN_ROWS,
             max_sources: None,
             sources: vec![],
             graphs: HashMap::new(),
@@ -134,6 +146,32 @@ impl Host {
     pub fn with_budget_bytes(mut self, bytes: usize) -> Self {
         self.budget_bytes = Some(bytes);
         self
+    }
+
+    /// Lets a run compute the steps that do not depend on each other at
+    /// the same time, on up to `n` threads (1, the default, computes them
+    /// one by one as TypeScript does). The answers are the same either way.
+    /// Sources shorter than [`PARALLEL_MIN_ROWS`] still run on one thread;
+    /// [`Host::with_parallel_min_rows`] moves that line.
+    pub fn with_threads(mut self, n: usize) -> Self {
+        self.threads = n.max(1);
+        self.retune();
+        self
+    }
+
+    /// The fewest rows a source needs before [`Host::with_threads`] takes
+    /// effect on it. 0 always uses the threads (the tests do, to run the
+    /// parallel path on small data).
+    pub fn with_parallel_min_rows(mut self, rows: usize) -> Self {
+        self.parallel_min_rows = rows;
+        self.retune();
+        self
+    }
+
+    fn retune(&mut self) {
+        for graph in self.graphs.values_mut() {
+            graph.set_threads(self.threads, self.parallel_min_rows);
+        }
     }
 
     /// Caps how many loaded sources are kept, dropping the least recently
@@ -211,12 +249,13 @@ impl Host {
                     format!("unknown dataset '{id}'{have}"),
                 ));
             };
-            let graph = BoundGraph::new(
+            let mut graph = BoundGraph::new(
                 series.clone(),
                 self.registry.clone(),
                 self.units.clone(),
                 self.budget_bytes,
             );
+            graph.set_threads(self.threads, self.parallel_min_rows);
             self.graphs.insert(id.to_string(), graph);
         }
         Ok(self.graphs.get_mut(id).expect("just inserted"))
@@ -299,5 +338,62 @@ impl Host {
             }
             self.remove(&oldest);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Registry, basic_ops};
+    use pond_rs::JsonOptions;
+    use serde_json::json;
+
+    /// Two steps that do not depend on each other share a wave, and the
+    /// step that reads both waits for the next one.
+    #[test]
+    fn independent_steps_share_a_wave() {
+        let rows: Vec<Value> = (0..20)
+            .map(|i| json!([i as f64 * 1000.0, i as f64, 2.0 * i as f64]))
+            .collect();
+        let series = TimeSeries::from_json_value(
+            &json!({
+                "name": "x",
+                "schema": [
+                    { "name": "time", "kind": "time" },
+                    { "name": "a", "kind": "number" },
+                    { "name": "b", "kind": "number" },
+                ],
+                "rows": rows,
+            }),
+            &JsonOptions::default(),
+        )
+        .expect("series");
+        let mut registry = Registry::new();
+        for def in basic_ops() {
+            registry.define(def).unwrap();
+        }
+        let registry = Arc::new(registry);
+        let a = json!({ "op": "scale", "params": { "factor": 2 }, "inputs": ["a"] });
+        let b = json!({ "op": "scale", "params": { "factor": 3 }, "inputs": ["b"] });
+        let both = json!({ "op": "add", "inputs": [a, b] });
+        let request = json!({
+            "from": "d",
+            "process": [both],
+            "select": [{ "on": both }, { "on": a }],
+            "assemble": false,
+        });
+        let answer = |threads: usize| {
+            let mut host = Host::new(registry.clone(), HashMap::new())
+                .with_threads(threads)
+                .with_parallel_min_rows(0);
+            host.add("d", Arc::new(series.clone()));
+            let result = host.run(&request).expect("run");
+            let widest = host.graphs.values().map(|g| g.widest_wave).max();
+            (result.columns, widest)
+        };
+        let (one, _) = answer(1);
+        let (four, widest) = answer(4);
+        assert_eq!(widest, Some(2));
+        assert_eq!(one, four);
     }
 }

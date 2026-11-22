@@ -209,6 +209,10 @@ const KITCHEN = {
   ratio: { op: 'divide', in: ['close', 'prev'] },
   ret: { op: 'scale', in: ['ratio'], params: { factor: 100, offset: -100 } },
   fwd: { op: 'subtract', in: ['next', 'close'] },
+  lr: { op: 'log', in: ['ratio'] },
+  ddLog: { op: 'log', in: ['dd'] },
+  root: { op: 'sqrt', in: ['var'] },
+  fwdRoot: { op: 'sqrt', in: ['fwd'] },
   up: { op: 'compare', in: ['ret'], params: { test: 'above', value: 0 } },
   down: { op: 'compare', in: ['ret'], params: { test: 'below', value: -1 } },
   flat: { op: 'compare', in: ['ret'], params: { test: 'equal', value: 0 } },
@@ -259,6 +263,8 @@ const KITCHEN = {
   bb: { op: 'band', in: ['close'], params: { width: 2.5 } },
   // folds
   last: { op: 'last', in: ['close'] },
+  lastLr: { op: 'last', in: ['lr'] },
+  lastRoot: { op: 'last', in: ['root'] },
   lastUp: { op: 'last', in: ['bb#Upper'] },
   range: { op: 'extremes', in: ['close'] },
   rank: { op: 'percentileRank', in: ['ret'] },
@@ -360,6 +366,10 @@ function sessions() {
               allBands: { on: 'bb' },
               ret: { on: 'ret' },
               again: { on: 'ret' },
+              lr: { on: 'lr' },
+              ddLog: { on: 'ddLog' },
+              root: { on: 'root' },
+              fwdRoot: { on: 'fwdRoot' },
               rank: { on: 'rank' },
             },
             onError: 'collect',
@@ -976,6 +986,37 @@ function idCases() {
   ];
 }
 
+/**
+ * Plans for `requiredHistory`: lookbacks add along a chain and take the
+ * largest across branches; an undeclared one makes the answer unknown.
+ */
+function historyCases() {
+  const shift = (periods, inputs = ['close']) => ({
+    op: 'shift',
+    params: { periods },
+    inputs,
+  });
+  const band = { op: 'band', params: { width: 2 }, inputs: [shift(4)] };
+  return [
+    [shift(5)],
+    [shift(-3)],
+    [shift(3, [shift(7)])],
+    [shift(2), shift(9), { op: 'scale', inputs: [shift(6)] }],
+    [{ op: 'subtract', inputs: [shift(2, [shift(3)]), shift(8)] }],
+    [{ op: 'last', inputs: [{ from: band, output: 'Lower' }] }],
+    [{ op: 'shift', inputs: ['close'] }],
+    [{ op: 'cumulative', inputs: [shift(4)] }],
+    [
+      { op: 'hold', inputs: [{ op: 'boom', inputs: [shift(1)] }] },
+      { op: 'cumulative', inputs: [{ op: 'hold', inputs: ['close'] }] },
+      shift(30),
+    ],
+    [],
+    [{ op: 'nope', inputs: ['close'] }],
+    [shift(2.5)],
+  ];
+}
+
 const SOURCE_REFS = [
   { source: 'feed', params: {} },
   { source: 'feed', params: { b: 2, a: 'x' } },
@@ -1116,6 +1157,13 @@ export async function buildFixture(pond, proc) {
       },
       ids,
       sourceIds: SOURCE_REFS.map((ref) => ({ ref, id: proc.sourceId(ref) })),
+      history: historyCases().map((plan) => {
+        try {
+          return { plan, result: proc.requiredHistory(all, plan) };
+        } catch (e) {
+          return { plan, error: caught(e) };
+        }
+      }),
       sessions: sessionsOut,
     }),
   );

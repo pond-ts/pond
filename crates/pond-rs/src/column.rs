@@ -4,23 +4,26 @@
 //! In a number column a gap is stored as `NaN`, as in pond-ts
 //! ([PND-NANREP]): any non-finite value in the buffer means "missing".
 //! Decimal, text and true/false columns mark gaps with an Arrow null; an
-//! array column marks them with `None`.
+//! array column marks them with `None` (or, while it is still held as the
+//! Arrow list it was read from, with a null list).
 //!
 //! The values live in an Arrow buffer (shared, immutable, reference
 //! counted). So a column read from Arrow can point at Arrow's memory instead
 //! of copying it, a column written to Arrow is handed over without a copy,
 //! and cloning a column or a series does not copy values.
 
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, OnceLock};
 
 use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
-use arrow_array::types::{Decimal128Type, Int32Type};
+use arrow_array::types::{Decimal128Type, Float64Type, Int32Type};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, StringArray, UInt32Array,
+    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Float64Array, ListArray,
+    StringArray, UInt32Array,
 };
-use arrow_buffer::{NullBuffer, ScalarBuffer};
-use arrow_schema::DataType;
+use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
+use arrow_schema::{DataType, Field};
 
 use crate::series::ColumnKind;
 
@@ -782,13 +785,157 @@ pub(crate) type Cell = Arc<[Scalar]>;
 /// [`TimeSeries::from_arrow`] reads lists of numbers, text or true/false
 /// values. pond-ts has no Arrow form for arrays.
 ///
+/// Cost: a column read from an Arrow list of numbers or text, and the
+/// output of `samples` over a number or decimal column, is held as the
+/// Arrow list. The first call of [`ArrayColumn::get`] or
+/// [`ArrayColumn::iter`] on it (or on a slice or clone of it) builds every
+/// row's list of [`Scalar`]s, one allocation per row and per text item,
+/// and keeps them; later calls are free.
+///
 /// [`TimeSeries::to_arrow`]: crate::TimeSeries::to_arrow
 /// [`TimeSeries::from_arrow`]: crate::TimeSeries::from_arrow
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArrayColumn {
-    cells: Arc<[Option<Cell>]>,
+    store: Arc<ArrayStore>,
     offset: usize,
     len: usize,
+}
+
+/// The rows behind an array column (and every slice of it), in one or both
+/// of two forms. A column built from Rust values has its cells. A column
+/// read from Arrow, or written by a kernel that makes lists of numbers,
+/// has the Arrow list; its cells are built from the list the first time
+/// one is read and kept. Both forms always hold the same rows.
+struct ArrayStore {
+    /// The rows as an Arrow list in the layout [`canonical_list`] gives.
+    list: Option<ListArray>,
+    /// The rows as cells; made on first use when `list` is set.
+    cells: OnceLock<Box<[Option<Cell>]>>,
+}
+
+/// A window on an array column held as an Arrow list (see
+/// [`ArrayColumn::list_view`]).
+pub(crate) struct ListView<'a> {
+    /// Row `r`'s items are `offsets[r]..offsets[r + 1]` of `values`.
+    pub(crate) offsets: &'a [i32],
+    /// The items of every row: `Float64` or `Utf8`, none null.
+    pub(crate) values: &'a ArrayRef,
+    /// Which rows are gaps, when any is.
+    nulls: Option<NullBuffer>,
+}
+
+impl ListView<'_> {
+    /// True when row `r` is a gap.
+    pub(crate) fn is_gap(&self, r: usize) -> bool {
+        self.nulls.as_ref().is_some_and(|n| n.is_null(r))
+    }
+
+    /// The items as numbers, when the lists hold numbers.
+    pub(crate) fn numbers(&self) -> Option<&[f64]> {
+        self.values
+            .as_primitive_opt::<Float64Type>()
+            .map(|a| &a.values()[..])
+    }
+}
+
+/// `list` in the one layout an array column keeps and
+/// `TimeSeries::to_arrow` writes: `List` of non-null `Float64` or `Utf8`
+/// items named `item`, offsets from 0, the items exactly those the rows
+/// use, an empty range under every null list, and no null buffer when no
+/// list is null. `None` when the list cannot be put that way without
+/// reading its items one by one: another item type, a null item, items
+/// under a null list, or no items at all (a column with none is written as
+/// a list of `Utf8`, whatever it was read as).
+///
+/// Cost: one pass over the offsets and the null bits; the items are shared,
+/// not copied.
+pub(crate) fn canonical_list(list: &ListArray) -> Option<ListArray> {
+    let values = list.values();
+    if values.null_count() > 0 {
+        return None;
+    }
+    let offsets = list.value_offsets();
+    let (lo, hi) = (offsets[0] as usize, offsets[list.len()] as usize);
+    if hi == lo {
+        return None;
+    }
+    let nulls = list.nulls().filter(|n| n.null_count() > 0);
+    if let Some(nulls) = nulls
+        && (0..list.len()).any(|r| nulls.is_null(r) && offsets[r] != offsets[r + 1])
+    {
+        return None;
+    }
+    let items: ArrayRef = match values.data_type() {
+        DataType::Float64 => {
+            let v = values.as_primitive::<Float64Type>();
+            Arc::new(Float64Array::new(v.values().slice(lo, hi - lo), None))
+        }
+        DataType::Utf8 => {
+            let v = values.as_string::<i32>();
+            let text = v.value_offsets();
+            let (first, last) = (text[lo], text[hi]);
+            let whole =
+                lo == 0 && hi == v.len() && first == 0 && last as usize == v.value_data().len();
+            if whole {
+                Arc::new(StringArray::new(
+                    v.offsets().clone(),
+                    v.values().clone(),
+                    None,
+                ))
+            } else {
+                let rebased: Vec<i32> = text[lo..=hi].iter().map(|o| o - first).collect();
+                let bytes = v
+                    .values()
+                    .slice_with_length(first as usize, (last - first) as usize);
+                Arc::new(StringArray::new(
+                    OffsetBuffer::new(rebased.into()),
+                    bytes,
+                    None,
+                ))
+            }
+        }
+        _ => return None,
+    };
+    let offsets = if lo == 0 {
+        list.offsets().clone()
+    } else {
+        let lo = lo as i32;
+        OffsetBuffer::new(offsets.iter().map(|o| o - lo).collect::<Vec<i32>>().into())
+    };
+    // The null bits are written out afresh, so the buffer is the same
+    // whatever spare bits or bit offset the source had.
+    let nulls = nulls.map(|n| NullBuffer::from_iter((0..list.len()).map(|r| n.is_valid(r))));
+    let item = Arc::new(Field::new_list_field(items.data_type().clone(), false));
+    Some(ListArray::new(item, offsets, items, nulls))
+}
+
+/// The rows of a canonical list as cells.
+fn cells_of(list: &ListArray) -> Box<[Option<Cell>]> {
+    let offsets = list.value_offsets();
+    let range = |r: usize| offsets[r] as usize..offsets[r + 1] as usize;
+    let present = |r: usize| list.nulls().is_none_or(|n| n.is_valid(r));
+    match list.values().data_type() {
+        DataType::Float64 => {
+            let v = list.values().as_primitive::<Float64Type>().values();
+            (0..list.len())
+                .map(|r| {
+                    present(r).then(|| v[range(r)].iter().map(|&x| Scalar::Number(x)).collect())
+                })
+                .collect()
+        }
+        _ => {
+            let v = list.values().as_string::<i32>();
+            (0..list.len())
+                .map(|r| {
+                    present(r).then(|| {
+                        range(r)
+                            .map(|k| Scalar::String(v.value(k).to_string()))
+                            .collect()
+                    })
+                })
+                .collect()
+        }
+    }
 }
 
 impl ArrayColumn {
@@ -800,7 +947,39 @@ impl ArrayColumn {
     pub(crate) fn from_cells(cells: Vec<Option<Cell>>) -> Self {
         let len = cells.len();
         Self {
-            cells: cells.into(),
+            store: Arc::new(ArrayStore {
+                list: None,
+                cells: OnceLock::from({
+                    // Moved to a block of their own and the `Vec`'s freed,
+                    // not kept in the `Vec`'s block. Keeping it measured
+                    // 0.3-0.5 ms slower on later `unique` / `top` reduces
+                    // of a 1M-row series, with the same instruction count:
+                    // the block the `Vec` frees is where their scratch
+                    // lists then go.
+                    let mut moved = Vec::with_capacity(len);
+                    moved.extend(cells);
+                    moved.into_boxed_slice()
+                }),
+            }),
+            offset: 0,
+            len,
+        }
+    }
+
+    /// A column that is `list`'s rows, which must be laid out as
+    /// [`canonical_list`] lays them out.
+    ///
+    /// Cost: nothing is read or copied. The cells behind
+    /// [`ArrayColumn::get`] and [`ArrayColumn::iter`] are built the first
+    /// time one is asked for: one allocation per row and one per text item.
+    pub(crate) fn from_list(list: ListArray) -> Self {
+        debug_assert!(list.value_offsets()[0] == 0 && !list.values().is_empty());
+        let len = list.len();
+        Self {
+            store: Arc::new(ArrayStore {
+                list: Some(list),
+                cells: OnceLock::new(),
+            }),
             offset: 0,
             len,
         }
@@ -816,8 +995,46 @@ impl ArrayColumn {
         self.len == 0
     }
 
-    fn cells(&self) -> &[Option<Cell>] {
-        &self.cells[self.offset..self.offset + self.len]
+    /// Every row of the store, built from the Arrow list if need be.
+    fn store_cells(&self) -> &[Option<Cell>] {
+        self.store.cells.get_or_init(|| {
+            cells_of(
+                self.store
+                    .list
+                    .as_ref()
+                    .expect("a store has cells or a list"),
+            )
+        })
+    }
+
+    /// The rows as cells (built from the Arrow list if need be): `None` is
+    /// a gap.
+    pub(crate) fn cells(&self) -> &[Option<Cell>] {
+        &self.store_cells()[self.offset..self.offset + self.len]
+    }
+
+    /// The column as an Arrow list, when it is held as one: the rows'
+    /// offsets, the items and the gaps, without building any cell.
+    pub(crate) fn list_view(&self) -> Option<ListView<'_>> {
+        let list = self.store.list.as_ref()?;
+        Some(ListView {
+            offsets: &list.value_offsets()[self.offset..=self.offset + self.len],
+            values: list.values(),
+            nulls: list.nulls().map(|n| n.slice(self.offset, self.len)),
+        })
+    }
+
+    /// The column as an Arrow list in the layout `TimeSeries::to_arrow`
+    /// writes, when it is held as one (see [`canonical_list`]).
+    ///
+    /// Cost: the whole column shares the list; a slice shares the items and
+    /// copies its offsets.
+    pub(crate) fn list(&self) -> Option<ListArray> {
+        let list = self.store.list.as_ref()?;
+        if self.offset == 0 && self.len == list.len() {
+            return Some(list.clone());
+        }
+        canonical_list(&list.slice(self.offset, self.len))
     }
 
     /// The list at `i`, or `None` for a gap. Panics if `i` is out of range.
@@ -830,6 +1047,16 @@ impl ArrayColumn {
         self.cells()[i].as_ref()
     }
 
+    /// True when row `i` holds a list. Panics if `i` is out of range.
+    pub(crate) fn is_present(&self, i: usize) -> bool {
+        assert!(i < self.len, "row {i} of {}", self.len);
+        match (self.store.cells.get(), &self.store.list) {
+            (Some(cells), _) => cells[self.offset + i].is_some(),
+            (None, Some(list)) => list.is_valid(self.offset + i),
+            (None, None) => unreachable!("a store has cells or a list"),
+        }
+    }
+
     /// Iterate as `Option<&[Scalar]>`.
     pub fn iter(&self) -> impl Iterator<Item = Option<&[Scalar]>> + '_ {
         self.cells().iter().map(|c| c.as_deref())
@@ -837,12 +1064,26 @@ impl ArrayColumn {
 
     /// Number of gaps.
     pub fn missing_count(&self) -> usize {
-        self.cells().iter().filter(|c| c.is_none()).count()
+        match (self.store.cells.get(), &self.store.list) {
+            (None, Some(list)) => list
+                .nulls()
+                .map_or(0, |n| n.slice(self.offset, self.len).null_count()),
+            _ => self.cells().iter().filter(|c| c.is_none()).count(),
+        }
     }
 
     /// The first element that is not a finite number, string or boolean
     /// (a non-finite number): `(row, element)`.
     pub(crate) fn first_bad_element(&self) -> Option<(usize, usize)> {
+        if let Some(view) = self.list_view() {
+            let numbers = view.numbers()?;
+            let (lo, hi) = (view.offsets[0] as usize, view.offsets[self.len] as usize);
+            let at = lo + numbers[lo..hi].iter().position(|v| !v.is_finite())?;
+            // The last row starting at or before the item (empty rows
+            // before it share its start).
+            let row = view.offsets.partition_point(|&o| o as usize <= at) - 1;
+            return Some((row, at - view.offsets[row] as usize));
+        }
         self.iter().enumerate().find_map(|(r, cell)| {
             cell?
                 .iter()
@@ -854,11 +1095,23 @@ impl ArrayColumn {
     /// The rows named by `rows`, in that order; `None` gives a gap. Cells
     /// are shared, not copied.
     pub(crate) fn take(&self, rows: &[Option<usize>]) -> Self {
+        let cells = self.cells();
         Self::from_cells(
             rows.iter()
-                .map(|r| r.and_then(|i| self.cell(i).cloned()))
+                .map(|r| r.and_then(|i| cells[i].clone()))
                 .collect(),
         )
+    }
+}
+
+/// As the cells, whichever form the column is held in.
+impl fmt::Debug for ArrayColumn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArrayColumn")
+            .field("cells", &self.store_cells())
+            .field("offset", &self.offset)
+            .field("len", &self.len)
+            .finish()
     }
 }
 
@@ -955,7 +1208,7 @@ impl ColumnData {
                 values: c.values.slice(offset, len),
             }),
             ColumnData::Array(c) => ColumnData::Array(ArrayColumn {
-                cells: c.cells.clone(),
+                store: c.store.clone(),
                 offset: c.offset + offset,
                 len,
             }),
@@ -1021,11 +1274,11 @@ impl ColumnData {
                 .into()
             }
             ColumnData::Array(_) => {
-                let cols = each!(Array);
+                let cols: Vec<&[Option<Cell>]> = each!(Array).iter().map(|c| c.cells()).collect();
                 ArrayColumn::from_cells(
                     picks
                         .iter()
-                        .map(|&(s, r)| cols[s as usize].cell(r as usize).cloned())
+                        .map(|&(s, r)| cols[s as usize][r as usize].clone())
                         .collect(),
                 )
                 .into()
@@ -1075,13 +1328,16 @@ impl ColumnData {
             ColumnData::Boolean(c) => {
                 BooleanColumn::from_arrow(gather(&c.values).as_boolean().clone()).into()
             }
-            ColumnData::Array(c) => ArrayColumn::from_cells(
-                indices
-                    .iter()
-                    .map(|r| r.and_then(|i| c.cell(i as usize).cloned()))
-                    .collect(),
-            )
-            .into(),
+            ColumnData::Array(c) => {
+                let cells = c.cells();
+                ArrayColumn::from_cells(
+                    indices
+                        .iter()
+                        .map(|r| r.and_then(|i| cells[i as usize].clone()))
+                        .collect(),
+                )
+                .into()
+            }
         }
     }
 
@@ -1092,7 +1348,7 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.get(i).is_some(),
             ColumnData::String(c) => c.get(i).is_some(),
             ColumnData::Boolean(c) => c.get(i).is_some(),
-            ColumnData::Array(c) => c.get(i).is_some(),
+            ColumnData::Array(c) => c.is_present(i),
         }
     }
 

@@ -18,6 +18,11 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
+use std::sync::Arc;
+
+use arrow_array::{Float64Array, ListArray};
+use arrow_buffer::OffsetBuffer;
+use arrow_schema::{DataType, Field};
 
 use crate::column::{ArrayColumn, Cell, ColumnData, Scalar};
 use crate::reducer::Reducer;
@@ -74,6 +79,77 @@ fn kind_rank(e: &Scalar) -> u8 {
         Scalar::String(_) => 1,
         Scalar::Boolean(_) => 2,
     }
+}
+
+/// One list per row range (an `aggregate` bucket, or `reduce`'s one): the
+/// reducer over the range's rows of `data`.
+///
+/// Cost: `samples` of a number or decimal column copies the present values
+/// once into an Arrow list ([`samples_list`]) and builds no cell. Every
+/// other case gives each element an id first ([`Elements::new`]) and makes
+/// one cell per range.
+pub(crate) fn reduce_ranges(
+    data: &ColumnData,
+    reducer: Reducer,
+    ranges: &[Range<usize>],
+) -> ArrayColumn {
+    if reducer == Reducer::Samples
+        && let Some(lists) = samples_list(data, ranges)
+    {
+        return lists;
+    }
+    Elements::new(data).reduce_ranges(reducer, ranges)
+}
+
+/// `samples` over each row range of a number or decimal column: the
+/// range's present values in row order (`-0` kept; a decimal as its nearest
+/// `f64`), as an Arrow list of numbers. `None` for a column of another
+/// kind, when no range holds a value (a column with no elements is not
+/// kept as a list of numbers), or when the lists would hold more items
+/// than an Arrow list can.
+fn samples_list(data: &ColumnData, ranges: &[Range<usize>]) -> Option<ArrayColumn> {
+    let rows: usize = ranges.iter().map(|r| r.len()).sum();
+    if rows > i32::MAX as usize {
+        return None;
+    }
+    let mut items: Vec<f64> = Vec::with_capacity(rows);
+    let mut offsets: Vec<i32> = Vec::with_capacity(ranges.len() + 1);
+    offsets.push(0);
+    match data {
+        ColumnData::Number(c) => {
+            let v = c.values();
+            for r in ranges {
+                if c.all_finite() {
+                    items.extend_from_slice(&v[r.clone()]);
+                } else {
+                    items.extend(v[r.clone()].iter().copied().filter(|x| x.is_finite()));
+                }
+                offsets.push(items.len() as i32);
+            }
+        }
+        ColumnData::Decimal(c) => {
+            let v = c.to_f64s();
+            let nulls = c.nulls();
+            for r in ranges {
+                match nulls {
+                    None => items.extend_from_slice(&v[r.clone()]),
+                    Some(n) => items.extend(r.clone().filter(|&i| n.is_valid(i)).map(|i| v[i])),
+                }
+                offsets.push(items.len() as i32);
+            }
+        }
+        _ => return None,
+    }
+    if items.is_empty() {
+        return None;
+    }
+    let item = Arc::new(Field::new_list_field(DataType::Float64, false));
+    Some(ArrayColumn::from_list(ListArray::new(
+        item,
+        OffsetBuffer::new(offsets.into()),
+        Arc::new(Float64Array::new(items.into(), None)),
+        None,
+    )))
 }
 
 impl Elements {
@@ -465,6 +541,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `samples` written straight to a list gives what the id path gives.
+    #[test]
+    fn samples_lists_match_the_id_path() {
+        let numbers: Vec<Option<f64>> = (0..60)
+            .map(|i| (i % 7 != 3).then(|| [0.0, -0.0, 1.5, -2.0][i % 4]))
+            .collect();
+        let full: Vec<f64> = (0..60).map(|i| f64::from(i % 5) - 2.0).collect();
+        let decimals: Vec<Option<i128>> = (0..60)
+            .map(|i| (i % 5 != 1).then_some(i as i128 * 37 - 900))
+            .collect();
+        let exact: Vec<Option<i128>> = (0..60).map(|i| Some(i as i128)).collect();
+        let columns = [
+            ColumnData::from(numbers),
+            ColumnData::from(full),
+            crate::DecimalColumn::from_options(decimals, 2)
+                .unwrap()
+                .into(),
+            crate::DecimalColumn::from_options(exact, 0).unwrap().into(),
+        ];
+        // Buckets, one bucket, single rows, empty and overlapping ranges.
+        let layouts: Vec<Vec<Range<usize>>> = vec![
+            (0..6).map(|b| b * 10..b * 10 + 10).collect(),
+            std::iter::once(0..60).collect(),
+            (0..60).map(|r| r..r + 1).collect(),
+            vec![3..4, 3..3, 0..20, 10..30, 59..60, 60..60],
+            vec![],
+        ];
+        for data in &columns {
+            for ranges in &layouts {
+                let want = Elements::new(data).reduce_ranges(Reducer::Samples, ranges);
+                let got = reduce_ranges(data, Reducer::Samples, ranges);
+                assert_eq!(got.missing_count(), 0);
+                assert_eq!(got.first_bad_element(), None);
+                assert_eq!(got, want);
+                assert_eq!(
+                    got.list_view().is_some(),
+                    want.iter().flatten().any(|c| !c.is_empty())
+                );
+            }
+        }
+        // No value anywhere: empty lists, not kept as a list of numbers.
+        let gaps = ColumnData::from(vec![None::<f64>; 4]);
+        assert!(samples_list(&gaps, &[0..2, 2..4]).is_none());
+        let got = reduce_ranges(&gaps, Reducer::Samples, &[0..2, 2..4]);
+        assert_eq!(got.get(0), Some(&[][..]));
+        // Text goes the id path.
+        let text = ColumnData::from(vec!["a", "b"]);
+        assert!(samples_list(&text, &[0..1, 1..2]).is_none());
     }
 
     #[test]

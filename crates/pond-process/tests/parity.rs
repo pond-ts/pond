@@ -14,7 +14,7 @@ use std::task::{Context, Poll, Waker};
 
 use pond_process::{
     Def, ErrorKind, Host, LoadedSource, ParamDef, ProcessError, Registry, RunResult, SourceRef,
-    SourceRegistry, basic_ops, explain, source_id, spec_id, summary_folds,
+    SourceRegistry, basic_ops, explain, required_history, source_id, spec_id, summary_folds,
 };
 use pond_rs::{JsonOptions, TimeSeries};
 use serde_json::{Map, Value, json};
@@ -43,6 +43,7 @@ fn fixture_ops() -> Vec<Def> {
         .param("days", ParamDef::int(252.0).min(1.0).max(366.0))
         .typed_input("variance", "variance")
         .output("", "%")
+        .lookback(|_| 0.0)
         .run(|ctx| {
             let days = ctx.number("days");
             Ok(vec![
@@ -59,6 +60,7 @@ fn fixture_ops() -> Vec<Def> {
             .output_on("Upper", "inherit", &["width"])
             .output_on("Mid", "inherit", &[])
             .output_on("Lower", "inherit", &["width"])
+            .lookback(|_| 0.0)
             .run(|ctx| {
                 let v = ctx.input("source");
                 let w = ctx.number("width");
@@ -252,7 +254,7 @@ fn response(result: &RunResult) -> Value {
     out
 }
 
-fn run_session(session: &Value) -> Vec<Value> {
+fn run_session(session: &Value, threads: usize) -> Vec<Value> {
     let units: HashMap<String, String> = session
         .get("units")
         .and_then(Value::as_object)
@@ -265,7 +267,9 @@ fn run_session(session: &Value) -> Vec<Value> {
     let mut host = Host::new(
         Arc::new(registry(session["registry"].as_str().unwrap())),
         units,
-    );
+    )
+    .with_threads(threads)
+    .with_parallel_min_rows(0);
     if let Some(b) = session.get("budgetBytes").and_then(Value::as_u64) {
         host = host.with_budget_bytes(b as usize);
     }
@@ -342,10 +346,21 @@ fn run_session(session: &Value) -> Vec<Value> {
 
 #[test]
 fn sessions_match() {
+    sessions_match_on(1);
+}
+
+/// Independent nodes computed at once give every answer, and every timing
+/// entry but `ms`, exactly as one thread does.
+#[test]
+fn sessions_match_on_four_threads() {
+    sessions_match_on(4);
+}
+
+fn sessions_match_on(threads: usize) {
     let mut failures = vec![];
     for session in fixture()["sessions"].as_array().unwrap() {
         let name = session["name"].as_str().unwrap();
-        let got = run_session(session);
+        let got = run_session(session, threads);
         let want = session["results"].as_array().unwrap();
         assert_eq!(got.len(), want.len(), "{name}: step count");
         for (i, (g, w)) in got.iter().zip(want).enumerate() {
@@ -410,4 +425,100 @@ fn malformed_requests_fail_without_a_code() {
         r.skipped[0]["reason"],
         "slot 'a' needs an 'in' list of inputs"
     );
+}
+
+/// `log` must give JavaScript's `Math.log` bits, not the system `ln`'s.
+/// These inputs are ones where the two differ in the last bit (from
+/// pond-rs's own `js_log` test); the fixture's 57 log cells happen to
+/// include none.
+#[test]
+fn log_gives_javascript_bits() {
+    let cases = [
+        (0x40a3452893a2f8c3_u64, 0x401f3e0aa9bcec18_u64),
+        (0x40aa9d835d743864, 0x4020445c3465a0be),
+        (0x4004c8faecb2f9c3, 0x3fee8dabc63fc0b2),
+    ];
+    let rows: Vec<Value> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (x, _))| json!([i as f64 * 86_400_000.0, f64::from_bits(*x)]))
+        .collect();
+    let series = TimeSeries::from_json_value(
+        &json!({
+            "name": "x",
+            "schema": [{ "name": "time", "kind": "time" }, { "name": "v", "kind": "number" }],
+            "rows": rows,
+        }),
+        &JsonOptions::default(),
+    )
+    .expect("series");
+    let mut registry = Registry::new();
+    for def in basic_ops() {
+        registry.define(def).unwrap();
+    }
+    let mut host = Host::new(Arc::new(registry), HashMap::new());
+    host.add("d", Arc::new(series));
+    let spec = json!({ "op": "log", "inputs": ["v"] });
+    let result = host
+        .run(&json!({ "from": "d", "process": [spec], "select": [{ "on": spec }], "assemble": false }))
+        .expect("run");
+    let (_, column) = &result.columns.expect("columns")[0];
+    for ((x, want), got) in cases.iter().zip(column.iter()) {
+        assert_ne!(
+            f64::from_bits(*x).ln().to_bits(),
+            *want,
+            "{x:#x} is a case where ln differs"
+        );
+        assert_eq!(got.to_bits(), *want, "log of {x:#x}");
+    }
+}
+
+#[test]
+fn required_history_matches() {
+    let registry = registry("all");
+    for case in fixture()["history"].as_array().unwrap() {
+        let plan = case["plan"].as_array().unwrap();
+        let got = match required_history(&registry, plan) {
+            Ok(h) => json!({ "result": h.to_json() }),
+            Err(e) => json!({ "error": caught(&e) }),
+        };
+        let want = match case.get("result") {
+            Some(r) => json!({ "result": r }),
+            None => json!({ "error": case["error"] }),
+        };
+        // As text, so key order (`byOp` in the order each op finished) counts.
+        assert_eq!(
+            norm(&got).to_string(),
+            norm(&want).to_string(),
+            "plan {}",
+            case["plan"]
+        );
+    }
+}
+
+/// A lookback that is negative or not finite is the op's own mistake,
+/// reported with `requiredHistory`'s words.
+#[test]
+fn required_history_refuses_a_bad_lookback() {
+    for (n, text) in [(-1.0, "-1"), (f64::NAN, "NaN"), (f64::INFINITY, "Infinity")] {
+        let mut registry = Registry::new();
+        registry
+            .define(
+                Def::op("odd", "fixture", "A broken lookback.")
+                    .input("source")
+                    .output("", "inherit")
+                    .lookback(move |_| n)
+                    .run(|ctx| Ok(vec![ctx.input("source").to_vec()])),
+            )
+            .unwrap();
+        let err = required_history(&registry, &[json!({ "op": "odd", "inputs": ["close"] })])
+            .unwrap_err();
+        assert_eq!(
+            err.message,
+            format!(
+                "op 'odd' declared a lookback of {text}; it must be a non-negative finite row count"
+            )
+        );
+        assert_eq!(err.name(), "ProcessError");
+    }
 }
