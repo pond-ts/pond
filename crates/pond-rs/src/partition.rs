@@ -1307,11 +1307,11 @@ impl Hasher for Mixer {
             ))
         };
         if n >= 8 {
-            let mut chunks = bytes.chunks_exact(8);
-            for chunk in &mut chunks {
-                self.word(u64::from_le_bytes(chunk.try_into().expect("8 bytes")));
+            let (words, rest) = bytes.as_chunks::<8>();
+            for word in words {
+                self.word(u64::from_le_bytes(*word));
             }
-            if !chunks.remainder().is_empty() {
+            if !rest.is_empty() {
                 self.word(u64::from_le_bytes(
                     bytes[n - 8..].try_into().expect("8 bytes"),
                 ));
