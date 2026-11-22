@@ -306,12 +306,15 @@ impl Sequence {
                         ))
                     })
                 };
-                let mut starts = Vec::with_capacity(count);
-                let mut ends = Vec::with_capacity(count);
-                for k in first..=last {
-                    starts.push(edge(k)?);
-                    ends.push(edge(k + 1)?);
-                }
+                // Edges rise with k, so when the first start and the last
+                // end are in range every edge between them is.
+                let first_start = edge(first)?;
+                edge(last + 1)?;
+                let starts: Vec<i64> = (0i64..)
+                    .take(count)
+                    .map(|k| first_start + k * step_ms)
+                    .collect();
+                let ends = starts.iter().map(|start| start + step_ms).collect();
                 Ok(labelled_by_start(starts, ends))
             }
             Grid::Calendar { .. } => {
