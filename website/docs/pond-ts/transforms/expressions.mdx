@@ -20,7 +20,7 @@ a function for anything else.
 
 :::note Versions
 Expressions are new in pond-ts 0.76.0, and in the Python package
-(`pond_rs`) from 0.76.0. In Rust they are on `main` but not yet in a
+from 0.76.0 (imported as `pond_rs` before 0.79.0). In Rust they are on `main` but not yet in a
 pond-rs release: crates.io's 0.1.0 doesn't have them, so build pond-rs
 from the repository to use them for now.
 :::
@@ -152,10 +152,10 @@ pond-rs keeps the closure methods (`filter`, `find`, …) and adds
 <TabItem value="python" label="Python">
 
 ```python
-import pond_rs
-from pond_rs import col
+import pond
+from pond import col
 
-cpu = pond_rs.TimeSeries({
+cpu = pond.TimeSeries({
     "time": [0, 60_000, 120_000, 180_000, 240_000],
     "cpu": [0.2, None, 0.9, 0.6, 0.4],
     "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
@@ -271,23 +271,31 @@ before.
 <TabItem value="python" label="Python">
 
 ```python
-from pond_rs import col, when
+import pond
+from pond import col, when
 
-def values(s, column):
-    return s.to_pyarrow()[column].to_pylist()
+cpu = pond.TimeSeries({
+    "time": [0, 60_000, 120_000, 180_000, 240_000],
+    "cpu": [0.2, None, 0.9, 0.6, 0.4],
+    "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
+    "host": ["a", "b", "a", "c", "b"],
+})
 
+# A new column from other columns. 0.6 / 0 is a gap (None).
 load = cpu.with_column("load", col("cpu") / col("cores"))
-assert values(load, "load") == [0.1, None, 0.225, None, 0.2]
+assert load.column("load") == [0.1, None, 0.225, None, 0.2]
 
+# Replace a column in place.
 pct = cpu.map_columns({"cpu": col("cpu") * 100})
-assert values(pct, "cpu") == [20.0, None, 90.0, 60.0, 40.0]
+assert pct.column("cpu") == [20.0, None, 90.0, 60.0, 40.0]
 
+# Pick between two values. The gap row gets "low".
 level = cpu.with_column("level", when(col("cpu") > 0.5, "high", "low"))
-assert values(level, "level") == ["low", "low", "high", "high", "low"]
+assert level.column("level") == ["low", "low", "high", "high", "low"]
 
 # A plain number on the left works too.
 idle = cpu.with_column("idle", 1 - col("cpu"))
-assert values(idle, "idle")[2] == 0.09999999999999998
+assert idle.column("idle")[2] == 0.09999999999999998
 ```
 
 `map(column, expr)` replaces one column, `map_columns({...})` several.
@@ -365,10 +373,10 @@ fn main() -> Result<(), pond_rs::PondError> {
 <TabItem value="python" label="Python">
 
 ```python
-import pond_rs
-from pond_rs import col
+import pond
+from pond import col
 
-live = pond_rs.LiveSeries({"time": "time", "cpu": "number", "host": "string"})
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"})
 hot = live.filter(col("cpu") > 0.5)
 
 live.push(0, cpu=0.9, host="a")
@@ -458,6 +466,16 @@ fn main() -> Result<(), pond_rs::PondError> {
 <TabItem value="python" label="Python">
 
 ```python
+import pond
+from pond import col
+
+cpu = pond.TimeSeries({
+    "time": [0, 60_000, 120_000, 180_000, 240_000],
+    "cpu": [0.2, None, 0.9, 0.6, 0.4],
+    "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
+    "host": ["a", "b", "a", "c", "b"],
+})
+
 # cpu: 0.2, None, 0.9, 0.6, 0.4
 assert len(cpu.filter(col("cpu") > 0.5)) == 2
 assert len(cpu.filter(col("cpu") <= 0.5)) == 2  # the gap fails this too
@@ -466,8 +484,8 @@ assert len(cpu.filter(~(col("cpu") > 0.5))) == 3  # ~ brings the gap back
 assert len(cpu.filter(col("cpu") != 0.2)) == 4  # including the gap
 assert len(cpu.filter(col("cpu").is_missing())) == 1
 
-assert values(cpu.map("cpu", col("cpu").fill(0)), "cpu")[1] is None
-assert values(cpu.with_column("cpu0", col("cpu").fill(0)), "cpu0")[1] == 0.0
+assert cpu.map("cpu", col("cpu").fill(0)).column("cpu")[1] is None
+assert cpu.with_column("cpu0", col("cpu").fill(0)).column("cpu0")[1] == 0.0
 ```
 
 </TabItem>
@@ -544,11 +562,23 @@ fn main() -> Result<(), pond_rs::PondError> {
 <TabItem value="python" label="Python">
 
 ```python
+import pond
+from pond import col
+
+cpu = pond.TimeSeries({
+    "time": [0, 60_000, 120_000, 180_000, 240_000],
+    "cpu": [0.2, None, 0.9, 0.6, 0.4],
+    "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
+    "host": ["a", "b", "a", "c", "b"],
+})
+
 try:
     cpu.map_columns({"nope": col("cpu")})
-except pond_rs.PondError as e:
+    raise AssertionError("expected an error")
+except pond.PondError as e:
     print(e)
     # TimeSeries::map_exprs: no column named 'nope' (columns: cpu, cores, host)
+    assert "nope" in str(e)
 ```
 
 </TabItem>
@@ -566,7 +596,7 @@ JSON.stringify(col('cpu').gt(0.5).and(col('host').eq('a')));
 
 pond-rs reads and writes the same tree (`Expr::to_json`,
 `Expr::from_json`, shown in the Rust tab above), and so does Python
-(`expr.to_json()`, `pond_rs.Expr.from_json(text)`). So a rule saved by one
+(`expr.to_json()`, `pond.Expr.from_json(text)`). So a rule saved by one
 can run in another, or be written by a tool that never runs code.
 
 ## Speed

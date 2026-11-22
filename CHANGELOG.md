@@ -81,7 +81,27 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Docs: a Python tab on every example that has language tabs** (beside
+  TypeScript and Rust), 178 runnable scripts across 23 pages. Each is a whole
+  script with asserts, and CI runs every one against the freshly built wheel
+  on Python 3.9 and 3.13 (`website/scripts/check-python-snippets.py`), so the
+  examples can't drift from the bridge. The `@pond-ts/fit` guides are not in
+  that run: their Python blocks build on each other and are checked by hand
+  with `check-fit-guides.mts`.
+
 ### Changed
+
+- **Python: the import is now `import pond`** (was `import pond_rs`). The
+  PyPI package stays `pond-timeseries`, and the classes and functions behave
+  the same; what changes is the module name everywhere it shows: each class's
+  `__module__`, the exception's qualified name (`pond.PondError`) and error
+  text such as "pond.studies() lists them". No `pond_rs` alias is kept:
+  0.78.0 was the only PyPI release with that import, and it had been out for
+  hours. Update `import pond_rs` / `from pond_rs import …` to `pond`. Heads
+  up: an unrelated, empty PyPI package called `pond` (0.1) also installs a
+  `pond` module; don't install both.
 
 - **pond-rs: `align`, `materialize` and `dedupe` are faster.** The walks keep
   4-byte row numbers that go straight to the column gathers, fixed-step

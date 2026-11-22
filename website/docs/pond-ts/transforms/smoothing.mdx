@@ -54,6 +54,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 In Rust the method and its options are one value: `Smooth::ema(alpha)`, then `.output(name)` and the rest. `Smooth::ema_span(20.0)` gives the finance-style "20-bar EMA" (`alpha = 2 / (span + 1)`).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# One reading a minute for twelve minutes.
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(12)],
+    "cpu": [0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58],
+})
+
+trend = cpu.smooth("cpu", "ema", alpha=0.3, output="cpuTrend")
+# trend gains an optional cpuTrend column; the source cpu passes through.
+assert trend.columns == ["cpu", "cpuTrend"]
+assert trend.schema[2]["required"] is False
+# 0.3 * 0.52 + 0.7 * 0.30
+assert trend.column("cpuTrend")[1] == 0.366
+```
+
+In Python the method is the second argument (`"ema"`, `"moving_average"`, `"loess"`) and the options are keywords. `smooth("cpu", "ema", span=20)` gives the finance-style "20-bar EMA" (`alpha = 2 / (span + 1)`).
+
+</TabItem>
 </Tabs>
 
 <ConceptViz
@@ -141,6 +163,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# One reading a minute for twelve minutes.
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(12)],
+    "cpu": [0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58],
+})
+
+trend = cpu.smooth("cpu", "ema", alpha=0.3, warmup=4)
+# The first 4 rows are dropped.
+assert len(trend) == len(cpu) - 4
+assert trend[0].key == 240_000
+assert trend.column("cpu")[0] == 0.556608
+```
+
+</TabItem>
 </Tabs>
 
 ### Moving average — windowed arithmetic mean
@@ -188,6 +229,29 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# One reading a minute for twelve minutes.
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(12)],
+    "cpu": [0.30, 0.52, 0.41, 0.88, 0.62, 0.25, 0.71, 0.80, 0.49, 0.43, 0.66, 0.58],
+})
+
+avg = cpu.smooth(
+    "cpu",
+    "moving_average",
+    window="5m",
+    alignment="centered",  # "trailing" | "leading" | "centered"
+    output="cpuAvg",
+)
+# At minute 5 the window [2.5m, 7.5m) holds minutes 3 to 7.
+assert avg.column("cpuAvg")[5] == 0.6519999999999999
 ```
 
 </TabItem>
@@ -247,6 +311,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 Giving a method an option it does not take (`warmup` on a loess, say) is an error when the code runs; pond-ts's types catch it before.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# 40 noisy readings with an upward drift.
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(40)],
+    "cpu": [((i * 7) % 11) / 10 + i * 0.02 for i in range(40)],
+})
+
+# span: the fraction of the series each fit uses; smaller is more local.
+fit = cpu.smooth("cpu", "loess", span=0.25, output="cpuLoess")
+raw = cpu.column("cpu")
+smooth = fit.column("cpuLoess")
+# A jump from 0.48 to 1.2 in the raw values; the fit barely moves.
+assert (raw[19], raw[20]) == (0.48, 1.2000000000000002)
+assert smooth[19] == 0.8434140976273988
+assert smooth[20] == 0.8365859023726016
+```
+
+Giving a method an option it does not take (`warmup` on a loess, say) is an error when the code runs.
 
 </TabItem>
 </Tabs>

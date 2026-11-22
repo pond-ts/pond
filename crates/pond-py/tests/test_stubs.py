@@ -1,4 +1,4 @@
-"""The study methods in pond_rs.pyi match the catalog."""
+"""The study methods in pond.pyi match the catalog."""
 
 import subprocess
 import sys

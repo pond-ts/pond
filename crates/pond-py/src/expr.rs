@@ -25,7 +25,7 @@ use crate::convert::err;
 /// Gaps: a comparison with a gap is false (so `!=` is true), arithmetic
 /// with a gap gives a gap, a non-finite result (`x / 0`) is a gap, and
 /// `&`, `|` and `when` read a gap as false.
-#[pyclass(name = "Expr", module = "pond_rs", frozen)]
+#[pyclass(name = "Expr", module = "pond", frozen)]
 pub struct PyExpr {
     pub(crate) inner: Expr,
 }

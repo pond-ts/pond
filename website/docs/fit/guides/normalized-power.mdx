@@ -96,12 +96,12 @@ average, and the fourth-power mean in polars:
 
 ```python
 import polars as pl
-import pond_rs
-from pond_rs import col
+import pond
+from pond import col
 
 FTP = 250
 ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
-power = pond_rs.TimeSeries(ride.select("time", "power"), key="time").filter(
+power = pond.TimeSeries(ride.select("time", "power"), key="time").filter(
     ~col("power").is_missing()
 )
 

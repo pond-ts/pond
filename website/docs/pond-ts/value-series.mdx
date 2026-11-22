@@ -117,6 +117,53 @@ fn main() -> Result<(), pond_rs::PondError> {
 `ValueSeries::new(name, axis_name, axis, columns)` is the Rust door for values you already hold, as `TimeSeries::new` is for a time series.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import polars as pl
+import pond
+
+# 1. PROJECT a TimeSeries onto one of its non-decreasing columns.
+ride = pond.TimeSeries({
+    "time": [0, 1_000, 2_000],
+    "cumDist": [0.0, 20_000.0, 38_000.0],
+    "hr": [120.0, 130.0, 140.0],
+})
+by_distance = ride.by_value("cumDist")  # TimeSeries → ValueSeries
+assert by_distance.axis() == [0.0, 20_000.0, 38_000.0]
+
+# 2. CONSTRUCT directly, from whatever you are holding.
+# A frame (polars, pandas or pyarrow), naming the axis column:
+frame = pl.DataFrame({"strike": [90.0, 95.0, 100.0], "iv": [0.31, 0.28, 0.26], "oi": [1200.0, 3400.0, 8800.0]})
+chain = pond.ValueSeries.from_arrow(frame, "strike", name="chain")
+
+def same(a, b):
+    return a.axis() == b.axis() and all(a.column(c) == b.column(c) for c in ["iv", "oi"])
+
+# Row JSON:
+rows = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"""
+assert same(pond.ValueSeries.from_json(rows), chain)
+
+# Columns JSON:
+columns = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"""
+assert same(pond.ValueSeries.from_columns_json(columns), chain)
+```
+
+`ValueSeries.from_arrow(frame, axis)` is the Python door for values you already hold in a frame. A frame's columns may have gaps (its fields are nullable), so they come in optional, where JSON's follow its schema.
+
+</TabItem>
 </Tabs>
 
 All four share **one ingest engine** and the same monotonicity contract; they
@@ -201,6 +248,38 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert!(ValueSeries::from_json(&with_rows("[[90, null, 1200]]"), KeyOrder::Strict).is_err());
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+schema = """[
+  {"name": "strike", "kind": "value"},
+  {"name": "iv", "kind": "number"},
+  {"name": "oi", "kind": "number"}
+]"""
+
+def with_rows(rows):
+    return f'{{"name": "chain", "schema": {schema}, "rows": {rows}}}'
+
+tuples = pond.ValueSeries.from_json(with_rows("[[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]"))
+objects = pond.ValueSeries.from_json(with_rows("""[
+    {"strike": 90, "iv": 0.31, "oi": 1200},
+    {"strike": 95, "iv": 0.28, "oi": 3400},
+    {"strike": 100, "iv": 0.26, "oi": 8800}]"""))
+assert objects.to_json() == tuples.to_json()
+
+# The axis must be a number: there is no time zone to read text in.
+# A required column refuses a gap.
+for bad in ['[["90", 0.31, 1200]]', "[[90, null, 1200]]"]:
+    try:
+        pond.ValueSeries.from_json(with_rows(bad))
+        raise AssertionError("expected an error")
+    except pond.PondError:
+        pass
 ```
 
 </TabItem>
@@ -292,6 +371,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs reads Arrow itself: `read_ipc` takes any reader, `from_ipc_bytes` bytes already in memory, and `from_arrow` `RecordBatch`es you already hold. Unlike pond-ts it refuses a time-typed axis field and reads true/false, decimal and list value fields; see [Arrow and JSON](../pond-rs/arrow#value-series).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pyarrow as pa
+import pyarrow.ipc
+import pond
+
+table = pa.table({"strike": [90.0, 95.0, 100.0], "iv": [0.31, 0.28, 0.26]})
+sink = pa.BufferOutputStream()
+with pa.ipc.new_file(sink, table.schema) as writer:
+    writer.write_table(table)
+data = sink.getvalue()
+
+# Read the file with pyarrow, then name the field to key on.
+chain = pond.ValueSeries.from_arrow(pa.ipc.open_file(data).read_all(), "strike", name="chain")
+assert chain.axis() == [90.0, 95.0, 100.0]
+
+# Naming a field that is not there is an error.
+try:
+    pond.ValueSeries.from_arrow(table, "price")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+A `ValueSeries` has no `read_ipc` of its own in Python: read the `.arrow` file with pyarrow (or polars) and pass the table to `from_arrow`.
+
+</TabItem>
 </Tabs>
 
 pond takes **no dependency** on `apache-arrow` — bring your own and hand the
@@ -372,6 +479,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 `axis()` is a plain `&[f64]`, so pond-ts's `axisAt(i)` is `axis()[i]`. `nearest_index` gives `None` for an empty series, where pond-ts gives `-1`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000, 5_000],
+    "cumDist": [0.0, 20_000.0, 38_000.0, 41_000.0, 55_000.0, 70_000.0],
+    "hr": [120.0, 130.0, 140.0, 150.0, 155.0, 160.0],
+})
+by_distance = ride.by_value("cumDist")
+
+assert len(by_distance) == 6  # number of rows
+assert by_distance.axis_name == "cumDist"  # the key column's name
+assert by_distance.axis()[3] == 41_000.0  # the axis, as a list
+
+assert by_distance.column("hr")[2] == 140.0
+
+# Row nearest the 40 km mark; clamps outside the axis.
+assert by_distance.nearest_index(40_000.0) == 3
+assert by_distance.nearest_index(1e9) == 5
+
+# The [40 km, 60 km) sub-series.
+leg = by_distance.slice_by_value(40_000.0, 60_000.0)
+assert leg.axis() == [41_000.0, 55_000.0]
+assert len(by_distance.slice_by_value(60_000.0, 40_000.0)) == 0
+```
+
+`axis()` is a plain list, so pond-ts's `axisAt(i)` is `axis()[i]`. `nearest_index` gives `None` for an empty series, where pond-ts gives `-1`.
+
+</TabItem>
 </Tabs>
 
 - **`axisValues()`** returns the **live** key buffer — zero-copy, so treat it as
@@ -445,6 +583,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs has no `toRows` / `toObjects` for a value series: read the axis with `axis()` and each column with `column(name)`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+chain = pond.ValueSeries.from_columns_json("""{"name": "chain",
+  "schema": [{"name": "strike", "kind": "value"}, {"name": "iv", "kind": "number"}, {"name": "oi", "kind": "number"}],
+  "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}""")
+
+rows = chain.to_json()
+assert rows.endswith('"rows":[[90,0.31,1200],[95,0.28,3400],[100,0.26,8800]]}')
+
+objects = chain.to_json("object")
+assert objects.endswith('{"strike":100,"iv":0.26,"oi":8800}]}')
+
+columns = chain.to_columns_json()
+assert columns.endswith('"columns":{"strike":[90,95,100],"iv":[0.31,0.28,0.26],"oi":[1200,3400,8800]}}')
+
+# Every door out reads back in.
+assert pond.ValueSeries.from_json(rows).to_json() == rows
+assert pond.ValueSeries.from_json(objects).to_json() == rows
+assert pond.ValueSeries.from_columns_json(columns).to_json() == rows
+
+table = chain.to_pyarrow()  # also to_polars(), to_pandas()
+assert table.num_rows == 3
+```
+
+For rows in Python, take a frame (`to_polars()`, `to_pandas()`), or read the axis with `axis()` and each column with `column(name)`.
 
 </TabItem>
 </Tabs>
@@ -544,6 +712,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `to_arrow` returns an Arrow `RecordBatch`, so there is nothing to assemble.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import polars as pl
+import pond
+
+chain = pond.ValueSeries.from_arrow(
+    pl.DataFrame({"strike": [90.0, 95.0, 100.0], "iv": [0.31, None, 0.26]}), "strike", name="chain"
+)
+
+table = chain.to_pyarrow()
+# The axis is the first field, a plain float64.
+assert table.schema.field(0).name == "strike"
+
+iv = table["iv"]
+assert iv[0].as_py() == 0.31
+assert iv[1].as_py() is None  # a gap is an Arrow null
+```
+
+`to_pyarrow()` returns a pyarrow `Table`, so there is nothing to assemble.
 
 </TabItem>
 </Tabs>

@@ -139,6 +139,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Agg::of(column, reducer)` is the shorthand `{ cpu: 'avg' }`. The result is keyed by interval here too; `as_time(At::Begin)` rekeys it.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+cpu = pond.TimeSeries({
+    "time": [0, 2 * minute, 4 * minute, 6 * minute, 9 * minute],
+    "cpu": [0.2, 0.4, 0.6, 0.9, 0.5],
+    "requests": [10.0, 20.0, 30.0, 5.0, 15.0],
+    "host": ["a", "b", "a", "b", "a"],
+})
+
+five_min = cpu.aggregate("5m", {"cpu": "avg", "requests": "sum", "host": "last"})
+assert five_min.key_name == "interval"
+assert [row.begin for row in five_min] == [0, 5 * minute]
+assert five_min.column("cpu") == [0.4000000000000001, 0.7]
+assert five_min.column("requests") == [60.0, 20.0]
+assert five_min.column("host") == ["a", "a"]
+```
+
+`{"cpu": "avg"}` is the shorthand `{ cpu: 'avg' }`. The result is keyed by interval here too; `as_time()` rekeys it by each bucket's start.
+
+</TabItem>
 </Tabs>
 
 The output is **interval-keyed**. To feed it into a transform that
@@ -225,6 +249,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Sequence::calendar(unit, time_zone)` starts weeks on Monday; `.with_week_start(7)` starts them on Sunday.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import datetime as dt
+from zoneinfo import ZoneInfo
+import pond
+
+ny = ZoneInfo("America/New_York")
+days = [dt.date(2026, 1, d) for d in (7, 8, 9, 12, 13, 14, 15, 16)]  # Wed to Fri, Mon to Fri
+close = [10.0, 11.0, 12.0, 13.0, 12.0, 14.0, 15.0, 16.0]
+daily = pond.TimeSeries({
+    "time": [dt.datetime(d.year, d.month, d.day, tzinfo=ny) for d in days],  # NY midnight
+    "open": [c - 0.5 for c in close],
+    "high": [c + 1.0 for c in close],
+    "low": [c - 1.0 for c in close],
+    "close": close,
+})
+
+# daily → weekly bars; weeks start on Monday unless you say otherwise.
+weeks = pond.Sequence.calendar("week", "America/New_York")
+weekly = daily.aggregate(weeks, {"close": "last", "high": "max", "low": "min", "open": "first"})
+monday = dt.datetime(2026, 1, 5, tzinfo=ny)
+assert weekly[0].begin == int(monday.timestamp() * 1000)
+assert weekly.column("close") == [12.0, 16.0]
+assert weekly.column("open") == [9.5, 12.5]
+```
+
+`pond.Sequence.calendar(unit, time_zone)` starts weeks on Monday; `week_starts_on=7` starts them on Sunday.
+
+</TabItem>
 </Tabs>
 
 :::
@@ -297,6 +351,43 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `Agg::new(output, source, reducer)` is the `{ from, using }` form. Rust checks that a reducer fits its column when the code runs, not when it compiles.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+cpu = pond.TimeSeries({
+    "time": [0, 2 * minute, 4 * minute, 6 * minute, 9 * minute],
+    "cpu": [0.2, 0.4, 0.6, 0.9, 0.5],
+    "requests": [10.0, 20.0, 30.0, 5.0, 15.0],
+})
+
+out = cpu.aggregate("5m", {
+    # avg of cpu, output column with the same name
+    "cpu": "avg",
+    # name the output column: (source, reducer)
+    "cpu_p95": ("cpu", "p95"),
+    # several reducers over the same source column
+    "requests_total": ("requests", "sum"),
+    "requests_peak": ("requests", "max"),
+})
+assert out.columns == ["cpu", "cpu_p95", "requests_total", "requests_peak"]
+assert out.column("cpu_p95") == [0.58, 0.88]
+assert out.column("requests_peak") == [30.0, 15.0]
+
+# A reducer that does not fit the column is an error when the code runs.
+host = pond.TimeSeries({"time": [0], "host": ["a"]})
+try:
+    host.aggregate("5m", {"host": "avg"})
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+`{"out": ("source", "reducer")}` is the `{ from, using }` form; `{"out": {"from": "source", "using": "reducer"}}` works too.
 
 </TabItem>
 </Tabs>
@@ -445,6 +536,24 @@ fn main() -> Result<(), pond_rs::PondError> {
 `reduce_number` and `reduce_value` are the one-column form.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000],
+    "cpu": [0.2, 0.4, 0.6, 0.9, 0.5],
+    "host": ["b", "a", "b", "c", "a"],
+})
+
+assert series.reduce({"cpu": "avg"})["cpu"] == 0.52
+assert series.reduce({"host": "last"})["host"] == "a"
+```
+
+`reduce` always returns a dict, one entry per output; for one column, read the one entry.
+
+</TabItem>
 </Tabs>
 
 :::tip[Type narrowing]
@@ -508,6 +617,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `reduce` returns a `Reduced`, read by output name with `number`, `string`, `array` and so on; each checks the kind when the code runs. This covers the named outputs below too.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000],
+    "cpu": [0.2, 0.4, 0.6, 0.9, 0.5],
+    "requests": [10.0, 20.0, 30.0, 5.0, 15.0],
+    "host": ["b", "a", "b", "c", "a"],
+    "latency": [120.0, 80.0, 200.0, 90.0, 60.0],
+})
+
+summary = series.reduce({"cpu": "avg", "requests": "sum", "host": "unique"})
+assert summary == {"cpu": 0.52, "requests": 80.0, "host": ["a", "b", "c"]}
+
+# Named outputs.
+quantiles = series.reduce({
+    "p50": ("latency", "p50"),
+    "p95": ("latency", "p95"),
+    "p99": ("latency", "p99"),
+})
+assert quantiles == {"p50": 90.0, "p95": 184.0, "p99": 196.8}
+```
+
+This covers the named outputs below too.
 
 </TabItem>
 </Tabs>
@@ -616,6 +753,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs returns a `Table` rather than an array of records: one column per field (`start`, `end`, then one per `Agg`), read with `column(name)`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(6)],
+    "cumDist": [0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0],
+    "ele": [1.0, 2.0, 1.5, 0.5, 3.0, 1.0],
+    "speed": [7.0, 7.5, 6.5, 6.0, 8.0, 7.0],
+})
+
+# Per-kilometre elevation gain and average speed.
+splits = ride.by_column("cumDist", {"gain": ("ele", "sum"), "speed": ("speed", "avg")}, width=1_000)
+assert splits == {
+    "start": [0.0, 1_000.0, 2_000.0],
+    "end": [1_000.0, 2_000.0, 3_000.0],
+    "gain": [4.5, 0.5, 4.0],
+    "speed": [7.0, 6.0, 7.5],
+}
+```
+
+Python returns a dict of columns (`start`, `end`, then one per reducer), ready for `pl.DataFrame(splits)`, rather than an array of records.
+
+</TabItem>
 </Tabs>
 
 The result is a plain **array of bin records**, each
@@ -683,6 +845,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 This covers the explicit edges below too. `Bins::width_from(w, origin)` shifts the bins, and `Bins::edges_upper_inclusive` puts a value that sits on an edge in the bin below.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(6)],
+    "watts": [90.0, 110.0, 140.0, 30.0, 260.0, 180.0],
+})
+secs = {"secs": ("watts", "count")}
+
+# Seconds in each 25 W band, empty bands in between included.
+bands = ride.by_column("watts", secs, width=25)
+assert bands["start"][0] == 25.0
+assert len(bands["start"]) == 10  # 25 W up to 275 W
+assert bands["secs"][1] == 0.0  # 50 to 75 W
+
+# Time in each power zone.
+zones = ride.by_column("watts", secs, edges=[0, 150, 250, 350, 500])
+assert zones["secs"] == [4.0, 1.0, 1.0, 0.0]
+```
+
+This covers the explicit edges below too. `origin=` shifts the bins, and `upper_inclusive=True` puts a value that sits on an edge in the bin below.
 
 </TabItem>
 </Tabs>
@@ -795,6 +982,29 @@ fn main() -> Result<(), pond_rs::PondError> {
 `axis()` gives the axis values as a `&[f64]`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(6)],
+    "cumDist": [0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0],
+    "watts": [90.0, 110.0, 140.0, 30.0, 260.0, 180.0],
+})
+
+# Re-key the ride onto cumulative distance.
+by_distance = ride.by_value("cumDist")
+assert by_distance.axis_name == "cumDist"
+assert by_distance.axis() == [0.0, 400.0, 900.0, 1_300.0, 2_600.0, 2_900.0]
+assert "cumDist" not in by_distance.columns  # it is the key now
+
+i = by_distance.nearest_index(1_000.0)  # row nearest 1 km
+assert by_distance.column("watts")[i] == 140.0
+assert len(by_distance.slice_by_value(1_000.0, 3_000.0)) == 3  # 1–3 km
+```
+
+</TabItem>
 </Tabs>
 
 The axis must be **defined, finite, and non-decreasing at every
@@ -878,6 +1088,32 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `ArrayOptions { output: Some(name), .. }` is pond-ts's `{ as: name }`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+events = pond.TimeSeries({
+    "time": [0, 1_000, 2_000],
+    "tags": [["web", "eu", "web"], ["db"], []],
+})
+
+# Number of tags per event, replacing the list column.
+counts = events.array_aggregate("tags", "count")
+assert counts.column("tags") == [3.0, 1.0, 0.0]
+
+# The same, as a new tagCount column beside the list.
+kept = events.array_aggregate("tags", "count", output="tagCount")
+assert kept.columns == ["tags", "tagCount"]
+
+# Distinct values per event.
+distinct = events.array_aggregate("tags", "unique")
+assert distinct.column("tags")[0] == ["eu", "web"]
+```
+
+`output=` is pond-ts's `{ as: name }`.
 
 </TabItem>
 </Tabs>
@@ -967,6 +1203,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs calls none of your code during a push. You `watch` a node, and each `push` returns what it caused: `OutputKind::Event` for a closed bucket, `OutputKind::Bucket` for the open one. See [Live series](../../pond-rs/live).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu", max_age="1h")
+
+agg = live.aggregate("1m", {"cpu": "avg", "host": "last"})
+# Closed buckets, and the open bucket after each event joins it.
+agg.watch("event", "bucket")
+
+live.push(0, cpu=1.0, host="a")
+live.push(30_000, cpu=3.0, host="b")
+# An event in the next minute closes the first.
+out = live.push(61_000, cpu=5.0, host="a")
+closed = [o.event for o in out if o.kind == "event"]
+assert len(closed) == 1
+assert closed[0].begin == 0
+assert closed[0]["cpu"] == 2.0
+assert closed[0]["host"] == "b"
+
+# Snapshot at any time: the open bucket is the last row.
+snap = agg.snapshot()
+assert [row.begin for row in snap] == [0, 60_000]
+assert snap.column("cpu")[1] == 5.0
+```
+
+As in Rust, none of your code runs during a push. You `watch` a node, and each `push` returns what it caused: kind `"event"` for a closed bucket, `"bucket"` for the open one. See [Python: live series](../../pond-rs/python.mdx#live-series).
+
+</TabItem>
 </Tabs>
 
 `LiveAggregation` inherits the source's `graceWindow` for late-event
@@ -1034,6 +1300,23 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(got, [Some(0.2), Some(0.4)]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 30_000, 90_000], "cpu": [0.2, 0.4, 0.6]})
+
+# aggregate: one row per minute, value reduced from the rows inside.
+avg = cpu.aggregate("1m", {"cpu": "avg"})
+assert avg.column("cpu") == [0.30000000000000004, 0.6]
+
+# align: one row per minute, value sampled at each minute's start.
+held = cpu.align("1m")
+assert held.column("cpu") == [0.2, 0.4]
 ```
 
 </TabItem>

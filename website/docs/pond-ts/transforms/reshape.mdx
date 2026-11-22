@@ -146,6 +146,43 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Pivot::default().aggregate(Reducer::Avg)` is `{ aggregate: 'avg' }`. pond-rs has no custom reducer functions here.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Long: one row per (time, host).
+long = pond.TimeSeries({
+    "time": [0, 0, 60_000, 60_000, 120_000],
+    "host": ["api-2", "api-1", "api-1", "api-2", "api-1"],
+    "cpu": [0.5, 0.2, 0.3, 0.6, 0.4],
+})
+
+# Wide: one row per time, a column per host.
+wide = long.pivot_by_group("host", "cpu")
+assert wide.columns == ["api-1_cpu", "api-2_cpu"]  # sorted
+assert [row.key for row in wide] == [0, 60_000, 120_000]
+assert wide.column("api-2_cpu") == [0.5, 0.6, None]  # no api-2 row at 120 s
+
+# Two rows with the same time and host: an error unless you say how
+# to combine them.
+dup = pond.TimeSeries({
+    "time": [0, 0, 60_000],
+    "host": ["api-1", "api-1", "api-2"],
+    "cpu": [0.2, 0.4, 0.6],
+})
+try:
+    dup.pivot_by_group("host", "cpu")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+avg = dup.pivot_by_group("host", "cpu", aggregate="avg")
+assert avg.column("api-1_cpu")[0] == 0.30000000000000004
+```
+
+`aggregate="avg"` is `{ aggregate: 'avg' }`. Python takes a reducer name here, not a function.
+
+</TabItem>
 </Tabs>
 
 The wide-row counterpart of [`groupBy`](#groupby): where `groupBy`
@@ -266,6 +303,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 Rust has no type-level column names, so `groups` only fixes the columns and their order; a misspelt column name is caught when the code runs.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Long: one row per (time, host).
+long = pond.TimeSeries({
+    "time": [0, 0, 60_000, 60_000, 120_000],
+    "host": ["api-2", "api-1", "api-1", "api-2", "api-1"],
+    "cpu": [0.5, 0.2, 0.3, 0.6, 0.4],
+})
+
+wide = long.pivot_by_group("host", "cpu", groups=["api-1", "api-2", "api-3"])
+# Columns in the order given; api-3 has no rows but still gets one.
+assert wide.columns == ["api-1_cpu", "api-2_cpu", "api-3_cpu"]
+
+# A host not on the list is an error.
+try:
+    long.pivot_by_group("host", "cpu", groups=["api-1"])
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
 
 </TabItem>
 </Tabs>
@@ -434,6 +496,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 `group_by` takes several columns (pond-ts takes one), and gives `(key, series)` pairs rather than a `Map`. Each key part is an `Option<Value>`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 0, 60_000, 60_000],
+    "host": ["api-1", "api-2", "api-1", "api-2"],
+    "cpu": [0.4, 0.8, 0.5, 0.6],
+    "requests": [100.0, 50.0, 120.0, 70.0],
+})
+
+# A dict of {host: series}, in the order hosts first appear.
+per_host = series.group_by("host")
+assert list(per_host) == ["api-1", "api-2"]
+
+# The transform form is an ordinary dict comprehension.
+per_host_avg = {
+    host: group.reduce({"cpu": "avg", "requests": "sum"})
+    for host, group in per_host.items()
+}
+assert per_host_avg == {
+    "api-1": {"cpu": 0.45, "requests": 220.0},
+    "api-2": {"cpu": 0.7, "requests": 120.0},
+}
+```
+
+`group_by` takes one column or a list of them; with several, each key is a tuple.
+
+</TabItem>
 </Tabs>
 
 Callback receives the group key as a second argument:
@@ -527,6 +619,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Two hosts interleaved by time; host a misses its reading at 60 s.
+ts = pond.TimeSeries({
+    "time": [0, 60_000, 60_000, 120_000, 120_000],
+    "host": ["a", "a", "b", "a", "b"],
+    "cpu": [0.5, None, 0.9, 0.7, 0.3],
+})
+
+# Without partitioning: host a's gap is filled from host b's 0.9.
+mixed = ts.fill({"cpu": "linear"})
+assert mixed.column("cpu")[1] == 0.9
+
+# With partitioning: each host fills against its own rows only.
+per_host = ts.partition_by("host").fill({"cpu": "linear"}).collect()
+assert per_host.column("cpu")[1] == 0.6
+```
+
+</TabItem>
 </Tabs>
 
 ### Persistent partition + `.collect()`
@@ -600,6 +714,37 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Two hosts interleaved by time; host a misses its reading at 60 s.
+ts = pond.TimeSeries({
+    "time": [0, 60_000, 60_000, 120_000, 120_000],
+    "host": ["a", "a", "b", "a", "b"],
+    "cpu": [0.5, None, 0.9, 0.7, 0.3],
+})
+
+cleaned = (
+    ts.partition_by("host")
+    .dedupe("last")  # per host
+    .fill({"cpu": "linear"})  # per host
+    .rolling("5m", {"cpu": "avg", "host": "last"})  # per host
+    .collect()  # back to one series
+)
+
+rows = [(r.key, r["host"], r["cpu"]) for r in cleaned]
+assert rows == [
+    (0, "a", 0.5),
+    (60_000, "a", 0.55),  # a filled from its own 0.5 and 0.7
+    (60_000, "b", 0.9),
+    (120_000, "a", 0.6),
+    (120_000, "b", 0.6),
+]
 ```
 
 </TabItem>
@@ -688,6 +833,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs also has `map`, which runs your closure on each partition and stays partitioned. Partitions run on several cores.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Two hosts interleaved by time; host a misses its reading at 60 s.
+ts = pond.TimeSeries({
+    "time": [0, 60_000, 60_000, 120_000, 120_000],
+    "host": ["a", "a", "b", "a", "b"],
+    "cpu": [0.5, None, 0.9, 0.7, 0.3],
+})
+
+out = ts.partition_by("host").fill({"cpu": "linear"}).rolling("5m", {"cpu": "avg"}).collect()
+assert out.column("cpu") == [0.5, 0.55, 0.9, 0.6, 0.6]
+```
+
+Python has no `apply`: chain the steps on the partitioned series (each runs per host, on several cores) and `collect()` once at the end.
 
 </TabItem>
 </Tabs>
@@ -782,6 +946,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 A column is required in the result only if it is required in every input. pond-rs also refuses series whose interval labels differ in kind (text in one, numbers in another), which pond-ts allows.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+last_week = pond.TimeSeries({"time": [0, 2_000], "cpu": [1.0, 3.0]})
+this_week = pond.TimeSeries({"time": [1_000, 2_000], "cpu": [2.0, 4.0]})
+combined = pond.TimeSeries.concat([last_week, this_week])
+# Same columns; rows from both, sorted by time. At 2 s both rows stay.
+assert [row.key for row in combined] == [0, 1_000, 2_000, 2_000]
+assert combined.column("cpu") == [1.0, 2.0, 3.0, 4.0]
+
+# group_by, then concat: one series per host and back again.
+# Two hosts interleaved by time; host a misses its reading at 60 s.
+ts = pond.TimeSeries({
+    "time": [0, 60_000, 60_000, 120_000, 120_000],
+    "host": ["a", "a", "b", "a", "b"],
+    "cpu": [0.5, None, 0.9, 0.7, 0.3],
+})
+
+filled_by_host = [
+    g.fill({"cpu": "linear"}, limit=2) for g in ts.group_by("host").values()
+]
+combined = pond.TimeSeries.concat(filled_by_host)
+assert combined.column("cpu") == [0.5, 0.6, 0.9, 0.7, 0.3]
+```
 
 </TabItem>
 </Tabs>
@@ -955,6 +1147,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+this_week = pond.TimeSeries(
+    {"time": [0, 60_000], "cpu": [0.5, 0.6], "requests": [10.0, 12.0]}, name="this"
+)
+last_week = pond.TimeSeries(
+    {"time": [60_000, 120_000], "cpu": [0.4, 0.3], "requests": [9.0, 8.0]}, name="last"
+)
+
+joined = this_week.join(last_week, how="outer", on_conflict="prefix", prefixes=["this", "last"])
+assert joined.columns == ["this_cpu", "this_requests", "last_cpu", "last_requests"]
+assert [row.key for row in joined] == [0, 60_000, 120_000]
+assert joined.column("last_cpu") == [None, 0.4, 0.3]
+
+# The default refuses columns with the same name.
+try:
+    this_week.join(last_week)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+# Or rename one side first.
+right = last_week.select("cpu").rename({"cpu": "right_cpu"})
+assert this_week.join(right).columns == ["cpu", "requests", "right_cpu"]
+```
+
+</TabItem>
 </Tabs>
 
 **Join types:**
@@ -1084,6 +1306,24 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(wide.column("c_cpu")?.numbers()?.get(1), Some(6.0));
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+def one(name, values):
+    return pond.TimeSeries({"time": [0, 60_000], "cpu": values}, name=name)
+
+cpu_a, cpu_b, cpu_c = one("a", [1.0, 2.0]), one("b", [3.0, 4.0]), one("c", [5.0, 6.0])
+
+wide = pond.TimeSeries.join_many(
+    [cpu_a, cpu_b, cpu_c], how="outer", on_conflict="prefix", prefixes=["a", "b", "c"]
+)
+assert wide.columns == ["a_cpu", "b_cpu", "c_cpu"]
+assert wide.column("c_cpu")[1] == 6.0
 ```
 
 </TabItem>

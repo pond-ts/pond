@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-import pond_rs
-from pond_rs import col, lit, when
+import pond
+from pond import col, lit, when
 
 
 @pytest.fixture
 def s():
-    return pond_rs.TimeSeries(
+    return pond.TimeSeries(
         {
             "time": [0, 1000, 2000, 3000],
             "v": [1.0, None, 3.0, -6.0],
@@ -85,7 +85,7 @@ def test_map_columns_mixes_expressions_and_functions(s):
     out = s.map_columns({"v": lambda x: x * 10, "w": col("w") + col("v")})
     assert values(out, "v") == [10.0, None, 30.0, -60.0]
     assert values(out, "w") == [3.0, None, 3.0, -3.0]
-    with pytest.raises(pond_rs.PondError):
+    with pytest.raises(pond.PondError):
         s.map_columns({})
 
 
@@ -105,4 +105,4 @@ def test_json_round_trip_matches_pond_ts_shape():
             {"op": "eq", "args": [{"col": "host"}, {"lit": "h3"}]},
         ],
     }
-    assert pond_rs.Expr.from_json(e.to_json()).to_json() == e.to_json()
+    assert pond.Expr.from_json(e.to_json()).to_json() == e.to_json()

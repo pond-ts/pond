@@ -110,6 +110,30 @@ live.free(); // frees every view built on it too
 In JavaScript (`@pond-ts/wasm`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "load": "number"}, name="cpu")
+
+live.push(0, host="a", load=0.25)
+live.push_many([(1_000, {"host": "b", "load": 0.5}), (2_000, {"host": "a"})])
+live.push_json('[[3000, "b", 0.75]]')
+
+assert len(live) == 4
+assert live.last()["load"] == 0.75
+assert live.events()[-2]["load"] is None  # the gap
+
+# A copy of what it holds now, as an ordinary batch series.
+batch = live.to_series()
+assert len(batch) == 4
+assert batch.at_or_before(1_500)["host"] == "b"
+```
+
+In Python a column left out of a push is a gap, and `push_frame` takes a whole polars, pandas or pyarrow frame at once. See [Python: live series](./python.mdx#live-series).
+
+</TabItem>
 </Tabs>
 
 The lookups are the batch ones: `at` (negative counts from the end),

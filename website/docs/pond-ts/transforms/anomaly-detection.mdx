@@ -109,6 +109,35 @@ fn main() -> Result<(), pond_rs::PondError> {
 In Rust the window and sigma are plain arguments, and the last one, a `Rolling`, sets the window's alignment and `min_samples` as for [`rolling_with`](../../pond-rs/operations#where-the-window-sits-rolling_with).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline("cpu", "1m", 2.0)
+assert bands.columns == ["cpu", "host", "avg", "sd", "upper", "lower"]
+assert bands.column("avg")[6] == 0.48999999999999994
+assert bands.column("upper")[6] == 0.8661458683618819
+# The first window holds one value: flat, so no band.
+assert bands.column("upper")[0] is None
+
+# The rows outside the band.
+anomalies = bands.filter(
+    lambda e: e["upper"] is not None and not e["lower"] <= e["cpu"] <= e["upper"]
+)
+assert [row.key for row in anomalies] == [30_000]  # the 0.95 spike
+```
+
+The window and sigma are plain arguments; `alignment=` and `min_samples=` set where the window sits and how full it must be, as for `rolling`.
+
+</TabItem>
 </Tabs>
 
 Four optional number columns appended:
@@ -205,6 +234,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline("cpu", "1m", 2.0, min_samples=5)
+avg, upper = bands.column("avg"), bands.column("upper")
+# Rows 0 to 3 hold fewer than 5 readings: every band column is a gap.
+assert (avg[3], upper[3]) == (None, None)
+assert avg[4] == 0.41200000000000003
+```
+
+</TabItem>
 </Tabs>
 
 While the window holds fewer than `minSamples` source events,
@@ -278,6 +327,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs also refuses a name that is the key's, or the same name twice.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline(
+    "cpu", "1m", 2.0,
+    names={"avg": "cpuAvg", "sd": "cpuSd", "upper": "cpuHi", "lower": "cpuLo"},
+)
+assert bands.columns == ["cpu", "host", "cpuAvg", "cpuSd", "cpuHi", "cpuLo"]
+
+# A series that already has an avg column: the default names collide.
+with_avg = cpu.with_column("avg", [0.0] * 14)
+try:
+    with_avg.baseline("cpu", "1m", 2.0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+`names=` also takes a list of four, in the order avg, sd, upper, lower.
+
+</TabItem>
 </Tabs>
 
 Collisions throw at construction, so the rename is mandatory, not
@@ -341,6 +420,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `group_by` gives a list of `(key, series)` pairs rather than a `Map`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+anomalies = cpu.outliers("cpu", "1m", 2.0)
+# Fewer rows, same columns.
+assert anomalies.columns == ["cpu", "host"]
+assert [row.key for row in anomalies] == [30_000]
+
+# Anomalies per 15 s, for a bar chart.
+per_bucket = anomalies.aggregate("15s", {"cpu": "count"})
+assert per_bucket.column("cpu")[0] == 1.0
+
+# Per host.
+per_host = anomalies.group_by("host")
+assert list(per_host) == ["a"]  # only host a had one
+```
 
 </TabItem>
 </Tabs>

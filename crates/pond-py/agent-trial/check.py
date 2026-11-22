@@ -1,10 +1,10 @@
-"""Grade one run of the pond_rs docs trial.
+"""Grade one run of the pond docs trial.
 
     python check.py RUN_DIR
 
 RUN_DIR holds the inputs (gen_data.py) and the four answers the prompt asks
 for. Every expected answer is worked out here with plain pandas / Python,
-not with pond_rs, so a misuse of the library shows up as a wrong answer.
+not with pond, so a misuse of the library shows up as a wrong answer.
 Prints one line per task: right / wrong and why. Exit status 0 when all
 four are right.
 """

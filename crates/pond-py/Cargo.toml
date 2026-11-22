@@ -10,7 +10,7 @@ publish = false
 exclude = ["agent-trial", "bench"]
 
 [lib]
-name = "pond_rs"
+name = "pond"
 crate-type = ["cdylib"]
 test = false
 doctest = false
