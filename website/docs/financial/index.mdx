@@ -21,11 +21,14 @@ Two things, both built on plain pond series:
   intraday breaks) plus the query surface pond's data ops and
   `@pond-ts/charts`' trading-time axis need. One class, `TradingCalendar`.
 
-Both are in **TypeScript or Rust**. In Rust they are part of the
+Both are in **TypeScript, Rust or Python**. In Rust they are part of the
 `pond-rs` crate (`pond_rs::financial`): every study `@pond-ts/financial`
 has, with the same numbers to the bit, and the trading calendar. The
 [pond-rs finance studies](../pond-rs/finance-studies) page has the Rust
-details. The charts on this page are TypeScript only.
+details. In Python they come with the same package
+(`pond-timeseries`): each study is a method on `TimeSeries`, and
+`pond.TradingCalendar` is the calendar; see
+[Python: finance studies](../pond-rs/python.mdx#finance-studies). The charts on this page are TypeScript only.
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
@@ -41,6 +44,13 @@ step.
 # Cargo.toml: the studies come with the core crate
 [dependencies]
 pond-rs = "0.1"
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```sh
+pip install pond-timeseries          # the studies come with the core package
 ```
 
 </TabItem>
@@ -124,6 +134,41 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 In Rust every study is a method on `TimeSeries` with an options struct;
 `Study::period(n)` covers the ones that take only a period.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import math
+import pond
+
+# 60 one-minute bars of made-up prices.
+n = 60
+close = [100.0 + math.sin(i * 0.7) * 3.0 + i * 0.1 for i in range(n)]
+candles = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(n)],
+    "high": [c + 0.5 for c in close],
+    "low": [c - 0.5 for c in close],
+    "close": close,
+    "volume": [1_000.0 + (i % 7) * 50.0 for i in range(n)],
+})
+
+bars = (
+    candles.bollinger(period=20)
+    .ema(period=10)
+    .rsi(period=14)
+    .macd(fast_period=12, slow_period=26, signal_period=9)
+    .vwap(period=20)
+)
+# + bbMiddle / bbUpper / bbLower, ema, rsi, macdLine / macdSignal / macdHist, vwap
+
+# The same numbers pond-ts gives for the same bars.
+last = bars.last()
+assert last["rsi"] == 49.37483595541058
+assert last["macdHist"] == 0.05182032081976984
+```
+
+In Python every study is a method on `TimeSeries`, with its options as keywords in Python's spelling (`std_dev`, `fast_period`). `bars.study("rsi", period=14)` runs one by name.
 
 </TabItem>
 </Tabs>
@@ -234,6 +279,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# From hours + a date range: a calendar that generates its sessions.
+cal = pond.TradingCalendar.from_rules("America/New_York", "09:30", "16:00", "2026-01-05", "2026-02-13")
+
+# From an explicit session list: dated open/close instants (epoch ms)
+# from a vendor calendar or a holiday API.
+cal2 = pond.TradingCalendar.from_sessions([
+    {"date": "2026-01-05", "open": 1_767_623_400_000, "close": 1_767_646_800_000},
+    {"date": "2026-01-06", "open": 1_767_709_800_000, "close": 1_767_733_200_000},
+])
+
+assert len(cal) == 30  # six weeks of weekdays
+assert cal2.sessions[0] == cal.sessions[0]  # the same 5 January
+```
+
+</TabItem>
 </Tabs>
 
 `SessionRules` also takes `weekmask` (default Monday–Friday), `breaks`
@@ -276,6 +341,22 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cal = pond.TradingCalendar.from_rules("America/New_York", "09:30", "16:00", "2026-01-05", "2026-02-13")
+instant = "2026-01-06T15:00:00Z"  # 10:00 in New York
+
+cal.sessions  # every session, ascending
+assert cal.session_on("2026-01-06") is not None  # the session on a date, or None
+assert not cal.is_trading_day("2026-01-10")  # a Saturday
+assert cal.session_containing(instant)["date"] == "2026-01-06"
+assert cal.is_open(instant)  # inside a session and not inside a break
+```
+
+</TabItem>
 </Tabs>
 
 ## Feeding a chart-ready bucketing grid
@@ -300,7 +381,7 @@ boundary or an intraday break, and the final bar of each tradeable
 segment truncates at the close rather than overrunning it.
 
 pond-rs has not built `sessionSequence` / `barSequence` yet, so this
-section has no Rust tab. In Rust, `tag_sessions` (below) with
+section has no Rust or Python tab. In Rust, `tag_sessions` (below) with
 `partition_by` covers the per-session work.
 
 ## Tagging events with their session
@@ -354,6 +435,32 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(avg, [Some(10.0), Some(11.0), Some(20.0)]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cal = pond.TradingCalendar.from_rules("America/New_York", "09:30", "16:00", "2026-01-05", "2026-01-06")
+
+# Two prices near the Monday close, one at the Tuesday open.
+series = pond.TimeSeries({
+    "time": [
+        "2026-01-05T20:57:00Z",  # 15:57 New York
+        "2026-01-05T20:59:00Z",
+        "2026-01-06T14:30:00Z",  # 09:30 the next day
+    ],
+    "price": [10.0, 12.0, 20.0],
+})
+
+tagged = cal.tag_sessions(series)  # adds a "session" column
+smoothed = tagged.partition_by("session").rolling("5m", {"price": "avg"}).collect()
+
+# Tuesday's first average is its own price: the 5-minute window did not
+# reach back into Monday's session.
+assert smoothed.column("price") == [10.0, 11.0, 20.0]
 ```
 
 </TabItem>

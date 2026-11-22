@@ -111,6 +111,44 @@ fn main() -> Result<(), pond_rs::PondError> {
 Rust does not track column kinds in its types, so each output is read with the method for its kind (`number`, `string`, `array`, …), which checks it when the code runs. `unique` and `top(n)` give a list (`&[Scalar]`) on any column kind.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000],
+    "cpu": [0.2, 0.4, 0.6, 0.9, 0.5],
+    "latency": [120.0, 80.0, 200.0, 90.0, 60.0],
+    "host": ["b", "a", "b", "c", "a"],
+    "values": [3.0, 1.0, 3.0, 2.0, 1.0],
+    "paths": ["/a", "/b", "/a", "/c", "/a"],
+    "status": ["ok", "ok", "err", "ok", "slow"],
+})
+
+result = series.reduce({
+    "cpu": "avg",
+    "latency": "p95",
+    "host": "unique",
+    "values": "unique",
+    "paths": "top3",
+    "status": "last",
+})
+
+# A plain dict: numbers, text, and lists for unique and top3.
+assert result == {
+    "cpu": 0.52,
+    "latency": 184.0,
+    "host": ["a", "b", "c"],
+    "values": [1.0, 2.0, 3.0],
+    "paths": ["/a", "/b", "/c"],
+    "status": "slow",
+}
+```
+
+Each output comes back as the Python value for its kind: a float, a string, or a list for `unique` and `topN`, which work on any column kind.
+
+</TabItem>
 </Tabs>
 
 **Array-output reducers thread source column kind through.** `'unique'` and any
@@ -171,6 +209,24 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(avg, [Some(20.0), None, Some(5.0)]); // but has no average
     Ok(())
 }
+```
+
+This covers `count` below too.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+# Nothing between 5 and 10 minutes.
+series = pond.TimeSeries({"time": [0, minute, 2 * minute, 10 * minute], "requests": [10.0, 20.0, 30.0, 5.0]})
+
+out = series.aggregate("5m", {"requests": "sum", "n": ("requests", "count"), "avg": ("requests", "avg")})
+assert out.column("requests") == [60.0, 0.0, 5.0]  # the empty bucket sums to 0
+assert out.column("n") == [3.0, 0.0, 1.0]  # and counts 0
+assert out.column("avg") == [20.0, None, 5.0]  # but has no average
 ```
 
 This covers `count` below too.
@@ -265,6 +321,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 This covers `avg`, `min`, `max`, `median` and `difference` too.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 1_000, 2_000, 3_000], "latency": [100.0, 140.0, 120.0, 130.0]})
+
+def r(reducer):
+    return series.reduce({"x": ("latency", reducer)})["x"]
+
+assert r("avg") == 122.5
+assert r("min") == 100.0
+assert r("max") == 140.0
+assert r("median") == 125.0  # between 120 and 130
+assert r("stdev") == 14.79019945774904  # divides by n
+assert r("difference") == 40.0  # max - min
+
+flat = pond.TimeSeries({"time": [0, 1], "v": [5.0, 5.0]})
+assert flat.reduce({"v": "stdev"})["v"] == 0.0
+```
+
+This covers `avg`, `min`, `max`, `median` and `difference` too.
+
+</TabItem>
 </Tabs>
 
 Returns `0` when all values are identical. Returns `undefined` for an empty bucket.
@@ -352,6 +432,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `Reducer::Percentile(q)` takes `q` from 0 to 100. `Reducer::parse` reads pond-ts's names (`"p95"`, `"top3"`, …). This covers the one-column form below too.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+series = pond.TimeSeries({"time": [0, minute, 2 * minute, 10 * minute], "latency": [100.0, 140.0, 120.0, 130.0]})
+
+out = series.aggregate("5m", {
+    "p50": ("latency", "p50"),
+    "p95": ("latency", "p95"),
+    "p99": ("latency", "p99"),
+})
+assert out.column("p95") == [138.0, None, 130.0]  # the empty bucket: a gap
+
+# One column.
+assert series.reduce({"latency": "p95"})["latency"] == 138.5
+assert series.reduce({"latency": "p99.9"})["latency"] == 139.97
+assert series.reduce({"latency": "p0"})["latency"] == 100.0
+```
+
+Percentiles are named `p` and a number from 0 to 100, as in pond-ts. This covers the one-column form below too.
 
 </TabItem>
 </Tabs>
@@ -447,6 +551,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 This covers `first` and `last` above too.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+half_hour = 1_800_000
+series = pond.TimeSeries({
+    "time": [0, half_hour, 2 * half_hour, 3 * half_hour],
+    "cpu": [0.2, 0.4, 0.6, 0.8],
+    "host": ["a", "a", "a", "b"],
+    "status": ["ok", "slow", "ok", "err"],
+})
+
+hourly = series.aggregate("1h", {
+    "cpu": "avg",
+    "host": "keep",
+    "first": ("status", "first"),
+    "last": ("status", "last"),
+})
+assert hourly.column("host") == ["a", None]  # the second hour mixes a and b
+assert hourly.column("first") == ["ok", "ok"]
+assert hourly.column("last") == ["slow", "err"]
+```
+
+This covers `first` and `last` above too.
+
+</TabItem>
 </Tabs>
 
 If the series was already partitioned by `groupBy('host')`, `keep` will always return the
@@ -524,6 +655,22 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+hosts = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_500, 4_000, 5_500],
+    "host": ["api-1", "api-1", "api-2", "api-3", "api-1", "api-1"],
+})
+
+agg = hosts.aggregate("3s", {"host": "unique"})
+# A text column in, a list column out.
+assert agg.column("host") == [["api-1", "api-2"], ["api-1", "api-3"]]
+```
+
+</TabItem>
 </Tabs>
 
 **On an array-kind source column.** `unique` flattens one level and takes the **set union**
@@ -588,6 +735,21 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(lists.get(1).unwrap(), &[s("timeout")]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+tagged = pond.TimeSeries({
+    "time": [0, 500, 1_000, 3_500, 4_000],
+    "tags": [["5xx", "timeout"], ["5xx"], ["retry"], ["timeout"], []],  # an empty list adds nothing
+})
+
+agg = tagged.aggregate("3s", {"tags": "unique"})
+assert agg.column("tags") == [["5xx", "retry", "timeout"], ["timeout"]]
 ```
 
 </TabItem>
@@ -678,6 +840,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Reducer::Top(n)` is pond-ts's `top(n)`; `Reducer::parse("top2")` gives the same.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+hosts = pond.TimeSeries({
+    "time": [0, 500, 1_000, 1_500, 2_500, 3_500, 4_000, 4_500],
+    "host": ["api-1", "api-2", "api-1", "api-3", "api-1", "api-4", "api-4", "api-2"],
+})
+
+agg = hosts.aggregate("3s", {"host": "top2"})
+# api-1 three times; api-2 beats api-3 on the tie-break.
+assert agg.column("host") == [["api-1", "api-2"], ["api-4", "api-2"]]
+
+try:
+    hosts.aggregate("3s", {"host": "top0"})
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+`"top2"` is pond-ts's `top(2)`; any n from 1 up works.
+
+</TabItem>
 </Tabs>
 
 The string form is interchangeable: `{ host: 'top2' }` does the same thing.
@@ -740,6 +926,22 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(lists.get(0).unwrap(), &[s("5xx"), s("timeout"), s("retry")]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+tagged = pond.TimeSeries({
+    "time": [0, 500, 1_000, 1_500],
+    "tags": [["5xx", "timeout"], ["5xx"], ["retry", "5xx"], ["timeout"]],
+})
+
+agg = tagged.aggregate("3s", {"tags": "top3"})
+# Counts: 5xx 3, timeout 2, retry 1.
+assert agg.column("tags") == [["5xx", "timeout", "retry"]]
 ```
 
 </TabItem>
@@ -831,6 +1033,28 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+This covers the list-column example below too.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 1_000, 2_000, 3_500, 4_000], "cpu": [0.4, 0.5, 0.4, 0.6, 0.7]})
+
+agg = cpu.aggregate("3s", {"vals": ("cpu", "samples")})
+assert agg.column("vals") == [[0.4, 0.5, 0.4], [0.6, 0.7]]  # duplicates kept
+
+# On a list column, the lists are joined first.
+tagged = pond.TimeSeries({
+    "time": [0, 500, 1_000],
+    "tags": [["5xx", "timeout"], ["5xx"], ["retry"]],
+})
+flat = tagged.aggregate("3s", {"flat": ("tags", "samples")})
+assert flat.column("flat") == [["5xx", "timeout", "5xx", "retry"]]
 ```
 
 This covers the list-column example below too.

@@ -81,6 +81,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Docs: a Python tab on every example that has language tabs** (beside
+  TypeScript and Rust), 178 runnable scripts across 25 pages. Each is a whole
+  script with asserts, and CI runs every one against the freshly built wheel
+  on Python 3.9 and 3.13 (`website/scripts/check-python-snippets.py`), so the
+  examples can't drift from the bridge.
+
 ### Changed
 
 - **Python: the import is now `import pond`** (was `import pond_rs`). The

@@ -91,6 +91,19 @@ fn main() -> Result<(), pond_rs::PondError> {
 Each column is a `ColumnDef`: `required` or `optional` (gaps allowed).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics")
+assert live.name == "cpu-metrics"
+assert len(live) == 0
+```
+
+The schema is `{column: kind}`, key first. Value columns may have gaps unless given as `(name, kind, True)` tuples: `[("time", "time"), ("cpu", "number", True)]`.
+
+</TabItem>
 </Tabs>
 
 The schema is identical to what you'd pass to `TimeSeries`. All the same column
@@ -139,6 +152,33 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(live.len(), 3);
     Ok(())
 }
+```
+
+`push` takes one event and `push_many` several. A refused batch stores none of its rows.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics")
+# One event: the time, then the cells as keywords (or a dict, or a list).
+live.push(1_000, cpu=0.42, host="api-1")
+# Several at once.
+live.push_many([
+    (2_000, {"cpu": 0.51, "host": "api-1"}),
+    (3_000, {"cpu": 0.38, "host": "api-2"}),
+])
+assert len(live) == 3
+
+# Text in a number column is refused, and nothing is stored.
+try:
+    live.push(4_000, cpu="high", host="api-1")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+assert len(live) == 3
 ```
 
 `push` takes one event and `push_many` several. A refused batch stores none of its rows.
@@ -221,6 +261,21 @@ fn main() -> Result<(), pond_rs::PondError> {
 series with partitions: it refuses a batch holding a row for an undeclared
 group before storing anything, where pond-ts stores the batch and then
 throws.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import polars as pl
+import pond
+
+live = pond.LiveSeries({"time": "time", "price": "number", "size": "number"}, name="ticks")
+batch = pl.DataFrame({"time": [0, 1_000, 2_000], "price": [10.0, 10.5, 10.25], "size": [3.0, 1.0, 2.0]})
+live.push_frame(batch)  # also a TimeSeries, a pandas or pyarrow frame, or a dict of columns
+assert len(live) == 3
+```
+
+`push_frame` is the Python `pushSeries`: one batch, all or nothing, and the fastest way in.
 
 </TabItem>
 </Tabs>
@@ -352,6 +407,29 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics")
+live.push_many([
+    (1_000, {"cpu": 0.42, "host": "api-1"}),
+    (2_000, {"cpu": 0.51, "host": "api-1"}),
+    (3_000, {"cpu": 0.38, "host": "api-2"}),
+])
+
+assert len(live) == 3
+events = live.events()
+assert events[0]["cpu"] == 0.42
+assert live.last()["host"] == "api-2"
+assert events[0].begin == 1_000
+assert events[-1]["cpu"] == 0.38
+```
+
+`events()` gives a list, so `events()[i]` is pond-ts's `at(i)`; `last()` is the newest event.
+
+</TabItem>
 </Tabs>
 
 Events are the same immutable `Event` objects used by `TimeSeries`.
@@ -414,6 +492,35 @@ fn main() -> Result<(), pond_rs::PondError> {
 `to_time_series` takes no name.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics")
+live.push_many([
+    (1_000, {"cpu": 0.42, "host": "api-1"}),
+    (2_000, {"cpu": 0.51, "host": "api-1"}),
+    (3_000, {"cpu": 0.38, "host": "api-2"}),
+])
+
+ts = live.to_series()
+
+# Every batch operation works on the copy.
+smoothed = ts.rolling("5m", {"cpu": "avg"})
+assert smoothed.column("cpu")[1] == 0.46499999999999997
+groups = ts.group_by("host")
+assert len(groups) == 2
+assert len(groups["api-1"]) == 2
+
+# Later pushes leave the copy alone.
+live.push(4_000, cpu=0.9, host="api-1")
+assert len(ts) == 3
+```
+
+`to_series()` is pond-ts's `toTimeSeries()`; `to_polars()`, `to_pandas()` and `to_pyarrow()` give a frame straight away.
+
+</TabItem>
 </Tabs>
 
 The snapshot is independent — future pushes to the `LiveSeries` don't affect
@@ -469,6 +576,24 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(times, [45 * minute]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="bounded", max_events=3, max_age="30m")
+minute = 60_000
+for t in [0, 1, 2, 3]:
+    live.push(t * minute, cpu=0.1, host="a")
+# At most 3 events: the oldest went.
+assert [e.begin for e in live.events()] == [minute, 2 * minute, 3 * minute]
+
+# 45 minutes: everything older than 30 minutes before it goes.
+live.push(45 * minute, cpu=0.2, host="a")
+assert [e.begin for e in live.events()] == [45 * minute]
 ```
 
 </TabItem>
@@ -612,6 +737,49 @@ fn main() -> Result<(), pond_rs::PondError> {
 This one program covers all four cases above.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+schema = {"time": "time", "cpu": "number", "host": "string"}
+
+# Strict (the default): a late event is an error.
+strict = pond.LiveSeries(schema, name="strict")
+strict.push(1_000, cpu=0.5, host="a")
+try:
+    strict.push(500, cpu=0.3, host="a")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+# Drop: skipped quietly, and counted.
+drop = pond.LiveSeries(schema, name="drop-late", ordering="drop")
+drop.push(1_000, cpu=0.5, host="a")
+drop.push(500, cpu=0.3, host="a")
+assert (len(drop), drop.stats()["rejected"]) == (1, 1)
+
+# Reorder: put in its place in time.
+reorder = pond.LiveSeries(schema, name="reorder", ordering="reorder")
+reorder.push(2_000, cpu=0.6, host="a")
+reorder.push(1_000, cpu=0.5, host="a")
+assert reorder.events()[0].begin == 1_000
+
+# Reorder, but no more than 5 seconds late.
+bounded = pond.LiveSeries(schema, name="bounded-reorder", ordering="reorder", grace_window="5s")
+bounded.push(10_000, cpu=0.5, host="a")
+bounded.push(8_000, cpu=0.4, host="a")  # within 5 s
+try:
+    bounded.push(1_000, cpu=0.1, host="a")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+assert len(bounded) == 2
+```
+
+This one program covers all four cases above.
+
+</TabItem>
 </Tabs>
 
 Without `graceWindow`, reorder accepts any timestamp.
@@ -698,6 +866,42 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs has no listeners. `watch` says which outputs you want, and each push returns them as a list, in the order pond-ts would call its listeners. `unwatch` stops them.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics", max_events=2)
+# Ask for what you want back from each push.
+live.root.watch("event", "batch", "evict")
+
+# A label for each output, to show the order.
+def describe(outputs):
+    labels = []
+    for o in outputs:
+        if o.kind == "event":
+            labels.append(f"event {o.event.begin}")
+        else:  # "batch" or "evict"
+            labels.append(f"{o.kind} {len(o.events)}")
+    return labels
+
+out = live.push(0, cpu=0.4, host="a")
+assert describe(out) == ["event 0", "batch 1"]
+
+# Two rows: an event for each, then retention keeps 2 (one evicted),
+# then the batch, then the eviction.
+out = live.push_many([(1_000, {"cpu": 0.5, "host": "a"}), (2_000, {"cpu": 0.6, "host": "a"})])
+assert describe(out) == ["event 1000", "event 2000", "batch 2", "evict 1"]
+
+# Stop getting events back.
+live.root.unwatch("event")
+out = live.push(3_000, cpu=0.7, host="a")
+assert describe(out) == ["batch 1", "evict 1"]
+```
+
+Python has no listeners either. `watch` says which outputs you want, and each push returns them as a list, in the order pond-ts would call its listeners. `unwatch` stops them.
 
 </TabItem>
 </Tabs>
@@ -823,6 +1027,24 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu-metrics")
+live.root.watch("evict")
+live.push(0, cpu=0.4, host="a")
+live.push(1_000, cpu=0.5, host="a")
+
+out = live.clear()
+assert [o.kind for o in out] == ["evict"]
+assert len(out[0].events) == 2
+assert len(live) == 0
+live.push(2_000, cpu=0.6, host="a")  # ready for more
+```
+
+</TabItem>
 </Tabs>
 
 Removes all events and fires the `evict` subscription with the removed events.
@@ -921,6 +1143,33 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(alerts, ["High CPU on api-2", "High CPU on api-1"]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="monitor", max_events=2)
+live.root.watch("batch", "evict")
+
+evicted = 0
+alerts = []
+out = live.push_many([
+    (0, {"cpu": 0.5, "host": "api-1"}),
+    (1_000, {"cpu": 0.95, "host": "api-2"}),
+    (2_000, {"cpu": 0.97, "host": "api-1"}),
+])
+for output in out:
+    if output.kind == "evict":
+        evicted += len(output.events)
+    elif output.kind == "batch":
+        for e in output.events:
+            if e["cpu"] is not None and e["cpu"] > 0.9:
+                alerts.append(f"High CPU on {e['host']}")
+assert evicted == 1
+assert alerts == ["High CPU on api-2", "High CPU on api-1"]
 ```
 
 </TabItem>

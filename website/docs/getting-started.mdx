@@ -59,9 +59,9 @@ calls in the whole example:
 Everything below builds up to that, one step at a time.
 
 The core steps (the series, smoothing, bucketing by value) come in
-**TypeScript or Rust**; pick a tab and every tabbed example on the site follows.
+**TypeScript, Rust or Python**; pick a tab and every tabbed example on the site follows.
 The fitness library and the charts are TypeScript only, so those steps have
-no Rust tab.
+no Rust or Python tab.
 
 ## Install
 
@@ -79,6 +79,13 @@ npm install pond-ts
 # Cargo.toml
 [dependencies]
 pond-rs = "0.1"
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```sh
+pip install pond-timeseries          # then: import pond
 ```
 
 </TabItem>
@@ -151,6 +158,34 @@ columns)` builds a series straight from Rust vectors instead; see
 [pond-rs getting started](./pond-rs/getting-started).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries.from_json("""{
+  "name": "ride",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "watts", "kind": "number"}
+  ],
+  "rows": [
+    ["2016-07-20T14:27:50Z", 110],
+    ["2016-07-20T14:27:51Z", 96],
+    ["2016-07-20T14:27:52Z", 101],
+    ["2016-07-20T14:27:53Z", 101],
+    ["2016-07-20T14:27:54Z", 79]
+  ]
+}""")
+
+assert len(ride) == 5
+```
+
+Python reads the same JSON, schema and all. `pond.TimeSeries(data)` builds a
+series from a polars, pandas or pyarrow frame or a dict of columns instead;
+see [Python](./pond-rs/python).
+
+</TabItem>
 </Tabs>
 
 Two columns is all this example needs. The device also recorded cadence,
@@ -214,6 +249,40 @@ Rust has no `as const`: a column's name and kind are checked when the code
 runs, and a wrong one is an error that says what is there.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries.from_json("""{
+  "name": "ride",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "watts", "kind": "number"}
+  ],
+  "rows": [
+    ["2016-07-20T14:27:50Z", 110],
+    ["2016-07-20T14:27:51Z", 96],
+    ["2016-07-20T14:27:52Z", 101],
+    ["2016-07-20T14:27:53Z", 101],
+    ["2016-07-20T14:27:54Z", 79]
+  ]
+}""")
+
+# Read one row back. Columns are checked when the code runs:
+# column("wats") is an error that lists the columns there are.
+row = ride.at(3)
+assert row.key == 1_469_024_873_000  # 2016-07-20T14:27:53Z
+assert row["watts"] == 101.0
+assert ride.column("watts")[3] == 101.0
+try:
+    ride.column("wats")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+</TabItem>
 </Tabs>
 
 Nothing is mutable, so every operator below returns a _new_ series and the
@@ -272,6 +341,32 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(trend[1], Some(103.0)); // (110 + 96) / 2
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries.from_json("""{
+  "name": "ride",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "watts", "kind": "number"}
+  ],
+  "rows": [
+    ["2016-07-20T14:27:50Z", 110],
+    ["2016-07-20T14:27:51Z", 96],
+    ["2016-07-20T14:27:52Z", 101],
+    ["2016-07-20T14:27:53Z", 101],
+    ["2016-07-20T14:27:54Z", 79]
+  ]
+}""")
+
+# Adds a trend column; watts stays, so you can draw both.
+smoothed = ride.smooth("watts", "moving_average", window="2m", output="trend")
+assert smoothed.column("trend")[1] == 103.0  # (110 + 96) / 2
 ```
 
 </TabItem>
@@ -350,6 +445,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 This runs on the five rows typed out above, so its buckets are small. In
 Rust the result is a table with `start`, `end` and one column per reducer,
 rather than an array of records.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries.from_json("""{
+  "name": "ride",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "watts", "kind": "number"}
+  ],
+  "rows": [
+    ["2016-07-20T14:27:50Z", 110],
+    ["2016-07-20T14:27:51Z", 96],
+    ["2016-07-20T14:27:52Z", 101],
+    ["2016-07-20T14:27:53Z", 101],
+    ["2016-07-20T14:27:54Z", 79]
+  ]
+}""")
+
+bins = ride.by_column("watts", {"secs": ("watts", "count")}, width=25)  # 25-watt-wide buckets
+# A dict of columns: start, end and secs, one entry per bucket.
+assert bins["start"] == [75.0, 100.0]
+assert bins["secs"] == [2.0, 3.0]
+```
+
+This runs on the five rows typed out above, so its buckets are small. In
+Python the result is a dict of columns (`start`, `end` and one per
+reducer), ready for `pl.DataFrame(bins)`.
 
 </TabItem>
 </Tabs>

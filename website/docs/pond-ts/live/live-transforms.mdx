@@ -135,6 +135,51 @@ fn main() -> Result<(), pond_rs::PondError> {
 A count window is `window_rows`. `map` returns one cell per value column and cannot change an event's time.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "mem": "number", "host": "string"}, name="metrics")
+
+# Filter: only events from one host.
+api1 = live.filter(lambda e: e["host"] == "api-1")
+
+# Map: new values for each event, as {column: value} for the columns to
+# change. A gap stays a gap.
+pct = live.map(lambda e: {"cpu": None if e["cpu"] is None else e["cpu"] * 100})
+
+# Select: only the named columns. An unknown name is an error.
+cpu_only = live.select("cpu")
+try:
+    live.select("nope")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+# Window: the last 30 seconds, or the last 2 events.
+last_30s = live.window("30s")
+last_two = live.window(2)
+
+for t, cpu, mem, host in [
+    (0, 0.2, 50.0, "api-1"),
+    (20_000, 0.4, 55.0, "api-2"),
+    (40_000, 0.6, 52.0, "api-1"),
+    (60_000, 0.8, 60.0, "api-2"),
+    (70_000, 1.0, 58.0, "api-1"),
+]:
+    live.push(t, cpu=cpu, mem=mem, host=host)
+
+assert len(api1) == 3
+assert pct.last()["cpu"] == 100.0
+assert cpu_only.columns == ["cpu"]
+assert [e.begin for e in last_30s.events()] == [40_000, 60_000, 70_000]
+assert len(last_two) == 2
+```
+
+A count window is `window(n)` with an int. `map` returns the cells to change and cannot change an event's time. Filters can also take an [expression](../transforms/expressions.mdx#live-filter), which runs without a Python call per event.
+
+</TabItem>
 </Tabs>
 
 Under `ordering: 'reorder'`, `window()` eviction is not re-applied
@@ -201,6 +246,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "mem": "number", "host": "string"}, name="metrics")
+# Each view is the source of the next.
+pipeline = live.filter(lambda e: e["host"] == "api-1").select("cpu").window("1m")
+
+for t, cpu, mem, host in [
+    (0, 0.2, 50.0, "api-1"),
+    (20_000, 0.4, 55.0, "api-2"),
+    (40_000, 0.6, 52.0, "api-1"),
+    (60_000, 0.8, 60.0, "api-2"),
+    (70_000, 1.0, 58.0, "api-1"),
+]:
+    live.push(t, cpu=cpu, mem=mem, host=host)
+
+# A copy of the windowed view, as a batch series.
+ts = pipeline.to_series()
+assert ts.column("cpu")[0] == 0.6
+assert len(ts) == 2  # api-1 within a minute of 70 s
+```
+
+</TabItem>
 </Tabs>
 
 ### Subscriptions
@@ -262,6 +332,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs has no listeners. `watch` the view, and each push returns its events.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+api1 = live.filter(lambda e: e["host"] == "api-1")
+api1.watch("event")
+
+out = live.push(0, cpu=0.2, host="api-1")
+assert [o.event["cpu"] for o in out] == [0.2]
+# Filtered out: nothing comes back.
+assert live.push(1_000, cpu=0.4, host="api-2") == []
+
+# Stop getting them.
+api1.unwatch("event")
+assert live.push(2_000, cpu=0.6, host="api-1") == []
+```
+
+Python has no listeners either. `watch` the view, and each push returns its events.
 
 </TabItem>
 </Tabs>
@@ -356,6 +448,42 @@ fn main() -> Result<(), pond_rs::PondError> {
 This program also builds the filtered aggregation shown next.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "mem": "number", "host": "string"}, name="metrics")
+agg = live.aggregate("1m", {"cpu": "avg", "mem": "max"})
+# Built on a view: only api-1's events.
+api1_agg = live.filter(lambda e: e["host"] == "api-1").aggregate("1m", {"cpu": "avg"})
+
+for t, cpu, mem, host in [
+    (0, 0.2, 50.0, "api-1"),
+    (20_000, 0.4, 55.0, "api-2"),
+    (40_000, 0.6, 52.0, "api-1"),
+    (60_000, 0.8, 60.0, "api-2"),
+    (70_000, 1.0, 58.0, "api-1"),
+]:
+    live.push(t, cpu=cpu, mem=mem, host=host)
+
+# events() and to_series(): only finished buckets. The first minute closed at 60 s.
+closed = agg.to_series()
+assert len(closed) == 1
+assert closed.column("cpu")[0] == 0.4000000000000001
+assert closed.column("mem")[0] == 55.0
+
+# snapshot(): the open minute too, as it stands.
+snap = agg.snapshot()
+assert len(snap) == 2
+assert snap.column("cpu")[1] == 0.9
+
+assert api1_agg.events()[0]["cpu"] == 0.4
+```
+
+This program also builds the filtered aggregation shown next. An aggregation's `to_series()` is pond-rs's `closed()`.
+
+</TabItem>
 </Tabs>
 
 Or create it from a view for filtered aggregation:
@@ -412,6 +540,27 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(day.number("cpu")?, Some(0.4));
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics")
+daily = live.aggregate(pond.Sequence.calendar("day", "America/New_York"), {"cpu": "avg"})
+
+hour = 3_600_000
+mar10 = 1_710_028_800_000  # midnight UTC, 10 March 2024
+live.push(mar10 + 16 * hour, cpu=0.4)  # noon on the 10th, New York
+live.push(mar10 + 30 * hour, cpu=0.6)  # the 11th
+
+# New York's clocks moved forward on the 10th: a 23-hour day.
+day = daily.events()[0]
+assert day.begin == mar10 + 5 * hour
+assert day.end - day.begin == 23 * hour
+assert day["cpu"] == 0.4
 ```
 
 </TabItem>
@@ -507,6 +656,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs's batch `aggregate` has no `range` option: its buckets run from the first event to the last.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+avg = {"cpu": "avg"}
+agg = live.aggregate("1m", avg)
+# 1. Bucket outputs: the open bucket as it stands, after every event.
+agg.watch("bucket")
+
+current = []
+for t, cpu in [(0, 0.2), (20_000, 0.4), (40_000, 0.6), (60_000, 0.8), (70_000, 1.0)]:
+    for out in live.push(t, cpu=cpu, host="api-1"):
+        current.append((out.event.begin, out.event["cpu"]))
+assert current[-1] == (60_000, 0.9)
+
+# len() and events() see closed buckets only.
+assert len(agg) == 1
+
+# 2. snapshot(): the open bucket is the last row.
+assert agg.snapshot().last()["cpu"] == 0.9
+
+# 3. A batch aggregate over a copy of the series.
+batch = live.to_series().aggregate("1m", avg)
+assert batch.last()["cpu"] == 0.9
+```
+
+The batch `aggregate` has no `range` option: its buckets run from the first event to the last.
+
+</TabItem>
 </Tabs>
 
 **When to use which**:
@@ -600,6 +780,27 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `reduce` returns a `Reduced`, read by output name with `number`, `array` and so on.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+for t, cpu, host in [(0, 0.2, "api-1"), (20_000, 0.4, "api-2"), (40_000, 0.6, "api-1"), (60_000, 0.8, "api-2"), (70_000, 1.0, "api-1")]:
+    live.push(t, cpu=cpu, host=host)
+
+# "Current": the whole series, one record.
+state = live.to_series().reduce({"cpu": "avg", "host": "unique"})
+assert state == {"cpu": 0.6, "host": ["api-1", "api-2"]}
+
+# "Recent": the trailing 30 seconds, one record.
+recent = live.to_series().tail("30s").reduce({"cpu": "p95", "host": "top3"})
+assert recent == {"cpu": 0.99, "host": ["api-1", "api-2"]}
+```
+
+`reduce` returns a dict by output name.
 
 </TabItem>
 </Tabs>
@@ -762,6 +963,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics")
+agg = live.aggregate("1m", {"cpu": "avg"})
+# "event": a bucket closed; "bucket": the open bucket, as it stands;
+# "update": every source event.
+agg.watch("event", "bucket", "update")
+
+def describe(outputs):
+    labels = []
+    for o in outputs:
+        if o.kind == "event":
+            labels.append(f"event [{o.event.begin} – {o.event.end}] {o.event['cpu']}")
+        elif o.kind == "bucket":
+            labels.append(f"bucket {o.event.begin} {o.event['cpu']}")
+        else:
+            labels.append(o.kind)
+    return labels
+
+assert describe(live.push(40_000, cpu=0.6)) == ["bucket 0 0.6", "update"]
+assert describe(live.push(60_000, cpu=0.8)) == [
+    "bucket 60000 0.8",
+    "event [0 – 60000] 0.6",
+    "update",
+]
+```
+
+</TabItem>
 </Tabs>
 
 The `bucket` event is especially useful for live dashboards — it gives you the
@@ -841,6 +1073,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In pond-rs the override is `aggregate_with(from, &sequence, &aggs, Some("5s"))`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics", ordering="reorder", grace_window="10s")
+avg = {"cpu": "avg"}
+# Takes the series' 10-second grace.
+agg = live.aggregate("1m", avg)
+# Its own grace of 5 seconds.
+agg2 = live.aggregate("1m", avg, grace="5s")
+
+live.push(50_000, cpu=0.5)
+live.push(62_000, cpu=0.7)
+live.push(58_000, cpu=0.9)  # late, both still open
+live.push(66_000, cpu=0.1)  # 5 s past the minute: agg2 closes
+assert (len(agg), len(agg2)) == (0, 1)
+live.push(59_000, cpu=0.3)  # late: only agg takes it
+live.push(71_000, cpu=0.2)  # 10 s past: agg closes
+
+assert agg.events()[0]["cpu"] == 0.5666666666666667
+assert agg2.events()[0]["cpu"] == 0.7
+```
+
+In Python the override is `aggregate(sequence, reducers, grace="5s")`.
 
 </TabItem>
 </Tabs>
@@ -963,6 +1222,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 In pond-rs, a view built on an aggregation (with `filter`, `map` and the rest) sees each bucket as it closes.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics")
+agg = live.aggregate("1m", {"cpu": "avg"})
+# A view of the closed buckets.
+alerts = agg.filter(lambda bucket: bucket["cpu"] is not None and bucket["cpu"] > 0.5)
+alerts.watch("event")
+
+for t, cpu in [(0, 0.9), (30_000, 0.8), (60_000, 0.1), (120_000, 0.5)]:
+    live.push(t, cpu=cpu)
+assert len(agg) == 2  # closed buckets only
+assert [b.begin for b in alerts.events()] == [0]
+```
+
+As in Rust, a view built on an aggregation (with `filter`, `map` and the rest) sees each bucket as it closes.
+
+</TabItem>
 </Tabs>
 
 - `agg.length` — number of **closed** buckets (does not include the
@@ -1050,6 +1329,35 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!((latest.begin(), latest.number("cpu")?), (4_000, Some(4.0)));
     Ok(())
 }
+```
+
+This program also reads back the output events, as in the next section.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics")
+rolling = live.rolling("2s", {"cpu": "avg"})
+rolling.watch("update")
+
+updates = []
+for t, cpu in [(0, 1.0), (1_000, 2.0), (2_000, 3.0), (3_000, 4.0), (4_000, 5.0)]:
+    for out in live.push(t, cpu=cpu):
+        # The window's values after every source event.
+        updates.append(out.values["cpu"])
+assert updates == [1.0, 1.5, 2.0, 3.0, 4.0]
+
+# The current value, without emitting.
+assert rolling.value() == {"cpu": 4.0}
+
+# One output event per source event, keyed at it.
+events = rolling.events()
+assert len(events) == 5
+assert events[0]["cpu"] == 1.0
+assert (events[-1].begin, events[-1]["cpu"]) == (4_000, 4.0)
 ```
 
 This program also reads back the output events, as in the next section.
@@ -1228,6 +1536,46 @@ fn main() -> Result<(), pond_rs::PondError> {
 `rolling_windows` takes a list of `RollingWindow`s, one per window.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+fused = live.rolling(
+    {
+        "1m": {"cpu_avg": ("cpu", "avg"), "cpu_sd": ("cpu", "stdev")},
+        "200ms": {"cpu_samples": ("cpu", "samples")},
+    },
+    trigger="200ms",
+)
+
+for t, cpu in [(0, 1.0), (100, 3.0), (150, 5.0), (250, 7.0), (300, 9.0), (420, 2.0)]:
+    live.push(t, cpu=cpu)
+
+# All the columns from both windows on one event.
+assert fused.columns == ["cpu_avg", "cpu_sd", "cpu_samples"]
+e = fused.events()[0]
+assert e.begin == 200
+avg, sd = e["cpu_avg"], e["cpu_sd"]
+assert (avg, sd) == (4.0, 2.23606797749979)
+assert e["cpu_samples"] == [3.0, 5.0, 7.0]
+
+# A score per sample, as in the TypeScript.
+z = [(x - avg) / sd for x in e["cpu_samples"]]
+assert len(z) == 3
+
+# The same output name in two windows is refused.
+try:
+    live.rolling({"1m": {"x": ("cpu", "avg")}, "5s": {"x": ("cpu", "max")}})
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+The keyed form is a dict of `{window: reducers}`.
+
+</TabItem>
 </Tabs>
 
 Conceptually equivalent to declaring two `live.rolling(...)` calls
@@ -1330,6 +1678,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+fused = live.rolling(
+    {
+        "1m": {"cpu_avg": ("cpu", "avg")},
+        "200ms": {"aggs": {"cpu_samples": ("cpu", "samples")}, "min_samples": 3},  # this window only
+    },
+    trigger="200ms",
+    min_samples=2,  # every other window
+)
+
+for t, cpu in [(0, 1.0), (210, 3.0), (300, 5.0), (350, 6.0), (420, 2.0), (650, 8.0)]:
+    live.push(t, cpu=cpu)
+
+rows = [(e.begin, e["cpu_avg"], e["cpu_samples"]) for e in fused.events()]
+assert rows == [
+    (200, 2.0, None),  # the 200 ms window holds 1 sample: a gap
+    (400, 3.4, [5.0, 6.0, 2.0]),
+    (600, 4.166666666666667, None),
+]
+```
+
+</TabItem>
 </Tabs>
 
 Top-level options apply as defaults across all windows; per-window
@@ -1428,6 +1803,39 @@ fn main() -> Result<(), pond_rs::PondError> {
 The per-host `fill` is a `per_partition` chain; `partition_rolling_windows` emits every host together on the clock.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu")
+fused = live.partition_by("host").fill({"cpu": "hold"}).rolling(
+    {"1m": {"cpu_avg": ("cpu", "avg")}, "200ms": {"cpu_samples": ("cpu", "samples")}},
+    trigger="200ms",
+)
+
+for t, host, cpu in [
+    (0, "a", 1.0),
+    (50, "b", 4.0),
+    (150, "a", None),  # filled with a's last value
+    (250, "b", 6.0),
+    (420, "a", 3.0),
+]:
+    live.push(t, cpu=cpu, host=host)
+
+# One event per host per boundary; the host column comes first.
+assert fused.columns == ["host", "cpu_avg", "cpu_samples"]
+assert [(e.begin, e["host"], e["cpu_avg"]) for e in fused.events()] == [
+    (200, "a", 1.0),
+    (200, "b", 5.0),
+    (400, "a", 1.6666666666666667),
+    (400, "b", 5.0),
+]
+```
+
+The per-host `fill` chains on the partitioned node; a clock-triggered rolling window on it emits every host together.
+
+</TabItem>
 </Tabs>
 
 On the partitioned form, **clock trigger is required** — synced
@@ -1517,6 +1925,39 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(col(zeroed), [Some(0.0), Some(50.0), Some(-30.0)]);
     Ok(())
 }
+```
+
+This program also covers dropping the first event and filling its gap, from the blocks below. Pass a list of names for several columns.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "requests": "number"}, name="web")
+# The change since the previous event.
+deltas = live.diff("requests")
+# That change per second.
+per_sec = live.rate("requests")
+# As a fraction of the previous value.
+pct_chg = live.pct_change("requests")
+# Without the first event...
+dropped = live.diff("requests", drop_first=True)
+# ...or with its gap filled with 0.
+zeroed = live.diff("requests").fill({"requests": "zero"})
+
+for t, requests in [(0, 100.0), (2_000, 150.0), (4_000, 120.0)]:
+    live.push(t, requests=requests)
+
+def col(node):
+    return [e["requests"] for e in node.events()]
+
+assert col(deltas) == [None, 50.0, -30.0]
+assert col(per_sec) == [None, 25.0, -15.0]
+assert col(pct_chg) == [None, 0.5, -0.2]
+assert col(dropped) == [50.0, -30.0]
+assert col(zeroed) == [0.0, 50.0, -30.0]
 ```
 
 This program also covers dropping the first event and filling its gap, from the blocks below. Pass a list of names for several columns.
@@ -1658,6 +2099,40 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+# Carry forward the last value, in every column.
+held = live.fill("hold")
+# Gaps become 0 (number columns only).
+zeroed = live.fill("zero")
+# Per column, with a literal value.
+mixed = live.fill({"cpu": "hold", "host": "unknown"})
+# At most 1 gap in a row.
+limited = live.fill("hold", limit=1)
+# Fills that need later events are refused.
+try:
+    live.fill("linear")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+for t, cpu, host in [(0, 0.5, "a"), (1_000, None, None), (2_000, None, "b"), (3_000, 0.7, None)]:
+    live.push(t, cpu=cpu, host=host)
+
+def rows(node):
+    return [(e["cpu"], e["host"]) for e in node.events()]
+
+assert rows(held) == [(0.5, "a"), (0.5, "a"), (0.5, "b"), (0.7, "b")]
+assert rows(zeroed) == [(0.5, "a"), (0.0, None), (0.0, "b"), (0.7, None)]
+assert rows(mixed) == [(0.5, "a"), (0.5, "unknown"), (0.5, "b"), (0.7, "unknown")]
+assert rows(limited) == [(0.5, "a"), (0.5, "a"), (None, "b"), (0.7, "b")]
+```
+
+</TabItem>
 </Tabs>
 
 ### cumulative
@@ -1728,6 +2203,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `cumulative_with` runs one fold on one column.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "requests": "number", "cpu": "number"}, name="web")
+running = live.cumulative({"requests": "sum"})
+peaks = live.cumulative({"cpu": "max"})
+# A fold of your own: the first value as it is, then f(acc, value).
+custom = live.cumulative({"requests": lambda acc, v: acc + v * 2})
+
+for t, requests, cpu in [(0, 10.0, 0.5), (1_000, None, 0.9), (2_000, 5.0, 0.3)]:
+    live.push(t, requests=requests, cpu=cpu)
+
+def col(node, name):
+    return [e[name] for e in node.events()]
+
+# A gap keeps the running value.
+assert col(running, "requests") == [10.0, 10.0, 15.0]
+# Other columns pass through.
+assert col(running, "cpu") == [0.5, 0.9, 0.3]
+assert col(peaks, "cpu") == [0.5, 0.9, 0.9]
+assert col(custom, "requests") == [10.0, 10.0, 20.0]
+```
+
+A function runs one fold on one column.
 
 </TabItem>
 </Tabs>
@@ -1824,6 +2327,32 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In pond-rs, `sample` goes inside the per-host chain (`apply` or `per_partition`), so each host gets its own stride counter. This program also shows the counts after sampling, from the section below.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+# Every 2nd event of each host, then a 1-minute count per host.
+counts = live.partition_by("host").sample(2).rolling("1m", {"events": ("cpu", "count")}).collect()
+
+for i in range(8):
+    live.push(i * 1_000, cpu=float(i), host="b" if i % 2 == 1 else "a")
+
+# The counts are of the sampled events: times 2 for the true count.
+assert [(e.begin, e["events"]) for e in counts.events()] == [
+    (2_000, 1.0),
+    (3_000, 1.0),
+    (6_000, 2.0),
+    (7_000, 2.0),
+]
+# The series itself still counts every event.
+assert live.stats()["ingested"] == 8
+```
+
+In Python, `sample` goes on the partitioned node, so each host gets its own stride counter. This program also shows the counts after sampling, from the section below.
 
 </TabItem>
 </Tabs>
@@ -1948,6 +2477,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+pipeline = (
+    live.filter(lambda e: e["host"] == "api-1")
+    .select("cpu")
+    .window("10m")
+    .aggregate("1m", {"cpu": "avg"})
+)
+pipeline.watch("event")
+
+stored = []
+for t, cpu, host in [(0, 0.2, "api-1"), (30_000, 0.9, "api-2"), (40_000, 0.4, "api-1"), (70_000, 0.6, "api-1"), (130_000, 0.1, "api-1")]:
+    for out in live.push(t, cpu=cpu, host=host):
+        stored.append((out.event.begin, out.event["cpu"]))
+assert stored == [(0, 0.30000000000000004), (60_000, 0.6)]
+```
+
+</TabItem>
 </Tabs>
 
 ### Diff → fill pipeline
@@ -2048,6 +2599,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 The `map` closure can keep state between events.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+alpha = 0.3
+prev = None
+
+# The function keeps its own state between events.
+def smooth(e):
+    global prev
+    raw = e["cpu"]
+    if raw is None:
+        return {}  # pass through; no new prev
+    prev = raw if prev is None else alpha * raw + (1 - alpha) * prev
+    return {"cpu": prev}
+
+smoothed = live.map(smooth)
+
+for t, cpu in [(0, 1.0), (1_000, 2.0), (2_000, None), (3_000, 4.0)]:
+    live.push(t, cpu=cpu, host="a")
+assert [e["cpu"] for e in smoothed.events()] == [1.0, 1.2999999999999998, None, 2.11]
+```
+
+The `map` function can keep state between events; returning `{}` leaves the event as it is.
+
+</TabItem>
 </Tabs>
 
 ### Snapshot for batch analytics
@@ -2110,6 +2689,25 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+last_hour = live.window("1h")
+for t, cpu, host in [(0, 0.2, "a"), (1_000, 0.4, "b"), (2_000, None, "a"), (3_000, 0.8, "a")]:
+    live.push(t, cpu=cpu, host=host)
+
+ts = last_hour.to_series()
+# The whole batch toolkit.
+by_host = [g.reduce({"cpu": "avg"})["cpu"] for g in ts.group_by("host").values()]
+assert by_host == [0.5, 0.4]
+filled = ts.fill({"cpu": "linear"})
+assert filled.column("cpu")[2] == 0.6000000000000001
 ```
 
 </TabItem>
@@ -2217,6 +2815,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 As in pond-ts, the gathered series keeps everything unless `CollectOptions` sets a retention, and the host column comes through only if a reducer carries it.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="metrics")
+baseline = live.partition_by("host").rolling(
+    "1m",
+    {
+        # The host column is not carried over unless you keep it.
+        "host": ("host", "last"),
+        "avg": ("cpu", "avg"),
+        "sd": ("cpu", "stdev"),
+    },
+).collect(max_age="30m")  # the gathered series keeps its own retention; set it here
+
+for t, cpu, host in [(0, 1.0, "a"), (1_000, 3.0, "b"), (2_000, 3.0, "a"), (3_000, 5.0, "b")]:
+    live.push(t, cpu=cpu, host=host)
+
+# One series, every host interleaved.
+assert baseline.columns == ["host", "avg", "sd"]
+assert [(e.begin, e["host"], e["avg"], e["sd"]) for e in baseline.events()] == [
+    (0, "a", 1.0, 0.0),
+    (1_000, "b", 3.0, 0.0),
+    (2_000, "a", 2.0, 1.0),
+    (3_000, "b", 4.0, 1.0),
+]
+```
+
+As in pond-ts, the gathered series keeps everything unless `collect()` sets a retention, and the host column comes through only if a reducer carries it.
+
+</TabItem>
 </Tabs>
 
 Two things to know about `collect()`:
@@ -2287,6 +2917,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 After `remove`, `live.get(node)` gives an error, so a removed node can no longer be read. pond-ts keeps a disposed object readable.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="metrics")
+agg = live.aggregate("1m", {"cpu": "avg"})
+rolling = live.rolling("5m", {"cpu": "avg"})
+view = live.window("1h")
+live.push(0, cpu=0.5)
+
+agg.remove()
+rolling.remove()
+view.remove()
+# A removed node gives an error when read; the series carries on.
+try:
+    rolling.value()
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+live.push(60_000, cpu=0.7)
+assert len(live) == 2
+```
+
+After `remove()`, reading the node gives an error. pond-ts keeps a disposed object readable.
 
 </TabItem>
 </Tabs>
