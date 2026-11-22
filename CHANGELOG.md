@@ -81,7 +81,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-## [0.78.0] — 2026-11-22
+### Changed
 
 - **pond-rs: `align`, `materialize` and `dedupe` are faster.** The walks keep
   4-byte row numbers that go straight to the column gathers, fixed-step
@@ -101,6 +101,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   rows: about 222 ms to 71 ms). Same answers, bit for bit. Row-count rolling
   averages are unchanged: their time is the exact running sum, which cannot
   be reordered without changing the last bit.
+
+## [0.78.0] — 2026-11-22
 
 ### Added
 

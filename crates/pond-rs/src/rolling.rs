@@ -1014,7 +1014,7 @@ impl TimeSeries {
     /// Cost: `reduce_columns` reads every row of every window, O(B·W) for B
     /// windows of W rows, and for `avg` reads them twice (once to count the
     /// present values, once to add them, testing each for a gap). When the
-    /// windows overlap enough to hold every row twice over, `count`, `sum`
+    /// windows hold every row eight times over, `count`, `sum`
     /// and `avg` of a number column instead take two passes over the
     /// column first ([`present_before`], [`gaps_as_zero`]): a window's count
     /// is then one subtraction, and its sum adds the same values in the
@@ -1027,8 +1027,11 @@ impl TimeSeries {
         ranges: &[std::ops::Range<usize>],
     ) -> Result<Vec<Column>> {
         let held = ranges.iter().fold(0usize, |n, r| n.saturating_add(r.len()));
+        // From eight times over: at five (a 5-minute window on a 1-minute
+        // grid over 1M rows) the two O(N) passes cost more than the tests
+        // they save (6.5 ms by the old path, 7.7 ms by this one).
         let quick = |&(agg, source): &(&Agg, usize)| {
-            held / 2 >= self.len()
+            held / 8 >= self.len()
                 && matches!(agg.reducer, Reducer::Count | Reducer::Sum | Reducer::Avg)
                 && matches!(self.columns()[source].data(), ColumnData::Number(_))
         };
