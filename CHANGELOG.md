@@ -106,6 +106,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
+  `series.events` on a series whose events were not built yet (and so the
+  first `filter`, `toArray`, `map`, … on it) built each row through two
+  per-row `Map` caches; it now builds rows straight into the array, reusing
+  any event already handed out. Same objects and identity rules. 1M rows:
+  `events` ~1.0 s → ~0.35 s, `filter` ~1.05 s → ~0.36 s.
+
+- **`fromArrow`: tables from pyarrow, polars or apache-arrow's
+  `new Table({...})` now read as optional columns** ([PND-ARROWREQ]). Those
+  libraries mark every field nullable by default, and `fromArrow` now
+  follows the field's flag, so their value columns come back
+  `required: false` even when they hold no nulls.
+
 - **pond-rs: per-entity work no longer copies every column per entity.**
   After `partition_by`, the operations that keep each row and work on number
   columns (`diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`,
@@ -129,6 +142,40 @@ include new features and type-level changes; patch bumps are strictly additive.
   about 38 ms to 2.3 ms; a caller who then reads every cell saves less
   (about 34 ms to 27 ms). `samples` over 1M rows went from about 21 ms to
   1.8 ms. Writing list columns to Arrow went from about 6.9 ms to 3.8 ms.
+
+### Fixed
+
+- **`TimeSeries.fromArrow` / `ValueSeries.fromArrow`: a value column with
+  nulls is marked optional** ([PND-ARROWREQ]). Every value column used to
+  come out required, even one holding nulls, so the series' own `toJSON` →
+  `fromJSON` round trip threw ("row 1 col 1 (v) is required"). A column is
+  now `required: false` when its Arrow field is nullable, or when it holds a
+  gap (a null, `NaN` or an infinity); otherwise it stays required. A field
+  that says nothing about nullability (a hand-built stand-in) is optional
+  only if it holds a gap. pond-rs reads the same file to the same schema.
+  Run time only: the schema's TypeScript type is unchanged.
+- **`mapColumns`: a required column that gains a gap is marked optional**
+  ([PND-MAPREQ]). A non-finite mapper result (`v => v * 1e308 + 1e308`) is
+  stored as a gap, but the column stayed `required`, so the series' own
+  `toJSON` → `fromJSON` round trip threw ("row 3 col 1 (value) is
+  required"). Such a column is now `required: false` in the result's
+  schema, for functions and expressions alike; a mapping that leaves no gap,
+  and columns not mapped, keep their flag. As pond-rs. Run time only: the
+  schema's TypeScript type is unchanged.
+- **`TimeSeries.fromColumns` / `ValueSeries.fromColumns`: a required column
+  with gaps is marked optional** ([PND-COLSREQ]). Both read a gap (`null`,
+  `NaN`, an infinity) in a column the schema marks required (the default)
+  and kept it marked required, so the series' own `toJSON` → `fromJSON`
+  round trip threw. Such a column is now `required: false` in the series'
+  schema; gaps are still accepted, not refused. As pond-rs. Run time only:
+  the schema's TypeScript type is unchanged.
+- **`collapse`: the output column is required only when it has no gaps**
+  ([PND-COLLAPSEREQ]). A non-finite result (`0 / 0`) or a reducer returning
+  `undefined` left gaps in a column marked required, so the series' own
+  `toJSON` → `fromJSON` round trip threw. The output is now
+  `required: false` when it holds a gap, and stays required otherwise. As
+  pond-rs. Run time only: the reducer's type and the schema's TypeScript
+  type are unchanged.
 
 ## [0.77.0] — 2026-11-19
 
@@ -243,13 +290,6 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   variant): pond-rs's next release is 0.2.0.
 
 ### Changed
-
-- **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
-  `series.events` on a series whose events were not built yet (and so the
-  first `filter`, `toArray`, `map`, … on it) built each row through two
-  per-row `Map` caches; it now builds rows straight into the array, reusing
-  any event already handed out. Same objects and identity rules. 1M rows:
-  `events` ~1.0 s → ~0.35 s, `filter` ~1.05 s → ~0.36 s.
 
 - **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
   (number columns, count or duration windows), with the same answers bit for
@@ -381,39 +421,6 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   shares out the recording's own moving time, as other sports do (1,489 s;
   the samples say 1,492 s). Pool swims, and swims timed by the watch's swim
   time, are unchanged.
-- **`TimeSeries.fromArrow` / `ValueSeries.fromArrow`: a value column with
-  nulls is marked optional** ([PND-ARROWREQ]). Every value column used to
-  come out required, even one holding nulls, so the series' own `toJSON` →
-  `fromJSON` round trip threw ("row 1 col 1 (v) is required"). A column is
-  now `required: false` when its Arrow field is nullable, or when it holds a
-  gap (a null, `NaN` or an infinity); otherwise it stays required. A field
-  that says nothing about nullability (a hand-built stand-in) is optional
-  only if it holds a gap. pond-rs reads the same file to the same schema.
-  Run time only: the schema's TypeScript type is unchanged. Note that
-  pyarrow and polars mark fields nullable by default, so their columns now
-  read as optional.
-- **`mapColumns`: a required column that gains a gap is marked optional**
-  ([PND-MAPREQ]). A non-finite mapper result (`v => v * 1e308 + 1e308`) is
-  stored as a gap, but the column stayed `required`, so the series' own
-  `toJSON` → `fromJSON` round trip threw ("row 3 col 1 (value) is
-  required"). Such a column is now `required: false` in the result's
-  schema, for functions and expressions alike; a mapping that leaves no gap,
-  and columns not mapped, keep their flag. As pond-rs. Run time only: the
-  schema's TypeScript type is unchanged.
-- **`TimeSeries.fromColumns` / `ValueSeries.fromColumns`: a required column
-  with gaps is marked optional** ([PND-COLSREQ]). Both read a gap (`null`,
-  `NaN`, an infinity) in a column the schema marks required (the default)
-  and kept it marked required, so the series' own `toJSON` → `fromJSON`
-  round trip threw. Such a column is now `required: false` in the series'
-  schema; gaps are still accepted, not refused. As pond-rs. Run time only:
-  the schema's TypeScript type is unchanged.
-- **`collapse`: the output column is required only when it has no gaps**
-  ([PND-COLLAPSEREQ]). A non-finite result (`0 / 0`) or a reducer returning
-  `undefined` left gaps in a column marked required, so the series' own
-  `toJSON` → `fromJSON` round trip threw. The output is now
-  `required: false` when it holds a gap, and stays required otherwise. As
-  pond-rs. Run time only: the reducer's type and the schema's TypeScript
-  type are unchanged.
 
 ## [0.76.0] — 2026-11-06
 
