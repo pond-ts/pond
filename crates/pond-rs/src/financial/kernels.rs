@@ -922,7 +922,7 @@ pub(crate) fn js_min(a: f64, b: f64) -> f64 {
 /// `base::ieee754::log`), which can differ from the system's `f64::ln` in
 /// the last bit. This is that routine, step for step.
 #[allow(clippy::excessive_precision)] // fdlibm's constants, as written there
-pub(crate) fn js_log(x: f64) -> f64 {
+pub fn js_log(x: f64) -> f64 {
     const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-01;
     const LN2_LO: f64 = 1.908_214_929_270_587_700_02e-10;
     const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;

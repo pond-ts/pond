@@ -187,16 +187,17 @@ for (const def of [
 **`BASIC_OPS`** are row-by-row steps. A gap in any input is a gap out, and
 a non-finite result (a division by zero) is a gap.
 
-| Step                                    | Does                                                                             |
-| --------------------------------------- | -------------------------------------------------------------------------------- |
-| `add`, `subtract`, `multiply`, `divide` | `left ∘ right`; inputs `left`, `right`                                           |
-| `scale`                                 | `source × factor + offset` — ×100 for percent, offset −1 for a change            |
-| `shift`                                 | `periods` rows back; negative reads the future (forward returns)                 |
-| `compare`                               | `source` against a `value`: `above`, `below`, `atLeast`, `atMost`, `equal` → 1/0 |
-| `compareColumns`                        | the same tests, `left` against `right`                                           |
-| `and`, `or`                             | two signals (non-zero is true) → 1/0                                             |
-| `cumulative`                            | running `sum`, `product`, `max` (the peak, for drawdowns) or `min`               |
-| `hold`                                  | carries the last non-zero value — crossover events into a position               |
+| Step                                    | Does                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `add`, `subtract`, `multiply`, `divide` | `left ∘ right`; inputs `left`, `right`                                                           |
+| `scale`                                 | `source × factor + offset` — ×100 for percent, offset −1 for a change                            |
+| `log`, `sqrt`                           | natural log, unit `log` (zero or below is a gap); square root, unit `sqrt` (below zero is a gap) |
+| `shift`                                 | `periods` rows back; negative reads the future (forward returns)                                 |
+| `compare`                               | `source` against a `value`: `above`, `below`, `atLeast`, `atMost`, `equal` → 1/0                 |
+| `compareColumns`                        | the same tests, `left` against `right`                                                           |
+| `and`, `or`                             | two signals (non-zero is true) → 1/0                                                             |
+| `cumulative`                            | running `sum`, `product`, `max` (the peak, for drawdowns) or `min`                               |
+| `hold`                                  | carries the last non-zero value — crossover events into a position                               |
 
 **`SUMMARY_FOLDS`** answer questions about a whole column. Each carries
 its `count`, because an average of three values and of three thousand read

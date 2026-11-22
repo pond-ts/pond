@@ -666,6 +666,7 @@ export function AreaChart<
               line: style.color,
               fill: style.fill,
               fillOpacity: style.fillOpacity,
+              dash: style.dash,
             },
           },
         ];

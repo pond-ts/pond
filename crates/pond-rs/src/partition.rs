@@ -16,15 +16,32 @@
 //! and split would change: it drops partitions left empty, reorders them by
 //! their first row, and splits again for real only when an operation changed
 //! the values of a partition column.
+//!
+//! Cost: splitting is one pass that numbers each row's partition; no row
+//! is copied until a partition is asked for ([`PartitionedSeries::iter`],
+//! [`PartitionedSeries::get`], [`PartitionedSeries::map`]). The operations
+//! that keep every row and only write number columns (`diff`, `rate`,
+//! `pct_change`, `shift`, `cumulative`, `fill` and the row-by-row
+//! `rolling` calls) never build the partitions as whole series: each
+//! partition's rows of just the columns the operation reads are copied
+//! out, the operation runs on those, and its results are written back to
+//! the rows they came from. Text and other untouched columns are shared
+//! with the source, not copied, and [`PartitionedSeries::collect`] then
+//! has nothing to sort unless rows at one time are out of partition order.
+//! Everything else goes through [`PartitionedSeries::map`]: one copy of
+//! every column to split, and a sort and a copy to collect.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::{Arc, OnceLock};
 
 use crate::column::{ColumnData, Value};
+use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
 use crate::grid::{Align, Keep, Materialize};
 use crate::par;
 use crate::reducer::{Agg, Reducer};
-use crate::rolling::{Rolling, RollingOver};
+use crate::rolling::{Alignment, Rolling, RollingOver};
 use crate::rowwise::{Change, Fill, FillLimits};
 use crate::sequence::Sequence;
 use crate::series::{Column, ColumnKind, Key, Labels, TimeSeries};
@@ -60,7 +77,7 @@ pub struct PartitionedSeries {
     by: Vec<String>,
     /// In partition order: the order their first rows appear in the
     /// series as one.
-    parts: Vec<(PartitionKey, TimeSeries)>,
+    parts: Parts,
     /// The order the last operation ran the partitions in, as indexes into
     /// `parts`; [`PartitionedSeries::collect`] merges in this order.
     /// pond-ts splits before an operation and merges right after it, so an
@@ -73,6 +90,265 @@ pub struct PartitionedSeries {
     /// A zero-row series with the current columns, for when there are no
     /// partitions (pond-ts runs the operation on an empty series).
     empty: TimeSeries,
+}
+
+/// The partitions of a [`PartitionedSeries`].
+#[derive(Debug, Clone)]
+enum Parts {
+    /// One series per partition.
+    Made(Vec<(PartitionKey, TimeSeries)>),
+    /// Rows of one series, not yet copied apart.
+    Rows(Rows),
+}
+
+/// Partitions held as the rows of one series: partition `i` is the rows
+/// `groups.rows[i]` of `base`. `base` is in the row order of the series
+/// that was split (sorted by key), which is not always the order
+/// [`PartitionedSeries::collect`] gives.
+#[derive(Debug, Clone)]
+struct Rows {
+    base: TimeSeries,
+    groups: Arc<Groups>,
+    /// The partitions as series, copied out of `base` on first use.
+    made: OnceLock<Vec<(PartitionKey, TimeSeries)>>,
+    /// What the short cut that made `base` computed, partition by
+    /// partition, kept so that making the partitions does not copy those
+    /// columns out of `base` again.
+    computed: Option<Arc<Computed>>,
+}
+
+/// Per-partition results a short cut wrote into a base series.
+#[derive(Debug)]
+struct Computed {
+    /// One series per partition: its key and its result columns.
+    parts: Vec<TimeSeries>,
+    /// `(column of the base series, column of each of `parts`)` for every
+    /// column of the base series that holds these results.
+    columns: Vec<(usize, usize)>,
+}
+
+/// Which rows of a series belong to which partition.
+#[derive(Debug)]
+struct Groups {
+    /// Each partition's key, in partition order (first-row order).
+    keys: Vec<PartitionKey>,
+    /// Each partition's rows, ascending.
+    rows: Vec<Vec<usize>>,
+    /// Each row's partition.
+    part: Vec<u32>,
+}
+
+impl Rows {
+    fn new(base: TimeSeries, groups: Arc<Groups>) -> Self {
+        Rows {
+            base,
+            groups,
+            made: OnceLock::new(),
+            computed: None,
+        }
+    }
+
+    /// The partitions as series. Cost: the first call copies every
+    /// column of every row once, except the columns a short cut has just
+    /// computed, which are taken from its per-partition results.
+    fn made(&self) -> &[(PartitionKey, TimeSeries)] {
+        if let Some(made) = self.made.get() {
+            return made;
+        }
+        // Built before taking the cell, not inside `get_or_init`: the
+        // copy runs on several cores, and a thread waiting on that work
+        // may be handed another task that asks for the partitions, which
+        // would then wait on a cell its own thread is filling. Two
+        // callers at once may both build them; the first to finish is
+        // kept.
+        let series = match &self.computed {
+            None => par::map(&self.groups.rows, |rows| self.base.take_rows(rows)),
+            Some(computed) => {
+                let parts: Vec<usize> = (0..self.groups.rows.len()).collect();
+                par::map(&parts, |&i| self.part_from(computed, i))
+            }
+        };
+        let made = self.groups.keys.iter().cloned().zip(series).collect();
+        self.made.get_or_init(|| made)
+    }
+
+    /// Partition `i` as `base.take_rows` gives it, with the key and the
+    /// columns `computed` holds taken from there instead (the same
+    /// values: `base` was written from them).
+    fn part_from(&self, computed: &Computed, i: usize) -> TimeSeries {
+        let (base, rows, part) = (&self.base, &self.groups.rows[i], &computed.parts[i]);
+        let picks = std::cell::OnceCell::new();
+        let columns = base
+            .columns()
+            .iter()
+            .enumerate()
+            .map(
+                |(c, column)| match computed.columns.iter().find(|&&(at, _)| at == c) {
+                    Some(&(_, from)) => part.columns()[from].clone(),
+                    None => {
+                        let picks = picks.get_or_init(|| {
+                            rows.iter()
+                                .map(|&r| Some(r))
+                                .collect::<Vec<Option<usize>>>()
+                        });
+                        Column::from_data(
+                            column.name().to_string(),
+                            column.data().take(picks),
+                            column.is_required(),
+                        )
+                    }
+                },
+            )
+            .collect();
+        TimeSeries::from_parts(
+            base.name().to_string(),
+            base.key_name().to_string(),
+            part.shared_key(),
+            columns,
+        )
+    }
+
+    /// What [`merge`] gives for the partitions in order, without making
+    /// them. Cost: one pass over the keys; when no rows that share a key
+    /// are out of partition order (the usual case) the key and the columns
+    /// are shared with `base`, except a dictionary text column, which is
+    /// copied out as plain text as [`merge`] does. Otherwise one copy of
+    /// every column.
+    fn collect(&self) -> TimeSeries {
+        let base = &self.base;
+        if self.groups.rows.len() == 1 {
+            // One partition is every row, in order.
+            return base.clone();
+        }
+        let order = self.groups.merge_order(base.key());
+        let picks: Vec<(u32, u32)> = match &order {
+            Some(order) => order.iter().map(|&i| (0, i as u32)).collect(),
+            None => Vec::new(),
+        };
+        let columns = par::map(base.columns(), |c| {
+            let dictionary = matches!(c.data(), ColumnData::String(s) if s.is_dictionary());
+            let data = match &order {
+                None if !dictionary => c.data().clone(),
+                None => {
+                    let all: Vec<(u32, u32)> = (0..base.len() as u32).map(|i| (0, i)).collect();
+                    ColumnData::gather(&[c.data()], &all)
+                }
+                Some(_) => ColumnData::gather(&[c.data()], &picks),
+            };
+            Column::from_data(c.name().to_string(), data, c.is_required())
+        });
+        let key = match &order {
+            None => base.shared_key(),
+            Some(order) => Arc::new(base.key().take(order)),
+        };
+        TimeSeries::from_parts(
+            base.name().to_string(),
+            base.key_name().to_string(),
+            key,
+            columns,
+        )
+    }
+}
+
+impl Groups {
+    /// The order [`merge`] puts the rows in, as row numbers: by key, rows
+    /// with the same key in partition order, then row order. `None` when
+    /// that is the row order they are already in.
+    fn merge_order(&self, key: &Key) -> Option<Vec<usize>> {
+        let (begin, end) = (key.begin(), key.end());
+        let n = begin.len();
+        let same = |i: usize| begin[i] == begin[i - 1] && end.is_none_or(|e| e[i] == e[i - 1]);
+        let part = &self.part;
+        if (1..n).all(|i| part[i] >= part[i - 1] || !same(i)) {
+            return None;
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        let mut from = 0;
+        while from < n {
+            let mut to = from + 1;
+            while to < n && same(to) {
+                to += 1;
+            }
+            // Stable: rows of one partition keep their order.
+            order[from..to].sort_by_key(|&i| part[i]);
+            from = to;
+        }
+        Some(order)
+    }
+
+    /// `f` on each partition's rows of `narrow`, or `None` if it fails
+    /// anywhere or gives back anything but the same rows (a result that
+    /// does not share its input's key).
+    fn run<F>(&self, narrow: &TimeSeries, f: &F) -> Option<Vec<TimeSeries>>
+    where
+        F: Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send,
+    {
+        par::map(&self.rows, |rows| {
+            let part = number_rows(narrow, rows);
+            let out = f(&part).ok()?;
+            Arc::ptr_eq(&part.shared_key(), &out.shared_key()).then_some(out)
+        })
+        .into_iter()
+        .collect()
+    }
+
+    /// The number columns of `outs` (one result per partition, all with
+    /// the same columns) as columns of `rows` rows, each value at the row
+    /// it was computed for.
+    fn scatter(&self, outs: &[TimeSeries], rows: usize) -> Vec<Column> {
+        let columns: Vec<usize> = (0..outs[0].columns().len()).collect();
+        par::map(&columns, |&c| {
+            let mut values = vec![f64::NAN; rows];
+            for (at, out) in self.rows.iter().zip(outs) {
+                let ColumnData::Number(part) = out.columns()[c].data() else {
+                    unreachable!("checked by same_number_columns");
+                };
+                for (&row, &v) in at.iter().zip(part.values()) {
+                    values[row] = v;
+                }
+            }
+            let head = &outs[0].columns()[c];
+            Column::from_data(head.name().to_string(), values, head.is_required())
+        })
+    }
+}
+
+/// The rows at `rows` of a series whose value columns are all numbers:
+/// [`TimeSeries::take_rows`] without its list of optional row numbers.
+fn number_rows(series: &TimeSeries, rows: &[usize]) -> TimeSeries {
+    let columns = series
+        .columns()
+        .iter()
+        .map(|c| {
+            let ColumnData::Number(values) = c.data() else {
+                unreachable!("the short cuts pick number columns only");
+            };
+            let values = values.values();
+            let picked: Vec<f64> = rows.iter().map(|&i| values[i]).collect();
+            Column::from_data(c.name().to_string(), picked, c.is_required())
+        })
+        .collect();
+    TimeSeries::from_parts(
+        series.name().to_string(),
+        series.key_name().to_string(),
+        series.key().take(rows),
+        columns,
+    )
+}
+
+/// True when every series has the columns of the first (names and
+/// required flags) and they are all number columns.
+fn same_number_columns(series: &[TimeSeries]) -> bool {
+    let head = series[0].columns();
+    head.iter().all(|c| c.kind() == ColumnKind::Number)
+        && series.iter().all(|s| {
+            s.columns().len() == head.len()
+                && s.columns().iter().zip(head).all(|(a, b)| {
+                    a.kind() == ColumnKind::Number
+                        && a.name() == b.name()
+                        && a.is_required() == b.is_required()
+                })
+        })
 }
 
 impl TimeSeries {
@@ -118,23 +394,31 @@ impl PartitionedSeries {
 
     /// The number of partitions.
     pub fn len(&self) -> usize {
-        self.parts.len()
+        match &self.parts {
+            Parts::Made(parts) => parts.len(),
+            Parts::Rows(rows) => rows.groups.rows.len(),
+        }
     }
 
     /// `true` when there is nothing in it.
     pub fn is_empty(&self) -> bool {
-        self.parts.is_empty()
+        self.len() == 0
     }
 
     /// Each partition's key and rows, in partition order (pond-ts
     /// `toMap`).
+    ///
+    /// Cost: the partitions are copied out of the series on the first
+    /// call that needs them (this one, [`PartitionedSeries::get`],
+    /// [`PartitionedSeries::into_groups`] or [`PartitionedSeries::map`]):
+    /// one copy of every column.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&[Option<Value>], &TimeSeries)> {
-        self.parts.iter().map(|(k, s)| (k.as_slice(), s))
+        self.parts().iter().map(|(k, s)| (k.as_slice(), s))
     }
 
     /// The partition with this key, if there is one.
     pub fn get(&self, key: &[Option<Value>]) -> Option<&TimeSeries> {
-        self.parts
+        self.parts()
             .iter()
             .find(|(k, _)| k.as_slice() == key)
             .map(|(_, s)| s)
@@ -142,7 +426,21 @@ impl PartitionedSeries {
 
     /// The partitions as owned `(key, series)` pairs.
     pub fn into_groups(self) -> Vec<(PartitionKey, TimeSeries)> {
-        self.parts
+        match self.parts {
+            Parts::Made(parts) => parts,
+            Parts::Rows(rows) => {
+                rows.made();
+                rows.made.into_inner().expect("just made")
+            }
+        }
+    }
+
+    /// The partitions as series, made on first use.
+    fn parts(&self) -> &[(PartitionKey, TimeSeries)] {
+        match &self.parts {
+            Parts::Made(parts) => parts,
+            Parts::Rows(rows) => rows.made(),
+        }
     }
 
     /// All partitions as one series, sorted by key; rows with the same key
@@ -150,11 +448,14 @@ impl PartitionedSeries {
     /// original series, unchanged. An error if an operation gave different
     /// partitions different columns.
     pub fn collect(&self) -> Result<TimeSeries> {
-        match &self.whole {
-            Some(whole) => Ok(whole.clone()),
-            None => {
+        match (&self.whole, &self.parts) {
+            (Some(whole), _) => Ok(whole.clone()),
+            // Held as rows only after an operation that kept every row,
+            // so the run order is the partition order.
+            (None, Parts::Rows(rows)) => Ok(rows.collect()),
+            (None, Parts::Made(parts)) => {
                 let series: Vec<&TimeSeries> =
-                    self.run_order.iter().map(|&i| &self.parts[i].1).collect();
+                    self.run_order.iter().map(|&i| &parts[i].1).collect();
                 merge(&series, &self.empty)
             }
         }
@@ -200,7 +501,7 @@ impl PartitionedSeries {
                 ),
             });
         }
-        let mut unchanged = !self.parts.is_empty();
+        let mut unchanged = !self.is_empty();
         for (key, s) in &parts {
             let at: Vec<usize> = self
                 .by
@@ -244,7 +545,7 @@ impl PartitionedSeries {
             .collect();
         Ok(PartitionedSeries {
             by: self.by.clone(),
-            parts,
+            parts: Parts::Made(parts),
             run_order,
             whole: None,
             empty,
@@ -264,37 +565,39 @@ impl PartitionedSeries {
 
     /// [`TimeSeries::diff`] on each partition.
     pub fn diff(&self, columns: &[&str]) -> Result<PartitionedSeries> {
-        self.map(|g| g.diff(columns))
+        self.map_numbers(columns, |g| g.diff(columns))
     }
 
     /// [`TimeSeries::diff_with`] on each partition.
     pub fn diff_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
-        self.map(|g| g.diff_with(columns, options.clone()))
+        self.map_change(columns, &options, |g| g.diff_with(columns, options.clone()))
     }
 
     /// [`TimeSeries::rate`] on each partition.
     pub fn rate(&self, columns: &[&str]) -> Result<PartitionedSeries> {
-        self.map(|g| g.rate(columns))
+        self.map_numbers(columns, |g| g.rate(columns))
     }
 
     /// [`TimeSeries::rate_with`] on each partition.
     pub fn rate_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
-        self.map(|g| g.rate_with(columns, options.clone()))
+        self.map_change(columns, &options, |g| g.rate_with(columns, options.clone()))
     }
 
     /// [`TimeSeries::pct_change`] on each partition.
     pub fn pct_change(&self, columns: &[&str]) -> Result<PartitionedSeries> {
-        self.map(|g| g.pct_change(columns))
+        self.map_numbers(columns, |g| g.pct_change(columns))
     }
 
     /// [`TimeSeries::pct_change_with`] on each partition.
     pub fn pct_change_with(&self, columns: &[&str], options: Change) -> Result<PartitionedSeries> {
-        self.map(|g| g.pct_change_with(columns, options.clone()))
+        self.map_change(columns, &options, |g| {
+            g.pct_change_with(columns, options.clone())
+        })
     }
 
     /// [`TimeSeries::shift`] on each partition.
     pub fn shift(&self, columns: &[&str], n: i64) -> Result<PartitionedSeries> {
-        self.map(|g| g.shift(columns, n))
+        self.map_numbers(columns, |g| g.shift(columns, n))
     }
 
     /// [`TimeSeries::cumulative`] on each partition.
@@ -302,12 +605,14 @@ impl PartitionedSeries {
         &self,
         spec: &[(&str, C)],
     ) -> Result<PartitionedSeries> {
-        self.map(|g| g.cumulative(spec))
+        let columns: Vec<&str> = spec.iter().map(|&(name, _)| name).collect();
+        self.map_numbers(&columns, |g| g.cumulative(spec))
     }
 
     /// [`TimeSeries::fill`] on each partition.
     pub fn fill(&self, spec: &[(&str, Fill)]) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill(spec))
+        let columns: Vec<&str> = spec.iter().map(|(name, _)| *name).collect();
+        self.map_numbers(&columns, |g| g.fill(spec))
     }
 
     /// [`TimeSeries::fill_with`] on each partition.
@@ -316,17 +621,35 @@ impl PartitionedSeries {
         spec: &[(&str, Fill)],
         limits: &FillLimits,
     ) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill_with(spec, limits))
+        let columns: Vec<&str> = spec.iter().map(|(name, _)| *name).collect();
+        self.map_numbers(&columns, |g| g.fill_with(spec, limits))
     }
 
     /// [`TimeSeries::fill_all`] on each partition.
     pub fn fill_all(&self, fill: Fill) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill_all(fill.clone()))
+        self.fill_all_with(fill, &FillLimits::none())
     }
 
     /// [`TimeSeries::fill_all_with`] on each partition.
     pub fn fill_all_with(&self, fill: Fill, limits: &FillLimits) -> Result<PartitionedSeries> {
-        self.map(|g| g.fill_all_with(fill.clone(), limits))
+        let f = |g: &TimeSeries| g.fill_all_with(fill.clone(), limits);
+        // The columns `fill_all` fills: those the strategy applies to.
+        if let Parts::Rows(rows) = &self.parts {
+            // `Hold` and `Bfill` find nothing to fill in a partition
+            // column: within a partition it is all one value or all gaps.
+            let constant = matches!(fill, Fill::Hold | Fill::Bfill);
+            let filled: Vec<usize> = (0..rows.base.columns().len())
+                .filter(|&c| {
+                    let column = &rows.base.columns()[c];
+                    crate::rowwise::fills(column, &fill)
+                        && !(constant && self.by.iter().any(|b| b == column.name()))
+                })
+                .collect();
+            if let Some(out) = self.on_numbers(&filled, &f) {
+                return Ok(out);
+            }
+        }
+        self.map(f)
     }
 
     /// [`TimeSeries::rolling`] on each partition. Only the outputs are
@@ -334,8 +657,7 @@ impl PartitionedSeries {
     /// carried through as a `first` output at the end (as pond-ts does), so
     /// the result stays partitioned.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<PartitionedSeries> {
-        let aggs = self.with_partition_outputs(aggs);
-        self.map(|g| g.rolling(window, &aggs))
+        self.rolling_with(window, aggs, Rolling::default())
     }
 
     /// [`TimeSeries::rolling_with`] on each partition, carrying the
@@ -350,6 +672,14 @@ impl PartitionedSeries {
         aggs: &[Agg],
         options: Rolling,
     ) -> Result<PartitionedSeries> {
+        // A trailing window at least 1 ms long always holds its own row.
+        let holds_row = options.alignment == Alignment::Trailing
+            && parse_duration(window).is_ok_and(|ms| ms >= 1);
+        if let Some(out) = self.roll_numbers(aggs, options, holds_row, |g, aggs| {
+            g.rolling_with(window, aggs, options)
+        }) {
+            return Ok(out);
+        }
         let aggs = self.rolling_outputs(aggs, options);
         self.map(|g| g.rolling_with(window, &aggs, options))
     }
@@ -362,6 +692,12 @@ impl PartitionedSeries {
         aggs: &[Agg],
         options: Rolling,
     ) -> Result<PartitionedSeries> {
+        // A row window always holds its own row.
+        if let Some(out) = self.roll_numbers(aggs, options, true, |g, aggs| {
+            g.rolling_rows(rows, aggs, options)
+        }) {
+            return Ok(out);
+        }
         let aggs = self.rolling_outputs(aggs, options);
         self.map(|g| g.rolling_rows(rows, &aggs, options))
     }
@@ -517,7 +853,7 @@ impl PartitionedSeries {
         // `map` hands each partition's own series to the closure, so its
         // address finds its place.
         let place: HashMap<usize, u64> = self
-            .parts
+            .parts()
             .iter()
             .enumerate()
             .map(|(i, (_, g))| (g as *const TimeSeries as usize, i as u64))
@@ -530,6 +866,279 @@ impl PartitionedSeries {
             let seed = seed ^ i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             g.sample(Sample::Reservoir { size, seed })
         })
+    }
+
+    /// [`PartitionedSeries::map_numbers`] for `diff`, `rate` and
+    /// `pct_change` with options: dropping the first row does not keep
+    /// every row, so that goes straight to [`PartitionedSeries::map`].
+    fn map_change<F>(&self, columns: &[&str], options: &Change, f: F) -> Result<PartitionedSeries>
+    where
+        F: Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send,
+    {
+        if options.drops_first() {
+            self.map(f)
+        } else {
+            self.map_numbers(columns, f)
+        }
+    }
+
+    /// `f` on each partition, for an operation that keeps every row and
+    /// every column and only writes to the columns named (or adds new
+    /// ones): the short cut of [`PartitionedSeries::on_numbers`] when it
+    /// applies, otherwise [`PartitionedSeries::map`]. The result is the
+    /// same either way.
+    fn map_numbers<F>(&self, columns: &[&str], f: F) -> Result<PartitionedSeries>
+    where
+        F: Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send,
+    {
+        if let Parts::Rows(rows) = &self.parts {
+            let named: Option<Vec<usize>> = columns
+                .iter()
+                .map(|name| rows.base.columns().iter().position(|c| c.name() == *name))
+                .collect();
+            if let Some(mut named) = named {
+                named.sort_unstable();
+                named.dedup();
+                if let Some(out) = self.on_numbers(&named, &f) {
+                    return Ok(out);
+                }
+            }
+        }
+        self.map(f)
+    }
+
+    /// `f` on each partition without building the partitions: `f` sees
+    /// each partition's rows of only the columns at `columns` (ascending),
+    /// and its results are written back to the rows they came from, the
+    /// other columns shared with the source. For an `f` that reads and
+    /// writes nothing but those columns and the key, this gives what
+    /// [`PartitionedSeries::map`] gives.
+    ///
+    /// `None` (use `map`) unless the partitions are still held as rows,
+    /// the columns are all number columns and none is a partition column,
+    /// and `f` succeeds on every partition, keeps the rows, and gives back
+    /// those columns (as numbers, with the same required flags in every
+    /// partition) plus, possibly, new number columns after them. So an
+    /// error always comes from `map`, worded for the whole series.
+    ///
+    /// Cost: one copy of the key and of the columns at `columns`, `f`,
+    /// and one write of each result column. No other column is touched.
+    fn on_numbers<F>(&self, columns: &[usize], f: &F) -> Option<PartitionedSeries>
+    where
+        F: Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send,
+    {
+        let Parts::Rows(rows) = &self.parts else {
+            return None;
+        };
+        let base = &rows.base;
+        let usable = |c: &usize| {
+            let column = &base.columns()[*c];
+            column.kind() == ColumnKind::Number && !self.by.iter().any(|b| b == column.name())
+        };
+        if rows.groups.rows.is_empty() || columns.is_empty() || !columns.iter().all(usable) {
+            return None;
+        }
+        let narrow =
+            base.with_value_columns(columns.iter().map(|&c| base.columns()[c].clone()).collect());
+        let outs = rows.groups.run(&narrow, f)?;
+        let head = outs[0].columns();
+        let kept = head.len() >= columns.len()
+            && head
+                .iter()
+                .zip(narrow.columns())
+                .all(|(a, b)| a.name() == b.name());
+        // A new column may not take a name the narrow series did not show
+        // `f`: on the whole series that is an error.
+        let clash = head[columns.len().min(head.len())..].iter().any(|new| {
+            new.name() == base.key_name() || base.columns().iter().any(|c| c.name() == new.name())
+        });
+        if !kept || clash || !same_number_columns(&outs) {
+            return None;
+        }
+        let mut written = rows.groups.scatter(&outs, base.len()).into_iter();
+        let mut all = base.columns().to_vec();
+        for &c in columns {
+            all[c] = written.next().expect("one per column");
+        }
+        all.extend(written);
+        // The narrow columns, then the new ones after every base column.
+        let new = (columns.len()..head.len()).map(|k| base.columns().len() + k - columns.len());
+        let places = columns.iter().copied().chain(new).zip(0..).collect();
+        Some(self.kept(rows, base.with_value_columns(all), outs, places))
+    }
+
+    /// The row-by-row rolling call `f(partition, aggs)` without building
+    /// the partitions, as [`PartitionedSeries::on_numbers`]: `f` sees only
+    /// the number columns `aggs` read. The partition columns are not
+    /// rolled: `first` of a partition column is the partition's own value
+    /// on every row whose window holds a row and at least
+    /// [`Rolling::min_samples`] rows, so those outputs are the source
+    /// columns, with gaps on the other rows. `holds_row` says every window
+    /// holds its own row; otherwise a count of the rows in each window is
+    /// rolled as well to find out.
+    ///
+    /// `None` (use `map`) unless the partitions are still held as rows,
+    /// the partition columns are text or true/false and no output is
+    /// named after one, every source is a number column under a reducer
+    /// that gives numbers, the call is not appending, and `f` succeeds on
+    /// every partition.
+    fn roll_numbers<F>(
+        &self,
+        aggs: &[Agg],
+        options: Rolling,
+        holds_row: bool,
+        f: F,
+    ) -> Option<PartitionedSeries>
+    where
+        F: Fn(&TimeSeries, &[Agg]) -> Result<TimeSeries> + Sync + Send,
+    {
+        let Parts::Rows(rows) = &self.parts else {
+            return None;
+        };
+        let base = &rows.base;
+        if rows.groups.rows.is_empty() || options.append {
+            return None;
+        }
+        let at = |name: &str| base.columns().iter().position(|c| c.name() == name);
+        let by: Vec<usize> = self.by.iter().map(|b| at(b)).collect::<Option<_>>()?;
+        let carried = |c: &usize| {
+            matches!(
+                base.columns()[*c].kind(),
+                ColumnKind::String | ColumnKind::Boolean
+            )
+        };
+        if !by.iter().all(carried) || aggs.iter().any(|a| self.by.contains(&a.output)) {
+            return None;
+        }
+        let mut sources = Vec::with_capacity(aggs.len());
+        for agg in aggs {
+            let c = at(&agg.source)?;
+            if base.columns()[c].kind() != ColumnKind::Number || agg.reducer.gives_list() {
+                return None;
+            }
+            sources.push(c);
+        }
+        sources.sort_unstable();
+        sources.dedup();
+        let mut columns: Vec<Column> = sources.iter().map(|&c| base.columns()[c].clone()).collect();
+        // With the partition outputs after them the entries are never all
+        // shorthand, so the outputs keep the order given.
+        let mut narrow_aggs: Vec<Agg> = aggs
+            .iter()
+            .map(|a| Agg {
+                shorthand: false,
+                ..a.clone()
+            })
+            .collect();
+        // Every window holds its own row, so only a minimum above one row
+        // can hold a row back.
+        let counted = !(holds_row && options.min_samples <= 1);
+        if counted {
+            // A column of ones under a name nothing else has: its rolling
+            // count is the number of rows in each window.
+            let mut name = String::from("rows");
+            while name == base.key_name()
+                || at(&name).is_some()
+                || aggs.iter().any(|a| a.output == name)
+            {
+                name.push('_');
+            }
+            columns.push(Column::from_data(name.clone(), vec![1.0; base.len()], true));
+            narrow_aggs.push(Agg::new(name.clone(), name, Reducer::Count));
+        }
+        let narrow = base.with_value_columns(columns);
+        let outs = rows
+            .groups
+            .run(&narrow, &|g: &TimeSeries| f(g, &narrow_aggs))?;
+        let head = outs[0].columns();
+        let as_asked = head.len() == narrow_aggs.len()
+            && head
+                .iter()
+                .zip(&narrow_aggs)
+                .all(|(c, a)| c.name() == a.output);
+        if !as_asked || !same_number_columns(&outs) {
+            return None;
+        }
+        let mut written = rows.groups.scatter(&outs, base.len());
+        // Rows whose window is empty or under the minimum: a gap in every
+        // output, the partition columns included.
+        let held: Option<Vec<bool>> = counted
+            .then(|| written.pop().expect("the count is the last output"))
+            .map(|count| {
+                let ColumnData::Number(count) = count.data() else {
+                    unreachable!("checked by same_number_columns");
+                };
+                count
+                    .values()
+                    .iter()
+                    .map(|&n| !(n.is_finite() && n > 0.0))
+                    .collect::<Vec<bool>>()
+            })
+            .filter(|held| held.contains(&true));
+        let showing: Option<Vec<Option<usize>>> = held.as_ref().map(|held| {
+            held.iter()
+                .enumerate()
+                .map(|(i, &h)| (!h).then_some(i))
+                .collect()
+        });
+        for &c in &by {
+            let column = &base.columns()[c];
+            let data = match &showing {
+                None => column.data().clone(),
+                Some(showing) => column.data().take(showing),
+            };
+            written.push(Column::from_data(column.name().to_string(), data, false));
+        }
+        let rolled = base.with_value_columns(written);
+        // A partition with a value in its key loses that value on a row
+        // held back: `map` then merges and splits again.
+        let moved =
+            held.as_ref().is_some_and(|held| {
+                let groups = &rows.groups;
+                groups.rows.iter().zip(&groups.keys).any(|(at, key)| {
+                    key.iter().any(Option::is_some) && at.iter().any(|&row| held[row])
+                })
+            });
+        if !moved {
+            // The outputs asked for come first, in both.
+            let places = (0..aggs.len()).map(|k| (k, k)).collect();
+            return Some(self.kept(rows, rolled, outs, places));
+        }
+        let empty = rolled.row_range(0..0);
+        let whole = Rows::new(rolled, Arc::clone(&rows.groups)).collect();
+        let by: Vec<usize> = (aggs.len()..aggs.len() + by.len()).collect();
+        Some(PartitionedSeries {
+            by: self.by.clone(),
+            parts: split(&whole, &by),
+            run_order: Vec::new(),
+            whole: Some(whole),
+            empty,
+        })
+    }
+
+    /// The same partitions over `base`: the result of an operation that
+    /// kept every row and left the partition columns as they were. What
+    /// [`PartitionedSeries::map`] makes of such a result: no partition is
+    /// empty, and they are already in first-row order. `parts` are the
+    /// operation's per-partition results and `columns` says which column
+    /// of `base` each of their columns was written to.
+    fn kept(
+        &self,
+        rows: &Rows,
+        base: TimeSeries,
+        parts: Vec<TimeSeries>,
+        columns: Vec<(usize, usize)>,
+    ) -> PartitionedSeries {
+        PartitionedSeries {
+            by: self.by.clone(),
+            run_order: (0..rows.groups.rows.len()).collect(),
+            whole: None,
+            empty: base.row_range(0..0),
+            parts: Parts::Rows(Rows {
+                computed: Some(Arc::new(Computed { parts, columns })),
+                ..Rows::new(base, Arc::clone(&rows.groups))
+            }),
+        }
     }
 
     /// The aggs for a rolling call: as given when appending (the partition
@@ -559,7 +1168,7 @@ impl PartitionedSeries {
     where
         F: Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send,
     {
-        if self.parts.is_empty() {
+        if self.is_empty() {
             let out = f(&self.empty)?;
             // pond-ts gives the operation's result on the empty series; it
             // has no rows to split, but keep any it made.
@@ -571,9 +1180,10 @@ impl PartitionedSeries {
             };
             return Ok((parts, empty));
         }
-        let results = par::map(&self.parts, |(_, s)| f(s));
+        let made = self.parts();
+        let results = par::map(made, |(_, s)| f(s));
         let mut parts = Vec::with_capacity(results.len());
-        for ((key, _), out) in self.parts.iter().zip(results) {
+        for ((key, _), out) in made.iter().zip(results) {
             parts.push((key.clone(), out?));
         }
         let empty = parts[0].1.row_range(0..0);
@@ -581,8 +1191,6 @@ impl PartitionedSeries {
     }
 }
 
-/// The rows of `series` grouped by the values of the columns at `by`, in
-/// first-row order.
 /// Refuse an array column among the partition columns `by`. pond-ts keys
 /// an array by its text (`String(arr)`), so `['a,b']` and `['a', 'b']`
 /// would share a partition.
@@ -601,7 +1209,10 @@ fn refuse_array_keys(call: &'static str, series: &TimeSeries, by: &[usize]) -> R
     }
 }
 
-fn split(series: &TimeSeries, by: &[usize]) -> Vec<(PartitionKey, TimeSeries)> {
+/// The rows of `series` grouped by the values of the columns at `by`, in
+/// first-row order. Cost: one pass over the partition columns; no row is
+/// copied.
+fn split(series: &TimeSeries, by: &[usize]) -> Parts {
     // One number per row that is equal exactly when the rows' values in
     // every partition column are: the first column's value numbers, then
     // each further column folded in pairwise.
@@ -623,37 +1234,169 @@ fn split(series: &TimeSeries, by: &[usize]) -> Vec<(PartitionKey, TimeSeries)> {
     }
     // The numbers are dense, so renumbering into first-row order is a
     // lookup table, not a hash.
-    let mut part = vec![u32::MAX; ids.iter().max().map_or(0, |&m| m as usize + 1)];
+    let mut number = vec![u32::MAX; ids.iter().max().map_or(0, |&m| m as usize + 1)];
     let mut rows: Vec<Vec<usize>> = Vec::new();
-    for (i, &id) in ids.iter().enumerate() {
-        let slot = &mut part[id as usize];
+    let mut part = ids;
+    for (i, id) in part.iter_mut().enumerate() {
+        let slot = &mut number[*id as usize];
         if *slot == u32::MAX {
             *slot = rows.len() as u32;
             rows.push(Vec::new());
         }
         rows[*slot as usize].push(i);
+        *id = *slot;
     }
-    par::map(&rows, |rows| {
-        let key = by
-            .iter()
-            .map(|&c| value_at(series.columns()[c].data(), rows[0]))
-            .collect();
-        (key, series.take_rows(rows))
-    })
+    let keys = rows
+        .iter()
+        .map(|rows| {
+            by.iter()
+                .map(|&c| value_at(series.columns()[c].data(), rows[0]))
+                .collect()
+        })
+        .collect();
+    Parts::Rows(Rows::new(
+        series.clone(),
+        Arc::new(Groups { keys, rows, part }),
+    ))
+}
+
+/// The hash for numbering a partition column's values: a multiply and a
+/// rotate per 8 bytes and a mix at the end, started from a seed.
+/// `HashMap`'s default hash is built to hold up against keys chosen to
+/// collide and costs several times as much on short keys, and here it is
+/// run once per row. The seed is drawn per call from the standard
+/// library's random state, so which keys collide is still not
+/// predictable from outside. The numbers given out do not depend on it.
+#[derive(Clone)]
+struct Seeded(u64);
+
+impl Seeded {
+    fn new() -> Self {
+        Seeded(std::collections::hash_map::RandomState::new().hash_one(0u8))
+    }
+}
+
+impl BuildHasher for Seeded {
+    type Hasher = Mixer;
+    fn build_hasher(&self) -> Mixer {
+        Mixer(self.0)
+    }
+}
+
+struct Mixer(u64);
+
+impl Mixer {
+    #[inline]
+    fn word(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl Hasher for Mixer {
+    /// Whole 8-byte words, then the last 8 bytes again if any are left
+    /// over. Under 8 bytes: the first and last 4 (overlapping), or the
+    /// first, middle and last byte of 1 to 3. Fixed-size reads, so no
+    /// call to copy a short tail. Two texts that read the same here are
+    /// still told apart by the table's own comparison.
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let n = bytes.len();
+        let four = |at: usize| {
+            u64::from(u32::from_le_bytes(
+                bytes[at..at + 4].try_into().expect("4 bytes"),
+            ))
+        };
+        if n >= 8 {
+            let (words, rest) = bytes.as_chunks::<8>();
+            for word in words {
+                self.word(u64::from_le_bytes(*word));
+            }
+            if !rest.is_empty() {
+                self.word(u64::from_le_bytes(
+                    bytes[n - 8..].try_into().expect("8 bytes"),
+                ));
+            }
+        } else if n >= 4 {
+            self.word(four(0) | four(n - 4) << 32);
+        } else if n > 0 {
+            let (a, b, c) = (bytes[0], bytes[n / 2], bytes[n - 1]);
+            self.word(u64::from(a) | u64::from(b) << 8 | u64::from(c) << 16);
+        }
+        self.word(n as u64);
+    }
+    #[inline]
+    fn write_u8(&mut self, v: u8) {
+        self.word(u64::from(v));
+    }
+    #[inline]
+    fn write_u32(&mut self, v: u32) {
+        self.word(u64::from(v));
+    }
+    #[inline]
+    fn write_u64(&mut self, v: u64) {
+        self.word(v);
+    }
+    #[inline]
+    fn write_u128(&mut self, v: u128) {
+        self.word(v as u64);
+        self.word((v >> 64) as u64);
+    }
+    #[inline]
+    fn write_usize(&mut self, v: usize) {
+        self.word(v as u64);
+    }
+    /// The multiply leaves the low bits depending on the low bits of the
+    /// last word only; the table is indexed by them, so mix the high bits
+    /// down (the 64-bit finalizer of MurmurHash3).
+    #[inline]
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h ^ (h >> 33)
+    }
 }
 
 /// A small integer per row that is equal exactly when the values are
 /// (a gap is 0).
 fn value_ids(data: &ColumnData) -> Vec<u32> {
-    fn ids<K: std::hash::Hash + Eq>(values: impl Iterator<Item = Option<K>>) -> Vec<u32> {
-        let mut seen: HashMap<K, u32> = HashMap::new();
+    /// Text hashed as its bytes alone (`str` adds an end marker, a
+    /// second round of the hash).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Text<'a>(&'a str);
+    impl Hash for Text<'_> {
+        #[inline]
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            state.write(self.0.as_bytes());
+        }
+    }
+    fn ids<K: Hash + Eq + Copy>(values: impl Iterator<Item = Option<K>>) -> Vec<u32> {
+        let mut seen: HashMap<K, u32, Seeded> = HashMap::with_hasher(Seeded::new());
+        // Rows of one entity often come in runs: then the value of the
+        // row before needs no lookup. Tried on the first rows, and kept up
+        // only if it found a repeat on at least one in eight of them.
+        const TRIAL: usize = 1024;
+        let mut last: Option<(K, u32)> = None;
+        let (mut tries, mut repeats, mut runs) = (0usize, 0usize, true);
         values
-            .map(|v| match v {
-                None => 0,
-                Some(v) => {
-                    let next = seen.len() as u32 + 1;
-                    *seen.entry(v).or_insert(next)
+            .map(|v| {
+                let Some(v) = v else { return 0 };
+                if runs {
+                    if let Some((same, id)) = last
+                        && same == v
+                    {
+                        repeats += 1;
+                        return id;
+                    }
+                    tries += 1;
+                    runs = tries < TRIAL || repeats >= tries / 8;
                 }
+                let next = seen.len() as u32 + 1;
+                let id = *seen.entry(v).or_insert(next);
+                last = Some((v, id));
+                id
             })
             .collect()
     }
@@ -661,7 +1404,7 @@ fn value_ids(data: &ColumnData) -> Vec<u32> {
         // `+ 0.0` turns -0 into 0, so they are one partition.
         ColumnData::Number(c) => ids(c.iter().map(|v| v.map(|v| (v + 0.0).to_bits()))),
         ColumnData::Decimal(c) => ids(c.iter().map(|v| v.map(|d| d.value))),
-        ColumnData::String(c) => ids(c.iter()),
+        ColumnData::String(c) => ids(c.iter().map(|v| v.map(Text))),
         ColumnData::Boolean(c) => ids(c.iter()),
         ColumnData::Array(_) => unreachable!("partition_by refuses array columns"),
     }
@@ -1215,6 +1958,613 @@ mod tests {
         assert!(one.len() > 30_000);
         assert_eq!(one, run(4));
         assert_eq!(one, run(7));
+    }
+
+    /// Everything a caller can see of a series: name, key, and each
+    /// column's name, kind, required flag and values, with numbers
+    /// compared as raw bits (a gap stored as an infinity is not a gap
+    /// stored as `NaN`), text by how it is held, decimals by precision.
+    fn exact(a: &TimeSeries, b: &TimeSeries, what: &str) {
+        assert_eq!(a.name(), b.name(), "{what}: name");
+        assert_eq!(a.key_name(), b.key_name(), "{what}: key name");
+        assert_eq!(a.key(), b.key(), "{what}: key");
+        assert_eq!(a.schema(), b.schema(), "{what}: schema");
+        for (x, y) in a.columns().iter().zip(b.columns()) {
+            let name = x.name();
+            match (x.data(), y.data()) {
+                (ColumnData::Number(p), ColumnData::Number(q)) => {
+                    let bits = |c: &crate::Float64Column| {
+                        c.values().iter().map(|v| v.to_bits()).collect::<Vec<u64>>()
+                    };
+                    assert_eq!(bits(p), bits(q), "{what}: column {name}");
+                    assert_eq!(p.all_finite(), q.all_finite(), "{what}: column {name}");
+                }
+                (ColumnData::String(p), ColumnData::String(q)) => {
+                    assert_eq!(
+                        p.is_dictionary(),
+                        q.is_dictionary(),
+                        "{what}: column {name} held as a dictionary"
+                    );
+                    assert_eq!(p, q, "{what}: column {name}");
+                }
+                (ColumnData::Decimal(p), ColumnData::Decimal(q)) => {
+                    assert_eq!(p.precision(), q.precision(), "{what}: column {name}");
+                    assert_eq!(p.scale(), q.scale(), "{what}: column {name}");
+                    assert_eq!(p, q, "{what}: column {name}");
+                }
+                (p, q) => assert_eq!(p, q, "{what}: column {name}"),
+            }
+        }
+    }
+
+    /// `fast` (a short cut) against `slow` (the same operation through
+    /// `map`): the collected series, then every partition, then the
+    /// collected series again now the partitions are made.
+    fn same(
+        fast: &Result<PartitionedSeries>,
+        slow: &Result<PartitionedSeries>,
+        what: &str,
+    ) -> Option<(PartitionedSeries, PartitionedSeries)> {
+        let (fast, slow) = match (fast, slow) {
+            (Ok(fast), Ok(slow)) => (fast, slow),
+            (Err(fast), Err(slow)) => {
+                assert_eq!(fast.to_string(), slow.to_string(), "{what}: error");
+                return None;
+            }
+            (fast, slow) => panic!(
+                "{what}: one failed and one did not: {:?} / {:?}",
+                fast.as_ref().map(|_| ()),
+                slow.as_ref().map(|_| ())
+            ),
+        };
+        exact(
+            &fast.collect().unwrap(),
+            &slow.collect().unwrap(),
+            &format!("{what}: collect"),
+        );
+        assert_eq!(fast.by(), slow.by(), "{what}: by");
+        assert_eq!(fast.len(), slow.len(), "{what}: partitions");
+        assert_eq!(fast.whole.is_some(), slow.whole.is_some(), "{what}: whole");
+        assert_eq!(fast.run_order, slow.run_order, "{what}: run order");
+        exact(&fast.empty, &slow.empty, &format!("{what}: empty"));
+        for (i, ((ka, a), (kb, b))) in fast.iter().zip(slow.iter()).enumerate() {
+            assert_eq!(ka, kb, "{what}: key of partition {i}");
+            exact(a, b, &format!("{what}: partition {i}"));
+        }
+        exact(
+            &fast.collect().unwrap(),
+            &slow.collect().unwrap(),
+            &format!("{what}: collect after iter"),
+        );
+        Some((fast.clone(), slow.clone()))
+    }
+
+    /// Panels to try the short cuts on: `(name, series, partition columns)`.
+    fn panels() -> Vec<(&'static str, TimeSeries, Vec<&'static str>)> {
+        use arrow_array::{DictionaryArray, types::Int32Type};
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let names = ["a", "b", "c", "d", "e"];
+        // `shape` 0: rows at one time in a random partition order, gaps in
+        // the partition column. 1: partitions interleaved in the same
+        // order at every time. 2: runs of one partition, times all
+        // different. 3: one partition. 4: no rows.
+        let mut build = |shape: usize, rows: usize| -> TimeSeries {
+            let mut time = Vec::new();
+            let mut host = Vec::new();
+            let mut t = 0i64;
+            for i in 0..rows {
+                let pick = match shape {
+                    0 => (next() % 6) as usize,
+                    1 => i % 4,
+                    2 => (i / 7) % 3,
+                    _ => 0,
+                };
+                match shape {
+                    0 => t += (next() % 3 / 2) as i64 * 1000,
+                    1 => t = (i / 4) as i64 * 1000,
+                    _ => t += 1 + (next() % 5) as i64 * 500,
+                }
+                time.push(t);
+                host.push(names.get(pick).copied());
+            }
+            let number = |next: &mut dyn FnMut() -> u64, gaps: u64| -> Vec<f64> {
+                (0..rows)
+                    .map(|_| {
+                        let r = next();
+                        match r % gaps {
+                            0 => f64::NAN,
+                            // A gap held as an infinity stays one.
+                            1 if gaps > 3 => f64::INFINITY,
+                            _ => (r % 100_003) as f64 / 7.0 - 5000.0,
+                        }
+                    })
+                    .collect()
+            };
+            let v = number(&mut next, 9);
+            let w = number(&mut next, 4);
+            let whole: Vec<f64> = (0..rows).map(|_| (next() % 50) as f64).collect();
+            let flag: Vec<Option<bool>> = (0..rows)
+                .map(|i| (shape != 0 || i % 11 != 3).then_some(host[i].is_some_and(|h| h < "c")))
+                .collect();
+            let words: DictionaryArray<Int32Type> = (0..rows)
+                .map(|_| {
+                    let r = next() % 5;
+                    (r != 0).then(|| ["x", "y", "z", "x"][r as usize - 1])
+                })
+                .collect();
+            let exact_values = (0..rows).map(|_| {
+                let r = next();
+                (r % 6 != 0).then_some((r % 100_000) as i128 - 50_000)
+            });
+            let price = crate::DecimalColumn::with_type(exact_values.collect(), 12, 2).unwrap();
+            let lists = crate::ArrayColumn::from_options((0..rows).map(|i| {
+                (i % 5 != 0).then(|| vec![crate::Scalar::from(i as f64), crate::Scalar::from("t")])
+            }));
+            // In `dict` every partition's rows are one value (or gaps),
+            // so it can be a partition column held as a dictionary.
+            let dict: DictionaryArray<Int32Type> = host.iter().copied().collect();
+            let columns = vec![
+                Column::optional("host", host.clone()),
+                Column::optional_raw("v", v),
+                Column::optional("flag", flag),
+                Column::from_data(
+                    "words".into(),
+                    crate::StringColumn::dictionary(words).unwrap(),
+                    false,
+                ),
+                Column::optional_raw("w", w),
+                Column::from_data("price".into(), price, false),
+                Column::required("whole", whole),
+                Column::from_data("lists".into(), lists, false),
+                Column::from_data(
+                    "dict".into(),
+                    crate::StringColumn::dictionary(dict).unwrap(),
+                    false,
+                ),
+            ];
+            TimeSeries::new("panel", time, columns).unwrap()
+        };
+        let ranges = {
+            let s = build(0, 60);
+            let begin = s.key().begin().to_vec();
+            let end = begin
+                .iter()
+                .enumerate()
+                .map(|(i, b)| b + (i as i64 % 3) * 10);
+            // Sorted by begin, then end, within each run of equal begins.
+            let mut keys: Vec<(i64, i64)> = begin.iter().copied().zip(end).collect();
+            keys.sort();
+            let keys = TimeRangeKeys {
+                begin: keys.iter().map(|k| k.0).collect(),
+                end: keys.iter().map(|k| k.1).collect(),
+            };
+            TimeSeries::from_time_ranges("ranges", keys, s.columns().to_vec()).unwrap()
+        };
+        vec![
+            ("ties", build(0, 300), vec!["host"]),
+            ("interleaved", build(1, 240), vec!["host"]),
+            ("runs", build(2, 200), vec!["host"]),
+            ("one partition", build(3, 40), vec!["host"]),
+            ("no rows", build(4, 0), vec!["host"]),
+            ("two columns", build(0, 300), vec!["host", "flag"]),
+            ("by a dictionary", build(0, 200), vec!["dict"]),
+            ("by a number", build(0, 200), vec!["whole"]),
+            ("by a decimal", build(1, 120), vec!["price"]),
+            ("ranges", ranges, vec!["flag"]),
+        ]
+    }
+
+    #[test]
+    fn row_keeping_short_cuts_give_what_map_gives() {
+        let linear = [("v", Fill::Linear)];
+        let mixed = [("w", Fill::Hold), ("v", Fill::Value(Value::Number(-1.5)))];
+        let text = [("words", Fill::Hold), ("v", Fill::Zero)];
+        let caps = FillLimits::none().limit(2).max_gap("3s");
+        type Op<'a> = (
+            &'a str,
+            Box<dyn Fn(&PartitionedSeries) -> Result<PartitionedSeries> + 'a>,
+            Box<dyn Fn(&TimeSeries) -> Result<TimeSeries> + Sync + Send + 'a>,
+        );
+        let out = || Change::default().output("dv");
+        let drop = || Change::default().first(crate::FirstRow::Drop);
+        let ops: Vec<Op> = vec![
+            (
+                "diff",
+                Box::new(|p| p.diff(&["v"])),
+                Box::new(|g| g.diff(&["v"])),
+            ),
+            (
+                "diff two",
+                Box::new(|p| p.diff(&["w", "v"])),
+                Box::new(|g| g.diff(&["w", "v"])),
+            ),
+            (
+                "diff twice",
+                Box::new(|p| p.diff(&["v", "v"])),
+                Box::new(|g| g.diff(&["v", "v"])),
+            ),
+            (
+                "diff to a new column",
+                Box::new(|p| p.diff_with(&["v"], out())),
+                Box::new(|g| g.diff_with(&["v"], out())),
+            ),
+            (
+                "diff to a taken name",
+                Box::new(|p| p.diff_with(&["v"], Change::default().output("words"))),
+                Box::new(|g| g.diff_with(&["v"], Change::default().output("words"))),
+            ),
+            (
+                "diff dropping the first row",
+                Box::new(|p| p.diff_with(&["v"], drop())),
+                Box::new(|g| g.diff_with(&["v"], drop())),
+            ),
+            (
+                "diff of a decimal",
+                Box::new(|p| p.diff(&["price"])),
+                Box::new(|g| g.diff(&["price"])),
+            ),
+            (
+                "diff of a partition column",
+                Box::new(|p| p.diff(&["whole"])),
+                Box::new(|g| g.diff(&["whole"])),
+            ),
+            (
+                "diff of text",
+                Box::new(|p| p.diff(&["words"])),
+                Box::new(|g| g.diff(&["words"])),
+            ),
+            (
+                "diff of nothing",
+                Box::new(|p| p.diff(&[])),
+                Box::new(|g| g.diff(&[])),
+            ),
+            (
+                "diff of an unknown column",
+                Box::new(|p| p.diff(&["v", "nope"])),
+                Box::new(|g| g.diff(&["v", "nope"])),
+            ),
+            (
+                "rate",
+                Box::new(|p| p.rate(&["v"])),
+                Box::new(|g| g.rate(&["v"])),
+            ),
+            (
+                "rate to a new column",
+                Box::new(|p| p.rate_with(&["w"], out())),
+                Box::new(|g| g.rate_with(&["w"], out())),
+            ),
+            (
+                "pct_change",
+                Box::new(|p| p.pct_change(&["v", "w"])),
+                Box::new(|g| g.pct_change(&["v", "w"])),
+            ),
+            (
+                "pct_change to a new column",
+                Box::new(|p| p.pct_change_with(&["v"], out())),
+                Box::new(|g| g.pct_change_with(&["v"], out())),
+            ),
+            (
+                "shift down",
+                Box::new(|p| p.shift(&["v"], 2)),
+                Box::new(|g| g.shift(&["v"], 2)),
+            ),
+            (
+                "shift up",
+                Box::new(|p| p.shift(&["w", "whole"], -1)),
+                Box::new(|g| g.shift(&["w", "whole"], -1)),
+            ),
+            (
+                "shift text",
+                Box::new(|p| p.shift(&["words", "v"], 1)),
+                Box::new(|g| g.shift(&["words", "v"], 1)),
+            ),
+            (
+                "cumulative",
+                Box::new(|p| p.cumulative(&[("v", Reducer::Sum), ("w", Reducer::Max)])),
+                Box::new(|g| g.cumulative(&[("v", Reducer::Sum), ("w", Reducer::Max)])),
+            ),
+            (
+                "cumulative twice",
+                Box::new(|p| p.cumulative(&[("v", Reducer::Sum), ("v", Reducer::Max)])),
+                Box::new(|g| g.cumulative(&[("v", Reducer::Sum), ("v", Reducer::Max)])),
+            ),
+            (
+                "cumulative increase",
+                Box::new(|p| p.cumulative(&[("v", crate::Cumulative::increase())])),
+                Box::new(|g| g.cumulative(&[("v", crate::Cumulative::increase())])),
+            ),
+            (
+                "fill linear",
+                Box::new(|p| p.fill(&linear)),
+                Box::new(|g| g.fill(&linear)),
+            ),
+            (
+                "fill hold and value",
+                Box::new(|p| p.fill(&mixed)),
+                Box::new(|g| g.fill(&mixed)),
+            ),
+            (
+                "fill text",
+                Box::new(|p| p.fill(&text)),
+                Box::new(|g| g.fill(&text)),
+            ),
+            (
+                "fill with caps",
+                Box::new(|p| p.fill_with(&linear, &caps)),
+                Box::new(|g| g.fill_with(&linear, &caps)),
+            ),
+            (
+                "fill with a bad cap",
+                Box::new(|p| p.fill_with(&linear, &FillLimits::none().max_gap("soon"))),
+                Box::new(|g| g.fill_with(&linear, &FillLimits::none().max_gap("soon"))),
+            ),
+            (
+                "fill the required column",
+                Box::new(|p| p.fill(&[("whole", Fill::Zero)])),
+                Box::new(|g| g.fill(&[("whole", Fill::Zero)])),
+            ),
+            (
+                "fill_all linear",
+                Box::new(|p| p.fill_all(Fill::Linear)),
+                Box::new(|g| g.fill_all(Fill::Linear)),
+            ),
+            (
+                "fill_all linear with caps",
+                Box::new(|p| p.fill_all_with(Fill::Linear, &caps)),
+                Box::new(|g| g.fill_all_with(Fill::Linear, &caps)),
+            ),
+            (
+                "fill_all hold",
+                Box::new(|p| p.fill_all(Fill::Hold)),
+                Box::new(|g| g.fill_all(Fill::Hold)),
+            ),
+            (
+                "fill_all zero",
+                Box::new(|p| p.fill_all(Fill::Zero)),
+                Box::new(|g| g.fill_all(Fill::Zero)),
+            ),
+            (
+                "fill_all value",
+                Box::new(|p| p.fill_all(Fill::Value(Value::Number(1.0)))),
+                Box::new(|g| g.fill_all(Fill::Value(Value::Number(1.0)))),
+            ),
+        ];
+        let mut short_cuts = 0;
+        for (panel, series, by) in panels() {
+            let p = series.partition_by(&by).unwrap();
+            for (name, fast, each) in &ops {
+                let what = format!("{panel}: {name}");
+                let quick = fast(&p);
+                short_cuts += quick
+                    .as_ref()
+                    .is_ok_and(|q| q.whole.is_none() && matches!(q.parts, Parts::Rows(_)))
+                    as usize;
+                let Some((a, b)) = same(&quick, &p.map(each), &what) else {
+                    continue;
+                };
+                // A second operation on each: a short cut on a short cut's
+                // result, and `map` on it.
+                same(
+                    &a.fill_all(Fill::Linear),
+                    &b.map(|g| g.fill_all(Fill::Linear)),
+                    &format!("{what}, then fill"),
+                );
+                same(
+                    &a.map(|g| g.shift(&["v"], 1)),
+                    &b.map(|g| g.shift(&["v"], 1)),
+                    &format!("{what}, then map"),
+                );
+                same(
+                    &a.dedupe(Keep::First),
+                    &b.dedupe(Keep::First),
+                    &format!("{what}, then dedupe"),
+                );
+            }
+        }
+        // The short cuts did run (not everything fell back to `map`).
+        assert!(short_cuts > 100, "{short_cuts}");
+    }
+
+    #[test]
+    fn rolling_short_cuts_give_what_map_gives() {
+        use crate::rolling::Alignment::{Centered, Leading, Trailing};
+        let lists = [
+            vec![Agg::new("out", "v", Reducer::Avg)],
+            vec![
+                Agg::of("w", Reducer::Stdev),
+                Agg::of("v", Reducer::Last),
+                Agg::of("whole", Reducer::Sum),
+            ],
+            vec![
+                Agg::of("w", Reducer::Median),
+                Agg::new("lo", "v", Reducer::Min),
+                Agg::new("n", "v", Reducer::Count),
+                Agg::new("d", "w", Reducer::Difference),
+            ],
+            vec![],
+            // Not short cuts: text, decimal and list outputs, an output
+            // named after a partition column, a partition column as a
+            // source, and errors.
+            vec![Agg::of("v", Reducer::Avg), Agg::of("words", Reducer::Last)],
+            vec![Agg::new("p", "price", Reducer::Max)],
+            vec![Agg::new("u", "v", Reducer::Unique)],
+            vec![Agg::new("host", "v", Reducer::Avg)],
+            vec![Agg::new("flag", "v", Reducer::Avg)],
+            vec![Agg::new("n", "host", Reducer::Count)],
+            vec![Agg::new("out", "nope", Reducer::Avg)],
+            vec![
+                Agg::new("out", "v", Reducer::Avg),
+                Agg::new("out", "w", Reducer::Avg),
+            ],
+            vec![Agg::new("time", "v", Reducer::Avg)],
+            vec![
+                Agg::new("rows", "v", Reducer::Avg),
+                Agg::new("rows_", "w", Reducer::Sum),
+            ],
+        ];
+        let mut choices = Vec::new();
+        for alignment in [Trailing, Leading, Centered] {
+            for min_samples in [0, 1, 2, 4, 1000] {
+                for append in [false, true] {
+                    choices.push(Rolling {
+                        alignment,
+                        min_samples,
+                        append,
+                    });
+                }
+            }
+        }
+        let mut short_cuts = 0;
+        for (panel, series, by) in panels() {
+            let p = series.partition_by(&by).unwrap();
+            for (l, aggs) in lists.iter().enumerate() {
+                for options in &choices {
+                    let options = *options;
+                    let all = p.rolling_outputs(aggs, options);
+                    let mut check =
+                        |what: String,
+                         fast: Result<PartitionedSeries>,
+                         slow: Result<PartitionedSeries>| {
+                            short_cuts += fast
+                                .as_ref()
+                                .is_ok_and(|q| matches!(q.parts, Parts::Rows(_)))
+                                as usize;
+                            if let Some((a, b)) = same(&fast, &slow, &what) {
+                                same(
+                                    &a.fill_all(Fill::Hold),
+                                    &b.map(|g| g.fill_all(Fill::Hold)),
+                                    &format!("{what}, then fill"),
+                                );
+                                let again = [Agg::new("again", "out", Reducer::Sum)];
+                                same(
+                                    &a.rolling_rows(2, &again, Rolling::default()),
+                                    &b.map(|g| {
+                                        g.rolling_rows(
+                                            2,
+                                            &b.rolling_outputs(&again, Rolling::default()),
+                                            Rolling::default(),
+                                        )
+                                    }),
+                                    &format!("{what}, then rolling"),
+                                );
+                            }
+                        };
+                    for rows in [0, 1, 3, 20] {
+                        check(
+                            format!("{panel}: {rows} rows, aggs {l}, {options:?}"),
+                            p.rolling_rows(rows, aggs, options),
+                            p.map(|g| g.rolling_rows(rows, &all, options)),
+                        );
+                    }
+                    for window in ["0s", "1ms", "1s", "3s", "1h", "soon"] {
+                        check(
+                            format!("{panel}: {window}, aggs {l}, {options:?}"),
+                            p.rolling_with(window, aggs, options),
+                            p.map(|g| g.rolling_with(window, &all, options)),
+                        );
+                    }
+                }
+                let all = p.with_partition_outputs(aggs);
+                same(
+                    &p.rolling("2s", aggs),
+                    &p.map(|g| g.rolling("2s", &all)),
+                    &format!("{panel}: rolling, aggs {l}"),
+                );
+            }
+        }
+        assert!(short_cuts > 1000, "{short_cuts}");
+    }
+
+    #[test]
+    fn collect_sorts_only_rows_out_of_partition_order() {
+        // b before a at time 0, then a before b: the merge puts a's row
+        // first at time 1000 only if partition order says so.
+        let p = hosts().partition_by(&["host"]).unwrap();
+        let Parts::Rows(rows) = &p.parts else {
+            panic!("a fresh split is held as rows");
+        };
+        assert_eq!(
+            rows.groups.merge_order(hosts().key()),
+            Some(vec![0, 1, 3, 2, 4])
+        );
+        let d = p.diff(&["v"]).unwrap().collect().unwrap();
+        let slow = p.map(|g| g.diff(&["v"])).unwrap().collect().unwrap();
+        exact(&d, &slow, "diff");
+        // In partition order already: nothing to sort.
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 0, 1000, 1000],
+            vec![
+                Column::required("host", vec!["a", "b", "a", "b"]),
+                Column::required("v", vec![1.0, 2.0, 3.0, 4.0]),
+            ],
+        )
+        .unwrap();
+        let p = s.partition_by(&["host"]).unwrap();
+        let Parts::Rows(rows) = &p.parts else {
+            panic!("a fresh split is held as rows");
+        };
+        assert_eq!(rows.groups.merge_order(s.key()), None);
+    }
+
+    #[test]
+    fn value_ids_number_values_in_first_seen_order() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        // Texts of every length from 0 to 20 bytes, many sharing a start
+        // or an end, in runs and scattered, with gaps.
+        let mut words: Vec<String> = Vec::new();
+        for len in 0..=20 {
+            for k in 0..12u8 {
+                let mut w: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 7)).collect();
+                if let Some(last) = w.last_mut() {
+                    *last = b'A' + k;
+                }
+                if len > 9 && k % 2 == 0 {
+                    w[0] = b'0' + k;
+                }
+                words.push(String::from_utf8(w).unwrap());
+            }
+        }
+        for runs in [1, 3, 40] {
+            let rows: Vec<Option<&str>> = (0..6000)
+                .map(|i| {
+                    let r = next();
+                    let pick = if i % runs == 0 { r } else { r / 1000 * 1000 };
+                    (r % 23 != 0).then(|| words[(pick % words.len() as u64) as usize].as_str())
+                })
+                .collect();
+            let mut seen: Vec<&str> = Vec::new();
+            let want: Vec<u32> = rows
+                .iter()
+                .map(|v| match v {
+                    None => 0,
+                    Some(v) => match seen.iter().position(|s| s == v) {
+                        Some(at) => at as u32 + 1,
+                        None => {
+                            seen.push(v);
+                            seen.len() as u32
+                        }
+                    },
+                })
+                .collect();
+            assert_eq!(value_ids(&ColumnData::from(rows)), want, "runs of {runs}");
+        }
+        let numbers = vec![Some(0.0), Some(-0.0), None, Some(1.5), Some(0.0), Some(1.5)];
+        assert_eq!(value_ids(&ColumnData::from(numbers)), [1, 1, 0, 2, 1, 2]);
+        let flags = vec![Some(true), None, Some(false), Some(true)];
+        assert_eq!(value_ids(&ColumnData::from(flags)), [1, 0, 2, 1]);
     }
 
     #[test]

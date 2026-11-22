@@ -105,9 +105,10 @@ the same `ChartSeries` a `LineChart` uses.
 - **Selection:** opt in with `id`, as on `<LineChart>`; the pointer counts
   as on the area anywhere between its line and its baseline.
 - **Theming:** the `theme.area` slot (`AreaStyle` =
-  `{ color, width, fill, fillOpacity, flatFill? }` plus interaction and band
-  options); default roles `default` / `in` /
-  `out`.
+  `{ color, width, fill, fillOpacity, flatFill?, dash? }` plus interaction
+  and band options); default roles `default` / `in` / `out`. `dash` (px
+  on/off, as on a line) dashes the outline only; the fill stays whole, and
+  the legend swatch shows the dashed edge.
 
 ## Cautions
 

@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { LineCursor } from './cursors.js';
+import { Legend } from './Legend.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
 const N = 60;
@@ -377,4 +378,61 @@ export const SolidFillAboveBelow: Story = {
       </ChartRow>
     </ChartContainer>
   ),
+};
+
+/**
+ * **Dashed outline** (`AreaStyle.dash`). Two areas in the same hue: `spot` is
+ * the shipped default, `compare` is the same style with `dash: [6, 4]`. Only
+ * the outline dashes; the fill stays whole, so the comparison reads as the
+ * same kind of shape with a dashed rim. The legend swatch follows: three
+ * dashes over the fill. Like colour and width, dash is set on the role in the
+ * theme, and the call site only names the role with `as`.
+ */
+const dashedOutline: ChartTheme = {
+  ...defaultTheme,
+  area: {
+    ...defaultTheme.area,
+    compare: { ...defaultTheme.area.default, dash: [6, 4] },
+  },
+};
+
+function compared() {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const spot = 300 + 150 * Math.sin(i / 9);
+    const compare = 260 + 120 * Math.sin(i / 9 + 0.8);
+    rows.push([BASE + i * STEP, spot, compare]);
+  }
+  return new TimeSeries({
+    name: 'compared',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'spot', kind: 'number' },
+      { name: 'compare', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
+export const DashedOutline: Story = {
+  render: () => {
+    const s = compared();
+    return (
+      <ChartContainer range={TIME_RANGE} width={560} theme={dashedOutline}>
+        <LineCursor />
+        <ChartRow height={240}>
+          <Layers>
+            <AreaChart series={s} column="spot" as="spot" baseline="floor" />
+            <AreaChart
+              series={s}
+              column="compare"
+              as="compare"
+              baseline="floor"
+            />
+          </Layers>
+        </ChartRow>
+        <Legend />
+      </ChartContainer>
+    );
+  },
 };

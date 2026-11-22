@@ -12,6 +12,8 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
+import { AreaChart } from '../src/AreaChart.js';
+import { defaultTheme } from '../src/theme.js';
 import { BandChart } from '../src/BandChart.js';
 import { BarChart } from '../src/BarChart.js';
 import { ScatterChart } from '../src/ScatterChart.js';
@@ -485,6 +487,75 @@ describe('<Legend> — swatch glyphs + placement (the #512 follow-up polish)', (
           {
             label: 'observed',
             swatch: { kind: 'line', color: '#123', width: 2 },
+          },
+        ]}
+      />,
+    );
+    expect(legendCard(container).querySelectorAll('line')).toHaveLength(1);
+  });
+
+  it('an area swatch with a dashed outline draws three dashes over a whole fill', () => {
+    const { container } = render(
+      <Legend
+        items={[
+          {
+            label: 'compare',
+            swatch: {
+              kind: 'area',
+              line: '#64748b',
+              fill: '#64748b',
+              fillOpacity: 0.2,
+              dash: [6, 4],
+            },
+          },
+        ]}
+      />,
+    );
+    const card = legendCard(container);
+    expect(card.querySelectorAll('line')).toHaveLength(3);
+    // One fill rect, not cut into pieces.
+    expect(card.querySelectorAll('rect')).toHaveLength(1);
+  });
+
+  it("an AreaChart registers its theme style's dash with the legend", () => {
+    const theme = {
+      ...defaultTheme,
+      area: {
+        ...defaultTheme.area,
+        compare: { ...defaultTheme.area.default, dash: [6, 4] },
+      },
+    };
+    const { container } = renderChart(
+      <ChartContainer range={[0, 2000]} width={400} theme={theme}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            <AreaChart series={series()} column="v" as="spot" axis="a" />
+            <AreaChart series={series()} column="w" as="compare" axis="a" />
+          </Layers>
+        </ChartRow>
+        <Legend />
+      </ChartContainer>,
+    );
+    const card = legendCard(container);
+    // A label's parent is its row: the swatch sits beside it.
+    const row = (label: string) => within(card).getByText(label).parentElement!;
+    expect(row('spot').querySelectorAll('line')).toHaveLength(1);
+    expect(row('compare').querySelectorAll('line')).toHaveLength(3);
+  });
+
+  it('an area swatch without a dash keeps one solid outline', () => {
+    const { container } = render(
+      <Legend
+        items={[
+          {
+            label: 'spot',
+            swatch: {
+              kind: 'area',
+              line: '#123',
+              fill: '#123',
+              fillOpacity: 0.2,
+            },
           },
         ]}
       />,

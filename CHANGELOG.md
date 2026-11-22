@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.76.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.77.0...HEAD
+[0.77.0]: https://github.com/pond-ts/pond/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/pond-ts/pond/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/pond-ts/pond/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/pond-ts/pond/compare/v0.73.0...v0.74.0
@@ -81,14 +82,58 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
-- **pond-rs `js_number`** is public: JavaScript's `String(x)` for a number
-  (`1e-7`, `1.5e+21`, `-0` as `0`), for Rust code that must write numbers
-  into text exactly as pond-ts does. The Rust port of `@pond-ts/process`
-  ([PND-RUST-R5]) builds its ids with it.
-- **pond-rs `Reducer::reduce`**: one reducer over a slice of numbers
-  (`None` for the list reducers and for an out-of-range percentile), so
-  code outside the crate can bin a column the way `aggregate` does. The
-  Rust port of `@pond-ts/process` uses it for `shape`.
+- **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's
+  outline (its top edge), the same shape and meaning as `LineStyle.dash`
+  (`[6, 4]` = 6px on, 4px off). The fill is never dashed. Set it on an area
+  role in the theme, as with colour and width. The legend swatch shows the
+  dashed outline over the fill. Asked for by a consumer drawing a comparison
+  area in the same hue as the series it compares to.
+
+- **`@pond-ts/process`: `log` and `sqrt` basic steps.** The natural log
+  and the square root of a column, row by row; a gap where either is
+  undefined (log of zero or below, the root of a negative). Their units are
+  `log` and `sqrt`: neither keeps its input's, so an op that demands a
+  `variance` refuses the root of one. With `divide`
+  (already a gap on a zero denominator) and `scale`, they make a log return
+  (`log(divide(close, shift(close)))`) and an annualised volatility from a
+  daily variance (`scale(sqrt(scale(var, 252)), 100)`) without custom code.
+  Part of `BASIC_OPS`, so a registry built from it lists two more steps.
+
+- **pond-rs `js_log`** is public: JavaScript's `Math.log`, bit for bit
+  (V8's fdlibm routine; the system `f64::ln` differs in the last bit on
+  about 2% of inputs). The Rust port of `@pond-ts/process` uses it for
+  `log`.
+
+### Changed
+
+- **pond-rs: per-entity work no longer copies every column per entity.**
+  After `partition_by`, the operations that keep each row and work on number
+  columns (`diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`,
+  `rolling`, `rolling_rows` and their `_with` forms) run on each entity's
+  rows in place and write back in the original row order; columns they do
+  not read are shared with the source. Same answers, bit for bit. A 20-row
+  rolling average over 1M rows and 8 hosts went from about 134 ms to 29 ms on
+  one core, and per-symbol `diff` and linear `fill` with `collect` from about
+  53 ms to 13 ms. `partition_by` itself is now lazy: the per-entity series
+  are built the first time they are asked for (`iter`, `get`,
+  `into_groups`, `map`), so that cost moves there. Partition values are
+  numbered with a seeded multiply hash in place of `HashMap`'s default.
+
+- **pond-rs: list columns read from Arrow stay in Arrow's layout.** A list
+  column of non-null numbers or text read with `from_arrow` or from an Arrow
+  file is kept as read, and its per-row cells are built the first time one
+  is read. `samples` over a number or decimal column writes its list
+  directly, and `array_aggregate` number reducers no longer allocate per
+  row. Same answers, bit for bit. On 100k rows, reading two list columns
+  from Arrow went from about 35 ms to 1.2 ms and from an Arrow file from
+  about 38 ms to 2.3 ms; a caller who then reads every cell saves less
+  (about 34 ms to 27 ms). `samples` over 1M rows went from about 21 ms to
+  1.8 ms. Writing list columns to Arrow went from about 6.9 ms to 3.8 ms.
+
+## [0.77.0] — 2026-11-19
+
+### Added
+
 - **`@pond-ts/charts`: `<Baseline lineWidth>` and `<Marker lineWidth>`**
   ([PND-BASELINEWIDTH]) — the line's stroke width in px (default 1; both used
   to be fixed at 1px). The theme can set it too, as `annotation.lineWidth` or
@@ -96,15 +141,138 @@ include new features and type-level changes; patch bumps are strictly additive.
   and the role over the register. The invisible grab area widens to cover a
   line thicker than its 10px. Region edges, zone boundaries and the cross-row
   guides stay 1px.
+
 - **`@pond-ts/charts`: `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]) —
   pond's default annotation register (`color` `#14b8a6`, `fillOpacity` 0.1,
   `depth` `[1, 0.7, 0.4]`) is now exported. The marks, the cross-row guides,
   the `<Marker indicator>` x-axis pills and the list's selected-row edge all
   fall back to this one object, so a host no longer copies it into its theme.
 
+- **`@pond-ts/process`: basic steps and summary folds** — the pieces a finance
+  MCP server needs past "what is RSI now?". `BASIC_OPS`: `add`, `subtract`,
+  `multiply`, `divide`, `scale` (× factor + offset), `shift` (positive reads
+  the past, negative the future, for forward returns), `compare` /
+  `compareColumns` (write 1/0), `and`, `or`, `cumulative` (`sum` / `product`
+  / `max` / `min` — compounding, running peaks) and `hold` (carry the last
+  non-zero value, turning crossover events into a position). `SUMMARY_FOLDS`:
+  `mean`, `stdev` (population, as pond's reducer), `sum`, `count`,
+  `percentile` (`q` 0–100, linear), `shareTrue`, `lastTrue`, `lastChange`,
+  `events` (the newest `limit` dates plus the total), `meanWhere` (an average
+  over the rows a signal marks) and `change` (first, last, percent). Neither
+  set is pre-registered, so `createRegistry()` and what it describes to a
+  model are unchanged; `define` them to opt in. All are one pass over packed
+  columns (`percentile` sorts): 4–14 ms per op and 9–20 ms per fold at 1M rows
+  (`scripts/perf-kit.mjs`).
+
+- **`@pond-ts/financial/process`: the study catalog as process steps.**
+  `studyOps({ sessions? })` returns every study as an `OpDef` with its params
+  and ranges, input roles and output units — the bridge that until now lived
+  only in a test, with no params. A required tuning param takes its catalog
+  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`.
+  Four are left out and listed in `UNBRIDGED_STUDIES` with the reason:
+  `anchoredVwap` (its anchor is an instant, which a process param cannot be)
+  and `swingIndex`, `accumulativeSwingIndex`, `tradeVolumeIndex` (each needs
+  an instrument setting — limit move, tick size — with no honest default).
+  `@pond-ts/process` is an optional peer, needed for types only. A test runs
+  all 105 through a host request and checks each column cell for cell
+  against a direct study call.
+
+- **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
+  `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
+  stretch's moving pace with the model named (`'acsm-running'`, the ACSM
+  running equation, by default for runs, with descents as level;
+  `'minetti-2002-walking'` for walks and hikes; `'minetti-2002-running'` by
+  name), the recorded pace beside it, the level-equivalent `factor` and the
+  share of distance with a known grade. Grade is read over 100 m of distance
+  and capped at ±45 %.
+  Steps with no elevation recorded count as level, and `coverage` says how
+  much distance had it. `aerobic.efficiency()` and `decoupling()` take
+  `output: 'grade-adjusted-speed'` (and `gradeModel`), so a steady effort
+  over hills isn't marked `variable`.
+
+- **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
+  `analysis.efforts.fromLaps()` reads the recorded laps (the device's
+  work/rest marks, a pool swim's laps with distance, or laps split into
+  faster and slower when they take turns), `efforts.detect({ powerAbove:
+Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
+  stretches above a threshold. Each effort is a section with the recovery
+  after it; warm-up and cool-down apart; `source` says where they came from.
+  `compare()` gives each metric's values, highest, lowest, typical, spread
+  and first-to-last change (best and worst for pace and power), and the
+  recoveries. The FIT reader keeps each lap's `intensity`.
+
+- **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
+  `section.analyze().technique` over the pool lengths whose middle is in a
+  section (drills and lengths counted as 0 left out, `uncounted` says how
+  many): `strokesPerLength`, `strokeRate`, `distancePerStroke`, `swolf`,
+  `timePerLength`, the `stroke` (or `'mixed'`), and the counting
+  `convention` (`'arm-cycles'` for Garmin, else `'unknown'`, with the
+  maker).
+
+- **`@pond-ts/fit`: `analyze()` without an athlete.** `athlete` is now
+  optional; left out, only the readings that need no settings come back.
+
+- **`@pond-ts/fit`: running dynamics** (RFC §15.7). `section.dynamics` has
+  `cadence` in steps per minute (a new `StepRate` quantity; on-foot cadence
+  is recorded per leg, so it is doubled unless the new `cadenceUnit: 'steps'`
+  stream flag or a median above 120 says it's already steps), `stepLength`
+  and `verticalRatio` (worked out), and `groundContactTime` and
+  `verticalOscillation` (as recorded), each with its `source`, plus
+  `stats()` (time-weighted over moving time). The FIT reader reads
+  `stance_time` and `vertical_oscillation` into the new streams
+  `groundContactMs` and `verticalOscillationMm`.
+
+- **pond-rs `js_number`** is public: JavaScript's `String(x)` for a number
+  (`1e-7`, `1.5e+21`, `-0` as `0`), for Rust code that must write numbers
+  into text exactly as pond-ts does. The Rust port of `@pond-ts/process`
+  ([PND-RUST-R5]) builds its ids with it.
+
+- **pond-rs `Reducer::reduce`**: one reducer over a slice of numbers
+  (`None` for the list reducers and for an out-of-range percentile), so
+  code outside the crate can bin a column the way `aggregate` does. The
+  Rust port of `@pond-ts/process` uses it for `shape`.
+
+- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
+  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
+  `output.series`). Each push returns `Output::Columns { node, series }`, a
+  batch `TimeSeries` of the rows it added, in key order. Watched alone on
+  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
+  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232
+  ms against `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust
+  code** that matches on `Output` / `OutputKind` without a wildcard arm (new
+  variant): pond-rs's next release is 0.2.0.
+
 ### Changed
 
-- **`@pond-ts/charts`: a partial `theme.annotation` fills from
+- **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
+  (number columns, count or duration windows), with the same answers bit for
+  bit. The range studies that stand on them speed up about 2×: at 1M bars
+  `donchian` 193 → 79 ms, `williamsR` 199 → 82 ms, `stochastic` 235 → 123 ms,
+  `choppinessIndex` 227 → 127 ms.
+
+- **`arrayContains`, `arrayContainsAll` and `arrayContainsAny` read the
+  array column** ([PND-ARRAYSLOW]) instead of building every `Event`. Same
+  rows kept; a kept row's `Event` is still the source row's. 100k rows:
+  59–75 → 8–11 ms (`arrayContainsAny` on numbers 35 → 7 ms). A series
+  built from ready-made events (`fromEvents`, a `map` result) still reads
+  its events.
+
+- **`fromArrow` reads text columns straight from Arrow's buffers**
+  ([PND-ARROWTEXT]) instead of through apache-arrow's `toArray()`. Each
+  distinct string is decoded once (a `Dictionary<Utf8>` column decodes only
+  its dictionary). Same strings, same column storage, same all-null rule.
+  `TimeSeries.fromArrow` / `ValueSeries.fromArrow` on 1M rows with a text
+  column of 100 labels: ~480 → ~50 ms; `Dictionary<Utf8>` 123 → ~20 ms;
+  every row distinct ~1.1 s → ~500 ms. Applies to interval label columns
+  too. A vector without a `type` / `data` (a hand-made stand-in), and
+  `LargeUtf8` / `Utf8View`, keep the old path.
+
+- **Building a string column stops counting distinct values once it knows
+  the column will be stored plain** (`stringColumnFromArray`, used by every
+  text-column door). Same result; a mostly-distinct column skips most of
+  the work.
+
+- **`@pond-ts/charts` (breaking): a partial `theme.annotation` fills from
   `defaultAnnotation`** ([PND-ANNOTATIONDEFAULTS]). `color`, `fillOpacity`
   and `depth` are now optional: a theme can set only `roles`, or only
   `depth`, and every field it leaves out comes from `defaultAnnotation`
@@ -155,44 +323,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   one fact. The scale is one `extremes` scan, so `shape` now costs 6–11 ms at
   1M rows (`median` ~18 ms), up from 2 ms (`scripts/perf-kit.mjs`).
 
-- **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
-  (number columns, count or duration windows), with the same answers bit for
-  bit. The range studies that stand on them speed up about 2×: at 1M bars
-  `donchian` 193 → 79 ms, `williamsR` 199 → 82 ms, `stochastic` 235 → 123 ms,
-  `choppinessIndex` 227 → 127 ms.
-
-### Added
-
-- **`@pond-ts/process`: basic steps and summary folds** — the pieces a finance
-  MCP server needs past "what is RSI now?". `BASIC_OPS`: `add`, `subtract`,
-  `multiply`, `divide`, `scale` (× factor + offset), `shift` (positive reads
-  the past, negative the future, for forward returns), `compare` /
-  `compareColumns` (write 1/0), `and`, `or`, `cumulative` (`sum` / `product`
-  / `max` / `min` — compounding, running peaks) and `hold` (carry the last
-  non-zero value, turning crossover events into a position). `SUMMARY_FOLDS`:
-  `mean`, `stdev` (population, as pond's reducer), `sum`, `count`,
-  `percentile` (`q` 0–100, linear), `shareTrue`, `lastTrue`, `lastChange`,
-  `events` (the newest `limit` dates plus the total), `meanWhere` (an average
-  over the rows a signal marks) and `change` (first, last, percent). Neither
-  set is pre-registered, so `createRegistry()` and what it describes to a
-  model are unchanged; `define` them to opt in. All are one pass over packed
-  columns (`percentile` sorts): 4–14 ms per op and 9–20 ms per fold at 1M rows
-  (`scripts/perf-kit.mjs`).
-- **`@pond-ts/financial/process`: the study catalog as process steps.**
-  `studyOps({ sessions? })` returns every study as an `OpDef` with its params
-  and ranges, input roles and output units — the bridge that until now lived
-  only in a test, with no params. A required tuning param takes its catalog
-  `example` as the default. `sessions` adds `sessionVwap` and `pivotPoints`.
-  Four are left out and listed in `UNBRIDGED_STUDIES` with the reason:
-  `anchoredVwap` (its anchor is an instant, which a process param cannot be)
-  and `swingIndex`, `accumulativeSwingIndex`, `tradeVolumeIndex` (each needs
-  an instrument setting — limit move, tick size — with no honest default).
-  `@pond-ts/process` is an optional peer, needed for types only. A test runs
-  all 105 through a host request and checks each column cell for cell
-  against a direct study call.
-
-### Changed
-
 - **`@pond-ts/process`: a fact on an intraday row now carries its time.** The
   folds' `at` (and `shape`'s points) used to print the UTC day only, so an
   answer on 5-minute bars read `2026-11-07` with no time. The format is chosen
@@ -202,82 +332,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   bars stamped at midnight UTC read exactly as before; daily bars stamped at
   another hour now show it.
 
-### Added
-
-- **`@pond-ts/fit`: grade-adjusted pace** (RFC §15.1).
-  `section.pace.adjustedForGrade()` gives the level-ground equivalent of a
-  stretch's moving pace with the model named (`'acsm-running'`, the ACSM
-  running equation, by default for runs, with descents as level;
-  `'minetti-2002-walking'` for walks and hikes; `'minetti-2002-running'` by
-  name), the recorded pace
-  beside it, the level-equivalent `factor` and the share of distance with a
-  known grade. Grade is read over 100 m of distance and capped at ±45 %.
-  Steps with no elevation recorded count as level, and `coverage` says how
-  much distance had it. `aerobic.efficiency()` and `decoupling()` take
-  `output: 'grade-adjusted-speed'` (and `gradeModel`), so a steady effort
-  over hills isn't marked `variable`.
-
-- **`@pond-ts/fit`: efforts and recoveries** (RFC §14.2, §15.3, §16.3).
-  `analysis.efforts.fromLaps()` reads the recorded laps (the device's
-  work/rest marks, a pool swim's laps with distance, or laps split into
-  faster and slower when they take turns), `efforts.detect({ powerAbove:
-Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
-  stretches above a threshold. Each effort is a section with the recovery
-  after it; warm-up and cool-down apart; `source` says where they came from.
-  `compare()` gives each metric's values, highest, lowest, typical, spread
-  and first-to-last change (best and worst for pace and power), and the
-  recoveries. The FIT reader keeps each lap's `intensity`.
-
-- **`@pond-ts/fit`: swim stroke metrics** (RFC §16.4).
-  `section.analyze().technique` over the pool lengths whose middle is in a
-  section (drills and lengths counted as 0 left out, `uncounted` says how
-  many): `strokesPerLength`, `strokeRate`,
-  `distancePerStroke`, `swolf`, `timePerLength`, the `stroke` (or
-  `'mixed'`), and the counting `convention` (`'arm-cycles'` for Garmin, else
-  `'unknown'`, with the maker).
-- **`@pond-ts/fit`: `analyze()` without an athlete.** `athlete` is now
-  optional; left out, only the readings that need no settings come back.
-
-- **`@pond-ts/fit`: running dynamics** (RFC §15.7). `section.dynamics` has
-  `cadence` in steps per minute (a new `StepRate` quantity; on-foot cadence
-  is recorded per leg, so it is doubled unless the new `cadenceUnit: 'steps'`
-  stream flag or a median above 120 says it's already steps), `stepLength` and `verticalRatio` (worked out), and
-  `groundContactTime` and `verticalOscillation` (as recorded), each with its
-  `source`, plus `stats()` (time-weighted over moving time). The FIT reader
-  reads `stance_time` and `vertical_oscillation` into the new streams
-  `groundContactMs` and `verticalOscillationMm`.
-
-- **pond-rs `OutputKind::Columns`** ([PND-RUSTCOLS]): the same output in
-  pond-rs, `@pond-ts/rs` (`on('columns')`) and Python (`watch("columns")`,
-  `output.series`). Each push returns `Output::Columns { node, series }`, a
-  batch `TimeSeries` of the rows it added, in key order. Watched alone on
-  the series, a push builds no `LiveEvent`. Pays off somewhere between 10
-  and 100 rows a push: 1M rows summing one column, 1,000 a push 296 → 232 ms against
-  `Batch`, one a push 413 → 861 ms (slower). **Breaking for Rust code** that
-  matches on `Output` / `OutputKind` without a wildcard arm (new variant):
-  pond-rs's next release is 0.2.0.
-
-### Changed
-
-- **`arrayContains`, `arrayContainsAll` and `arrayContainsAny` read the
-  array column** ([PND-ARRAYSLOW]) instead of building every `Event`. Same
-  rows kept; a kept row's `Event` is still the source row's. 100k rows:
-  59–75 → 8–11 ms (`arrayContainsAny` on numbers 35 → 7 ms). A series
-  built from ready-made events (`fromEvents`, a `map` result) still reads
-  its events.
-- **`fromArrow` reads text columns straight from Arrow's buffers**
-  ([PND-ARROWTEXT]) instead of through apache-arrow's `toArray()`. Each
-  distinct string is decoded once (a `Dictionary<Utf8>` column decodes only
-  its dictionary). Same strings, same column storage, same all-null rule.
-  `TimeSeries.fromArrow` / `ValueSeries.fromArrow` on 1M rows with a text
-  column of 100 labels: ~480 → ~50 ms; `Dictionary<Utf8>` 123 → ~20 ms;
-  every row distinct ~1.1 s → ~500 ms. Applies to interval label columns
-  too. A vector without a `type` / `data` (a hand-made stand-in), and
-  `LargeUtf8` / `Utf8View`, keep the old path.
-- **Building a string column stops counting distinct values once it knows
-  the column will be stored plain** (`stringColumnFromArray`, used by every
-  text-column door). Same result; a mostly-distinct column skips most of
-  the work.
 - **`@pond-ts/fit`: the FIT reader adds `fractional_cadence` to `cadence`.**
   A run recorded as 85 plus half a cycle now reads 85.5, not 85. Average
   cadence on files that record the fraction goes up by up to one cycle per
@@ -287,19 +341,20 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   §14.1). `analysis.distribution(channel, { binWidth, time })` gives the time
   at each level of `'power'`, `'heartRate'`, `'cadence'`, `'speed'` or
   `'pace'` (s/km, or s/100 m in open water; stops left out, slow paces held
-  in one bin), binned with pond's `byColumn`, every bin
-  in between kept; power and cadence start at 0. `analysis.coasting` is a
-  ride's moving time with zero cadence (or zero power without cadence), with
-  its share of moving time.
+  in one bin), binned with pond's `byColumn`, every bin in between kept;
+  power and cadence start at 0. `analysis.coasting` is a ride's moving time
+  with zero cadence (or zero power without cadence), with its share of
+  moving time.
 
 - **`@pond-ts/fit`: aerobic efficiency and decoupling on any section**
   (RFC §14.1, §15.2). `section.analyze({ athlete }).aerobic` has
   `efficiency({ output })` (normalized power ÷ average heart rate on a ride
   with power, else speed ÷ heart rate in metres per heartbeat; both on
-  moving time), `efficiencyFactor`, and `decoupling({ output, method:
-'halves' })`: the first half against the second, split by moving time,
-  with `change`, `coverage`, and `cautions` (`'short'`, `'low-coverage'`,
-  `'variable'`) so an interval session doesn't read as a steady effort.
+  moving time), `efficiencyFactor`, and
+  `decoupling({ output, method: 'halves' })`: the first half against the
+  second, split by moving time, with `change`, `coverage`, and `cautions`
+  (`'short'`, `'low-coverage'`, `'variable'`) so an interval session
+  doesn't read as a steady effort.
 
 ### Fixed
 
@@ -309,15 +364,16 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
   are no longer drawn; the label used to print outside its row. A level near
   the edge keeps its label chip inside the row instead of letting it ride the
   line out. An opt-in `indicator` pill still stays pinned at the nearest edge.
+
 - **`editRecording` (and `Activity.edit`): a cropped open water swim keeps
   its moving time by speed.** A crop took every swim's moving time from its
   kept laps, but a swim that moves by speed (open water, or a swim with GPS
-  and no pool details) gets its
-  uncropped moving time from the samples. On a real open water swim whose
-  laps counted all of it as swimming, cropping 10 % off each end raised
-  moving time from 2,315 s to 2,555 s. It now shares out the recording's own
-  moving time, as other sports do (1,489 s; the samples say 1,492 s). Pool
-  swims, and swims timed by the watch's swim time, are unchanged.
+  and no pool details) gets its uncropped moving time from the samples. On
+  a real open water swim whose laps counted all of it as swimming, cropping
+  10 % off each end raised moving time from 2,315 s to 2,555 s. It now
+  shares out the recording's own moving time, as other sports do (1,489 s;
+  the samples say 1,492 s). Pool swims, and swims timed by the watch's swim
+  time, are unchanged.
 - **`TimeSeries.fromArrow` / `ValueSeries.fromArrow`: a value column with
   nulls is marked optional** ([PND-ARROWREQ]). Every value column used to
   come out required, even one holding nulls, so the series' own `toJSON` →
