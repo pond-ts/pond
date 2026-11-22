@@ -205,7 +205,7 @@ jobs:
       - name: Build on the oldest supported Rust
         run: cargo check -p pond-rs --lib --examples --all-features
 
-  # The Python bridge (crates/pond-py, PyPI `pond-rs`, `import pond_rs`):
+  # The Python bridge (crates/pond-py, PyPI `pond-timeseries`, `import pond_rs`):
   # one abi3 wheel for Python 3.9+, tested on the oldest and newest Python,
   # through the same core parity fixture the Rust crate passes.
   python:

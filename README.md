@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/pond-ts?label=pond-ts)](https://www.npmjs.com/package/pond-ts)
 [![crates.io](https://img.shields.io/crates/v/pond-rs?label=pond-rs)](https://crates.io/crates/pond-rs)
-[![PyPI](https://img.shields.io/pypi/v/pond-rs?label=pip%20pond-rs)](https://pypi.org/project/pond-rs/)
+[![PyPI](https://img.shields.io/pypi/v/pond-timeseries?label=pip%20pond-timeseries)](https://pypi.org/project/pond-timeseries/)
 [![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/npm/l/pond-ts)](https://github.com/pond-ts/pond/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org)
@@ -92,11 +92,11 @@ of data from Rust or Python, and get the same numbers.
 **pond-rs, the Rust version** — same operations, same results as pond-ts (a
 test suite checks every operation against output written by pond-ts):
 
-| Package                                                        | What it's for                                                                                                     | Folder           |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)      | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
-| [`@pond-ts/wasm`](https://www.npmjs.com/package/@pond-ts/wasm) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
-| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)          | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
+| Package                                                               | What it's for                                                                                                     | Folder           |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
+| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)             | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
+| [`@pond-ts/wasm`](https://www.npmjs.com/package/@pond-ts/wasm)        | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
+| [`pond-timeseries`](https://pypi.org/project/pond-timeseries/) (PyPI) | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
 
 **Also here:** the docs site [pond-ts.org](https://pond-ts.org) (`website/`), a
 Claude Code plugin with skills for using pond (`plugins/pond-ts`), worked
@@ -108,7 +108,7 @@ example apps (`apps/`: a live chart drawn off the main thread, and a demo of
 npm install pond-ts                                   # core: enough for Node pipelines and non-React apps
 npm install @pond-ts/charts @pond-ts/react pond-ts    # add the React chart stack
 cargo add pond-rs                                     # Rust
-pip install pond-rs                                   # Python
+pip install pond-timeseries                           # Python
 ```
 
 ### Which one to use

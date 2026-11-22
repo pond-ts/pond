@@ -4736,6 +4736,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       as `@duckdb/duckdb-wasm` does. Cost accepted: the crate and the
       PyPI package stay `pond-rs`, so not one name everywhere. The folder
       stays `packages/rs` (less churn; only the npm name is public).
+      PyPI name (2026-11-22, Peter's choice): `pond-timeseries`, import
+      still `pond_rs`. `pond-py` was refused in advance: PyPI's
+      `ultranormalize_name` strips `-_.` and maps l/i->1, o->0, so it
+      equals the unrelated `pondpy`; `py-pond` likewise equals `pypond`.
     - [PND-RSTYPES] (DONE 2026-11-21): `packages/rs/index.d.ts`,
       hand-written. Decided **not** to import pond-ts's types: `@pond-ts/rs`
       has no dependency on pond-ts, and pond-ts's types follow the schema

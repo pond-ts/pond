@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "pond-rs"
+name = "pond-timeseries"
 description = "Time series analytics over Arrow frames: rolling windows, calendar buckets in any time zone, joins and per-entity work. Same results as pond-ts."
 readme = "README.md"
 license = "MIT"
