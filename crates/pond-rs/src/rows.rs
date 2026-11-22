@@ -273,8 +273,7 @@ impl TimeSeries {
     /// `column` with `f` applied to every number (pond-ts's `mapColumns`).
     /// Gaps stay gaps and are not passed to `f`; a non-finite result
     /// (`NaN`, `±inf`) is a gap. A required column that gains a gap becomes
-    /// optional (pond-ts keeps it marked required, which its own `fromJSON`
-    /// then refuses: [PND-MAPREQ]).
+    /// optional (as pond-ts `mapColumns`).
     ///
     /// ```
     /// # use pond_rs::{Column, TimeSeries};

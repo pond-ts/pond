@@ -82,8 +82,9 @@ export type ValueSeriesJsonOutputObject<VS extends ValueSeriesSchema> = {
  * Every value cell is `| undefined` regardless of the column's `required`
  * flag, because the columnar doors (`fromColumns` / `fromArrow`) don't enforce
  * `required` — they pack whatever the buffers hold, and a non-finite cell is a
- * gap. Only the row door (`fromJSON`) checks `required`, so a type that
- * narrowed on it would be lying about series built the other way.
+ * gap. They mark such a column `required: false` in the runtime schema, but
+ * the type parameter is taken as given, so a type that narrowed on it would
+ * be lying about series built that way.
  */
 export type ValueSeriesRow<VS extends ValueSeriesSchema> = {
   [I in keyof VS]: I extends '0'

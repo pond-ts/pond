@@ -198,21 +198,11 @@ bug is logged in `PLAN.md` to fix there.
   pond-ts compares the lists as objects, so two equal lists in different
   rows count as different and give a gap ([PND-ARRAYKEY]). pond-rs compares
   the elements exactly, so `[0]` and `[-0]` count as different.
-- After `map_numbers` turns values into gaps, a required column becomes
-  optional. pond-ts keeps it marked required, which its own `fromJSON` then
-  refuses ([PND-MAPREQ]).
-- A column read from Arrow with nulls in it is optional. pond-ts's
-  `fromArrow` marks every column required, even one with nulls, so its own
-  save-and-reload then fails ([PND-ARROWREQ]). pond-rs takes the flag from
-  the Arrow field's nullability.
 
 ## Small differences
 
-- **`collapse`'s output is optional when it has gaps.** pond-ts marks it
-  required even then, so its own `fromJSON` refuses the result (logged
-  as a pond-ts issue, [PND-COLLAPSEREQ]). Decimal groups in
-  `pivot_by_group`, which pond-ts has no kind for, are named in full
-  (`1.50_cpu`).
+- **Decimal groups in `pivot_by_group`**, which pond-ts has no kind for,
+  are named in full (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
   (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom

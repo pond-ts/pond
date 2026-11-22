@@ -232,7 +232,7 @@ pub(crate) fn columnar_columns(
             )
             .into()
         };
-        // pond-ts does not check `required` here; a column with a gap
+        // As pond-ts, `required` is not checked here; a column with a gap
         // can only be optional.
         let required = *required && data.missing_count() == 0;
         out.push(Column::from_data(col_name.clone(), data, required));
@@ -377,7 +377,8 @@ impl TimeSeries {
     ///
     /// As in pond-ts, value columns are numbers or text only (a `boolean`
     /// column is an error), names in `columns` that the schema does not
-    /// list are ignored, and `order` handles keys out of order as in
+    /// list are ignored, a column with gaps is optional whatever the schema
+    /// says, and `order` handles keys out of order as in
     /// [`TimeSeries::from_json`].
     ///
     /// Errors, as in pond-ts: a missing column or one of the wrong length;
@@ -388,9 +389,6 @@ impl TimeSeries {
     ///
     /// Differences from pond-ts:
     ///
-    /// - pond-ts ignores `required` here, and keeps a column with gaps
-    ///   marked required (so its own `fromJSON` then refuses the series).
-    ///   pond-rs marks such a column optional.
     /// - Errors where pond-ts accepts: a cell of the wrong kind (pond-ts
     ///   turns `"5"` in a number column into 5, `true` into 1, and a number
     ///   in a text column into a gap); a key written as text or `true`

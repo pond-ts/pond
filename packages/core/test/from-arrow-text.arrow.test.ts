@@ -220,7 +220,11 @@ describe('fromArrow text columns read from buffers', () => {
       vectorFromArray([], new Utf8()),
     ]) {
       const series = TimeSeries.fromArrow(tableWith(column));
-      expect(series.schema[1]).toEqual({ name: 's', kind: 'number' });
+      expect(series.schema[1]).toEqual({
+        name: 's',
+        kind: 'number',
+        required: false,
+      });
       expect(series.column('s')!.kind).toBe('number');
     }
   });

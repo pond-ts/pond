@@ -90,7 +90,10 @@ import {
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
-import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import {
+  ingestColumnsToStore,
+  optionalWhereGaps,
+} from './operators/ingest-columns.js';
 import { resolveOrdering } from './operators/out-of-order.js';
 import {
   arrowToColumns,
@@ -1186,6 +1189,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * non-finite (`NaN`/`Infinity`) — identical rule regardless of which array
    * type supplied it. Note this is looser than `fromJSON`, which *rejects* a
    * non-finite provided number outright rather than treating it as a gap.
+   * Likewise a gap in a column the schema marks required is not refused: the
+   * column comes out `required: false` in the series' runtime schema (its
+   * TypeScript type is unchanged), so the series reloads through its own
+   * `toJSON` → `fromJSON`.
    *
    * Skips the row-tuple materialization + per-row intake a columnar caller
    * otherwise pays (transpose → `fromJSON`): each column packs directly, the key
@@ -1293,7 +1300,14 @@ export class TimeSeries<S extends SeriesSchema> {
       columns,
       ordering,
     });
-    return TimeSeries.#fromTrustedStore(name, schema, store);
+    // A column the schema calls required may still hold gaps here; mark it
+    // optional so the series reloads through its own `fromJSON`
+    // ([PND-COLSREQ]). Run time only; `S` is unchanged.
+    return TimeSeries.#fromTrustedStore(
+      name,
+      optionalWhereGaps(schema, store),
+      store,
+    );
   }
 
   /**
@@ -1319,6 +1333,9 @@ export class TimeSeries<S extends SeriesSchema> {
    *   through; a plain int/float is taken as ms. `timeUnit` overrides.
    * - **Value columns** — every non-time field by default, or the subset named
    *   by `columns` (in order). A null in the time key throws.
+   * - **`required`** — a value column is `required: false` when its field is
+   *   nullable or it holds a gap, so the series reloads through its own
+   *   `toJSON` → `fromJSON`. Run time only; `S` is taken as given.
    *
    * **The readable types, and only these** (checked against each field's
    * *declared* Arrow type, so an unreadable one is refused by name rather than
@@ -1374,7 +1391,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
-    return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
+    return timeSeriesFromTrustedStore(
+      name,
+      optionalWhereGaps(schema, store) as unknown as S,
+      store,
+    );
   }
 
   /**
@@ -2337,7 +2358,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * **Missing cells carry:** the mapper is called only on defined
    * values; a missing (`undefined`) cell stays missing. On a `number`
    * column a mapper result of `NaN` / `±Infinity` is stored as missing
-   * (a non-finite number in a number column means missing).
+   * (a non-finite number in a number column means missing). A required
+   * column that gains a gap this way is marked `required: false` in the
+   * result's runtime schema, so the series still reloads through its own
+   * `toJSON` → `fromJSON`; the TypeScript type is unchanged.
    *
    * **Expressions** ({@link col}) may replace a function and may read
    * other columns (`{ w: col('w').add(col('v')) }`), as they were before
@@ -2407,7 +2431,14 @@ export class TimeSeries<S extends SeriesSchema> {
     for (const [name, column] of replaced) {
       out = withColumnReplaced(out, name, column);
     }
-    return TimeSeries.#fromTrustedStore(this.name, schema, out);
+    // A mapped column that gained a gap (a non-finite result) is optional
+    // from here on, or `fromJSON` would refuse the series' own `toJSON`
+    // ([PND-MAPREQ]). Run time only; `S` is unchanged.
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      optionalWhereGaps(schema, out, new Set(all.map(([name]) => name))),
+      out,
+    );
   }
 
   /** Example: `series.asTime({ at: "center" })`. Converts the series key type to `"time"` using the supplied anchor within each event extent. */
@@ -6208,7 +6239,13 @@ export class TimeSeries<S extends SeriesSchema> {
     return TimeSeries.#fromTrustedStore(this.name, resultSchema, reshaped);
   }
 
-  /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */
+  /**
+   * Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series.
+   * The output column is required unless a result is a gap (`undefined`, or a
+   * non-finite number such as `0 / 0`); then the runtime schema marks it
+   * `required: false`, so the series reloads through its own `fromJSON`. The
+   * TypeScript type is unchanged.
+   */
   collapse<
     const Keys extends readonly (keyof EventDataForSchema<S>)[],
     Name extends string,

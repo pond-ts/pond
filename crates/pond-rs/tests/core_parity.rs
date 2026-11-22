@@ -824,27 +824,7 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 spec.iter().map(|(k, v)| (k.clone(), expr_arg(v))).collect();
             let pairs: Vec<(&str, &pond_rs::Expr)> =
                 exprs.iter().map(|(k, e)| (k.as_str(), e)).collect();
-            // As the function cases: pond-ts keeps a mapped column
-            // required even when it gets a gap ([PND-MAPREQ]).
-            return Some(
-                input
-                    .map_exprs(&pairs)
-                    .map(|s| {
-                        let mut json = to_json(&s);
-                        match case.id.as_str() {
-                            "mapColumns-expr-overflow" => {
-                                assert_eq!(json.schema[1].required, Some(false));
-                                json.schema[1].required = None;
-                            }
-                            "mapColumns-expr-required" => {
-                                assert_ne!(json.schema[1].required, Some(false));
-                            }
-                            _ => {}
-                        }
-                        Outcome::from(json)
-                    })
-                    .map_err(|e| e.to_string()),
-            );
+            input.map_exprs(&pairs)
         }
         "withColumn" if case.args[1].get("expr").is_some() => {
             let name = case.args[0].as_str().expect("column name");
@@ -877,24 +857,7 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                     }
                 });
             }
-            // pond-ts keeps a mapped column marked required even when the
-            // mapping leaves a gap ([PND-MAPREQ]); pond-rs makes it
-            // optional. Check that, then compare the rest as pond-ts has it.
-            return Some(
-                out.map(|s| {
-                    let mut json = to_json(&s);
-                    if case.id == "mapColumns-overflow" {
-                        assert_eq!(
-                            json.schema[1].required,
-                            Some(false),
-                            "mapped gap makes it optional"
-                        );
-                        json.schema[1].required = None;
-                    }
-                    Outcome::from(json)
-                })
-                .map_err(|e| e.to_string()),
-            );
+            out
         }
         "withColumn" => {
             let name = case.args[0].as_str().expect("column name");
@@ -1450,29 +1413,7 @@ fn implemented_ops_match_pond_ts() {
             }
             continue;
         }
-        // Known difference ([PND-COLLAPSEREQ]): pond-ts marks collapse's
-        // output required even when it holds gaps; pond-rs marks it
-        // optional then (and required when it has none, as pond-ts).
-        let mut case = case.clone();
-        if case.op == "collapse"
-            && let Some(expected) = case.expected.as_mut()
-        {
-            let name = case.args[1].as_str().expect("output");
-            let at = expected
-                .schema
-                .iter()
-                .position(|c| c.name == name)
-                .expect("collapse output in the schema");
-            if expected.rows.iter().any(|r| r[at].is_null()) {
-                assert_eq!(
-                    expected.schema[at].required, None,
-                    "{}: pond-ts fixed [PND-COLLAPSEREQ]",
-                    case.id
-                );
-                expected.schema[at].required = Some(false);
-            }
-        }
-        if let Err(why) = check_case(&case, &actual) {
+        if let Err(why) = check_case(case, &actual) {
             failures.push(format!("{} ({}): {why}", case.id, case.op));
         }
     }
@@ -1857,17 +1798,11 @@ fn columns_and_points_json_match_pond_ts() {
             failures.push(format!("{label}: the text and value doors disagree"));
         }
         let refused = COLUMNS_REFUSED.contains(&case.id.as_str());
-        let expected = case.expected.as_ref().filter(|_| !refused).map(|v| {
-            let mut s: SeriesJson = serde_json::from_value(v.clone()).expect("a series");
-            // pond-ts keeps a column with gaps marked required here; pond-rs
-            // marks it optional (a known difference).
-            for (c, def) in s.schema.iter_mut().enumerate().skip(1) {
-                if def.required.is_none() && s.rows.iter().any(|r| r[c].is_null()) {
-                    def.required = Some(false);
-                }
-            }
-            s
-        });
+        let expected = case
+            .expected
+            .as_ref()
+            .filter(|_| !refused)
+            .map(|v| serde_json::from_value::<SeriesJson>(v.clone()).expect("a series"));
         if let Err(why) = judge(&label, refused, expected, &case.error, &got) {
             failures.push(why);
         }
@@ -2029,25 +1964,7 @@ fn value_series_match_pond_ts() {
                 Err("the text and value doors disagree".into()),
             );
         }
-        // pond-ts keeps a column with gaps marked required here; pond-rs
-        // marks it optional (a known difference, as for TimeSeries).
-        let expected = case.expected.clone().map(|mut v| {
-            let rows = v["rows"].clone();
-            for (c, def) in v["schema"]
-                .as_array_mut()
-                .unwrap()
-                .iter_mut()
-                .enumerate()
-                .skip(1)
-            {
-                let gap = rows.as_array().unwrap().iter().any(|r| r[c].is_null());
-                if def.get("required").is_none() && gap {
-                    def["required"] = json!(false);
-                }
-            }
-            v
-        });
-        check(label, judge(&expected, &got));
+        check(label, judge(&case.expected, &got));
     }
     let total = vs.by_value.len() + vs.from_json.len() + vs.from_columns.len();
     report("core ValueSeries parity", total, total, &failures);
@@ -2056,10 +1973,10 @@ fn value_series_match_pond_ts() {
 /// `ValueSeries::from_ipc_bytes` reads the Arrow files pond-ts
 /// `ValueSeries.fromArrow` reads (integer, float, dictionary, empty and
 /// two-batch tables) to the same series, and refuses what it refuses.
-/// pond-rs marks a nullable value field optional where pond-ts leaves the
-/// schema bare. Known differences, checked as such: pond-ts reads a
-/// Timestamp axis as its raw count (pond-rs refuses a time-typed axis) and
-/// refuses a true/false value field (pond-rs reads it). Also reads back
+/// Both mark a nullable value field optional. Known differences, checked
+/// as such: pond-ts reads a Timestamp axis as its raw count (pond-rs
+/// refuses a time-typed axis) and refuses a true/false value field
+/// (pond-rs reads it). Also reads back
 /// `parity-export-value.arrow`, pond-ts's own `toArrow` output.
 #[test]
 fn value_series_arrow_match_pond_ts() {
@@ -2067,24 +1984,13 @@ fn value_series_arrow_match_pond_ts() {
     let mut failures = Vec::new();
     for case in &cases {
         let bytes = hex(&case.ipc);
-        let schema = arrow_ipc::reader::FileReader::try_new(std::io::Cursor::new(&bytes), None)
-            .unwrap()
-            .schema();
         let got = ValueSeries::from_ipc_bytes("va", bytes, &case.axis);
         let outcome = match (case.id.as_str(), &case.expected, &got) {
             ("timestampAxis", Some(_), Err(_)) | ("boolValues", None, Ok(_)) => Ok(()),
             ("timestampAxis" | "boolValues", ..) => {
                 Err("expected the known difference".to_string())
             }
-            (_, Some(e), Ok(g)) => {
-                let mut e = e.clone();
-                for def in e.schema.iter_mut().skip(1) {
-                    if schema.field_with_name(&def.name).unwrap().is_nullable() {
-                        def.required.get_or_insert(false);
-                    }
-                }
-                compare_series(&e, &value_json(g), None)
-            }
+            (_, Some(e), Ok(g)) => compare_series(e, &value_json(g), None),
             (_, Some(_), Err(err)) => Err(format!("pond-ts reads it, pond-rs errored: {err}")),
             (_, None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
             (_, None, Err(_)) => Ok(()),

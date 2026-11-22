@@ -308,7 +308,7 @@ impl ValueSeries {
     /// `columns` holds an array per schema column, the axis included,
     /// under its name. `number` and `string` value columns; a gap is
     /// `null`, and a column with a gap is optional whatever the schema says
-    /// (pond-ts keeps it marked required). `order` as in
+    /// (as pond-ts). `order` as in
     /// [`ValueSeries::from_json`].
     ///
     /// Errors, as in pond-ts: a missing column, columns of different
