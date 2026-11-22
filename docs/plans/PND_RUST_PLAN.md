@@ -736,12 +736,13 @@ Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
   `col` / `lit` / `when` with TypeScript, Rust and Python tabs, all checked
   against pond-ts.
 - **Python beside Rust** (Peter, 2026-11-22): a Python tab (`import pond`)
-  on every tabbed example across 25 pages, 178 runnable scripts with asserts
+  on every tabbed example across 23 pages, 178 runnable scripts with asserts
   mirroring the Rust ones. `website/scripts/check-python-snippets.py` runs
   each in a fresh interpreter, and CI's `python` job runs it against the
-  wheel it just built, on 3.9 and 3.13 (`fit/` pages excluded: their blocks
-  build on each other and `check-fit-guides.mts` covers them). Where the
-  Python bridge lacks a call the page says so rather than working around it:
+  wheel it just built, on 3.9 and 3.13. `fit/` pages are excluded: their
+  blocks build on each other, and `check-fit-guides.mts` checks their Python
+  only by hand (CI runs it with `--no-python`). Where the Python bridge
+  lacks a call the page says so rather than working around it:
   no `apply` on a partitioned series (chain steps, then `collect()`), no
   `ValueSeries.read_ipc` (read with pyarrow, then `from_arrow`), no batch
   custom-fold `cumulative` (use `scan`), no live `at_or_before` (use

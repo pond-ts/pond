@@ -574,9 +574,11 @@ cpu = pond.TimeSeries({
 
 try:
     cpu.map_columns({"nope": col("cpu")})
+    raise AssertionError("expected an error")
 except pond.PondError as e:
     print(e)
     # TimeSeries::map_exprs: no column named 'nope' (columns: cpu, cores, host)
+    assert "nope" in str(e)
 ```
 
 </TabItem>

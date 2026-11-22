@@ -7,7 +7,8 @@ script: it runs on its own, in a fresh interpreter, and a failed assert
 fails it. A block fenced as ```python ignore is skipped. Python blocks
 outside a language tab (the Python page's short fragments) are not run
 here, nor are the fit guides, whose blocks build on each other and are
-run by check-fit-guides.mts.
+run by check-fit-guides.mts (by hand: CI runs that
+script with --no-python).
 
     python website/scripts/check-python-snippets.py          # every page
     python website/scripts/check-python-snippets.py creating  # pages whose path holds "creating"
