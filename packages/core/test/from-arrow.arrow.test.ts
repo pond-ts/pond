@@ -496,6 +496,15 @@ describe('[PND-TOARROWREQ] toArrow says which columns are required', () => {
     expect(back.toRows()).toEqual(series.toRows());
   });
 
+  it('gives the right flag to a reordered { columns } subset', () => {
+    const out = series.toArrow({ columns: ['gap', 'price'] });
+    expect(out.fields.map((f) => [f.name, f.nullable])).toEqual([
+      ['time', false],
+      ['gap', true],
+      ['price', false],
+    ]);
+  });
+
   it('keeps them through an Arrow IPC file too', () => {
     const bytes = tableToIPC(build(series.toArrow() as never), 'file');
     const back = TimeSeries.fromArrow(tableFromIPC(bytes));

@@ -131,9 +131,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   `toArrow` and read back with `fromArrow` lost its `required` flags: since
   0.78.0 a table built with `new Table({ ...vectors })` brought every column
   back optional, and before that every column came back required. Pass
-  `f.nullable` to Arrow's `new Field(name, type, nullable)` to keep them.
-  pond-rs `to_arrow` already writes the same flag, so a file either one
-  writes reads back the same in both.
+  `f.nullable` to Arrow's `Field` (the `toArrow` docs show the whole table
+  build) to keep them. These are the flags pond-rs `to_arrow` writes.
+  `ArrowExportField` gains this as a required property, so code that builds
+  one by hand must set it; code that only reads `toArrow()` is unaffected.
 
 ## [0.78.0] — 2026-11-22
 

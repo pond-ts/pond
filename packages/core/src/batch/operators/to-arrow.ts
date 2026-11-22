@@ -44,22 +44,42 @@ import { KEY_END_SUFFIX, KEY_LABEL_SUFFIX } from './flat-keys.js';
  * `f.values` doesn't typecheck against `makeData`'s `data:` unnarrowed):
  *
  * ```ts
- * import { Field, makeData, makeVector, Float64 } from 'apache-arrow';
+ * import {
+ *   Float64,
+ *   makeData,
+ *   makeVector,
+ *   RecordBatch,
+ *   Schema,
+ *   Table,
+ * } from 'apache-arrow';
+ *
  * const { fields } = series.toArrow();
- * const f = fields.find((x) => x.name === 'close')!;
- * if (f.type !== 'float64' && f.type !== 'timestamp') throw new Error(f.type);
- * const vec = makeVector(
- *   makeData({
- *     type: new Float64(),
- *     length: f.length,
- *     nullCount: f.nullCount,
- *     nullBitmap: f.nullBitmap,
- *     data: f.values, // narrowed to Float64Array by the guard above
+ * const vectors = Object.fromEntries(
+ *   fields.map((f) => {
+ *     if (f.type !== 'float64' && f.type !== 'timestamp') throw new Error(f.type);
+ *     const data = makeData({
+ *       type: new Float64(),
+ *       length: f.length,
+ *       nullCount: f.nullCount,
+ *       nullBitmap: f.nullBitmap,
+ *       data: f.values, // narrowed to Float64Array by the guard above
+ *     });
+ *     return [f.name, makeVector(data)];
  *   }),
  * );
- * // Keep the column's required flag ([PND-TOARROWREQ]): `new Table({...})`
- * // would mark every field nullable, so every column reads back optional.
- * const field = new Field(f.name, vec.type, f.nullable);
+ *
+ * // `new Table({ ...vectors })` marks every field nullable, so fromArrow would
+ * // read every column back optional. Rebuild its schema with toArrow's own
+ * // `nullable` flags (false for the key and required columns, true for optional
+ * // ones), so fromArrow (or pond-rs) reads back the same `required` flags.
+ * const loose = new Table(vectors);
+ * const schema = new Schema(
+ *   loose.schema.fields.map((x, i) => x.clone({ nullable: fields[i]!.nullable })),
+ * );
+ * const table = new Table(
+ *   schema,
+ *   loose.batches.map((b) => new RecordBatch(schema, b.data)),
+ * );
  * ```
  *
  * From there a consumer can reach whatever engine they like — polars,
