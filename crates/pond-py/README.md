@@ -12,8 +12,8 @@ pond-ts (TypeScript) and pond-rs (Rust): the test suite runs pond-ts's own
 parity fixture through this package and every case matches.
 
 ```sh
-pip install pond-rs                # import pond_rs
-pip install "pond-rs[polars]"      # plus polars; or [pandas], [pyarrow]
+pip install pond-timeseries        # import pond_rs
+pip install "pond-timeseries[polars]" # plus polars; or [pandas], [pyarrow]
 ```
 
 The guide is on the docs site:

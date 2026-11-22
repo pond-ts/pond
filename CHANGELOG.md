@@ -121,6 +121,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **The Python package is published on PyPI as `pond-timeseries`**
+  (`pip install pond-timeseries`; it was named `pond-rs`, which never
+  reached PyPI). The import name is unchanged: `import pond_rs`. `pond-py`
+  was the first choice, but PyPI refuses it as too similar to an unrelated
+  `pondpy`.
+
 - **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
   `@pond-ts/rs` in the repo, but never reached npm under that name: the
   release workflow skipped it until a first publish by hand). Same package,
