@@ -95,6 +95,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs has no general `map` over whole events. Change one column's values with `map_numbers` (or `map_strings`, `map_booleans`, `map_decimals`), and add a column with `with_column`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 1_000, 2_000, 3_000], "cpu": [0.5, None, 0.95, 0.4]})
+
+# Same columns; transform the cpu values. Gaps are not passed in.
+scaled = cpu.map("cpu", lambda v: v * 100)
+assert scaled.column("cpu") == [50.0, None, 95.0, 40.0]
+
+# A new "flagged" column, worked out from cpu.
+flags = [(v or 0.0) > 0.9 for v in cpu.column("cpu")]
+flagged = cpu.with_column("flagged", flags)
+assert flagged.column("flagged") == [False, False, True, False]
+```
+
+Python has no `map` over whole events either. Change one column with `map(column, f)` (or several with `map_columns`), and add a column with `with_column(name, values)`. Both also take an [expression](./expressions.mdx), which runs without a Python call per row.
+
+</TabItem>
 </Tabs>
 
 `Event` instances are immutable; `set` returns a new `Event` with the
@@ -139,6 +159,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 The closure gets a `Row` and returns a `Result`, so lookups inside it can use `?`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+events = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000],
+    "cpu": [0.5, None, 0.95, 0.4],
+    "host": ["api-1", "db-1", "api-2", "api-1"],
+})
+
+active = events.filter(lambda e: e["cpu"] is not None)
+api_only = events.filter(lambda e: e["host"].startswith("api"))
+assert len(active) == 3
+assert [row.key for row in api_only] == [0, 2_000, 3_000]
+```
+
+The function gets a `Row`; `row["cpu"]` is `None` for a gap.
 
 </TabItem>
 </Tabs>
@@ -194,6 +234,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 `select` takes a slice of names. An unknown name is an error.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+full = pond.TimeSeries({
+    "time": [0, 1_000],
+    "cpu": [0.5, 0.7],
+    "requests": [10.0, 20.0],
+    "host": ["api-1", "api-2"],
+})
+
+just = full.select("host", "cpu")
+assert just.columns == ["cpu", "host"]  # schema order, not the order asked
+assert just.column("cpu")[0] == 0.5
+
+try:
+    full.select("ghost")  # not a column
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+</TabItem>
 </Tabs>
 
 Pass the names as separate arguments. A name that isn't a payload
@@ -238,6 +302,19 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `rename` takes `(from, to)` pairs.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 1_000], "cpu": [0.5, 0.7], "host": ["a", "b"]})
+
+renamed = cpu.rename({"cpu": "usage"})
+assert renamed.columns == ["usage", "host"]  # 'usage' where 'cpu' was
+assert renamed.column("usage")[0] == 0.5
+```
 
 </TabItem>
 </Tabs>
@@ -299,6 +376,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 The closure gets the whole row and returns `Ok(Some(Scalar))`, or `Ok(None)` for a gap. The output column comes after the columns that are kept.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+metrics = pond.TimeSeries({
+    "time": [0, 1_000, 2_000],
+    "cpu": [0.5, None, 0.95],
+    "requests": [10.0, 20.0, 40.0],
+    "host": ["api-1", "db-1", "api-2"],
+})
+
+# Average of cpu and requests into a "load" column.
+def load(r):
+    return ((r["cpu"] or 0.0) + (r["requests"] or 0.0)) / 2
+
+summary = metrics.collapse(["cpu", "requests"], "load", load)
+assert summary.columns == ["host", "load"]
+assert summary.column("load") == [5.25, 10.0, 20.475]
+
+# keep=True is pond-ts's { append: true }.
+kept = metrics.collapse(["cpu", "requests"], "load", load, keep=True)
+assert len(kept.columns) == 4
+```
+
+The function gets the whole row and returns the new value, or `None` for a gap.
 
 </TabItem>
 </Tabs>
@@ -392,6 +497,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 `diff_with` takes a `Change`: `.first(FirstRow::Drop)` is `{ drop: true }` and `.output(name)` is `{ output }`. This covers the `output` example below too.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000],
+    "requests": [10.0, 20.0, 40.0, 30.0],
+    "cpu": [0.5, 0.6, 0.95, 0.4],
+    "mem": [1.0, 1.5, 1.5, 2.0],
+})
+
+deltas = series.diff("requests")
+assert deltas.column("requests") == [None, 10.0, 20.0, -10.0]  # first row: a gap
+
+both = series.diff(["cpu", "mem"])
+assert both.column("mem")[1] == 0.5
+
+dropped = series.diff("requests", drop_first=True)
+assert len(dropped) == 3
+
+# Keep the source and add the change beside it.
+with_change = series.diff("requests", output="requestsDelta")
+assert with_change.column("requests")[1] == 20.0
+assert with_change.column("requestsDelta")[1] == 10.0
+```
+
+`drop_first=True` is `{ drop: true }` and `output=` is `{ output }`. This covers the `output` example below too.
+
+</TabItem>
 </Tabs>
 
 `diff`, `rate` and `pctChange` replace each named column with its change.
@@ -443,6 +578,23 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A request counter read at 0 s, 1 s, 3 s, and twice at 3 s.
+series = pond.TimeSeries({
+    "time": [0, 1_000, 3_000, 3_000],
+    "requests": [100.0, 110.0, 150.0, 160.0],
+})
+
+rps = series.rate("requests")
+# 10 in 1 s, 40 in 2 s, then no time between the last two rows.
+assert rps.column("requests") == [None, 10.0, 20.0, None]
+```
+
+</TabItem>
 </Tabs>
 
 ### `pctChange(cols)` — relative change
@@ -475,6 +627,18 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(got, [None, Some(1.0), Some(-1.0), None]); // previous 0: a gap
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+prices = pond.TimeSeries({"time": [0, 1_000, 2_000, 3_000], "price": [10.0, 20.0, 0.0, 5.0]})
+
+rets = prices.pct_change("price")
+assert rets.column("price") == [None, 1.0, -1.0, None]  # previous 0: a gap
 ```
 
 </TabItem>
@@ -528,6 +692,32 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 A fold of your own is `cumulative_with`, one column at a time.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000],
+    "requests": [10.0, 20.0, 40.0, 30.0],
+    "cpu": [0.5, None, 0.95, 0.4],
+})
+
+running = series.cumulative({"requests": "sum", "cpu": "max"})
+assert running.column("requests") == [10.0, 30.0, 70.0, 100.0]
+assert running.column("cpu") == [0.5, 0.5, 0.95, 0.95]  # the gap carries
+
+counts = series.cumulative({"cpu": "count"})
+assert counts.column("cpu") == [1.0, 1.0, 2.0, 3.0]
+
+# A running fold of your own is a scan (below).
+product = series.scan("requests", lambda acc, v, i: (acc * v, acc * v), 1.0)
+assert product.column("requests")[3] == 240_000.0
+```
+
+`cumulative` takes reducer names; a fold of your own is `scan`.
 
 </TabItem>
 </Tabs>
@@ -596,6 +786,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 A `Reducer` mixes in with `.into()`:
 `&[("ele", Cumulative::increase()), ("work", Reducer::Sum.into())]`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+track = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(8)],
+    "ele": [100.0, 101.0, 104.0, None, 102.0, 99.0, 103.0, 108.0],
+})
+
+gain = track.cumulative({"ele": {"using": "increase", "threshold": 3}})
+assert gain.column("ele") == [0.0, 0.0, 4.0, 4.0, 4.0, 4.0, 8.0, 13.0]
+
+loss = track.cumulative({"ele": {"using": "decrease", "threshold": 3}})
+assert loss.column("ele") == [0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0]
+```
+
+Without a threshold, `{"ele": "increase"}` is enough, and it mixes with reducer names: `{"ele": "increase", "work": "sum"}`.
 
 </TabItem>
 </Tabs>
@@ -692,6 +902,42 @@ fn main() -> Result<(), pond_rs::PondError> {
 `scan(column, init, step)` takes the start value before the step, and `scan_to(column, output, init, step)` writes a new column and keeps the source. The state's type comes from `init`. The step also gets the row number.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+track = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(8)],
+    "ele": [100.0, 101.0, 104.0, None, 102.0, 99.0, 103.0, 108.0],
+})
+
+# Running sum, replacing the column: the same as cumulative's "sum".
+total = track.scan("ele", lambda acc, v, i: (acc + v, acc + v), 0.0)
+assert total.column("ele")[7] == 717.0
+
+# Hysteresis elevation gain into a new column. The state carries
+# (ref, gain) but each row gets only the gain.
+T = 3.0  # ±3 m deadband
+
+def step(state, ele, i):
+    ref, gain = state
+    if ref is None:
+        return (ele, 0.0), 0.0
+    if ele - ref >= T:
+        return (ele, gain + ele - ref), gain + ele - ref
+    if ele - ref <= -T:
+        return (ele, gain), gain
+    return (ref, gain), gain  # within deadband: carry
+
+with_gain = track.scan("ele", step, (None, 0.0), output="cumGain")
+# The gap at row 3 repeats the last output.
+assert with_gain.column("cumGain") == [0.0, 0.0, 4.0, 4.0, 4.0, 4.0, 8.0, 13.0]
+```
+
+`scan(column, step, init)` replaces the column; with `output=` it writes a new column and keeps the source. The state can be any Python value. `step` gets the state, the value and the row number, and returns the new state and the row's output.
+
+</TabItem>
 </Tabs>
 
 `step(acc, value, i)` returns `[nextAcc, output]`. The accumulator `A`
@@ -751,6 +997,29 @@ fn main() -> Result<(), pond_rs::PondError> {
 Each partition starts from its own copy of the start value.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 0, 1_000, 1_000, 2_000, 2_000],
+    "host": ["a", "b", "a", "b", "a", "b"],
+    "requests": [1.0, 10.0, 2.0, 20.0, 3.0, 30.0],
+})
+
+# One running total per host, not a single interleaved one.
+per_host = (
+    series.partition_by("host")
+    .scan("requests", lambda acc, v, i: (acc + v, acc + v), 0.0)
+    .collect()
+)
+assert per_host.column("requests") == [1.0, 10.0, 3.0, 30.0, 6.0, 60.0]
+```
+
+Each partition starts from its own deep copy of the start value.
+
+</TabItem>
 </Tabs>
 
 **`split = scan + byColumn`.** The reason `scan` exists: it isolates the
@@ -798,6 +1067,19 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `tail` needs a duration; there is no form with no argument.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 1_000, 2_000, 3_000], "cpu": [0.5, 0.6, 0.95, 0.4]})
+
+# Rows that start after 3 s - 2 s = 1 s.
+recent = series.tail("2s")
+assert [row.key for row in recent] == [2_000, 3_000]
+```
 
 </TabItem>
 </Tabs>
@@ -852,6 +1134,27 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs's `shift` works on every column kind, not only numbers.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000],
+    "value": [10.0, 20.0, 40.0, 30.0],
+    "cpu": [0.5, 0.6, 0.95, 0.4],
+    "mem": [1.0, 1.5, 1.5, 2.0],
+})
+
+lagged = series.shift("value", 1)
+lead = series.shift("value", -1)
+multi = series.shift(["cpu", "mem"], 2)
+assert lagged.column("value") == [None, 10.0, 20.0, 40.0]
+assert lead.column("value") == [20.0, 40.0, 30.0, None]
+assert multi.column("cpu")[2] == 0.5
+```
+
+</TabItem>
 </Tabs>
 
 For time-based shifts on irregular data, align to a regular grid
@@ -901,6 +1204,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `offset_time` takes a duration and `offset_time_ms` takes milliseconds.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+day = 86_400_000
+yesterday = pond.TimeSeries({"time": [0, 3_600_000], "v": [1.0, 2.0]}, name="load")
+
+# Overlay yesterday on today: yesterday's rows, keyed a day later.
+yesterday_on_today = yesterday.offset_time("1d")
+assert [row.key for row in yesterday_on_today] == [day, day + 3_600_000]
+
+skew_fixed = yesterday.offset_time(-250)  # clock ran 250 ms fast
+assert [row.key for row in skew_fixed] == [-250, 3_599_750]
+```
+
+`offset_time` takes a duration, or an int of milliseconds.
 
 </TabItem>
 </Tabs>

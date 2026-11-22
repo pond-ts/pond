@@ -90,6 +90,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 Rust has no type-level narrowing: `Column::optional` and `Column::required` set the flag, and pond-rs checks it when the series is built.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# From a dict: None is a gap, and a column with a gap is optional.
+cpu = pond.TimeSeries({"time": [0, 1_000], "cpu": [0.5, None], "host": ["a", "a"]})
+assert cpu.column("cpu")[1] is None
+assert cpu.schema == [
+    {"name": "time", "kind": "time", "required": True},
+    {"name": "cpu", "kind": "number", "required": False},
+    {"name": "host", "kind": "string", "required": True},
+]
+
+# From JSON: null is a gap, allowed only where "required" is false.
+ok = """{"name": "cpu",
+  "schema": [{"name": "time", "kind": "time"},
+             {"name": "cpu", "kind": "number", "required": false}],
+  "rows": [[0, 0.5], [1000, null]]}"""
+assert pond.TimeSeries.from_json(ok).column("cpu")[1] is None
+
+strict = ok.replace(', "required": false', "")
+try:
+    pond.TimeSeries.from_json(strict)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+Python has no type-level narrowing either. From a frame, a column is optional when its Arrow field is nullable; from a dict, when it holds a `None`. `schema` shows which.
+
+</TabItem>
 </Tabs>
 
 When ingesting JSON or CSV-derived rows, missing cells arrive as
@@ -165,6 +197,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 The closure returns a `Result`, so lookups inside it can use `?`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000],
+    "cpu": [0.5, None, -0.2, 1.7, 0.8],
+    "host": ["web-1", "web-1", "staging-1", "web-2", "web-2"],
+})
+
+# Drop rows whose value is missing.
+present = cpu.filter(lambda e: e["cpu"] is not None)
+assert len(present) == 4
+
+# Drop obvious sensor errors (negative CPU, value over 100%).
+sane = cpu.filter(lambda e: e["cpu"] is not None and 0.0 <= e["cpu"] <= 1.0)
+assert [row.key for row in sane] == [0, 4_000]
+
+# Drop rows from a known-bad host.
+trusted = cpu.filter(lambda e: e["host"] != "staging-1")
+assert len(trusted) == 4
+
+# Just the bad rows, to inspect.
+bad = cpu.filter(lambda e: e["cpu"] is None or not 0.0 <= e["cpu"] <= 1.0)
+assert len(bad) == 3
+```
+
+For speed on large series, write the test as an [expression](./expressions.mdx) instead: `cpu.filter(col("cpu").is_missing() | (col("cpu") < 0) | (col("cpu") > 1))`.
 
 </TabItem>
 </Tabs>
@@ -263,6 +326,39 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `fill_all` is the one-rule form; `fill` takes a rule per column. pond-rs refuses an unknown column, `Linear` on a column that is not numbers, and a fixed value of the wrong kind; pond-ts lets these through.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+series = pond.TimeSeries({
+    "time": [i * minute for i in range(5)],
+    "cpu": [None, 0.2, None, 0.6, None],
+    "host": [None, "a", None, "b", None],
+})
+
+# One rule for every column. The leading gap stays: nothing to carry.
+assert series.fill("hold").column("cpu") == [None, 0.2, 0.2, 0.6, 0.6]
+assert series.fill("bfill").column("cpu") == [0.2, 0.2, 0.6, 0.6, None]
+
+# A rule per column; columns not named keep their gaps.
+mixed = series.fill({"cpu": "linear", "host": "hold"})
+assert mixed.column("cpu") == [None, 0.2, 0.4, 0.6, None]
+
+# Fixed values.
+fixed = series.fill({"cpu": 0.0, "host": "unknown"})
+assert fixed.column("host")[0] == "unknown"
+
+# Zero fills number columns; text columns keep their gaps.
+zeroed = series.fill("zero")
+assert zeroed.column("cpu") == [0.0, 0.2, 0.0, 0.6, 0.0]
+assert zeroed.column("host")[0] is None
+```
+
+`fill("hold")` is the one-rule form; a dict gives a rule per column. As in Rust, an unknown column is an error.
 
 </TabItem>
 </Tabs>
@@ -376,6 +472,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 `fill_with` and `fill_all_with` take the caps as `FillLimits`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A one-minute gap, then a five-minute outage.
+series = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(9)],
+    "cpu": [1.0, None, 3.0, 10.0, None, None, None, None, 20.0],
+})
+
+# At most 3 cells: the 4-cell outage is left whole.
+held = series.fill("hold", limit=3)
+assert held.column("cpu") == [1.0, 1.0, 3.0, 10.0, None, None, None, None, 20.0]
+
+# At most 5 minutes from the value before to the value after.
+lined = series.fill("linear", max_gap="5m")
+assert lined.column("cpu") == [1.0, 2.0, 3.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0]
+
+# Both: the stricter wins.
+both = series.fill("linear", limit=3, max_gap="5m")
+assert both.column("cpu")[4] is None
+```
+
+</TabItem>
 </Tabs>
 
 **All-or-nothing semantics.** A gap either fits the caps or it
@@ -456,6 +577,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute, hour = 60_000, 3_600_000
+series = pond.TimeSeries({
+    "time": [0, 10 * minute, 2 * hour + 5 * minute, 7 * hour],
+    "cpu": [0.2, 0.4, 0.8, 0.5],
+    "host": ["a", "a", "a", "a"],
+})
+
+hourly = series.aggregate("1h", {"cpu": "avg", "host": "last"}).fill(
+    {"cpu": "linear", "host": "hold"}, max_gap="3h"
+)
+# Hour 1 is filled; hours 3 to 6 are a 5-hour gap, left alone.
+assert hourly.column("cpu") == [0.30000000000000004, 0.55, 0.8, None, None, None, None, 0.5]
+```
+
+</TabItem>
 </Tabs>
 
 ### Multi-entity series — see `partitionBy`
@@ -503,6 +644,27 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(per_host.column("cpu")?.numbers()?.get(1), Some(0.6));
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 60, 60, 120],
+    "cpu": [0.5, None, 0.9, 0.7],
+    "host": ["a", "a", "b", "a"],
+})
+
+# Without partitions, host a's gap is filled from host b's 0.9.
+mixed = series.fill({"cpu": "linear"})
+assert mixed.column("cpu")[1] == 0.9
+
+# Per host: a fills between its own 0.5 and 0.7.
+per_host = series.partition_by("host").fill({"cpu": "linear"}).collect()
+assert per_host.column("cpu")[1] == 0.6
 ```
 
 </TabItem>
@@ -585,6 +747,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+# Hosts a and b both report at minute 1.
+events = pond.TimeSeries({
+    "time": [0, minute, minute, 2 * minute],
+    "cpu": [0.5, 0.4, 0.9, 0.7],
+    "host": ["a", "a", "b", "a"],
+})
+
+# Bare dedupe treats a and b at minute 1 as duplicates.
+assert len(events.dedupe("last")) == 3
+
+# Per host: the same time AND the same host is the duplicate key.
+clean = events.partition_by("host").dedupe("last").collect()
+assert len(clean) == 4
+```
+
+</TabItem>
 </Tabs>
 
 ### Resolution policies — `keep`
@@ -664,6 +848,40 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs has no custom keep function yet. `Keep::Min` and `Keep::Max` must name a number or decimal column, checked before anything runs.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+# Hosts a and b both report at minute 1.
+events = pond.TimeSeries({
+    "time": [0, minute, minute, 2 * minute],
+    "cpu": [0.5, 0.4, 0.9, 0.7],
+    "host": ["a", "a", "b", "a"],
+})
+
+# Last wins (the default).
+assert events.dedupe().column("cpu") == [0.5, 0.9, 0.7]
+assert events.dedupe("first").column("cpu") == [0.5, 0.4, 0.7]
+
+# An error at the first repeated time: for pipelines that want loud failures.
+try:
+    events.dedupe("error")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+# Keep the highest-CPU row when two reports race at the same instant.
+assert events.dedupe(("max", "cpu")).column("cpu") == [0.5, 0.9, 0.7]
+
+# Drop every row at a repeated time.
+assert len(events.dedupe("drop")) == 2
+```
+
+There is no custom keep function. `("min", column)` and `("max", column)` must name a number or decimal column.
+
+</TabItem>
 </Tabs>
 
 ### Chains compose
@@ -738,6 +956,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust the options are a `Materialize` struct: `select` is called `pick`, and `range` is a pair of epoch milliseconds.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [5_000, 50_000, 130_000, 250_000], "cpu": [0.1, 0.2, 0.3, 0.4]})
+
+grid = series.materialize("1m")
+# One time-keyed row per minute whose start falls in the series' range
+# (5 s to 250 s); empty buckets give gaps.
+assert grid.key_name == "time"
+assert [row.key for row in grid] == [60_000, 120_000, 180_000, 240_000]
+assert grid.column("cpu") == [None, 0.3, None, 0.4]
+
+# Rows at each bucket's middle, from the reading nearest it, and a range
+# chosen by hand.
+nearest = series.materialize("1m", sample="center", pick="nearest", range=(0, 240_000))
+assert [row.key for row in nearest] == [30_000, 90_000, 150_000, 210_000]
+assert nearest.column("cpu") == [0.2, None, 0.3, None]
+```
+
+In Python, as in Rust, `select` is called `pick`.
 
 </TabItem>
 </Tabs>
@@ -839,6 +1081,38 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+events = pond.TimeSeries({
+    "time": [0, 10_000, 60_000, 180_000, 200_000],
+    "cpu": [0.1, 0.5, 0.2, 0.4, 0.9],
+    "host": ["a", "b", "a", "a", "b"],
+})
+
+grid = (
+    events.partition_by("host")
+    .materialize("1m")
+    .fill({"cpu": "linear"}, max_gap="3m")
+    .collect()
+)
+
+# Every row carries its host, even where the host had no reading.
+rows = [(r.key, r["host"], r["cpu"]) for r in grid]
+assert rows == [
+    (0, "a", 0.1),
+    (60_000, "a", 0.2),
+    (60_000, "b", None),
+    (120_000, "a", 0.30000000000000004),
+    (120_000, "b", None),
+    (180_000, "a", 0.4),
+    (180_000, "b", 0.9),
+]
 ```
 
 </TabItem>
@@ -944,6 +1218,44 @@ fn main() -> Result<(), pond_rs::PondError> {
     );
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A retried poll at 0 s for host a, short gaps, and a 38-minute
+# silence for host b.
+raw = pond.TimeSeries({
+    "time": [0, 0, 0, 60_000, 60_000, 120_000, 120_000, 2_400_000],
+    "cpu": [0.5, 0.6, 0.9, None, 0.8, 0.7, None, 0.3],
+    "host": ["a", "a", "b", "a", "b", "a", "b", "b"],
+})
+
+cleaned = (
+    raw
+    # Scope every following step to each host.
+    .partition_by("host")
+    # Collapse rows that share (time, host); keep the newest.
+    .dedupe("last")
+    # Fill cpu with straight lines, but only across short gaps.
+    .fill({"cpu": "linear"}, max_gap="5m")
+    # Back to one series.
+    .collect()
+)
+
+rows = [(r.key, r["host"], r["cpu"]) for r in cleaned]
+assert rows == [
+    (0, "a", 0.6),  # the retry won
+    (0, "b", 0.9),
+    (60_000, "a", 0.6499999999999999),
+    (60_000, "b", 0.8),
+    (120_000, "a", 0.7),
+    (120_000, "b", None),  # the long silence stays a gap
+    (2_400_000, "b", 0.3),
+]
 ```
 
 </TabItem>

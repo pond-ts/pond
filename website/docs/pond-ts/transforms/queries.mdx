@@ -51,6 +51,27 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs columns have no `mean()`; a whole-column answer comes from `reduce_number`, as below under [Reading columns](#reading-columns).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+assert len(cpu) == 5
+assert cpu.first()["cpu"] == 0.31  # one row
+assert cpu.reduce({"cpu": "avg"}) == {"cpu": 0.476}  # a whole column
+assert cpu.time_range() == (0, 40_000)
+now = cpu.tail("30s").reduce({"cpu": "avg"})  # current state
+assert now["cpu"] == 0.5433333333333333
+```
+
+A whole-column answer comes from `reduce`, as below under [Reading columns](#reading-columns).
+
+</TabItem>
 </Tabs>
 
 Two ways to read: the **row API** (`Event`s — `first()`, `at(i)`,
@@ -115,6 +136,23 @@ fn main() -> Result<(), pond_rs::PondError> {
 `time_range()` gives an `EventKey`. There is no `events` array; `rows()` walks the rows instead.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 10_000, 20_000], "cpu": [0.31, 0.44, 0.48]})
+
+assert len(series) == 3
+
+# The overall span, as a (begin, end) pair; None for an empty series.
+assert series.time_range() == (0, 20_000)
+
+# Iterating gives the rows.
+assert [row.key for row in series] == [0, 10_000, 20_000]
+```
+
+</TabItem>
 </Tabs>
 
 ### `events`
@@ -172,6 +210,28 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(spike.unwrap().begin(), 10_000);
     Ok(())
 }
+```
+
+This covers `first()`, `last()` and `find()` below as well.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 10_000, 20_000, 30_000], "cpu": [0.31, 0.95, 0.48, 0.62]})
+
+assert series.at(0).key == 0
+assert series.at(-1).key == 30_000  # same as last()
+assert series.at(4) is None  # past the end
+assert series[0].key == 0  # series[i] works too, and raises IndexError past the end
+
+assert series.first()["cpu"] == 0.31
+assert series.last()["cpu"] == 0.62
+
+spike = series.find(lambda r: r["cpu"] > 0.9)
+assert spike.key == 10_000
 ```
 
 This covers `first()`, `last()` and `find()` below as well.
@@ -239,6 +299,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 A pond-rs column holds the values but has no reductions (`mean`, `minMax`, `uniqueCount`, `all`, …); reduce through the series with `reduce_number`. `values()` is the raw buffer, where a gap is a non-finite number; `iter()` gives `Option<f64>`s, and `get(i)` panics past the end rather than giving `None`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+cpu = series.column("cpu")  # a plain list, None for a gap
+assert cpu[3] == 0.62  # the value at row 3
+assert cpu == [0.31, 0.44, 0.48, 0.62, 0.53]
+
+# Reductions go through the series.
+assert series.reduce({"avg": ("cpu", "avg"), "min": ("cpu", "min"), "max": ("cpu", "max")}) == {
+    "avg": 0.476,
+    "min": 0.31,
+    "max": 0.62,
+}
+```
+
+`column(name)` gives a Python list; for numpy or polars, take the frame with `to_polars()` / `to_pandas()` and use its columns.
 
 </TabItem>
 </Tabs>
@@ -323,6 +408,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 This covers `includes_key`, `bisect` and `nearest` too. A plain `i64` time works as a key; build other keys with `EventKey::time_range` or `EventKey::interval`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+assert series.includes_key(10_000)
+assert not series.includes_key(15_000)
+assert series.bisect(15_000) == 2
+
+assert series.at_or_before(15_000).key == 10_000
+assert series.at_or_after(15_000).key == 20_000
+
+assert series.nearest(26_000).key == 30_000
+assert series.nearest(25_000).key == 20_000  # a tie: the earlier row
+```
+
+This covers `includes_key`, `bisect` and `nearest` too. A key is a time (an int of milliseconds, a datetime or text), a `(begin, end)` tuple, or a `(label, begin, end)` tuple.
+
+</TabItem>
 </Tabs>
 
 ### `nearest(key)`
@@ -374,6 +483,18 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 10_000, 20_000], "cpu": [0.31, 0.95, 0.48], "host": ["a", "b", "a"]})
+
+assert series.some(lambda r: r["cpu"] > 0.9)  # any spike?
+assert series.every(lambda r: r["host"] is not None)  # all hosts known?
+```
+
+</TabItem>
 </Tabs>
 
 ## Subseries selection
@@ -415,6 +536,23 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `slice` takes a Rust range; negative ends count from the end, as in JavaScript.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [i * 1_000 for i in range(200)], "cpu": [0.5] * 200})
+
+head = series.slice(0, 100)  # first 100 rows
+tail = series.slice(-10)  # last 10 rows
+assert len(head) == 100
+assert tail[0].key == 190_000
+assert len(series[:100]) == 100  # Python slices work too
+```
+
+`slice(start, end)` counts negative ends from the end, as in JavaScript.
 
 </TabItem>
 </Tabs>
@@ -460,6 +598,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 `tail` takes a duration and returns an error for a bad one; there is no form with no argument.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+# Rows that start after 40 s - 30 s = 10 s.
+last_30s = series.tail("30s")
+assert [row.key for row in last_30s] == [20_000, 30_000, 40_000]
+
+now = series.tail("30s").reduce({"cpu": "avg"})
+assert now["cpu"] == 0.5433333333333333
+```
+
+</TabItem>
 </Tabs>
 
 `tail()` with no argument is the identity.
@@ -494,6 +651,21 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(series.after(20_000).key().begin(), &[30_000, 40_000]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+assert [row.key for row in series.before(20_000)] == [0, 10_000]
+assert [row.key for row in series.after(20_000)] == [30_000, 40_000]
 ```
 
 </TabItem>
@@ -542,6 +714,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 `within` takes the two ends rather than a range. Both ends count as inside, for all three.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+span = (10_000, 30_000)
+
+overlapping = series.overlapping(span)
+fully = series.contained_by(span)
+within = series.within(10_000, 30_000)  # takes the two ends
+assert len(overlapping) == 3  # both ends are included
+assert len(fully) == 3  # the same rows here, since rows are moments
+assert len(within) == 3
+```
+
+A span is a `(begin, end)` tuple; `within` takes the two ends. Both ends count as inside, for all three.
+
+</TabItem>
 </Tabs>
 
 ### `trim(range)`
@@ -582,6 +776,25 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Two jobs, each running from begin to end.
+jobs = pond.TimeSeries(
+    {"time": [(0, 15_000), (20_000, 50_000)], "id": ["a", "b"]},
+    name="jobs",
+    key_kind="time_range",
+)
+
+clipped = jobs.trim((10_000, 30_000))
+assert [row.key for row in clipped] == [(10_000, 15_000), (20_000, 30_000)]
+```
+
+A frame with time ranges has two columns, `time` and `timeEnd`; in a dict, each key is a `(begin, end)` tuple.
 
 </TabItem>
 </Tabs>
@@ -629,6 +842,18 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 10_000], "cpu": [0.31, 0.44], "host": ["a", "b"], "healthy": [True, False]})
+
+picked = series.select("cpu", "healthy")
+assert picked.columns == ["cpu", "healthy"]
+```
+
+</TabItem>
 </Tabs>
 
 ### `rename(mapping)`
@@ -660,6 +885,19 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert!(renamed.column("cpu").is_err());
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 10_000], "cpu": [0.31, 0.44]})
+
+renamed = series.rename({"cpu": "load"})  # 'cpu' column becomes 'load'
+assert renamed.column("load")[0] == 0.31
+assert "cpu" not in renamed.columns
 ```
 
 </TabItem>
@@ -713,6 +951,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In pond-rs `overlaps`, `contains` and `intersection` take a span, not another series; pass the other series' `time_range()`. This covers `contains` and `intersection` below as well.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+a = pond.TimeSeries({"time": [0, 20_000, 40_000], "v": [1.0, 2.0, 3.0]})
+b = pond.TimeSeries({"time": [30_000, 60_000], "v": [4.0, 5.0]})
+# These take a span, so pass the other series' span.
+b_range = b.time_range()
+
+assert a.overlaps(b_range)
+assert not a.contains(b_range)
+assert a.contains((5_000, 15_000))
+assert a.intersection(b_range) == (30_000, 40_000)
+```
+
+As in Rust, `overlaps`, `contains` and `intersection` take a span, not another series; pass the other series' `time_range()`. This covers `contains` and `intersection` below as well.
 
 </TabItem>
 </Tabs>
@@ -773,6 +1030,26 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(plain, total);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({
+    "time": [0, 10_000, 20_000, 30_000, 40_000],
+    "cpu": [0.31, 0.44, 0.48, 0.62, 0.53],
+})
+
+total = 0.0
+for row in series:
+    total += row["cpu"] or 0.0
+
+# The same result, one pass over the column inside pond.
+assert series.reduce({"cpu": "sum"})["cpu"] == total
+assert sum(v for v in series.column("cpu") if v is not None) == total
 ```
 
 </TabItem>

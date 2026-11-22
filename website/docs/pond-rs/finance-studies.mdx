@@ -116,6 +116,24 @@ for (const s of [out, withSma, bars]) s.free();
 In JavaScript (`@pond-ts/wasm`) every study is a method with `@pond-ts/financial`'s name and options, as `@pond-ts/financial/fluent` mounts them, or `s.study(name, options)`; `studies()` and `studyInfo(name)` give the catalog.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+bars = pond.TimeSeries({"time": [0, minute, 2 * minute, 3 * minute], "close": [10.0, 11.0, 12.0, 14.0]})
+
+out = bars.sma(period=2).ema(period=3, output="ema3")
+
+assert out.column("sma") == [None, 10.5, 11.5, 13.0]
+# Gaps until 3 bars have been read; then 10 → 10.5 → 11.25 → 12.625.
+assert out.column("ema3") == [None, None, 11.25, 12.625]
+```
+
+In Python every study is a method in snake case (`sma`, `bollinger_percent_b`), with its options as keywords, or `s.study(name, **options)`; `pond.studies()` and `pond.study_info(name)` give the catalog.
+
+</TabItem>
 </Tabs>
 
 ## Moving averages

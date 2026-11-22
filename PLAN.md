@@ -625,7 +625,8 @@ pond-ts bugs found while porting.
   in `docs/plans/PND_RUST_PLAN.md`.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`) and the Rust / Python tabs on the core pages
-  (what is covered so far is in the breakout plan). Left: run
+  (what is covered so far is in the breakout plan). The Python tabs already
+  run in CI (`check-python-snippets.py`). Left: run
   `website/scripts/check-rust-snippets.sh`, which checks every Rust example
   as a whole program, in CI (today it runs by hand); keep the pages in step
   as pond-rs changes.

@@ -53,6 +53,29 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Agg::of("cpu", Reducer::Avg)` is the shorthand `{ cpu: 'avg' }`: the output keeps the source's name.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# One reading a minute for ten minutes.
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(10)],
+    "cpu": [0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+})
+
+rolling_avg = cpu.rolling("5m", {"cpu": "avg"})
+# One row per source row; each cpu is the trailing-5-minute average
+# ending at that row.
+assert len(rolling_avg) == len(cpu)
+avg = rolling_avg.column("cpu")
+assert avg[4] == 0.54  # (0.3 + 0.5 + 0.4 + 0.9 + 0.6) / 5
+assert avg[9] == 0.52  # minutes 5 to 9
+```
+
+`{"cpu": "avg"}` is the shorthand `{ cpu: 'avg' }`: the output keeps the source's name.
+
+</TabItem>
 </Tabs>
 
 Same reducer vocabulary as [`aggregate`](./aggregation) — every
@@ -132,6 +155,22 @@ fn main() -> Result<(), pond_rs::PondError> {
 `rolling_with` takes the options as a `Rolling` struct; `Rolling::default()` gives what `rolling` does.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(10)],
+    "cpu": [0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+})
+
+centered = cpu.rolling("5m", {"cpu": "avg"}, alignment="centered")
+# At minute 4 the window [1.5m, 6.5m) holds minutes 2 to 6.
+assert centered.column("cpu")[4] == 0.5599999999999999
+```
+
+</TabItem>
 </Tabs>
 
 Near the series' ends the window holds fewer events (the first ones under
@@ -203,6 +242,30 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(stats.len(), 30); // the length doesn't change
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# One reading a second for 30 seconds.
+cpu = pond.TimeSeries({
+    "time": [i * 1_000 for i in range(30)],
+    "cpu": [50.0 + (i * 7) % 11 for i in range(30)],
+})
+
+# Don't trust the rolling stats until at least 20 samples are in.
+stats = cpu.rolling("1m", {"mean": ("cpu", "avg"), "sd": ("cpu", "stdev")}, min_samples=20)
+mean, sd = stats.column("mean"), stats.column("sd")
+# Rows 0 to 18 hold fewer than 20 samples: gaps in every column.
+assert mean[18] is None
+assert sd[18] is None
+# Row 19 is the first with 20.
+assert mean[19] == 54.9
+assert sd[19] == 3.2388269481403293
+assert len(stats) == 30  # the length doesn't change
 ```
 
 </TabItem>
@@ -286,6 +349,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 In Rust the studies are methods on `TimeSeries` already; there is nothing to opt in to.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# 30 one-minute bars of made-up prices.
+bars = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(30)],
+    "close": [100.0 + (i % 7) - (i % 3) * 1.5 for i in range(30)],
+})
+
+out = bars.rsi(period=14).rolling("10m", {"rsi10m": ("rsi", "avg")}, append=True)
+# out has time, close, rsi, rsi10m
+assert out.columns == ["close", "rsi", "rsi10m"]
+assert out.column("rsi10m")[29] == 50.92088286604516
+
+# An output named after an existing column is an error with append.
+try:
+    bars.rsi(period=14).rolling("10m", {"rsi": "avg"}, append=True)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+In Python, too, the studies are methods on `TimeSeries` already; there is nothing to opt in to.
+
+</TabItem>
 </Tabs>
 
 An output may not take an existing column's name, so the shorthand
@@ -358,6 +448,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 The grid form is `rolling_over` in Rust.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Readings at uneven times.
+cpu = pond.TimeSeries({
+    "time": [0, 50_000, 130_000, 140_000, 260_000, 330_000],
+    "cpu": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+})
+
+# Per-row rolling: one output per source row, same key.
+per_row = cpu.rolling("2m", {"cpu": "avg"})
+assert [r.key for r in per_row] == [r.key for r in cpu]
+
+# Grid rolling: one output per minute of the sequence.
+grid = cpu.rolling("2m", {"cpu": "avg"}, over="1m")
+assert grid.key_name == "interval"
+assert [r.begin for r in grid] == [0, 60_000, 120_000, 180_000, 240_000, 300_000]
+assert grid.column("cpu") == [1.0, 1.5, 2.0, 3.5, 3.5, 5.0]
+```
+
+The grid form is `rolling(..., over=grid)` in Python.
+
+</TabItem>
 </Tabs>
 
 The per-event form is the common one. Use the grid form when you
@@ -425,6 +540,35 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `Agg::new(output, source, reducer)` is the explicit form; `Agg::of(source, reducer)` is the shorthand.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(10)],
+    "cpu": [0.3, 0.5, 0.4, 0.9, 0.6, 0.2, 0.7, 0.8, 0.5, 0.4],
+})
+
+# Shorthand: the output takes the source's name.
+short = cpu.rolling("5m", {"cpu": "avg"})
+assert short.columns == ["cpu"]
+
+# Named outputs: several reducers on one column, one pass.
+band = cpu.rolling("5m", {
+    "avg": ("cpu", "avg"),
+    "sd": ("cpu", "stdev"),
+    "peak": ("cpu", "max"),
+})
+assert band.columns == ["avg", "sd", "peak"]
+assert band.column("avg")[9] == 0.52
+assert band.column("sd")[9] == 0.21354156504062624
+assert band.column("peak")[9] == 0.8
+```
+
+`{"out": ("source", "reducer")}` is the explicit form; `{"source": "reducer"}` is the shorthand.
 
 </TabItem>
 </Tabs>
@@ -514,6 +658,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 `reduce` returns a `Reduced`, read by output name. `Unique` gives a list, so it comes back as a `Value::Array`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from three hosts in turn.
+series = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(12)],
+    "cpu": [0.2, 0.4, 0.9, 0.3, 0.5, 0.6, 0.1, 0.8, 0.7, 0.35, 0.45, 0.95],
+    "host": [["a", "b", "c"][i % 3] for i in range(12)],
+})
+
+# Trailing 30s, then collapse to single values.
+recent = series.tail("30s").reduce({"cpu": "p95", "host": "unique"})
+assert recent == {"cpu": 0.9125, "host": ["a", "b", "c"]}
+```
+
+`reduce` returns a dict by output name; `unique` gives a list.
 
 </TabItem>
 </Tabs>
@@ -626,6 +790,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 pond-rs calls none of your code during a push. Instead of `on('event')`, watch the node and read the outputs each `push` returns (see [Live series](../../pond-rs/live#what-a-push-returns-outputs)).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+
+rolling = live.rolling("5m", {"cpu": "avg"})
+# Two stats from one column in one rolling pass.
+band = live.rolling("1m", {"mean": ("cpu", "avg"), "sd": ("cpu", "stdev")})
+# No listeners: watch the node, and each push returns what it emitted.
+rolling.watch("event")
+
+seen = []
+for i, v in enumerate([0.2, 0.4, 0.9, 0.3]):
+    for out in live.push(i * 30_000, cpu=v):
+        seen.append(out.event["cpu"])
+assert seen == [0.2, 0.30000000000000004, 0.5, 0.45]
+
+# The current values, by column.
+assert rolling.value() == {"cpu": 0.45}
+assert band.value() == {"mean": 0.5333333333333333, "sd": 0.26246692913372704}
+```
+
+As in Rust, none of your code runs during a push. Instead of `on('event')`, watch the node and read the outputs each `push` returns (see [Python: live series](../../pond-rs/python.mdx#live-series)).
+
+</TabItem>
 </Tabs>
 
 Both [mapping shapes](#mapping-shapes) work on live the same way
@@ -733,6 +924,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "latency": "number"}, name="req")
+
+rolling = live.rolling("1m", {"latency": "p95"}, trigger="30s")
+
+for t, ms in [(0, 100.0), (10_000, 120.0), (25_000, 300.0), (31_000, 110.0), (45_000, 90.0), (62_000, 130.0)]:
+    live.push(t, latency=ms)
+
+# One row each time an event crosses into a new 30 s, keyed at its start.
+rows = [(e.begin, e["latency"]) for e in rolling.events()]
+assert rows == [(30_000, 272.99999999999994), (60_000, 266.0)]
+```
+
+`trigger=` takes a duration (a clock), an int (every n events), a `Sequence`, or `"event"` (the default).
+
+</TabItem>
 </Tabs>
 
 For the full trigger reference (event / clock / count, semantics,
@@ -833,6 +1044,37 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 The keyed form is `rolling_windows` in Rust, one `RollingWindow` per window.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+
+fused = live.rolling(
+    {
+        "1m": {"cpu_avg": ("cpu", "avg"), "cpu_sd": ("cpu", "stdev")},
+        "200ms": {"cpu_samples": ("cpu", "samples")},
+    },
+    trigger="200ms",
+)
+
+for t, v in [(0, 1.0), (100, 2.0), (150, 3.0), (250, 5.0), (320, 4.0), (410, 6.0)]:
+    live.push(t, cpu=v)
+
+# All three columns from both windows on one event.
+e = fused.events()[-1]
+assert e.begin == 400
+avg, sd = e["cpu_avg"], e["cpu_sd"]
+assert (avg, sd) == (3.5, 1.707825127659933)
+assert e["cpu_samples"] == [5.0, 4.0, 6.0]
+z = [(s - avg) / sd for s in e["cpu_samples"]]
+assert len(z) == 3
+```
+
+The keyed form is a dict of `{window: reducers}` in Python.
 
 </TabItem>
 </Tabs>
@@ -937,6 +1179,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+
+fused = live.rolling(
+    {
+        "1m": {"cpu_avg": ("cpu", "avg")},
+        # this window's own setting
+        "200ms": {"aggs": {"cpu_samples": ("cpu", "samples")}, "min_samples": 5},
+    },
+    trigger="200ms",
+    min_samples=2,  # the default for the rest
+)
+
+for t, v in [(0, 1.0), (100, 2.0), (150, 3.0), (250, 5.0), (320, 4.0), (410, 6.0)]:
+    live.push(t, cpu=v)
+
+e = fused.events()[-1]
+assert e["cpu_avg"] == 3.5
+# The 200 ms window holds 3 events, short of its 5: a gap.
+assert e["cpu_samples"] is None
+```
+
+</TabItem>
 </Tabs>
 
 Top-level options apply as the default across all windows;
@@ -1032,6 +1301,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust, `per_partition` builds the fill on every host, and `partition_rolling_windows` runs the windows over it. As in pond-ts, it needs a clock trigger.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"}, name="cpu")
+
+fused = live.partition_by("host").fill({"cpu": "hold"}).rolling(
+    {
+        "1m": {"cpu_avg": ("cpu", "avg")},
+        "200ms": {"cpu_samples": ("cpu", "samples")},
+    },
+    trigger="200ms",
+)
+
+live.push(0, cpu=1.0, host="a")
+live.push(50, cpu=10.0, host="b")
+live.push(100, cpu=None, host="a")  # held at 1
+live.push(150, cpu=20.0, host="b")
+live.push(250, cpu=3.0, host="a")
+
+# One row per host at each 200 ms boundary.
+rows = [(e.begin, e["host"], e["cpu_avg"], e["cpu_samples"]) for e in fused.events()]
+assert rows == [
+    (200, "a", 1.6666666666666667, [1.0, 3.0]),
+    (200, "b", 15.0, [10.0, 20.0]),
+]
+```
+
+In Python the steps chain on the partitioned node, and a clock trigger on a partitioned rolling window gives one node with a row per host at each tick. As in pond-ts, it needs a clock trigger.
 
 </TabItem>
 </Tabs>

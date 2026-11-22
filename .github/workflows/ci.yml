@@ -246,6 +246,11 @@ jobs:
       - name: Test
         run: python -m pytest crates/pond-py/tests -q
 
+      # Every Python tab on the docs site is a whole script with asserts;
+      # run each against the wheel just built, so the examples can't drift.
+      - name: Docs examples
+        run: python website/scripts/check-python-snippets.py
+
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
   # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used

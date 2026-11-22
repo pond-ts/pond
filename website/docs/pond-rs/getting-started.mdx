@@ -52,6 +52,17 @@ ES modules). See [From JavaScript](./javascript) for browser set-up and how
 it differs from pond-ts.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+pond-rs is on PyPI as [`pond-timeseries`](https://pypi.org/project/pond-timeseries/):
+
+```sh
+pip install pond-timeseries
+```
+
+and imported as `import pond`. It takes and gives polars, pandas and pyarrow frames. See [Python](./python.mdx) for what it needs and how it differs.
+
+</TabItem>
 </Tabs>
 
 ## Build a series, bucket it by day
@@ -179,6 +190,44 @@ The calls are pond-ts's: a `TimeSeries` from a schema and rows, and
 `aggregate` with a `Sequence` and a mapping of output columns. The steps
 below name the Rust calls; each has the pond-ts counterpart you would
 expect.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+hour = 3_600_000
+# One reading an hour for 72 hours, starting at midnight in New York on
+# Saturday 7 March 2026. Times are epoch milliseconds (a datetime works too).
+start = 1_772_859_600_000  # 2026-03-07 00:00 in New York = 05:00 UTC
+
+# The sensor missed one reading (hour 30). None marks the gap.
+series = pond.TimeSeries(
+    {
+        "time": [start + h * hour for h in range(72)],
+        "temp": [None if h == 30 else 10.0 + (h % 24) * 0.5 for h in range(72)],
+    },
+    name="weather",
+)
+
+# One row per calendar day in New York.
+days = series.aggregate(
+    pond.Sequence.calendar("day", "America/New_York"),
+    {"readings": ("temp", "count"), "high": ("temp", "max")},
+)
+
+# Sunday 8 March is the day the clocks go forward: it is 23 hours long.
+assert [(row.end - row.begin) // hour for row in days] == [24, 23, 24, 24]
+
+# 72 hourly readings cover four New York days, not three, because one
+# day was short. The gap is not counted.
+assert days.column("readings") == [24.0, 22.0, 24.0, 1.0]
+
+print(len(days), "days")
+```
+
+The calls take the same words as Rust's: `aggregate` with a `Sequence` and a dict of output columns. `days.to_polars()` gives the result as a frame.
 
 </TabItem>
 </Tabs>
