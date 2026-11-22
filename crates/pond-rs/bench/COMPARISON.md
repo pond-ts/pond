@@ -244,6 +244,15 @@ comparisons are within one probe run.
   general "number or text or true/false" value per row before turning
   them into a column. polars runs `v > 500` or `v + w` over whole columns
   at once (3 ms).
+
+  _Since this run:_ column expressions (#867, 2026-10-31) give both a form
+  that does not call a function per row: `filter_expr`, and for `collapse`
+  `with_column_expr` (then `select` to drop the inputs). The runners time
+  them as the `(expression)` cases beside the closure ones, on all three
+  sides, with the answers checked like the rest. They are not in the tables
+  or counts here, which are the 2026-10-22 run; the `collapse` and `filter`
+  figures above are for the closure forms.
+
 - **Row windows per entity** (`rows 20 avg by host`, 8 hosts): pond-rs
   splits the series into 8 separate series (every column copied, text
   included: 40 ms), runs the window on each (38 ms) and merges them back

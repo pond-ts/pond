@@ -2,7 +2,7 @@
 //
 //     npm run build --workspace=pond-ts
 //     node crates/pond-rs/bench/rowwise_pond_ts.mjs
-import { TimeSeries } from '../../../packages/core/dist/index.js';
+import { TimeSeries, col } from '../../../packages/core/dist/index.js';
 
 const ROWS = 1_000_000;
 let seed = 20261019;
@@ -65,6 +65,7 @@ const cases = [
         return x !== undefined && x > 500;
       }),
   ],
+  ['filter v > 500 (expression)', () => s.filter(col('v').gt(500))],
   ['map_numbers v * 2', () => s.mapColumns({ v: (x) => x * 2 })],
   ['with_column', () => s.withColumn('w', extra)],
   ['slice middle half', () => s.slice(250_000, 750_000)],

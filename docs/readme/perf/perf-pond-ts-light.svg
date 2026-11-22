@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 270" width="800" height="270" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-label="pond-ts against pandas: ema 1.7× faster, mean 1.5× faster, median 1.1× faster, five studies 1.3× slower, bollinger 1.4× slower, envelope 1.9× slower. pond-ts against polars on one core: ema 3.1× faster, bollinger 1.9× faster, five studies 1.2× faster, sma 1.2× slower, mean 3.8× slower, stdev 8.9× slower, five studies, polars on 10 cores 3.5× slower">
+<text x="0" y="18" font-size="13" fill="#0b0b0b" text-anchor="start" font-weight="600">pond-ts against pandas</text>
+<text x="230" y="42" font-size="12" fill="#76746e" text-anchor="end" font-weight="400">← faster</text>
+<text x="246" y="42" font-size="12" fill="#76746e" text-anchor="start" font-weight="400">slower →</text>
+<text x="0" y="74" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">ema</text>
+<path d="M238,62 h-20.74798274264843 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h20.74798274264843 z" fill="#2a78d6"/>
+<text x="207.25201725735158" y="74" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">1.7×</text>
+<text x="0" y="100" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">mean</text>
+<path d="M238,88 h-16.205357482571596 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h16.205357482571596 z" fill="#2a78d6"/>
+<text x="211.7946425174284" y="100" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">1.5×</text>
+<text x="0" y="126" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">median</text>
+<path d="M238,114 h-1.995871407781788 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h1.995871407781788 z" fill="#2a78d6"/>
+<text x="226.00412859221822" y="126" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">1.1×</text>
+<text x="0" y="152" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">five studies</text>
+<path d="M238,140 h7.578676721969785 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-7.578676721969785 z" fill="#e34948"/>
+<text x="255.57867672196977" y="152" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">1.3×</text>
+<text x="0" y="178" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">bollinger</text>
+<path d="M238,166 h11.781827853249702 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-11.781827853249702 z" fill="#e34948"/>
+<text x="259.7818278532497" y="178" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">1.4×</text>
+<text x="0" y="204" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">envelope</text>
+<path d="M238,192 h24.85454666752549 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-24.85454666752549 z" fill="#e34948"/>
+<text x="272.8545466675255" y="204" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">1.9×</text>
+<line x1="238" y1="54" x2="238" y2="214" stroke="#c3c2b7" stroke-width="1"/>
+<text x="408" y="18" font-size="13" fill="#0b0b0b" text-anchor="start" font-weight="600">pond-ts against polars on one core</text>
+<text x="638" y="42" font-size="12" fill="#76746e" text-anchor="end" font-weight="400">← faster</text>
+<text x="654" y="42" font-size="12" fill="#76746e" text-anchor="start" font-weight="400">slower →</text>
+<text x="408" y="74" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">ema</text>
+<path d="M646,62 h-49.44380234145015 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h49.44380234145015 z" fill="#2a78d6"/>
+<text x="586.5561976585499" y="74" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">3.1×</text>
+<text x="408" y="100" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">bollinger</text>
+<path d="M646,88 h-25.77820608311478 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h25.77820608311478 z" fill="#2a78d6"/>
+<text x="610.2217939168852" y="100" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">1.9×</text>
+<text x="408" y="126" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">five studies</text>
+<path d="M646,114 h-3.622756022856385 a4,4 0 0 0 -4,4 v8 a4,4 0 0 0 4,4 h3.622756022856385 z" fill="#2a78d6"/>
+<text x="632.3772439771436" y="126" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="400">1.2×</text>
+<text x="408" y="152" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">sma</text>
+<path d="M646,140 h4.55157457314348 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-4.55157457314348 z" fill="#e34948"/>
+<text x="660.5515745731435" y="152" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">1.2×</text>
+<text x="408" y="178" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">mean</text>
+<path d="M646,166 h58.86284319446454 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-58.86284319446454 z" fill="#e34948"/>
+<text x="714.8628431944645" y="178" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">3.8×</text>
+<text x="408" y="204" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">stdev</text>
+<path d="M646,192 h98.69195755996302 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-98.69195755996302 z" fill="#e34948"/>
+<text x="754.691957559963" y="204" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">8.9×</text>
+<line x1="646" y1="54" x2="646" y2="214" stroke="#c3c2b7" stroke-width="1"/>
+<text x="408" y="236" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">five studies, polars on 10 cores</text>
+<line x1="646" y1="242" x2="646" y2="262" stroke="#c3c2b7" stroke-width="1"/>
+<path d="M646,244 h54.62514611159143 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-54.62514611159143 z" fill="#e34948"/>
+<text x="710.6251461115914" y="256" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="400">3.5×</text>
+</svg>

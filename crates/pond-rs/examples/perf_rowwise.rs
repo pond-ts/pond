@@ -7,11 +7,13 @@
 //! Cost: each op is one O(N) pass over the column (fill: one pass to find
 //! runs, one to fill them), plus an O(N) copy of the key for `FirstRow::Drop`
 //! and `slice`. `filter` is one pass to choose rows plus a copy of the kept
-//! rows; `with_column` is one pass to check the new column.
+//! rows; `with_column` is one pass to check the new column. `filter` is
+//! timed three ways: a closure that looks the column up by name on every
+//! row, a closure handed the column, and a column expression.
 
 mod common;
 
-use pond_rs::{Change, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Change, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries, col};
 
 fn main() -> pond_rs::Result<()> {
     const ROWS: usize = 1_000_000;
@@ -89,6 +91,10 @@ fn main() -> pond_rs::Result<()> {
                 s.filter(|r| Ok(v_col.get(r.index()).is_some_and(|x| x > 500.0)))
                     .unwrap()
             }),
+        ),
+        (
+            "filter v > 500 (expression)",
+            Box::new(|| s.filter_expr(&col("v").gt(500)).unwrap()),
         ),
         (
             "map_numbers v * 2",

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 148" width="800" height="148" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-label="First paint of 166,650 points (milliseconds, lower is better): pond 11.4, uPlot 14.5, Chart.js 36.4. Area chart of 10 million points (frames a second, higher is better): pond 117, SciChart (GPU) 119, uPlot 18. 100,000 points changing every frame (frames a second, higher is better): pond 18, SciChart (GPU) 119, uPlot 37">
+<text x="0" y="18" font-size="13" fill="#f0efec" text-anchor="start" font-weight="600">First paint of 166,650 points</text>
+<text x="0" y="37" font-size="12" fill="#9a988f" text-anchor="start" font-weight="400">milliseconds, lower is better</text>
+<text x="0" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">pond</text>
+<path d="M104,58 h26.065934065934066 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-26.065934065934066 z" fill="#3987e5"/>
+<text x="141.06593406593407" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">11.4</text>
+<text x="0" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">uPlot</text>
+<path d="M104,88 h34.24175824175825 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-34.24175824175825 z" fill="#55544f"/>
+<text x="149.24175824175825" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">14.5</text>
+<text x="0" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">Chart.js</text>
+<path d="M104,118 h92 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-92 z" fill="#55544f"/>
+<text x="207" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">36.4</text>
+<line x1="104" y1="52" x2="104" y2="142" stroke="#3d3d3a" stroke-width="1"/>
+<text x="272" y="18" font-size="13" fill="#f0efec" text-anchor="start" font-weight="600">Area chart of 10 million points</text>
+<text x="272" y="37" font-size="12" fill="#9a988f" text-anchor="start" font-weight="400">frames a second, higher is better</text>
+<text x="272" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">pond</text>
+<path d="M376,58 h90.38655462184873 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-90.38655462184873 z" fill="#3987e5"/>
+<text x="477.38655462184875" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">117</text>
+<text x="272" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">SciChart (GPU)</text>
+<path d="M376,88 h92 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-92 z" fill="#55544f"/>
+<text x="479" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">119</text>
+<text x="272" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">uPlot</text>
+<path d="M376,118 h10.521008403361343 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-10.521008403361343 z" fill="#55544f"/>
+<text x="397.52100840336135" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">18</text>
+<line x1="376" y1="52" x2="376" y2="142" stroke="#3d3d3a" stroke-width="1"/>
+<text x="544" y="18" font-size="13" fill="#f0efec" text-anchor="start" font-weight="600">100,000 points changing every frame</text>
+<text x="544" y="37" font-size="12" fill="#9a988f" text-anchor="start" font-weight="400">frames a second, higher is better</text>
+<text x="544" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">pond</text>
+<path d="M648,58 h10.521008403361343 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-10.521008403361343 z" fill="#3987e5"/>
+<text x="669.5210084033613" y="71" font-size="12.5" fill="#f0efec" text-anchor="start" font-weight="600">18</text>
+<text x="544" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">SciChart (GPU)</text>
+<path d="M648,88 h92 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-92 z" fill="#55544f"/>
+<text x="751" y="101" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">119</text>
+<text x="544" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">uPlot</text>
+<path d="M648,118 h25.84873949579832 a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h-25.84873949579832 z" fill="#55544f"/>
+<text x="684.8487394957983" y="131" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="400">37</text>
+<line x1="648" y1="52" x2="648" y2="142" stroke="#3d3d3a" stroke-width="1"/>
+</svg>
