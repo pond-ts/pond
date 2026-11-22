@@ -35,6 +35,47 @@ few pixels, `rolling` for the moving window, and `aggregate(Sequence.every(…))
 for the bars, drawn by `@pond-ts/charts`. Source and recorder:
 [`docs/readme/demo/`](docs/readme/demo/).</sub>
 
+## Why pond
+
+### The series goes straight to the chart
+
+`@pond-ts/charts` takes a `TimeSeries` or a `LiveSeries` as it is. You do the
+maths in pond and hand the result to a chart layer. There is no step where you
+reshape it into arrays of points, and a chart prop that names a column is
+checked against your schema, so a misspelt column name is a compile error.
+
+It stays quick on large data. A line of one million points pans at about 90
+frames a second with nothing to configure, and an area chart of 10 million
+points holds 117 frames a second
+([how it works and where it stops](https://pond-ts.org/docs/how-to-guides/rendering-large-series);
+figures under [Performance](#performance)).
+
+### It is built for data that arrives over time
+
+Readings go missing, arrive late, come from many machines at once, and need
+grouping into calendar days that are not always 24 hours long. pond has a
+stated rule for each, and you pick it with one argument:
+
+- **Missing readings.** `fill` takes a strategy per column (hold the last
+  value, draw a straight line, use zero) and the longest gap it is allowed to
+  fill. `align` puts uneven readings onto a regular grid and does not draw a
+  line across a reading that is missing.
+- **Late and out-of-order events.** A `LiveSeries` rejects them, drops them,
+  or sorts them into place if they arrive within a grace period you set.
+- **Many sources at once.** After `partitionBy('host')`, every rolling window,
+  fill and bucket is kept separately for each host.
+- **Calendar time.** `Sequence.calendar('day', { timeZone: 'America/New_York' })`
+  gives real local days, including the 23-hour day when the clocks go forward.
+- **Types.** You describe the columns once. Every result knows its own
+  columns, and `event.get('cpu')` is a `number | undefined` with no casts.
+
+### The same answers in TypeScript, Rust and Python
+
+pond-rs is the same library written in Rust. Its test suite runs every
+operation against output written by pond-ts and requires the results to match
+to the last bit. So you can try an idea in the browser, then run it over years
+of data from Rust or Python, and get the same numbers.
+
 ## What's in this repository
 
 **TypeScript packages** (npm, all released together under one version):
@@ -57,13 +98,6 @@ test suite checks every operation against output written by pond-ts):
 | [`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
 | [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)      | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
 
-How fast: across the 173 benchmark cases measured while building it, pond-rs
-on 4 cores was faster than pond-ts in 170, with a median of 7.5× (6.8× on a
-single core), and was about even with polars overall
-([full comparison](crates/pond-rs/bench/COMPARISON.md)). pond-ts itself is
-20.7× faster than its predecessor pondjs on average across 54 shared
-operations ([Performance](#performance) below).
-
 **Also here:** the docs site [pond-ts.org](https://pond-ts.org) (`website/`), a
 Claude Code plugin with skills for using pond (`plugins/pond-ts`), worked
 example apps (`apps/`: a live chart drawn off the main thread, and a demo of
@@ -77,31 +111,23 @@ cargo add pond-rs                                     # Rust
 pip install pond-rs                                   # Python
 ```
 
-## What the core does
+### Which one to use
 
-- **Typed schemas** — declare once, every transform downstream narrows
-  off it. `event.get('cpu')` returns `number | undefined` straight from
-  the schema; no `as` casts.
-- **Batch + streaming with the same vocabulary** — `filter`, `map`,
-  `aggregate`, `rolling`, `diff`, `rate`, `fill`, `cumulative`,
-  `sample`, `reduce` all exist on both `TimeSeries` and `LiveSeries`.
-- **Multi-entity by construction** — `partitionBy('host')` routes per
-  entity; `rolling` / `aggregate` / `fill` / `sample` over a partitioned
-  view all become per-entity automatically.
-- **Bounded-memory streaming** — retention policies, eviction-aware
-  views, and sampling decouple downstream window length
-  from event rate at firehose loads (up to 500k events/sec on a
-  single node.js instance.)
-- **Triggers** — for control of rolling emission cadences. Synchronised
-  partitioned rolling fires across partitions on every boundary.
-- **Typed column extraction** — `series.column('cpu')` returns a
-  schema-narrowed typed column with single-pass reductions
-  (`min`/`max`/`sum`/`mean`/`stdev`/`median`/`percentile`/`minMax`),
-  index downsampling (`bin`), and a zero-copy `toFloat64Array()` for
-  canvas / WebGL draw loops — no per-event allocation on the hot path.
-- **No legacy baggage**
+- **An app in the browser or in Node, with charts:** `pond-ts`, plus
+  `@pond-ts/charts` and `@pond-ts/react`. Everything is typed and the charts
+  read the series directly.
+- **Heavy computation in Rust or Python:** `pond-rs`. It is several times
+  faster and can use several cores.
+- **The Rust engine from JavaScript:** `@pond-ts/rs` is 3–11× faster than
+  pond-ts on the financial studies, on one thread. It is younger than the
+  rest: it has no TypeScript types yet, you release each series yourself with
+  `free()`, it needs Node 20.19 or newer, and the charts do not take its
+  series directly. Pass results to pond-ts as JSON or Arrow
+  ([details](https://pond-ts.org/docs/pond-rs/javascript)).
 
-## Quick start: batch
+## Quick start
+
+### A batch of history
 
 ```ts
 import { Sequence, TimeSeries } from 'pond-ts';
@@ -125,74 +151,55 @@ const cpu = TimeSeries.fromJSON({
   ],
 });
 
+// Average CPU and total requests per minute.
 const byMinute = cpu.aggregate(Sequence.every('1m'), {
   cpu: 'avg',
   requests: 'sum',
-  host: 'last',
 });
 
+// One row per calendar day in New York, clock changes included.
+const byDay = cpu.aggregate(
+  Sequence.calendar('day', { timeZone: 'America/New_York' }),
+  { cpu: 'max' },
+);
+
+// A rolling two-minute average with a band two standard deviations wide.
 const bands = cpu.baseline('cpu', { window: '2m', sigma: 2 });
-//    ^ appends rolling avg / sd / upper / lower in one pass.
 
-const anomalies = cpu.outliers('cpu', { window: '2m', sigma: 2 });
-//    ^ schema-preserving filter — same columns, just the spikes.
+// Only the readings that fall outside that band.
+const unusual = cpu.outliers('cpu', { window: '2m', sigma: 2 });
+
+// The same kind of rolling window, kept separately for each host.
+const perHost = cpu
+  .partitionBy('host')
+  .rolling('5m', {
+    avg: { from: 'cpu', using: 'avg' },
+    sd: { from: 'cpu', using: 'stdev' },
+  })
+  .collect();
 ```
 
-The full batch surface (`align`, `rolling`, `smooth`, `groupBy`, `join`,
-`reduce`, `diff`, `rate`, `fill`, `dedupe`, `materialize`, `sample`,
-`partitionBy`, `pivotByGroup`, …) follows the same shape: TimeSeries
-in, TimeSeries out, schema preserved.
+Every operation takes a series and returns a new one; the original is never
+changed. The rest of the batch operations (`align`, `smooth`, `join`, `fill`,
+`dedupe`, `diff`, `rate`, `pivotByGroup`, and more) work the same way.
 
-## Quick start: live (streaming)
-
-```ts
-import { LiveSeries, Sequence } from 'pond-ts';
-
-// 1. Same schema; this is a live append buffer with retention.
-const live = new LiveSeries({
-  name: 'cpu',
-  schema,
-  retention: { maxAge: '10m' }, // keep only the last 10 minutes
-});
-
-// 2. Push as events arrive. Each push is validated against the schema.
-live.push([Date.now(), 0.45, 128, 'api-1']);
-
-// 3. Compose live views — incremental, push-driven, eviction-aware.
-const recentAvg = live.rolling('5m', { cpu: 'avg' });
-recentAvg.on('event', (e) => render(e.get('cpu')));
-
-// 4. Snapshot to a TimeSeries for batch analytics at any time.
-const snap = live.toTimeSeries();
-```
-
-The full live surface (`filter`, `map`, `select`, `window`, `aggregate`,
-`rolling`, `reduce`, `diff`, `rate`, `pctChange`, `fill`, `cumulative`,
-`sample`) is incremental — events flow, views emit, retention bounds
-memory.
-
-## Quick start: charts (React)
-
-`@pond-ts/charts` reads a `TimeSeries` or `LiveSeries` directly — do the maths
-in pond, hand the result to a layer. Rows share one x scale, so they pan,
-zoom and track the cursor together.
+### On the chart
 
 ```tsx
 import {
   BandChart,
   ChartContainer,
   ChartRow,
+  CrosshairCursor,
   Layers,
   LineChart,
   YAxis,
-  CrosshairCursor,
 } from '@pond-ts/charts';
 
-// `bands` is the baseline() result from the batch quick start:
-// cpu + avg / sd / upper / lower columns.
-export function CpuChart({ width }: { width: number }) {
+// `bands` is the series from the batch example: cpu plus avg, sd, upper, lower.
+export function CpuChart() {
   return (
-    <ChartContainer width={width} panZoom>
+    <ChartContainer width="auto" panZoom>
       <CrosshairCursor />
       <ChartRow height={240}>
         <YAxis id="cpu" format=".0%" />
@@ -206,123 +213,157 @@ export function CpuChart({ width }: { width: number }) {
 }
 ```
 
-Pass `width="auto"` to measure the parent instead. Live data renders through
-the same layers: own the series with `useLiveSeries` from `@pond-ts/react`
+Rows in one container share a time axis, so they pan, zoom and track the
+cursor together. Line, area, band, bar, scatter, box, candlestick and heat map
+layers are included, along with cursors, selection, draggable annotations and
+a time axis that skips the hours a market is closed. Live data goes through
+the same layers: hold the series with `useLiveSeries` from `@pond-ts/react`
 and pass its snapshot as `series`.
 
-## Quick start: multi-entity
-
-`partitionBy` routes events into per-key buffers. Every stateful
-operator downstream of `partitionBy` runs per-partition automatically:
+### A live stream
 
 ```ts
-const perHost = cpu
-  .partitionBy('host')
-  .rolling('5m', { cpu: 'avg', cpu_sd: 'stdev' });
+import { LiveSeries } from 'pond-ts';
 
-// .collect() fans the per-partition outputs back into a flat TimeSeries
-// with the partition key auto-injected as a column.
-const flat = perHost.collect();
-```
+const live = new LiveSeries({
+  name: 'cpu',
+  schema,
+  retention: { maxAge: '10m' }, // keep the last ten minutes
+  ordering: 'reorder', // accept events that arrive out of order...
+  graceWindow: '5s', // ...up to five seconds late
+});
 
-Same shape on the live side — `live.partitionBy('host')` returns a
-`LivePartitionedSeries` whose `rolling` / `fill` / `diff` / `sample`
-methods all maintain per-partition state.
+live.push([Date.now(), 0.45, 128, 'api-1']);
 
-## Quick start: bounded-memory sampling
+// Updated as each event arrives; nothing is recomputed from scratch.
+const recent = live.rolling('5m', { cpu: 'avg' });
+recent.on('event', (e) => console.log(e.get('cpu')));
 
-At firehose rates, a long rolling baseline blows the heap. `sample({
-stride: N })` decouples baseline length from event rate; chain it
-between `partitionBy` and `rolling`:
-
-```ts
-// Per-host 1-in-10 stride feeding a per-host 5m baseline.
-live
+// Per-host average and spread, using every tenth event to bound memory.
+const liveHosts = live
   .partitionBy('host')
   .sample({ stride: 10 })
-  .rolling('5m', { cpu_avg: 'avg', cpu_sd: 'stdev' });
+  .rolling('5m', {
+    avg: { from: 'cpu', using: 'avg' },
+    sd: { from: 'cpu', using: 'stdev' },
+  });
+
+// A plain TimeSeries of what is in the buffer right now.
+const snapshot = live.toTimeSeries();
 ```
 
-For visualization, the snapshot side ships reservoir sampling too —
-single-pass Algorithm R, sorted by key, fixed point count regardless of
-source size:
+`filter`, `map`, `aggregate`, `rolling`, `diff`, `rate`, `fill`, `cumulative`,
+`sample` and `reduce` exist on both `TimeSeries` and `LiveSeries`. On a live
+series they update as events arrive, and the retention setting keeps memory
+bounded.
 
-```ts
-const points = series.sample({ reservoir: { size: 500 } }).toRows();
-// 500 uncorrelated points drawn uniformly from the source.
-```
+### Also in the core
+
+- **Triggers** decide how often a live rolling window reports: on every
+  event, on clock boundaries, at a fixed interval, or every N events.
+- **Typed columns.** `series.column('cpu')` gives `min`, `max`, `sum`, `mean`,
+  `stdev`, `median` and `percentile` directly, and `toFloat64Array()` hands
+  the numbers to a canvas or WebGL draw loop without copying them.
+- **Arrow in and out.** `fromArrow` and `toArrow` exchange columns with Apache
+  Arrow without copying the numeric data.
+- **Series on another axis.** `ValueSeries` is keyed by a value that only
+  increases, such as distance along a route, instead of by time.
+- **Sampling for display.** `series.sample({ reservoir: { size: 500 } })`
+  draws 500 points evenly at random from a series of any length.
 
 ## Performance
 
-Measured against three reference points (snapshot 2026-07-30; full tables,
-methodology, and every losing number in the
-[benchmark reference](website/docs/reference/benchmarks.mdx)):
+Three things were measured, each on its own: drawing, the TypeScript library,
+and the Rust library. The dates and machines differ, so the ratios do not
+multiply together. Blue is pond. In the second and third figures, red is
+where pond is slower.
 
-- **vs pondjs** (the predecessor): faster on all 54 measurable shared
-  operations — geometric mean **20.7×**, `aggregate` up to 453×,
-  `median` 157×, and `select` / `rename` effectively instant (O(1)
-  column rebinds).
-- **vs pandas** (500k-bar workload): roughly **even** — ahead on `ema`,
-  `mean`, `median` / `percentile`; behind ~1.1–1.9× on the rolling
-  studies. A five-study strategy pass runs 1.28× slower than pandas'
-  Cython kernels.
-- **vs polars, single-threaded**: **ahead on composite studies**
-  (`bollinger` 0.53×, strategy stack 0.85×, `ema` 0.32× — lower is
-  pond-ts faster), behind 4–9× on whole-column reductions (the SIMD gap;
-  half-closed already by blocked summation) and on raw ingest, where
-  pond-ts front-loads validation the dataframe engines defer.
-- **vs polars on all 10 cores**: behind ~3.5× on the strategy stack —
-  pond-ts has no parallelism today; a measured 2.42× worker-thread path
-  is on the roadmap (`[PND-PROCPAR]`).
+### Charts
 
-The honest one-line version: the rewrite beat its predecessor by an order
-of magnitude, holds its own per-core against the native engines on the
-composite queries that dominate real workloads, and knows exactly where
-it is behind. Run locally:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-charts-dark.svg">
+  <img src="docs/readme/perf/perf-charts-light.svg" width="800" alt="First paint of 166,650 points in milliseconds: pond 11.4, uPlot 14.5, Chart.js 36.4. Area chart of 10 million points in frames a second: pond 117, SciChart on the graphics card 119, uPlot 18. 100,000 points changing every frame, in frames a second: pond 18, SciChart 119, uPlot 37.">
+</picture>
+
+<sub>Apple M1 Pro, headless Chromium.
+[First paint](website/docs/reference/charts-benchmarks.mdx),
+[scaling](website/docs/reference/charts-scale-benchmarks.mdx). Also behind:
+hovering costs more than in uPlot, and the charts add 50 KB compressed on top
+of React and pond-ts.</sub>
+
+### pond-ts
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-pond-ts-dark.svg">
+  <img src="docs/readme/perf/perf-pond-ts-light.svg" width="800" alt="pond-ts against pandas: ema 1.7 times faster, mean 1.5 times faster, median 1.1 times faster, a pass of five studies 1.3 times slower, bollinger 1.4 times slower, envelope 1.9 times slower. pond-ts against polars on one core: ema 3.1 times faster, bollinger 1.9 times faster, five studies 1.2 times faster, sma 1.2 times slower, mean 3.8 times slower, stdev 8.9 times slower. Against polars on 10 cores, five studies is 3.5 times slower.">
+</picture>
+
+<sub>The same query on 500,000 rows. Node 22, Apple silicon, 30 July 2026.
+[Every figure, losses included](website/docs/reference/benchmarks.mdx).</sub>
+
+- **Against pondjs:** faster on all 54 operations the two share, 20.7× by
+  geometric mean.
+- **Loading rows** is where pond-ts is furthest behind: 6.3 ms for 500,000
+  rows against 0.03 ms for polars, because it checks every row against the
+  schema as it loads.
+- **One thread.** An opt-in worker mode for Node
+  (`@pond-ts/financial/parallel`) speeds up three of the rolling studies, and
+  pond-rs is the answer when you need every core.
+- **Live:** about 350,000 events a second pushed one at a time into a series
+  that keeps a rolling average and one-minute buckets, and about a million a
+  second in batches of 1,000
+  ([one thread, 4-core Xeon, 31 October 2026](website/docs/pond-rs/performance.mdx#from-javascript)).
+
+### pond-rs
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/perf/perf-pond-rs-dark.svg">
+  <img src="docs/readme/perf/perf-pond-rs-light.svg" width="800" alt="pond-rs is 7.5 times faster than pond-ts at the median on 4 cores, and faster in 170 of 173 cases. Against polars with 4 cores each it is faster in 73 cases, level in 9 and slower in 59.">
+</picture>
+
+<sub>22 October 2026.
+[Full comparison](crates/pond-rs/bench/COMPARISON.md).</sub>
+
+- **Against polars** it is furthest ahead on rolling "top 3" and "unique
+  values" windows and on joins that keep every row. It is furthest behind
+  where a rule is written as a function that pond calls once per row
+  (`filter`, `collapse`). Write the rule as a column expression where you
+  can, and it runs over whole columns instead.
+- **From JavaScript,** `@pond-ts/rs` runs the same engine as WebAssembly on
+  one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
+  on live series. Write filters as expressions (`col('v').gt(0)`); a filter
+  written as a JavaScript function is about 18× slower than in pond-ts
+  ([table](website/docs/pond-rs/performance.mdx#from-javascript)).
+
+The figures are drawn by
+[`docs/readme/perf/make-charts.mjs`](docs/readme/perf/make-charts.mjs) from
+the numbers on the linked pages. To run the pondjs comparison yourself:
 
 ```sh
 npm run build && node packages/core/bench/vs-pondjs.cjs
 ```
 
-## Domain packages
-
-Optional, domain-specific, all on plain pond series:
-
-- **[`@pond-ts/financial`](https://www.npmjs.com/package/@pond-ts/financial)**
-  — 109 oracle-verified technical studies (SMA, EMA, RSI, MACD,
-  Bollinger, ATR, VWAP, …) that append columns to a bar series, a fluent
-  `bars.sma({ period: 20 }).rsi({ period: 14 })` form, and a
-  `TradingCalendar` so session-aligned bars, rolling windows and chart axes
-  stop at the close.
-- **[`@pond-ts/fit`](https://www.npmjs.com/package/@pond-ts/fit)** — fitness
-  and activity analytics: typed quantities with units, canonical activity
-  series, geo (distance, elevation, best efforts), power (NP / IF / TSS,
-  curves), heart-rate zones, splits.
-- **[`@pond-ts/process`](https://www.npmjs.com/package/@pond-ts/process)** —
-  **experimental.** Computations as data: processing graphs authored fluently
-  or composed as JSON, resolved against a declared op vocabulary with
-  content-addressed caching, provenance and per-node timings. The API is
-  expected to move.
-
 ## Documentation
 
 The full guide is at **<https://pond-ts.org/>**.
 
-- **[Start here](https://pond-ts.org/docs/)**
-  — five-minute walkthrough with batch, live, and React examples.
-- **[Concepts](https://pond-ts.org/docs/start-here/concepts)**
-  — temporal keys, sequences, windowing, partitioning, triggers, late
-  data.
-- **[Transforms reference](https://pond-ts.org/docs/pond-ts/transforms/queries)**
-  — every batch operator (queries, aggregation, alignment, rolling,
-  smoothing, sampling, cleaning, reshape, anomaly detection).
-- **[Live reference](https://pond-ts.org/docs/pond-ts/live/live-series)**
-  — `LiveSeries`, live transforms, triggering.
-- **[How-to guides](https://pond-ts.org/docs/how-to-guides)**
-  — building a dashboard, ingesting messy data.
-- **[API reference (auto-generated)](https://pond-ts.org/generated-api/core/)**
-  — TypeDoc output, every public class and method.
-- **[CHANGELOG](./CHANGELOG.md)** — what shipped in each release.
+- **[Start here](https://pond-ts.org/docs/)**: a walkthrough of batch, live
+  and React examples.
+- **[Concepts](https://pond-ts.org/docs/pond-ts/concepts)**: time keys,
+  sequences, windows, partitions, triggers and late data.
+- **[Coming from pondjs](https://pond-ts.org/docs/pond-ts/mental-model#coming-from-pondjs)**:
+  what each pondjs idea became.
+- **[Batch operations](https://pond-ts.org/docs/pond-ts/transforms/queries)**
+  and **[live series](https://pond-ts.org/docs/pond-ts/live/live-series)**.
+- **[Charts](https://pond-ts.org/docs/charts)** and the
+  **[chart gallery](https://pond-ts.org/docs/charts/gallery)**.
+- **[pond-rs](https://pond-ts.org/docs/pond-rs)**: Rust, WebAssembly and
+  Python.
+- **[How-to guides](https://pond-ts.org/docs/how-to-guides)**: building a
+  dashboard, cleaning messy data, drawing very large series.
+- **[API reference](https://pond-ts.org/generated-api/core/)**: every public
+  class and method, generated from the source.
+- **[CHANGELOG](./CHANGELOG.md)**: what shipped in each release.
 
 ## Versioning
 
@@ -346,15 +387,16 @@ pond is built by agents and expects to be used by them. Three things exist so
 an agent can go from "never heard of pond" to working code without a human in
 the loop:
 
-- **`AGENTS.md` + `API.md` ship inside every npm tarball** —
-  `node_modules/pond-ts/AGENTS.md` is a one-read guide (which package for
-  which task, the idioms, the mistakes agents make); `API.md` maps every
-  public export to its source file. Source:
+- **`AGENTS.md` and `API.md` ship inside each of the six TypeScript
+  packages.** `node_modules/pond-ts/AGENTS.md` is a one-read guide: which
+  package for which task, the idioms, and the mistakes agents make. `API.md`
+  maps every public export to its source file. Sources:
   [docs/agents/USING_POND.md](docs/agents/USING_POND.md), [API.md](API.md).
-- **<https://pond-ts.org/llms.txt>** — every docs page with a one-line
-  description, plus `llms-<area>.txt` single-fetch dumps per package.
-- **Claude Code plugin** — skills for core, charts and financial, versioned
-  with the library:
+- **<https://pond-ts.org/llms.txt>** lists every docs page with a one-line
+  description, and `llms-<area>.txt` gives each package's docs in a single
+  fetch.
+- **A Claude Code plugin** with skills for the core, the charts and the
+  financial package, versioned with the library:
   ```
   /plugin marketplace add pond-ts/pond
   /plugin install pond-ts@pond-ts
@@ -362,31 +404,35 @@ the loop:
 
 ## Examples
 
-- **[pond-ts-dashboard](https://github.com/pjm17971/pond-ts-dashboard)**
-  — a working React dashboard that streams synthetic per-host CPU /
-  request metrics, computes per-host rolling baselines, flags anomalies
-  against ±σ bands, and renders everything as live line and bar charts
-  (~600 lines of TypeScript). Walked through end-to-end in
+- **[pond-ts-dashboard](https://github.com/pjm17971/pond-ts-dashboard)**: a
+  React dashboard that streams per-host CPU and request metrics, keeps a
+  rolling baseline for each host, flags readings outside it, and draws
+  everything as live line and bar charts. Walked through in
   [Building a dashboard](website/docs/how-to-guides/dashboard-guide.mdx).
+- **[`apps/worker-chart`](apps/worker-chart)**: a live chart drawn off the
+  main thread.
+- **[`apps/process-demo`](apps/process-demo)**: a demo of `@pond-ts/process`.
+- **[`docs/readme/demo`](docs/readme/demo/)**: the source of the animation at
+  the top of this page.
 
 ## Develop
 
-The repo is an npm-workspaces monorepo with six published packages
-(`pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, `@pond-ts/financial`,
-`@pond-ts/fit`, `@pond-ts/process`). Node 18+ for runtime; Node 20+ for the
-docs site (Docusaurus).
+The six TypeScript packages live under `packages/` as npm workspaces (`core`
+is `pond-ts`; the rest match their scoped names). The Rust crates live under
+`crates/` as a Cargo workspace, and `packages/rs` is built from them. The docs
+site in `website/` has its own `package.json` and is not a workspace.
+
+Node 18 or newer runs the TypeScript packages; `@pond-ts/rs` needs 20.19, and
+the docs site (Docusaurus) needs 20.
 
 ```sh
-npm install         # one-time, hoists deps for all packages
-npm run build       # build both packages
-npm test            # runtime + type-level tests on both packages
-npm run format      # prettier write across the repo
-npm run verify      # format check + build + test (CI parity)
+npm install         # once; installs dependencies for all six packages
+npm run build       # build all six TypeScript packages
+npm test            # runtime and type-level tests
+npm run format      # prettier across the repo
+npm run verify      # format check, build and test, as CI runs them
+cargo test          # the Rust crates
 ```
-
-Each package lives under `packages/<name>/` (`core` is `pond-ts`, the rest
-match their scoped names). Docs live in `website/` — its own npm root, not a
-workspace.
 
 ## License
 

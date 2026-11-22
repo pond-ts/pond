@@ -3,7 +3,7 @@
 //
 //     npm run build --workspace=pond-ts
 //     node crates/pond-rs/bench/reshape_pond_ts.mjs [name prefix]
-import { TimeSeries } from '../../../packages/core/dist/index.js';
+import { TimeSeries, col } from '../../../packages/core/dist/index.js';
 
 const value = (i) => (i % 17 !== 5 ? ((i * 7919) % 10_007) / 8 : undefined);
 const long = (rows, hosts, copies) => {
@@ -47,6 +47,8 @@ const ten = parts(10, 100_000);
 const many = parts(1000, 1000);
 const sum = ({ v, w }) =>
   v !== undefined && w !== undefined ? v + w : undefined;
+// The same sum as a column expression, for the `(expression)` cases.
+const add = col('v').add(col('w'));
 
 const cases = [
   ['concat 10 x 100k', () => TimeSeries.concat(ten)],
@@ -56,6 +58,11 @@ const cases = [
     'collapse_keep sum',
     () => wide.collapse(['v', 'w'], 'out', sum, { append: true }),
   ],
+  [
+    'collapse sum (expression)',
+    () => wide.withColumn('out', add).select('host', 'out'),
+  ],
+  ['collapse_keep sum (expression)', () => wide.withColumn('out', add)],
   ['pivot 100 hosts', () => wide.pivotByGroup('host', 'v')],
   ['pivot 4 hosts', () => few.pivotByGroup('host', 'v')],
   [
