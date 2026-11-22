@@ -1,7 +1,7 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
 use crate::column::{ColumnData, Decimal, Scalar, Value};
-use crate::elements::Elements;
+use crate::elements::reduce_ranges;
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
@@ -114,7 +114,7 @@ impl TimeSeries {
         crate::par::map(plan, |&(agg, source)| {
             let data = self.columns()[source].data();
             if agg.reducer.gives_list() {
-                let lists = Elements::new(data).reduce_ranges(agg.reducer, ranges);
+                let lists = reduce_ranges(data, agg.reducer, ranges);
                 return Ok(Column::from_data(agg.output.clone(), lists, false));
             }
             let kind = input_kind(data, agg.reducer);
@@ -208,7 +208,7 @@ impl TimeSeries {
         for (agg, &source) in aggs.iter().zip(&sources) {
             let data = self.columns()[source].data();
             if agg.reducer.gives_list() {
-                let lists = Elements::new(data).reduce_ranges(agg.reducer, &all);
+                let lists = reduce_ranges(data, agg.reducer, &all);
                 columns.push(Column::from_data(agg.output.clone(), lists, false));
                 continue;
             }

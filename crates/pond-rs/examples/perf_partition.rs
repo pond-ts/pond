@@ -7,9 +7,12 @@
 //!     RAYON_NUM_THREADS=1 cargo run --release -p pond-rs --example perf_partition
 //!
 //! Cost, for N rows in P partitions of N/P rows: the split is one pass to
-//! number each row's key and one copy of the rows (O(N)); each operation is
-//! its own cost per partition, run on several cores; collecting is a sort
-//! of P already-sorted runs (O(N log P)) and one copy.
+//! number each row's key (O(N)) and, once the partitions are asked for
+//! (the `split` case and Q11, which reads each one), one copy of the rows.
+//! `diff`, `fill` and `rolling` on number columns copy only the columns
+//! they read, run per partition on several cores, and write their results
+//! back in place; collecting then shares the other columns, with nothing
+//! to sort here because rows at one time are already in partition order.
 
 mod common;
 
@@ -62,7 +65,15 @@ fn main() -> pond_rs::Result<()> {
     let cases: Vec<Case> = vec![
         (
             "split",
-            Box::new(|| Box::new(series.partition_by(&["symbol"]).unwrap())),
+            Box::new(|| {
+                // `partition_by` alone only numbers the rows; asking for
+                // the partitions copies them out, which is the split this
+                // case has always timed (and what polars' `partition_by`
+                // does).
+                let p = series.partition_by(&["symbol"]).unwrap();
+                assert_eq!(p.iter().len(), symbols);
+                Box::new(p)
+            }),
         ),
         (
             "diff + collect",

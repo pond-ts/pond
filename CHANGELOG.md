@@ -104,6 +104,32 @@ include new features and type-level changes; patch bumps are strictly additive.
   about 2% of inputs). The Rust port of `@pond-ts/process` uses it for
   `log`.
 
+### Changed
+
+- **pond-rs: per-entity work no longer copies every column per entity.**
+  After `partition_by`, the operations that keep each row and work on number
+  columns (`diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`,
+  `rolling`, `rolling_rows` and their `_with` forms) run on each entity's
+  rows in place and write back in the original row order; columns they do
+  not read are shared with the source. Same answers, bit for bit. A 20-row
+  rolling average over 1M rows and 8 hosts went from about 134 ms to 29 ms on
+  one core, and per-symbol `diff` and linear `fill` with `collect` from about
+  53 ms to 13 ms. `partition_by` itself is now lazy: the per-entity series
+  are built the first time they are asked for (`iter`, `get`,
+  `into_groups`, `map`), so that cost moves there. Partition values are
+  numbered with a seeded multiply hash in place of `HashMap`'s default.
+
+- **pond-rs: list columns read from Arrow stay in Arrow's layout.** A list
+  column of non-null numbers or text read with `from_arrow` or from an Arrow
+  file is kept as read, and its per-row cells are built the first time one
+  is read. `samples` over a number or decimal column writes its list
+  directly, and `array_aggregate` number reducers no longer allocate per
+  row. Same answers, bit for bit. On 100k rows, reading two list columns
+  from Arrow went from about 35 ms to 1.2 ms and from an Arrow file from
+  about 38 ms to 2.3 ms; a caller who then reads every cell saves less
+  (about 34 ms to 27 ms). `samples` over 1M rows went from about 21 ms to
+  1.8 ms. Writing list columns to Arrow went from about 6.9 ms to 3.8 ms.
+
 ### Fixed
 
 - **`@pond-ts/process`: one step feeding both inputs of an op.**
