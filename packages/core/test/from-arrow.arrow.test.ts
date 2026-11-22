@@ -159,6 +159,65 @@ describe('TimeSeries.fromArrow — real apache-arrow tables', () => {
   });
 });
 
+describe('[PND-ARROWREQ] a value column is required only when it can be', () => {
+  it('makes a nullable field with nulls optional, so toJSON → fromJSON reloads', () => {
+    const table = new Table({
+      time: vectorFromArray([0, 1000], new Float64()),
+      v: vectorFromArray([1, null], new Float64()),
+    });
+    expect(table.schema.fields[1]!.nullable).toBe(true);
+    const series = TimeSeries.fromArrow(table);
+    expect(series.schema[1]).toEqual({
+      name: 'v',
+      kind: 'number',
+      required: false,
+    });
+    const back = TimeSeries.fromJSON(series.toJSON() as never);
+    expect(back.toRows()).toEqual(series.toRows());
+  });
+
+  it('follows the nullable flag even when the field holds no null', () => {
+    const table = new Table({
+      time: vectorFromArray([0, 1000], new Float64()),
+      v: vectorFromArray([1, 2], new Float64()),
+    });
+    expect(table.schema.fields[1]!.nullable).toBe(true);
+    expect(TimeSeries.fromArrow(table).schema[1]!.required).toBe(false);
+  });
+
+  it('keeps a non-nullable field without gaps required', () => {
+    const table = tableFromArrays({
+      time: Float64Array.from([0, 1000]),
+      v: Float64Array.from([1, 2]),
+    });
+    expect(table.schema.fields[1]!.nullable).toBe(false);
+    expect(TimeSeries.fromArrow(table).schema[1]).toEqual({
+      name: 'v',
+      kind: 'number',
+    });
+  });
+
+  it('makes a non-nullable field holding NaN optional (NaN is a gap)', () => {
+    const table = tableFromArrays({
+      time: Float64Array.from([0, 1000]),
+      v: Float64Array.from([1, NaN]),
+    });
+    expect(table.schema.fields[1]!.nullable).toBe(false);
+    const series = TimeSeries.fromArrow(table);
+    expect(series.schema[1]!.required).toBe(false);
+    expect(TimeSeries.fromJSON(series.toJSON() as never).length).toBe(2);
+  });
+
+  it('reads a nullable field the same after an IPC round trip', () => {
+    const table = new Table({
+      time: vectorFromArray([0, 1000], new Float64()),
+      v: vectorFromArray([1, null], new Float64()),
+    });
+    const series = TimeSeries.fromArrow(tableFromIPC(tableToIPC(table)));
+    expect(series.schema[1]!.required).toBe(false);
+  });
+});
+
 describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
   // `toArrow` has always flattened a two-edged key into `<key>` + `<key>End`
   // (+ `<key>Label`) because Arrow has no interval-of-time type — but nothing
@@ -225,7 +284,12 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'ranges',
       keyKind: 'timeRange',
     });
-    expect(back.schema).toEqual(series.schema);
+    // A `Table` built from vectors marks every field nullable, so `load`
+    // comes back optional ([PND-ARROWREQ]); the key is what this pins.
+    expect(back.schema).toEqual([
+      series.schema[0],
+      { ...series.schema[1], required: false },
+    ]);
     expect(back.toRows()).toEqual(series.toRows());
   });
 
@@ -245,7 +309,10 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'shifts',
       keyKind: 'interval',
     });
-    expect(back.schema).toEqual(series.schema);
+    expect(back.schema).toEqual([
+      series.schema[0],
+      { ...series.schema[1], required: false },
+    ]);
     expect(back.toRows()).toEqual(series.toRows());
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimeSeries } from '../src/index.js';
+import { TimeSeries, col } from '../src/index.js';
 import {
   ColumnarStore,
   concatSorted,
@@ -141,6 +141,59 @@ describe('TimeSeries.mapColumns', () => {
     ]);
     expect(out.column('v').nullCount()).toBe(3);
     expect(out.column('v').count()).toBe(0);
+  });
+
+  describe('[PND-MAPREQ] a required column that gains a gap becomes optional', () => {
+    const dense = () =>
+      new TimeSeries({
+        name: 'd',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'value', kind: 'number' },
+          { name: 'other', kind: 'number' },
+        ] as const,
+        rows: [
+          [0, 1, 1],
+          [1000, 2, 2],
+          [2000, -3, 3],
+        ],
+      });
+
+    it('marks an overflowed column optional, so toJSON → fromJSON reloads', () => {
+      const out = dense().mapColumns({ value: (v) => v * 1e308 + 1e308 });
+      expect(out.schema[1]).toEqual({
+        name: 'value',
+        kind: 'number',
+        required: false,
+      });
+      const back = TimeSeries.fromJSON(out.toJSON());
+      expect(back.toRows()).toEqual(out.toRows());
+    });
+
+    it('does the same for an expression', () => {
+      const out = dense().mapColumns({
+        value: col('value').mul(1e308).add(1e308),
+      });
+      expect(out.schema[1]!.required).toBe(false);
+      expect(TimeSeries.fromJSON(out.toJSON()).length).toBe(3);
+    });
+
+    it('keeps a column required when the mapping leaves no gap', () => {
+      const out = dense().mapColumns({
+        value: (v) => v * 2,
+        other: col('other').add(1),
+      });
+      expect(out.schema).toEqual(dense().schema);
+    });
+
+    it('leaves columns it did not map as they were', () => {
+      const out = dense().mapColumns({ other: () => NaN });
+      expect(out.schema.map((c) => c.required)).toEqual([
+        undefined,
+        undefined,
+        false,
+      ]);
+    });
   });
 });
 

@@ -61,7 +61,9 @@ describe('groupBy / pivotByGroup from the columns [PND-GROUPEVENTS]', () => {
     ]);
   });
 
-  it('a required column holding a gap still throws, as the event path did', () => {
+  it('a column fromColumns read with gaps groups as an optional one [PND-COLSREQ]', () => {
+    // `fromColumns` used to keep this column marked required, and grouping
+    // then threw on the gap. It now comes out optional, so it groups.
     const s = TimeSeries.fromColumns({
       name: 's',
       schema: [
@@ -71,7 +73,9 @@ describe('groupBy / pivotByGroup from the columns [PND-GROUPEVENTS]', () => {
       ] as const,
       columns: { time: [0, 1], x: new Float64Array([1, NaN]), g: ['a', 'a'] },
     });
-    expect(() => s.groupBy('g')).toThrow(/required/);
+    const a = s.groupBy('g').get('a')!;
+    expect(a.schema[1]!.required).toBe(false);
+    expect(a.toRows().map((r) => r[1])).toEqual([1, undefined]);
   });
 
   for (const [label, call] of [

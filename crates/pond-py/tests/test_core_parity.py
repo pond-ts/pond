@@ -757,14 +757,7 @@ def run(case):
                 mul, add = m["mul"], m["add"]
                 f = lambda v, mul=mul, add=add: v * mul + add  # noqa: E731
             out = out.map(column, f)
-        got = outcome_series(out)
-        if case["id"] in ("mapColumns-overflow", "mapColumns-expr-overflow"):
-            # pond-ts keeps a mapped column marked required even when the
-            # mapping leaves a gap ([PND-MAPREQ]); pond-rs makes it
-            # optional. Check that, then compare as pond-ts has it.
-            assert got[1]["schema"][1].get("required") is False
-            del got[1]["schema"][1]["required"]
-        return got
+        return outcome_series(out)
     single = {
         "tail": lambda: s.tail(args[0]),
         "overlapping": lambda: s.overlapping(event_key(args[0])),
@@ -890,15 +883,6 @@ def test_core_case(case):
         assert case.get("expected") is not None
         assert isinstance(actual, Exception), "pond_rs should refuse"
         return
-    if case["op"] == "collapse" and case.get("expected") is not None:
-        # [PND-COLLAPSEREQ]: pond-ts marks collapse's output required even
-        # with gaps; pond-rs marks it optional then.
-        case = json.loads(json.dumps(case))
-        exp = case["expected"]
-        at = next(i for i, c in enumerate(exp["schema"]) if c["name"] == case["args"][1])
-        if any(r[at] is None for r in exp["rows"]):
-            assert "required" not in exp["schema"][at], "pond-ts fixed [PND-COLLAPSEREQ]"
-            exp["schema"][at]["required"] = False
     why = check(case, actual)
     assert why is None, why
 
