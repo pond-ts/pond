@@ -90,8 +90,11 @@ impl TimeSeries {
         keep: impl Fn(&[Scalar]) -> bool,
     ) -> Result<TimeSeries> {
         let arrays = self.array_column(call, column)?;
-        let rows: Vec<usize> = (0..self.len())
-            .filter(|&i| arrays.get(i).is_some_and(&keep))
+        let rows: Vec<usize> = arrays
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| cell.is_some_and(&keep))
+            .map(|(i, _)| i)
             .collect();
         Ok(self.take_rows(&rows))
     }
@@ -202,11 +205,7 @@ impl TimeSeries {
                 .collect();
             scalar_column(CALL, &format!("{reducer:?}"), &picked, options.kind)?
         } else {
-            arrays
-                .iter()
-                .map(|cell| cell.and_then(|cell| reduce_elements(reducer, cell)))
-                .collect::<Vec<Option<f64>>>()
-                .into()
+            reduce_rows(reducer, arrays).into()
         };
         self.put_output(CALL, column, options, |name| {
             Column::from_data(name, data, false)
@@ -353,13 +352,74 @@ fn scalar_column(
     })
 }
 
-/// pond-ts's row-path reducers (`reduce(defined, numeric)`) over one array:
-/// `defined` is every element, `numeric` its numbers. A non-finite result
-/// (an overflowing sum) is a gap.
+/// A number reducer over each row's array: a gap (`NaN`) for a gap,
+/// otherwise [`reduce_numbers`] of the array.
+///
+/// Cost: one pass over the elements and no allocation per row. A column
+/// held as an Arrow list is read from the list's buffers (`Count` from the
+/// offsets alone); no cell is built.
+fn reduce_rows(reducer: Reducer, arrays: &ArrayColumn) -> Vec<f64> {
+    let mut sorted = Vec::new();
+    if let Some(view) = arrays.list_view() {
+        // A list of text has no numbers.
+        let numbers = view.numbers();
+        return (0..arrays.len())
+            .map(|r| {
+                if view.is_gap(r) {
+                    return f64::NAN;
+                }
+                let (from, to) = (view.offsets[r] as usize, view.offsets[r + 1] as usize);
+                let numeric = numbers.map_or(&[][..], |n| &n[from..to]);
+                reduce_numbers(reducer, to - from, numeric, &mut sorted).unwrap_or(f64::NAN)
+            })
+            .collect();
+    }
+    if reducer == Reducer::Count {
+        // A cell's length is held beside its pointer: no element is read.
+        return arrays
+            .iter()
+            .map(|cell| cell.map_or(f64::NAN, |cell| cell.len() as f64))
+            .collect();
+    }
+    let mut numeric = Vec::new();
+    arrays
+        .iter()
+        .map(|cell| {
+            let Some(cell) = cell else { return f64::NAN };
+            numeric.clear();
+            if cell.iter().all(|e| matches!(e, Scalar::Number(_))) {
+                // The usual case, copied with the length known up front.
+                numeric.extend(cell.iter().map(|e| match e {
+                    Scalar::Number(v) => *v,
+                    _ => unreachable!("checked"),
+                }));
+            } else {
+                numeric.extend(cell.iter().filter_map(Scalar::as_f64));
+            }
+            reduce_numbers(reducer, cell.len(), &numeric, &mut sorted).unwrap_or(f64::NAN)
+        })
+        .collect()
+}
+
+/// [`reduce_numbers`] over one array's elements.
+#[cfg(test)]
 fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
     let numeric: Vec<f64> = cell.iter().filter_map(Scalar::as_f64).collect();
+    reduce_numbers(reducer, cell.len(), &numeric, &mut Vec::new())
+}
+
+/// pond-ts's row-path reducers (`reduce(defined, numeric)`) over one array
+/// of `len` elements (`defined`) whose numbers are `numeric`. A non-finite
+/// result (an overflowing sum) is a gap. `sorted` is scratch for the
+/// reducers that sort.
+fn reduce_numbers(
+    reducer: Reducer,
+    len: usize,
+    numeric: &[f64],
+    sorted: &mut Vec<f64>,
+) -> Option<f64> {
     let out = match reducer {
-        Reducer::Count => Some(cell.len() as f64),
+        Reducer::Count => Some(len as f64),
         Reducer::Sum => Some(numeric.iter().fold(0.0, |s, v| s + v)),
         Reducer::Avg => (!numeric.is_empty())
             .then(|| numeric.iter().fold(0.0, |s, v| s + v) / numeric.len() as f64),
@@ -372,8 +432,8 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
             .iter()
             .copied()
             .reduce(|a, b| if a >= b { a } else { b }),
-        Reducer::Median => sorted_percentile(numeric, 50.0),
-        Reducer::Percentile(q) => sorted_percentile(numeric, q),
+        Reducer::Median => sorted_percentile(numeric, 50.0, sorted),
+        Reducer::Percentile(q) => sorted_percentile(numeric, q, sorted),
         // pond-ts `difference.reduce`: start from the first number, then
         // `v < lo` / `v > hi`.
         Reducer::Difference => {
@@ -391,7 +451,7 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
         Reducer::Stdev => {
             // Welford, as pond-ts's `welfordStdev`.
             let (mut n, mut mean, mut m2) = (0.0f64, 0.0f64, 0.0f64);
-            for &v in &numeric {
+            for &v in numeric {
                 n += 1.0;
                 let delta = v - mean;
                 mean += delta / n;
@@ -406,13 +466,16 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
 }
 
 /// `numeric.slice().sort((a, b) => a - b)` then `percentileOfSorted`. The
-/// sort is stable in both languages, so `0` and `-0` keep their order.
-fn sorted_percentile(mut numeric: Vec<f64>, q: f64) -> Option<f64> {
+/// sort is stable in both languages, so `0` and `-0` keep their order. The
+/// copy is sorted in `sorted`.
+fn sorted_percentile(numeric: &[f64], q: f64, sorted: &mut Vec<f64>) -> Option<f64> {
     if numeric.is_empty() {
         return None;
     }
-    numeric.sort_by(|a, b| a.partial_cmp(b).expect("elements are finite"));
-    Some(percentile_of_sorted(&numeric, q))
+    sorted.clear();
+    sorted.extend_from_slice(numeric);
+    sorted.sort_by(|a, b| a.partial_cmp(b).expect("elements are finite"));
+    Some(percentile_of_sorted(sorted, q))
 }
 
 #[cfg(test)]
@@ -625,6 +688,75 @@ mod tests {
         assert_eq!(tail.len(), 2);
         assert!(tail.is_present(0) && !tail.is_present(1));
         assert_eq!(tail.missing_count(), 1);
+    }
+
+    /// A column held as the Arrow list it was read from reduces to what
+    /// its cells reduce to.
+    #[test]
+    fn kept_lists_reduce_as_cells_do() {
+        let nums: Vec<Option<Vec<Scalar>>> = (0..40usize)
+            .map(|i| {
+                (i % 6 != 4).then(|| {
+                    (0..i % 5)
+                        .map(|k| Scalar::from([0.0, -0.0, 2.5, -7.0, 1e300][(i + 2 * k) % 5]))
+                        .collect()
+                })
+            })
+            .collect();
+        let tags: Vec<Option<Vec<Scalar>>> = (0..40usize)
+            .map(|i| {
+                (i % 4 != 1).then(|| {
+                    (0..i % 3)
+                        .map(|k| Scalar::from(["a", "b"][k % 2]))
+                        .collect()
+                })
+            })
+            .collect();
+        let cells = TimeSeries::new(
+            "s",
+            (0..40).collect(),
+            vec![
+                Column::optional("nums", nums),
+                Column::optional("tags", tags),
+            ],
+        )
+        .unwrap();
+        let kept = TimeSeries::from_arrow("s", &[cells.to_arrow().unwrap()], "time").unwrap();
+        let o = ArrayOptions::default();
+        let reducers = [
+            Reducer::Count,
+            Reducer::Sum,
+            Reducer::Avg,
+            Reducer::Min,
+            Reducer::Max,
+            Reducer::Median,
+            Reducer::Percentile(90.0),
+            Reducer::Difference,
+            Reducer::Stdev,
+            Reducer::First,
+            Reducer::Last,
+            Reducer::Keep,
+            Reducer::Unique,
+            Reducer::Top(2),
+            Reducer::Samples,
+        ];
+        for (from, to) in [(0, 40), (3, 29), (7, 8), (5, 5)] {
+            let (a, b) = (kept.slice(from..to), cells.slice(from..to));
+            for column in ["nums", "tags"] {
+                for reducer in reducers {
+                    // Still held as a list, whatever has been read.
+                    let held = a.column(column).unwrap().arrays().unwrap().list_view();
+                    assert!(held.is_some());
+                    let got = a.array_aggregate(column, reducer, &o).unwrap();
+                    let want = b.array_aggregate(column, reducer, &o).unwrap();
+                    assert_eq!(
+                        got.column(column).unwrap().data(),
+                        want.column(column).unwrap().data(),
+                        "{reducer:?} {column} {from}..{to}"
+                    );
+                }
+            }
+        }
     }
 
     fn s(f: f64) -> Scalar {
