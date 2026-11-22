@@ -1,4 +1,4 @@
-"""pond_rs (Python) against polars and pandas on the same frames.
+"""pond (Python) against polars and pandas on the same frames.
 
 Each case starts from a pyarrow table and ends with a frame of the library's
 own kind, so getting data in and out is part of every number. Median of 7
@@ -7,7 +7,7 @@ runs after one warm-up, in milliseconds. Run with:
     python bench/bench.py            # 1M rows
     python bench/bench.py 100000     # another size
 
-Prints a markdown table and checks pond_rs's answers against polars where
+Prints a markdown table and checks pond's answers against polars where
 both compute the same thing.
 """
 
@@ -23,7 +23,7 @@ import pandas as pd
 import polars as pl
 import pyarrow as pa
 
-import pond_rs
+import pond
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 1_000_000
 HOSTS = 100
@@ -54,7 +54,7 @@ def bench(f, runs=7):
 
 
 def pond_series(t=numbers):
-    return pond_rs.TimeSeries(t, name="s")
+    return pond.TimeSeries(t, name="s")
 
 
 cases = {}
@@ -83,7 +83,7 @@ cases["Aggregate into 1-minute buckets"] = (
     lambda: pnum.resample("1min", on="time").agg({"cpu": "mean", "mem": "max"}),
 )
 
-ny = pond_rs.Sequence.calendar("day", "America/New_York")
+ny = pond.Sequence.calendar("day", "America/New_York")
 cases["Daily buckets in New York"] = (
     lambda: pond_series().aggregate(ny, {"cpu": "avg"}).to_polars(),
     lambda: pl.from_arrow(numbers)
@@ -145,7 +145,7 @@ cases["Bollinger bands (20, 2)"] = (
 )
 
 cases[f"Rolling 5m per host ({HOSTS} hosts)"] = (
-    lambda: pond_rs.TimeSeries(table)
+    lambda: pond.TimeSeries(table)
     .partition_by("host")
     .rolling("5m", {"cpu": "avg"})
     .collect()
@@ -158,7 +158,7 @@ cases[f"Rolling 5m per host ({HOSTS} hosts)"] = (
 
 
 def check():
-    """pond_rs gives polars's numbers where both compute the same thing."""
+    """pond gives polars's numbers where both compute the same thing."""
     a = pond_series().rolling("5m", {"cpu": "avg"}).to_polars()["cpu"].to_numpy()
     b = (
         pl.from_arrow(numbers)
@@ -185,7 +185,7 @@ def check():
 
 
 def threads():
-    """Four Python threads each running a rolling average: pond_rs lets go
+    """Four Python threads each running a rolling average: pond lets go
     of Python's lock while it works, so they overlap."""
     s = pond_series()
     one = bench(lambda: s.rolling("5m", {"cpu": "avg"}), runs=5)
@@ -201,8 +201,8 @@ def threads():
 
 
 if __name__ == "__main__":
-    print(f"{N:,} rows; pond_rs {pond_rs.__version__}, polars {pl.__version__}, pandas {pd.__version__}, pyarrow {pa.__version__}\n")
-    print("| Case (ms) | pond_rs | polars | pandas |")
+    print(f"{N:,} rows; pond {pond.__version__}, polars {pl.__version__}, pandas {pd.__version__}, pyarrow {pa.__version__}\n")
+    print("| Case (ms) | pond | polars | pandas |")
     print("|---|---:|---:|---:|")
     for name, fs in cases.items():
         cells = [f"{bench(f):.1f}" for f in fs]

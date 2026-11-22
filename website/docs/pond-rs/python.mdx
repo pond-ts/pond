@@ -1,11 +1,11 @@
 ---
 id: python
-title: Python (pond_rs)
+title: Python (pond)
 sidebar_position: 1.5
 description: pond-rs from Python. Install with pip, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as pond-ts.
 ---
 
-# Python (pond_rs)
+# Python (pond)
 
 pond-rs has a Python package. It takes the frames you already use (polars,
 pandas, pyarrow) and gives frames back, so pond's time-aware operations fit
@@ -21,7 +21,7 @@ pip install "pond-timeseries[polars]"  # plus polars; or [pandas], [pyarrow]
 ```
 
 ```python
-import pond_rs                 # and imported as pond_rs
+import pond                    # and imported as pond
 ```
 
 If pip can't find `pond-rs` (it is not on PyPI yet), install it from the
@@ -36,8 +36,8 @@ repository instead (needs Rust):
   `to_polars()` needs polars, `to_pyarrow()` needs pyarrow, and
   `to_pandas()` needs pandas 2.2+ and pyarrow; the extras above install
   them.
-- **Versions** follow pond-ts: `pond_rs` 0.77.0 is released with pond-ts
-  0.77.0 and gives the same answers. `pond_rs.__version__` says which you
+- **Versions** follow pond-ts: `pond-timeseries` 0.79.0 is released with pond-ts
+  0.79.0 and gives the same answers. `pond.__version__` says which you
   have.
 - **Type hints** for every method ship in the package, so an editor
   completes method and option names.
@@ -53,14 +53,14 @@ row per calendar day in New York.
 ```python
 import datetime as dt
 import polars as pl
-import pond_rs
+import pond
 
 df = pl.DataFrame({
     "time": [dt.datetime(2026, 3, 8, h) for h in range(24)],  # no zone: UTC
     "host": ["a", "b"] * 12,
     "cpu": [float(h) for h in range(24)],
 })
-s = pond_rs.TimeSeries(df)  # the time column is called "time"
+s = pond.TimeSeries(df)  # the time column is called "time"
 
 # Five-hour trailing average, per host, back as a polars frame.
 avg = s.partition_by("host").rolling("5h", {"cpu_avg": ("cpu", "avg")}).collect()
@@ -68,7 +68,7 @@ avg.to_polars()  # columns: time, cpu_avg, host
 
 # Calendar days in New York. 8 March 2026 is the day the clocks go
 # forward, so that day is 23 hours long.
-days = pond_rs.Sequence.calendar("day", "America/New_York")
+days = pond.Sequence.calendar("day", "America/New_York")
 daily = s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")})
 daily.as_time().to_pandas()  # columns: time (each day's start), cpu_max, n
 ```
@@ -77,7 +77,7 @@ Every operation returns a new series; nothing changes in place.
 
 ## Frames in
 
-`pond_rs.TimeSeries(data)` takes:
+`pond.TimeSeries(data)` takes:
 
 - a **polars** `DataFrame`,
 - a **pandas** `DataFrame` (pandas 2.2 or newer),
@@ -222,13 +222,13 @@ hosts mixes their rows, which is rarely what you want.
 ## Calendar buckets
 
 `aggregate(grid, reducers)` gives one row per bucket of a grid. A grid is a
-fixed step (`"5m"`, `"1h"`, `pond_rs.Sequence.every("15m")`) or calendar
+fixed step (`"5m"`, `"1h"`, `pond.Sequence.every("15m")`) or calendar
 units in a time zone:
 
 ```python
-days = pond_rs.Sequence.calendar("day", "America/New_York")
-weeks = pond_rs.Sequence.calendar("week", "Europe/London", week_starts_on=1)  # Monday
-months = pond_rs.Sequence.calendar("month", "Asia/Tokyo")
+days = pond.Sequence.calendar("day", "America/New_York")
+weeks = pond.Sequence.calendar("week", "Europe/London", week_starts_on=1)  # Monday
+months = pond.Sequence.calendar("month", "Asia/Tokyo")
 
 daily = s.aggregate(days, {"avg": ("cpu", "avg"), "n": ("cpu", "count")})
 out = daily.as_time().to_polars().with_columns(
@@ -252,7 +252,7 @@ out = daily.as_time().to_polars().with_columns(
 
 ## Other operations
 
-The full list is in the type hints (`pond_rs.pyi`); the
+The full list is in the type hints (`pond.pyi`); the
 [Operations](./operations.mdx) page explains each for Rust, and the Python
 methods take the same words as keyword arguments. The most used:
 
@@ -270,7 +270,7 @@ s.within("2026-03-08T00:00:00Z", "2026-03-09T00:00:00Z")
 s.tail("1h")                        # the last hour
 s.select("cpu"), s.rename({"cpu": "load"}), s.slice(0, 100)
 a.join(b)                           # columns side by side, matched on time
-pond_rs.TimeSeries.concat([a, b])   # rows stacked
+pond.TimeSeries.concat([a, b])   # rows stacked
 ```
 
 ### Row rules: expressions or Python functions
@@ -279,7 +279,7 @@ Write a per-row rule with `col`, `lit` and `when`, so it runs inside
 pond-rs with no Python call per row:
 
 ```python
-from pond_rs import col, lit, when
+from pond import col, lit, when
 
 s.filter((col("cpu") > 80) & (col("host") == "a"))
 s.with_column("pct", col("used") / col("total") * 100)
@@ -299,7 +299,7 @@ pond-ts's numbers to the last bit. Each study is a method; it adds its
 columns and keeps every row (gaps until its window fills).
 
 ```python
-bars = pond_rs.TimeSeries(df)      # time, open, high, low, close, volume
+bars = pond.TimeSeries(df)      # time, open, high, low, close, volume
 out = bars.rsi(period=14).bollinger(period=20, std_dev=2)
 out.columns                        # [..., "rsi", "bbMiddle", "bbUpper", "bbLower"]
 bars.macd()                        # adds macdLine, macdSignal, macdHist
@@ -320,7 +320,7 @@ bars.partition_by("symbol").atr(period=14).collect()   # per symbol
   RSI uses Wilder's smoothing as TA-Lib does, and Bollinger bands use the
   population standard deviation (dividing by the period). On a
   partitioned series each symbol's study sees only its own bars.
-- `pond_rs.studies()` lists every study, and `pond_rs.study_info("bollinger")`
+- `pond.studies()` lists every study, and `pond.study_info("bollinger")`
   describes one: the columns it reads, its options with defaults and
   ranges, and `output_names`.
 
@@ -328,7 +328,7 @@ Session studies (session VWAP, pivot points) need trading sessions. A
 `TradingCalendar` builds them from rules:
 
 ```python
-nyse = pond_rs.TradingCalendar.from_rules(
+nyse = pond.TradingCalendar.from_rules(
     "America/New_York", "09:30", "16:00", "2024-01-02", "2024-12-31",
     holidays=["2024-07-04"], early_closes={"2024-12-24": "13:00"},
 )
@@ -347,7 +347,7 @@ fills, buckets, rolling windows, per-host partitions) update with every
 push. The results match pond-ts's live layer, output for output.
 
 ```python
-live = pond_rs.LiveSeries(
+live = pond.LiveSeries(
     {"time": "time", "host": "string", "cpu": "number"},  # key first, then values
     max_age="10m",                                        # keep ten minutes
 )
@@ -436,7 +436,7 @@ in turn.
 
 ## Errors
 
-- `pond_rs.PondError` (a `ValueError`) for bad data or arguments: an
+- `pond.PondError` (a `ValueError`) for bad data or arguments: an
   unknown column, rows out of order, a bad duration or reducer name. The
   message names the call and the column, for example
   `rolling: no column named 'cpux' (columns: cpu)`.

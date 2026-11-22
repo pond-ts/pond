@@ -13,7 +13,7 @@ use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use crate::PondErrorPy;
 use crate::sequence::PySequence;
 
-/// A pond-rs error as the Python exception `pond_rs.PondError`.
+/// A pond-rs error as the Python exception `pond.PondError`.
 pub fn err(e: PondError) -> PyErr {
     PondErrorPy::new_err(e.to_string())
 }
@@ -30,7 +30,7 @@ impl<T> IntoPy<T> for pond_rs::Result<T> {
 }
 
 /// A bad value given to the binding (an unknown option word, a time that
-/// is not whole milliseconds): `pond_rs.PondError`, like pond-rs's own
+/// is not whole milliseconds): `pond.PondError`, like pond-rs's own
 /// errors. A value of the wrong type is a `TypeError`.
 pub fn value_error(message: impl Into<String>) -> PyErr {
     PondErrorPy::new_err(message.into())

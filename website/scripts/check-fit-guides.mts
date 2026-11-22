@@ -7,7 +7,7 @@
  * For each `.mdx` page under `docs/fit/`, every ```ts block is joined, in
  * order, into one module and run with Node; every ```python block is joined
  * into one script and run with Python (`POND_PYTHON`, default `python3`,
- * which needs `pond_rs` and `polars`). Both run in `static/data/fit/`, where
+ * which needs `pond` and `polars`). Both run in `static/data/fit/`, where
  * the example files are, so a page reads `hill-ride.fit` or
  * `hill-ride.csv` by name.
  *
@@ -171,7 +171,7 @@ function pages(): string[] {
 
 let failures = 0;
 const write = process.argv.includes('--write');
-// --no-python: TypeScript only, for CI, which has no pond_rs build.
+// --no-python: TypeScript only, for CI, which has no pond build.
 const noPython = process.argv.includes('--no-python');
 const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 for (const file of pages()) {

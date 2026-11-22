@@ -1,4 +1,4 @@
-//! `pond_rs.TradingCalendar`: exchange sessions for the session studies
+//! `pond.TradingCalendar`: exchange sessions for the session studies
 //! (`session_vwap`, `pivot_points`) and for tagging bars with their session.
 
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use crate::series::PyTimeSeries;
 /// weekdays, holidays, early closes, breaks) or from a list of sessions
 /// (`from_sessions`). A session is a dict `{"date", "open", "close",
 /// "breaks"}` with times in epoch milliseconds.
-#[pyclass(name = "TradingCalendar", module = "pond_rs", frozen)]
+#[pyclass(name = "TradingCalendar", module = "pond", frozen)]
 pub struct PyTradingCalendar {
     pub inner: Arc<TradingCalendar>,
 }

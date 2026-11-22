@@ -1,4 +1,4 @@
-//! `pond_rs.Row`: one row of a series, handed to Python functions and
+//! `pond.Row`: one row of a series, handed to Python functions and
 //! returned by lookups.
 
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use crate::convert::cell_to_py;
 /// One row of a series: `row["cpu"]` reads a cell (`None` for a gap),
 /// `row.index` is its position, `row.begin` / `row.end` its key's edges
 /// in epoch milliseconds (equal for a time key).
-#[pyclass(name = "Row", module = "pond_rs", frozen)]
+#[pyclass(name = "Row", module = "pond", frozen)]
 pub struct PyRow {
     pub series: Arc<TimeSeries>,
     pub index: usize,

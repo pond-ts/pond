@@ -1,4 +1,4 @@
-//! `pond_rs.LiveSeries`: events pushed as they arrive, and nodes built on
+//! `pond.LiveSeries`: events pushed as they arrive, and nodes built on
 //! them (filters, buckets, rolling windows, per-host partitions) that
 //! update with every push.
 //!
@@ -307,7 +307,7 @@ fn key_to_py<'py>(py: Python<'py>, key: &EventKey) -> PyResult<Bound<'py, PyAny>
 
 /// One event of a live node: a key and a cell per value column, read by
 /// column name (`event["cpu"]`), like a `Row`.
-#[pyclass(name = "LiveEvent", module = "pond_rs", frozen)]
+#[pyclass(name = "LiveEvent", module = "pond", frozen)]
 pub struct PyLiveEvent {
     event: LiveEvent,
 }
@@ -401,7 +401,7 @@ fn events_to_py(py: Python<'_>, events: Vec<LiveEvent>) -> PyResult<Bound<'_, Py
 /// `"bucket"` (an aggregation's open bucket as it now stands) or `"update"`
 /// (a rolling window's values as they now stand; `None` for an
 /// aggregation).
-#[pyclass(name = "LiveOutput", module = "pond_rs", frozen)]
+#[pyclass(name = "LiveOutput", module = "pond", frozen)]
 pub struct PyLiveOutput {
     #[pyo3(get)]
     node: Py<PyLiveNode>,
@@ -1121,7 +1121,7 @@ fn not_for(kind: NodeKind, what: &str, nodes: &str) -> PyErr {
 /// with the same methods as the series; read it with `len()`, `events()`,
 /// `last()`, `to_series()` / `to_polars()`; `watch()` it to have each push
 /// return what it emitted.
-#[pyclass(name = "LiveNode", module = "pond_rs", frozen)]
+#[pyclass(name = "LiveNode", module = "pond", frozen)]
 pub struct PyLiveNode {
     shared: Arc<Shared>,
     id: NodeId,
@@ -1865,7 +1865,7 @@ fn schema(obj: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnDef>> {
 /// "time", "host": "string", "cpu": "number"}`, a list of `(name, kind)`
 /// tuples, or a `TimeSeries.schema`. Value columns may have gaps unless
 /// marked required (`(name, kind, True)`).
-#[pyclass(name = "LiveSeries", module = "pond_rs", frozen)]
+#[pyclass(name = "LiveSeries", module = "pond", frozen)]
 pub struct PyLiveSeries {
     shared: Arc<Shared>,
 }

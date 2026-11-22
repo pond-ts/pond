@@ -1,6 +1,6 @@
 name: Python wheels
 
-# The Python bridge (crates/pond-py, PyPI `pond-timeseries`, `import pond_rs`):
+# The Python bridge (crates/pond-py, PyPI `pond-timeseries`, `import pond`):
 # build the wheels PyPI gets, test each one, and publish them on a release.
 #
 # - Pull requests that touch the bridge, the pond-rs crate or the parity
@@ -129,7 +129,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest pyarrow polars pandas numpy
           python -m pip install --no-index --find-links dist pond-timeseries
-          python -c "import pond_rs, sys; v = pond_rs.__version__; print(v); sys.exit(v != '${{ needs.version.outputs.version }}')"
+          python -c "import pond, sys; v = pond.__version__; print(v); sys.exit(v != '${{ needs.version.outputs.version }}')"
 
       - name: Test the built wheel
         run: python -m pytest crates/pond-py/tests -q

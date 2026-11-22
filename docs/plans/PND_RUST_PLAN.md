@@ -4740,6 +4740,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       still `pond_rs`. `pond-py` was refused in advance: PyPI's
       `ultranormalize_name` strips `-_.` and maps l/i->1, o->0, so it
       equals the unrelated `pondpy`; `py-pond` likewise equals `pypond`.
+      Import name (2026-11-22, Peter's choice): `import pond` from 0.79.0,
+      no `pond_rs` alias (0.78.0 had been out hours). Checked first: PyPI's
+      `pond` 0.1 (Feb 2025) is an empty placeholder whose wheel installs a
+      top-level `pond.py`; the only clash found. Rust keeps `pond_rs`.
     - [PND-RSTYPES] (DONE 2026-11-21): `packages/rs/index.d.ts`,
       hand-written. Decided **not** to import pond-ts's types: `@pond-ts/rs`
       has no dependency on pond-ts, and pond-ts's types follow the schema

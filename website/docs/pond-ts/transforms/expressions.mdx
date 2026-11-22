@@ -20,7 +20,7 @@ a function for anything else.
 
 :::note Versions
 Expressions are new in pond-ts 0.76.0, and in the Python package
-(`pond_rs`) from 0.76.0. In Rust they are on `main` but not yet in a
+from 0.76.0. In Rust they are on `main` but not yet in a
 pond-rs release: crates.io's 0.1.0 doesn't have them, so build pond-rs
 from the repository to use them for now.
 :::
@@ -152,10 +152,10 @@ pond-rs keeps the closure methods (`filter`, `find`, …) and adds
 <TabItem value="python" label="Python">
 
 ```python
-import pond_rs
-from pond_rs import col
+import pond
+from pond import col
 
-cpu = pond_rs.TimeSeries({
+cpu = pond.TimeSeries({
     "time": [0, 60_000, 120_000, 180_000, 240_000],
     "cpu": [0.2, None, 0.9, 0.6, 0.4],
     "cores": [2.0, 4.0, 4.0, 0.0, 2.0],
@@ -271,7 +271,7 @@ before.
 <TabItem value="python" label="Python">
 
 ```python
-from pond_rs import col, when
+from pond import col, when
 
 def values(s, column):
     return s.to_pyarrow()[column].to_pylist()
@@ -365,10 +365,10 @@ fn main() -> Result<(), pond_rs::PondError> {
 <TabItem value="python" label="Python">
 
 ```python
-import pond_rs
-from pond_rs import col
+import pond
+from pond import col
 
-live = pond_rs.LiveSeries({"time": "time", "cpu": "number", "host": "string"})
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"})
 hot = live.filter(col("cpu") > 0.5)
 
 live.push(0, cpu=0.9, host="a")
@@ -546,7 +546,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```python
 try:
     cpu.map_columns({"nope": col("cpu")})
-except pond_rs.PondError as e:
+except pond.PondError as e:
     print(e)
     # TimeSeries::map_exprs: no column named 'nope' (columns: cpu, cores, host)
 ```
@@ -566,7 +566,7 @@ JSON.stringify(col('cpu').gt(0.5).and(col('host').eq('a')));
 
 pond-rs reads and writes the same tree (`Expr::to_json`,
 `Expr::from_json`, shown in the Rust tab above), and so does Python
-(`expr.to_json()`, `pond_rs.Expr.from_json(text)`). So a rule saved by one
+(`expr.to_json()`, `pond.Expr.from_json(text)`). So a rule saved by one
 can run in another, or be written by a tool that never runs code.
 
 ## Speed

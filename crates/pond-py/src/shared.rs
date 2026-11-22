@@ -573,7 +573,7 @@ macro_rules! shared_methods {
             /// Run a financial study by name (`"rsi"`, `"bollinger"`,
             /// `"anchored_vwap"`) with its options as keywords:
             /// `study("rsi", period=14)`. Each study also has its own
-            /// method (`series.rsi(period=14)`); `pond_rs.studies()` lists
+            /// method (`series.rsi(period=14)`); `pond.studies()` lists
             /// them with their options. Columns it reads default to
             /// `close`, `high`, `low`, `open`, `volume`; a study adds its
             /// columns and keeps every row.

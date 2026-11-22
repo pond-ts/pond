@@ -1,9 +1,9 @@
-"""pond_rs.LiveSeries (Python): events pushed as they arrive, against the
+"""pond.LiveSeries (Python): events pushed as they arrive, against the
 same work written in plain Python.
 
 The work: a 1-minute rolling average of `cpu` (updated on every event) and
 1-minute buckets of avg / max (closed as time passes), on events 10 ms
-apart. pond_rs takes the events four ways: one `push(t, cpu=c)` call per
+apart. pond takes the events four ways: one `push(t, cpu=c)` call per
 event, `push_many` batches of 1,000 `(t, [c])` rows, `push_frame` with
 10,000-row pyarrow tables, and `push_frame` into a series with nothing
 built on it (storage only). Plain Python does the same work with a deque
@@ -26,7 +26,7 @@ from collections import deque
 import numpy as np
 import pyarrow as pa
 
-import pond_rs
+import pond
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 200_000
 STEP = 10
@@ -48,7 +48,7 @@ def bench(f, runs=5):
 
 
 def pipeline():
-    live = pond_rs.LiveSeries(SCHEMA, max_age="2m")
+    live = pond.LiveSeries(SCHEMA, max_age="2m")
     roll = live.rolling("1m", {"avg": ("cpu", "avg")})
     agg = live.aggregate("1m", {"avg": ("cpu", "avg"), "max": ("cpu", "max")})
     return live, roll, agg
@@ -86,7 +86,7 @@ def pond_push_frame():
 
 
 def pond_store_only():
-    live = pond_rs.LiveSeries(SCHEMA, max_age="2m")
+    live = pond.LiveSeries(SCHEMA, max_age="2m")
     for t in tables:
         live.push_frame(t)
     return live

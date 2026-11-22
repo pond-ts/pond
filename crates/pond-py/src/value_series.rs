@@ -1,4 +1,4 @@
-//! `pond_rs.ValueSeries`: rows keyed by a number axis.
+//! `pond.ValueSeries`: rows keyed by a number axis.
 
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use crate::convert::{IntoPy, column_to_py, err, value_error};
 
 /// A series keyed by a number axis instead of time (a distance, a strike
 /// price), from `TimeSeries.by_value(axis)`. The axis never goes down.
-#[pyclass(name = "ValueSeries", module = "pond_rs", frozen)]
+#[pyclass(name = "ValueSeries", module = "pond", frozen)]
 pub struct PyValueSeries {
     pub inner: Arc<ValueSeries>,
 }

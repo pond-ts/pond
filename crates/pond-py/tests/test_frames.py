@@ -11,8 +11,8 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
-import pond_rs
-from pond_rs import Sequence, TimeSeries
+import pond
+from pond import Sequence, TimeSeries
 
 UTC = dt.timezone.utc
 STAMP = pa.timestamp("ms", tz="UTC")
@@ -90,12 +90,12 @@ def test_pandas_frames_in_and_out():
 def test_naive_timestamps_are_read_as_utc():
     df = pd.DataFrame({"time": pd.to_datetime(["2026-01-01", "2026-01-02"]), "v": [1.0, 2.0]})
     s = TimeSeries(df)
-    assert s[0].begin == pond_rs.parse_time("2026-01-01T00:00:00Z")
+    assert s[0].begin == pond.parse_time("2026-01-01T00:00:00Z")
 
 
 def test_sub_millisecond_times_are_refused_not_rounded():
     t = pa.table({"time": pa.array([1_500], pa.timestamp("us")), "v": [1.0]})
-    with pytest.raises(pond_rs.PondError, match="millisecond"):
+    with pytest.raises(pond.PondError, match="millisecond"):
         TimeSeries(t)
 
 
@@ -106,7 +106,7 @@ def test_empty_and_chunked_tables():
     assert two.column("cpu").num_chunks == 2  # several chunks are copied into one
     assert TimeSeries(two).column("cpu") == [0.0, 1.0, 2.0, 3.0]
     backwards = pa.concat_tables([cpu_table(4).slice(2), cpu_table(4).slice(0, 2)])
-    with pytest.raises(pond_rs.PondError):
+    with pytest.raises(pond.PondError):
         TimeSeries(backwards)
 
 
@@ -174,8 +174,8 @@ def test_durations_take_text_or_timedelta():
     assert s.rolling(2, {"avg": ("cpu", "avg")}).column("avg") == a.column("avg")  # an int counts rows
     assert s.offset_time("-1m")[0].begin == -60_000
     assert s.offset_time(dt.timedelta(minutes=-1))[0].begin == -60_000
-    assert pond_rs.parse_duration("5m") == 300_000
-    with pytest.raises(pond_rs.PondError, match="duration"):
+    assert pond.parse_duration("5m") == 300_000
+    with pytest.raises(pond.PondError, match="duration"):
         s.rolling("5 minutes", {"avg": ("cpu", "avg")})
 
 
@@ -211,12 +211,12 @@ def test_reduce_gives_a_dict():
 
 def test_errors_are_pond_errors_naming_the_call_and_column():
     s = TimeSeries(cpu_table())
-    assert issubclass(pond_rs.PondError, ValueError)
-    with pytest.raises(pond_rs.PondError, match=r"no column named 'nope'"):
+    assert issubclass(pond.PondError, ValueError)
+    with pytest.raises(pond.PondError, match=r"no column named 'nope'"):
         s.rolling("1m", {"x": ("nope", "avg")})
-    with pytest.raises(pond_rs.PondError, match=r"column 'host' is a string column"):
+    with pytest.raises(pond.PondError, match=r"column 'host' is a string column"):
         s.rolling("1m", {"x": ("host", "avg")})
-    with pytest.raises(pond_rs.PondError, match="unknown reducer 'average'"):
+    with pytest.raises(pond.PondError, match="unknown reducer 'average'"):
         s.rolling("1m", {"x": ("cpu", "average")})
     with pytest.raises(ValueError, match="alignment"):
         s.rolling("1m", {"x": ("cpu", "avg")}, alignment="middle")
@@ -285,18 +285,18 @@ def test_numpy_and_pandas_times():
 
     s = TimeSeries(cpu_table())
     assert s.within(np.int64(60_000), np.datetime64("1970-01-01T00:02:00")).column("cpu") == [1.0, 2.0]
-    with pytest.raises(pond_rs.PondError, match="millisecond"):
+    with pytest.raises(pond.PondError, match="millisecond"):
         s.within(np.datetime64("1970-01-01T00:00:00.000000001"), 60_000)
-    with pytest.raises(pond_rs.PondError, match="millisecond"):
+    with pytest.raises(pond.PondError, match="millisecond"):
         s.within(pd.Timestamp("1970-01-01T00:00:00.000000001Z"), 60_000)
     assert len(s.within(pd.Timestamp("1970-01-01T00:01:00Z"), 60_000)) == 1
 
 
 def test_bad_option_values_are_pond_errors():
     s = TimeSeries(cpu_table())
-    with pytest.raises(pond_rs.PondError, match="alignment"):
+    with pytest.raises(pond.PondError, match="alignment"):
         s.rolling("1m", {"x": ("cpu", "avg")}, alignment="middle")
-    with pytest.raises(pond_rs.PondError, match="exactly one of alpha or span"):
+    with pytest.raises(pond.PondError, match="exactly one of alpha or span"):
         s.smooth("cpu", "ema")
     with pytest.raises(TypeError):
         s.sample(stride=1.5)
@@ -330,4 +330,4 @@ def test_calls_from_several_threads_give_the_same_answers():
 
 
 def test_version_matches_the_package():
-    assert pond_rs.__version__.count(".") == 2
+    assert pond.__version__.count(".") == 2

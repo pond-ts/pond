@@ -1,4 +1,4 @@
-//! Python bindings for pond-rs: the `pond_rs` module.
+//! Python bindings for pond-rs: the `pond` module.
 //!
 //! Frames come in and go out as Arrow (pyarrow, polars and pandas all speak
 //! it), so a column with no gaps crosses without being copied. Every
@@ -33,7 +33,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod errors {
     pyo3::create_exception!(
-        pond_rs,
+        pond,
         PondError,
         pyo3::exceptions::PyValueError,
         "An error from pond-rs: bad input data, an unknown column, a column of the wrong kind, a bad duration or reducer name. The message names the call and the column."
@@ -64,7 +64,7 @@ fn parse_duration(text: &str) -> PyResult<i64> {
 }
 
 #[pymodule]
-fn pond_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn pond(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("PondError", m.py().get_type::<PondErrorPy>())?;
     m.add_function(wrap_pyfunction!(parse_time, m)?)?;

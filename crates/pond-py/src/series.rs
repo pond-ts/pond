@@ -1,4 +1,4 @@
-//! `pond_rs.TimeSeries`.
+//! `pond.TimeSeries`.
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ use crate::value_series::PyValueSeries;
 /// straight to `pyarrow.table(s)` / `polars.DataFrame(s)`.
 ///
 /// Every operation returns a new series; none changes this one.
-#[pyclass(name = "TimeSeries", module = "pond_rs", frozen)]
+#[pyclass(name = "TimeSeries", module = "pond", frozen)]
 pub struct PyTimeSeries {
     pub inner: Arc<TimeSeries>,
 }
@@ -1302,7 +1302,7 @@ impl PyTimeSeries {
 shared_methods!(PyTimeSeries);
 
 /// Rows of a series, one at a time (`for row in series`).
-#[pyclass(module = "pond_rs")]
+#[pyclass(module = "pond")]
 pub struct RowIter {
     series: Arc<TimeSeries>,
     next: usize,
