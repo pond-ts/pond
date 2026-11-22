@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use pond_rs::TimeSeries;
 use serde_json::{Value, json};
 
 use crate::error::ProcessError;
@@ -26,6 +27,8 @@ pub struct OpContext<'a> {
     pub id: &'a str,
     /// The row times (milliseconds since 1970, UTC).
     pub times: &'a [i64],
+    /// The bound data, whose key an op can share rather than copy.
+    pub series: &'a TimeSeries,
 }
 
 impl<'a> OpContext<'a> {

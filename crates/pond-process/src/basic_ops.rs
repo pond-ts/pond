@@ -169,6 +169,7 @@ fn two(name: &str, family: &str, summary: &str, unit: &str) -> Def {
         .input("left")
         .input("right")
         .output("", unit)
+        .lookback(|_| 0.0)
 }
 
 /// The basic ops, in `BASIC_OPS` order.
@@ -218,6 +219,7 @@ pub fn basic_ops() -> Vec<Def> {
         .label(|p, inputs| {
             format!("{inputs} × {} + {}", param_text(p, "factor"), param_text(p, "offset"))
         })
+        .lookback(|_| 0.0)
         .run(scale),
         Def::op(
             "log",
@@ -227,6 +229,7 @@ pub fn basic_ops() -> Vec<Def> {
         .input("source")
         .output("", "log")
         .label(|_, inputs| format!("log of {inputs}"))
+        .lookback(|_| 0.0)
         .run(log),
         Def::op(
             "sqrt",
@@ -236,6 +239,7 @@ pub fn basic_ops() -> Vec<Def> {
         .input("source")
         .output("", "sqrt")
         .label(|_, inputs| format!("square root of {inputs}"))
+        .lookback(|_| 0.0)
         .run(sqrt),
         Def::op(
             "shift",
@@ -256,6 +260,9 @@ pub fn basic_ops() -> Vec<Def> {
                 format!("{inputs} {} rows later", js_number(-n))
             }
         })
+        // Only the backward half is history: a negative shift reads rows
+        // after each row, which a lookback cannot describe.
+        .lookback(|p| p["periods"].as_f64().unwrap_or(0.0).max(0.0))
         .run(shift),
         Def::op(
             "compare",
@@ -269,6 +276,7 @@ pub fn basic_ops() -> Vec<Def> {
         .label(|p, inputs| {
             format!("{inputs} {} {}", param_text(p, "test"), param_text(p, "value"))
         })
+        .lookback(|_| 0.0)
         .run(against),
         two(
             "compareColumns",
