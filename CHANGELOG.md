@@ -244,6 +244,13 @@ Power | speedAbove: Speed, minimumDuration, mergeGapsUnder })` finds
 
 ### Changed
 
+- **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
+  `series.events` on a series whose events were not built yet (and so the
+  first `filter`, `toArray`, `map`, … on it) built each row through two
+  per-row `Map` caches; it now builds rows straight into the array, reusing
+  any event already handed out. Same objects and identity rules. 1M rows:
+  `events` ~1.0 s → ~0.35 s, `filter` ~1.05 s → ~0.36 s.
+
 - **`rolling` `max` / `min` are 1.6–4.8× faster** on the columnar sweep
   (number columns, count or duration windows), with the same answers bit for
   bit. The range studies that stand on them speed up about 2×: at 1M bars
