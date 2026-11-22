@@ -92,14 +92,83 @@ under `script-src 'self' 'wasm-unsafe-eval'`.
 
 ## TypeScript
 
-The package ships no type declarations yet (they are planned). In
-TypeScript under `strict`, importing it fails with TS7016 ("Could not find
-a declaration file for module '@pond-ts/rs'"). Until types ship, declare
-the module in a `.d.ts` file of your own, which types it as `any`:
+The package ships its own type declarations (`index.d.ts`), so it works
+in TypeScript under `strict` with nothing to set up. The shapes are
+pond-ts's: schemas, reducer names, option objects, the `Event` and key
+classes, the live node classes and what each one's `on(type, fn)` hands
+the listener. Every financial study has its own options type, so
+`s.rsi({ length: 14 })` is an error (the option is `period`) and
+`s.bollinger()` is one too (a period is required).
 
 ```ts
-declare module '@pond-ts/rs';
+import { TimeSeries, Sequence, col, type Event } from '@pond-ts/rs';
+
+const cpu = new TimeSeries({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+  ],
+  rows: [[0, 0.31]],
+});
+const last: Event | undefined = cpu.filter(col('value').gt(0.4)).at(-1);
 ```
+
+One difference from pond-ts: a series is not typed by its schema (pond-ts's
+`TimeSeries<S>` is), so `event.get('value')` is any cell type
+(`number | string | boolean | list | undefined`) rather than
+`number | undefined`, and a misspelt column name is found when the code
+runs, not when it compiles.
+
+The declarations are checked in CI: every call in the parity fixtures the
+package is tested against (about 4,000 core calls, 8,400 study calls and
+1,300 live steps) has to compile under `tsc --strict`, and every method the
+package has at runtime has to be declared.
+
+## Drawing with `@pond-ts/charts`
+
+The charts take a pond-ts `TimeSeries`. `toColumns()` gives the series as
+pond-ts's columnar object, and pond-ts's `TimeSeries.fromColumns` reads it
+back, so a series from `@pond-ts/rs` reaches a chart with one call:
+
+```tsx
+import { TimeSeries } from 'pond-ts';
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
+import * as rs from '@pond-ts/rs';
+
+const cpu = rs.TimeSeries.fromArrow(bytes); // read in pond-rs
+const smoothed = cpu.rolling('5m', { value: 'avg' }); // computed in pond-rs
+const forChart = TimeSeries.fromColumns(smoothed.toColumns<'number'>());
+smoothed.free();
+cpu.free();
+
+<ChartContainer range={forChart.timeRange()} width={600}>
+  <ChartRow height={200}>
+    <YAxis id="v" />
+    <Layers>
+      <LineChart series={forChart} column="value" axis="v" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+The type argument (`<'number'>`, or `<'number' | 'string'>`) says which kinds
+of column the series holds; `fromColumns` takes number and text columns, so
+`select` the ones to draw first if it has true/false or list columns. It is
+not checked, as pond-ts's own `toColumns` type argument is not.
+
+How long the hand-over takes, from `@pond-ts/rs` to a pond-ts series (a time
+column and two number columns, 4-core Xeon, Node 22, median of 7, measured by
+`packages/rs/scripts/perf-tocolumns.mjs`): about 1.5 ms at 10,000 rows, 7 ms
+at 100,000 and 75 to 105 ms at a million (it varied between runs). Going
+through `toJSON()` and `TimeSeries.fromJSON` instead takes 3, 35 and about
+520 ms.
 
 ## How it differs from pond-ts
 
@@ -129,9 +198,11 @@ The ones you meet first:
 
 Not included: `@pond-ts/react`, `@pond-ts/charts` and
 `@pond-ts/process`; a series from `@pond-ts/rs` is not a pond-ts
-`TimeSeries`, so pass data between them as JSON: `toJSON()` on one side,
-`TimeSeries.fromJSON` on the other. (`@pond-ts/rs` also reads and writes
-Arrow IPC bytes: `TimeSeries.fromArrow`, `toArrow()`.)
+`TimeSeries`. Pass it to them with `toColumns()` and
+`TimeSeries.fromColumns` ([above](#drawing-with-pond-tscharts)), or as
+JSON: `toJSON()` on one side, `TimeSeries.fromJSON` on the other.
+(`@pond-ts/rs` also reads and writes Arrow IPC bytes:
+`TimeSeries.fromArrow`, `toArrow()`.)
 
 ## Speed
 

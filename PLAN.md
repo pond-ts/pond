@@ -613,12 +613,6 @@ pond-ts bugs found while porting.
   and the port follows. Also adds the pointwise basic ops a consumer needs to
   write its own ratio and volatility steps as compositions. Steps and
   decisions in the breakout plan.
-- **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
-  no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
-  give the `declare module` workaround). Write an `index.d.ts` from
-  pond-ts's types where the shapes match, and check it in CI against the
-  parity tests' calls. Detail in the breakout plan ([PND-RUST-R4]).
-
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
   300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
