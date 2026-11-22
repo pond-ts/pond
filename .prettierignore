@@ -40,3 +40,6 @@ packages/financial/test/fixtures/calendar-parity.json
 packages/financial/test/fixtures/catalog-parity.json
 packages/process/test/fixtures/parity.json
 packages/financial/test/fixtures/process-parity.json
+
+# Written by packages/rs/test/types/check.mjs from the parity fixtures.
+packages/rs/test/types/generated

@@ -4,8 +4,12 @@
   "description": "pond-rs (Rust) compiled to WebAssembly, with pond-ts's method names",
   "type": "module",
   "main": "index.js",
+  "types": "index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./package.json": "./package.json"
   },
   "imports": {
@@ -16,18 +20,21 @@
   },
   "files": [
     "index.js",
+    "index.d.ts",
     "wasm.node.js",
     "wasm.browser.js",
     "pkg/pond_wasm.js",
     "pkg/pond_wasm_bg.wasm",
     "LICENSE",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "./build.sh",
-    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && test -f pkg/pond_wasm_bg.wasm",
-    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs && node test/studies.mjs && node test/live.mjs && node test/tojson.mjs",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && test -f pkg/pond_wasm_bg.wasm",
+    "test": "node test/parity.mjs && node test/inputs.mjs && node test/expr.mjs && node test/studies.mjs && node test/live.mjs && node test/tojson.mjs && node test/types/check.mjs",
+    "test:types": "node test/types/check.mjs",
     "test:browser": "node test/browser.mjs"
   },
   "engines": {

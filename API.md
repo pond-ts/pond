@@ -784,18 +784,20 @@ version. The authority is `packages/rs/index.js` (plain JS, no `src/`, so
 the `API map` workflow does not guard it; keep this section in step by
 hand). Node 20+ loads the `.wasm` synchronously (`wasm.node.js`); browsers
 and bundlers with a top-level `await` (`wasm.browser.js`), chosen by the
-`node` condition of package.json `imports` (`#wasm`). Differences from
+`node` condition of package.json `imports` (`#wasm`). Type declarations:
+`packages/rs/index.d.ts` (hand-written, with a generated study-options block;
+checked by `packages/rs/test/types/check.mjs`). Differences from
 pond-ts: `packages/rs/README.md`. Docs:
 [website/docs/pond-rs/javascript.mdx](website/docs/pond-rs/javascript.mdx).
 
-| Group           | Exports                                                                                                                                                                                                                         | Source                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| Batch series    | `TimeSeries` (pond-ts's constructor, `fromJSON`, `fromArrow`, batch methods, `partitionBy`, one method per study, `toJSON`, `toArrow`, `numbers`, `times`, `free()`), `PartitionedSeries`, `Sequence`                           | `packages/rs/index.js` |
-| Keys and events | `Time` (`parse`), `TimeRange`, `Interval`, `Event` (cut down: `get`, `data`, `key`, `type`, `begin`, `end`, `timeRange`)                                                                                                        | `packages/rs/index.js` |
-| Expressions     | `col`, `lit`, `when`, `Expr` (same JSON tree as pond-ts's)                                                                                                                                                                      | `packages/rs/index.js` |
-| Studies         | `studies()`, `studyInfo(name)`; `TradingCalendar` (`fromRules`, `fromSessions`, lookups, `tagSessions`, `free()`), `generateSessions`                                                                                           | `packages/rs/index.js` |
-| Live            | `LiveSeries`, `LiveView`, `LiveAggregation`, `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, `LivePartitionedSeries`, `LivePartitionedView`, `LivePartitionedFusedRolling`, `LivePartitionedSyncRolling`, `Trigger` | `packages/rs/index.js` |
-| Housekeeping    | `version` (pond-rs's), `alive()`, `livesAlive()`, `calendarsAlive()` (objects not yet freed)                                                                                                                                    | `packages/rs/index.js` |
+| Group           | Exports                                                                                                                                                                                                                                                                                                         | Source                 |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Batch series    | `TimeSeries` (pond-ts's constructor, `fromJSON`, `fromArrow`, batch methods, `partitionBy`, one method per study, `toJSON`, `toColumns` (pond-ts's columnar object, for `pond-ts` `TimeSeries.fromColumns` and so `@pond-ts/charts`), `toArrow`, `numbers`, `times`, `free()`), `PartitionedSeries`, `Sequence` | `packages/rs/index.js` |
+| Keys and events | `Time` (`parse`), `TimeRange`, `Interval`, `Event` (cut down: `get`, `data`, `key`, `type`, `begin`, `end`, `timeRange`)                                                                                                                                                                                        | `packages/rs/index.js` |
+| Expressions     | `col`, `lit`, `when`, `Expr` (same JSON tree as pond-ts's)                                                                                                                                                                                                                                                      | `packages/rs/index.js` |
+| Studies         | `studies()`, `studyInfo(name)`; `TradingCalendar` (`fromRules`, `fromSessions`, lookups, `tagSessions`, `free()`), `generateSessions`                                                                                                                                                                           | `packages/rs/index.js` |
+| Live            | `LiveSeries`, `LiveView`, `LiveAggregation`, `LiveRollingAggregation`, `LiveFusedRolling`, `LiveReduce`, `LivePartitionedSeries`, `LivePartitionedView`, `LivePartitionedFusedRolling`, `LivePartitionedSyncRolling`, `Trigger`                                                                                 | `packages/rs/index.js` |
+| Housekeeping    | `version` (pond-rs's), `alive()`, `livesAlive()`, `calendarsAlive()` (objects not yet freed)                                                                                                                                                                                                                    | `packages/rs/index.js` |
 
 ---
 

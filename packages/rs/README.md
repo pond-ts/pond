@@ -60,16 +60,32 @@ cpu.free();
 
 ## TypeScript
 
-No type declarations yet (a `.d.ts` is planned: [PND-RSTYPES] in
-`PLAN.md`). In TypeScript, `import … from '@pond-ts/wasm'` fails with
-TS7016 ("Could not find a declaration file") under `strict` /
-`noImplicitAny`. Until then, declare the module yourself, which types it
-as `any`:
+The package ships `index.d.ts`: every class, method and option is typed,
+with one options type per study (generated from `studies()`, so the names
+match what the study accepts). Mistakes such as an unknown reducer
+(`'average'`), `aggregate('1m', …)` instead of a `Sequence`, or
+`rsi({ length: 14 })` do not compile. The types do not follow the schema
+the way pond-ts's do: `event.get('value')` is a `Cell`, not a `number`.
+`node test/types/check.mjs` checks the file: every call in the parity
+fixtures and `test/types/api.ts` must compile under `tsc --strict`, and
+every runtime export and method must be declared.
+
+## Drawing with `@pond-ts/charts`
+
+The charts take a pond-ts `TimeSeries`. `toColumns()` gives pond-ts's
+columnar object (the same as pond-ts's own `toColumns()`), and
+`TimeSeries.fromColumns` in pond-ts reads it back:
 
 ```ts
-// pond-rs.d.ts
-declare module '@pond-ts/wasm';
+import { TimeSeries } from 'pond-ts';
+const forChart = TimeSeries.fromColumns(smoothed.toColumns<'number'>());
+smoothed.free();
 ```
+
+`fromColumns` takes number and text columns only; `select` those first if
+the series has true/false or list columns. A million rows take about
+75-105 ms, against ~520 ms through `toJSON()` / `fromJSON`
+(`scripts/perf-tocolumns.mjs`).
 
 ## How it differs from pond-ts
 
@@ -219,7 +235,8 @@ node test/parity.mjs     # pond-ts's core parity fixture through this package
 node test/inputs.mjs     # cell checks, functions and other inputs the fixture misses
 node test/studies.mjs    # @pond-ts/financial's study, oracle, catalog and calendar fixtures
 node test/live.mjs       # pond-ts's live parity fixture
-node test/tojson.mjs     # toJSON against pond-ts's (npm run build --workspace=pond-ts first)
+node test/tojson.mjs     # toJSON and toColumns against pond-ts's (npm run build --workspace=pond-ts first)
+node test/types/check.mjs # index.d.ts: fixture calls compile, every export declared
 node test/browser.mjs    # the browser build in headless Chromium, with and without a strict CSP
 ```
 

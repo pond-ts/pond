@@ -4721,11 +4721,27 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       as `@duckdb/duckdb-wasm` does. Cost accepted: the crate and the
       PyPI package stay `pond-rs`, so not one name everywhere. The folder
       stays `packages/rs` (less churn; only the npm name is public).
-    - [PND-RSTYPES] (open): `index.d.ts` for `@pond-ts/wasm`. Types are
-      not generated (the JS layer is hand-written over a JSON
-      dispatcher), so they would be written by hand, reusing pond-ts's
-      option and schema types where the shapes are the same, and checked
-      with `tsc` against a file of calls taken from the parity tests.
+    - [PND-RSTYPES] (DONE 2026-11-21): `packages/rs/index.d.ts`,
+      hand-written. Decided **not** to import pond-ts's types: `@pond-ts/rs`
+      has no dependency on pond-ts, and pond-ts's types follow the schema
+      (`get('v')` is `number`), which the bridge's dynamic methods cannot
+      promise, so a cell is `Cell`. The study options block (StudyName,
+      one options type per study) is generated from `studies()` by
+      `scripts/types.mjs` (`--check` fails when stale). `test/types/check.mjs`
+      turns every core/study/live parity fixture call into TypeScript and
+      compiles it under `tsc --strict` (4,082 core calls, 8,456 study calls,
+      1,362 live steps), compiles `test/types/api.ts` (README examples plus
+      `@ts-expect-error` mistakes), and checks every runtime export and
+      prototype method is declared (619 names); runs in CI's js-bridge job.
+      34 fixture study calls pass options the study does not declare;
+      pond-ts's own types refuse them too, so the check drops them.
+      Same PR: `toColumns()` (pond-ts's columnar object, equal to pond-ts's
+      own `toColumns()` on 300 random series, 116 fromColumns round trips),
+      the route from the bridge to `@pond-ts/charts`. Chosen over a
+      Float64Array variant (~20 ms vs ~75-105 ms at 1M rows) because equal
+      output to pond-ts wins and `numbers()`/`times()` already cover the
+      typed-array case. And `AGENTS.md` (docs/agents/USING_POND.md) now
+      copied into the tarball by prepack, like the other packages.
     - P1 `crates/pond-py`: frames in / out (Arrow, no copy where
       possible), the batch core with keyword options, `datetime` and
       duration strings, mimalloc, errors as Python exceptions. Check: core
