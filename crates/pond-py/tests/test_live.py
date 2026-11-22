@@ -1,4 +1,4 @@
-"""pond_rs.LiveSeries from Python: the ways in (push, push_many, frames),
+"""pond.LiveSeries from Python: the ways in (push, push_many, frames),
 outputs, Python functions given to nodes, and threads. Parity with pond-ts
 is `test_live_parity.py`; this file covers what only the Python side has."""
 
@@ -11,8 +11,8 @@ from datetime import timedelta
 import pyarrow as pa
 import pytest
 
-import pond_rs
-from pond_rs import LiveSeries, PondError, Sequence, TimeSeries
+import pond
+from pond import LiveSeries, PondError, Sequence, TimeSeries
 
 SCHEMA = {"time": "time", "host": "string", "cpu": "number"}
 
@@ -457,4 +457,4 @@ def test_repr():
     assert repr(live) == "LiveSeries('cpu', 1 events)"
     assert repr(live.root) == "LiveNode(series)"
     assert "LiveEvent(0," in repr(live.last())
-    assert pond_rs.LiveOutput.__name__ == "LiveOutput"
+    assert pond.LiveOutput.__name__ == "LiveOutput"

@@ -90,10 +90,10 @@ full windows kept with a polars filter:
 
 ```python
 import polars as pl
-import pond_rs
+import pond
 
 ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
-power = pond_rs.TimeSeries(ride.select("time", "power"), key="time").fill("zero")
+power = pond.TimeSeries(ride.select("time", "power"), key="time").fill("zero")
 
 for window, secs in [("5s", 5), ("1m", 60), ("5m", 300), ("20m", 1200), ("60m", 3600)]:
     rolled = power.rolling(window, {"avg": ("power", "avg"), "n": ("power", "count")})

@@ -1,4 +1,4 @@
-//! `pond_rs.Sequence`: the grid `aggregate`, `align`, `materialize` and
+//! `pond.Sequence`: the grid `aggregate`, `align`, `materialize` and
 //! `rolling(over=…)` work on.
 
 use pond_rs::Sequence;
@@ -11,7 +11,7 @@ use crate::convert::{IntoPy, duration, time_ms};
 /// calendar units in a time zone (`Sequence.calendar("day",
 /// "America/New_York")`). Methods that take a sequence also take a step
 /// such as `"1m"` or a `timedelta`, meaning `Sequence.every(step)`.
-#[pyclass(name = "Sequence", module = "pond_rs", frozen)]
+#[pyclass(name = "Sequence", module = "pond", frozen)]
 pub struct PySequence {
     pub inner: Sequence,
 }

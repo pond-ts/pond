@@ -5,7 +5,7 @@
 #
 #     setup.sh RUN_DIR [PYTHON]
 #
-# PYTHON is an interpreter with pond_rs, pandas, polars and pyarrow
+# PYTHON is an interpreter with pond, pandas, polars and pyarrow
 # installed (default: python3). Grade afterwards with
 # `python check.py RUN_DIR`.
 set -euo pipefail

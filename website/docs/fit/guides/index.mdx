@@ -11,7 +11,7 @@ Each guide takes one measure athletes use and builds it three times:
 
 1. **The idea**, in plain words, with the formula.
 2. **From scratch**, on the raw samples, with pond's own operations: in
-   TypeScript with `pond-ts`, and in Python with `pond_rs`. The two tabs do
+   TypeScript with `pond-ts`, and in Python with `pond` (the `pond-timeseries` package). The two tabs do
    the same steps and print the same numbers.
 3. **With fit**, in a line or two, giving the same answer as the hand-built
    version (or, where it differs, saying exactly why).
@@ -58,9 +58,9 @@ TypeScript, in Node 18 or later:
 npm install pond-ts @pond-ts/fit
 ```
 
-Python: `pond_rs` is pond's Rust engine with a Python face, and gives the same
-results as pond-ts. It is not on PyPI yet (see the
-[Python page](../../pond-rs/python)), so build it from the pond repository (it
+Python: `pond` is pond's Rust engine with a Python face, and gives the same
+results as pond-ts. It is on PyPI as `pond-timeseries` (see the
+[Python page](../../pond-rs/python)); or build it from the pond repository (it
 needs a Rust toolchain):
 
 ```bash norun
@@ -71,14 +71,14 @@ maturin develop --release
 ```
 
 The Python examples read the CSV files with polars and hand the frame to
-`pond_rs.TimeSeries`. pandas frames work too.
+`pond.TimeSeries`. pandas frames work too.
 
 ```python
 import polars as pl
-import pond_rs
+import pond
 
 ride = pl.read_csv("hill-ride.csv", try_parse_dates=True)
-series = pond_rs.TimeSeries(ride, key="time")
+series = pond.TimeSeries(ride, key="time")
 print(series)
 ```
 

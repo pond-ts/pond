@@ -103,6 +103,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [i * 1_000 for i in range(95)], "cpu": [float(i) for i in range(95)]})
+
+sampled = series.sample(stride=10)
+# 95 / 10 rounded down; keeps the 10th, 20th, 30th, ... rows.
+assert len(sampled) == 9
+assert [row.key for row in sampled][:3] == [9_000, 19_000, 29_000]
+
+try:
+    series.sample(stride=0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+</TabItem>
 </Tabs>
 
 Cheap (`O(N)` time, single pass, no RNG). Uniform-over-time, so any
@@ -163,6 +183,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs's reservoir takes a `seed`, so a run can be repeated; pond-ts's has none. The kept rows stay in their order in the series, where pond-ts sorts them by key, so rows that share a time can come out in a different order.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [i * 1_000 for i in range(95)], "cpu": [float(i) for i in range(95)]})
+
+sampled = series.sample(reservoir=20, seed=42)
+assert len(sampled) == 20
+# The same seed picks the same rows.
+again = series.sample(reservoir=20, seed=42)
+assert [r.key for r in sampled] == [r.key for r in again]
+
+# Asking for more rows than there are keeps the whole series.
+assert len(series.sample(reservoir=500, seed=42)) == 95
+```
+
+As in Rust, the reservoir takes a `seed` (0 if left out), so a run can be repeated, and the kept rows stay in their order in the series.
 
 </TabItem>
 </Tabs>
@@ -289,6 +329,31 @@ fn main() -> Result<(), pond_rs::PondError> {
 On a partitioned series, `Sample::Reservoir` seeds each partition from your seed, so those picks repeat too.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Three hosts reporting in turn, 20 readings each.
+metrics = pond.TimeSeries({
+    "time": [(i // 3) * 1_000 for i in range(60)],
+    "host": [["a", "b", "c"][i % 3] for i in range(60)],
+    "cpu": [float(i) for i in range(60)],
+})
+
+# Bare stride on round-robin rows keeps one host and drops the others.
+bare = metrics.sample(stride=3)
+assert set(bare.column("host")) == {"c"}
+
+# Partition first: each host's rows are thinned on their own.
+sampled = metrics.partition_by("host").sample(stride=10).collect()
+assert len(sampled) == 6  # 2 per host
+assert sampled.column("host") == ["a", "b", "c", "a", "b", "c"]
+```
+
+On a partitioned series, a reservoir seeds each partition from your seed, so those picks repeat too.
+
+</TabItem>
 </Tabs>
 
 Each partition gets its own stride counter (or its own K-event reservoir
@@ -395,6 +460,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 As in pond-ts, a live `sample` takes a stride only (`Sample::Stride`); a reservoir is an error.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"}, name="metrics")
+
+# Per-host stride feeding per-host rolling.
+out = live.partition_by("host").sample(2).rolling("5s", {"cpu": "avg"}).collect()
+
+# Hosts a and b in turn; cpu is the push number.
+for i in range(12):
+    live.push((i // 2) * 1_000, host="a" if i % 2 == 0 else "b", cpu=float(i))
+
+# Host a keeps its 2nd, 4th and 6th events (cpu 2, 6, 10), host b
+# its 3, 7 and 11.
+got = [(e.begin, e["cpu"]) for e in out.events()]
+assert got == [
+    (1_000, 2.0),
+    (1_000, 3.0),
+    (3_000, 4.0),
+    (3_000, 5.0),
+    (5_000, 6.0),
+    (5_000, 7.0),
+]
+```
+
+As in pond-ts, a live `sample` takes a stride only.
 
 </TabItem>
 </Tabs>

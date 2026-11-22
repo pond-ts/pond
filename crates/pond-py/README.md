@@ -12,30 +12,30 @@ pond-ts (TypeScript) and pond-rs (Rust): the test suite runs pond-ts's own
 parity fixture through this package and every case matches.
 
 ```sh
-pip install pond-timeseries        # import pond_rs
+pip install pond-timeseries        # import pond
 pip install "pond-timeseries[polars]" # plus polars; or [pandas], [pyarrow]
 ```
 
 The guide is on the docs site:
-[Python (pond_rs)](https://pond-ts.org/docs/pond-rs/python).
+[Python (pond)](https://pond-ts.org/docs/pond-rs/python).
 
 ```python
 import datetime as dt
 import polars as pl
-import pond_rs
+import pond
 
 df = pl.DataFrame({
     "time": [dt.datetime(2026, 3, 8, h) for h in range(24)],
     "host": ["a", "b"] * 12,
     "cpu": [float(h) for h in range(24)],
 })
-s = pond_rs.TimeSeries(df, key="time")
+s = pond.TimeSeries(df, key="time")
 
 # Five-hour trailing average, per host, back as a polars frame.
 s.partition_by("host").rolling("5h", {"cpu_avg": ("cpu", "avg")}).collect().to_polars()
 
 # Calendar days in New York: 8 March 2026 is 23 hours long there.
-days = pond_rs.Sequence.calendar("day", "America/New_York")
+days = pond.Sequence.calendar("day", "America/New_York")
 s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas()
 ```
 
@@ -67,10 +67,10 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
   `{"cpu": "avg"}` to reduce a column into itself. count, sum, avg, min, max,
   first, last, median, stdev, difference, keep, unique, samples, `top3`,
   `p95`, …
-- **Errors** are `pond_rs.PondError` (a `ValueError`), naming the call and
+- **Errors** are `pond.PondError` (a `ValueError`), naming the call and
   the column; a value of the wrong type (text where a number is needed) is a
   `TypeError`.
-- **Expressions** (`from pond_rs import col, lit, when`) write a per-row
+- **Expressions** (`from pond import col, lit, when`) write a per-row
   rule as data, so it runs inside pond-rs with no Python call per row:
   `s.filter((col("v") / col("w") > 10) & (col("host") == "h3"))`. Accepted
   by `filter`, `find`, `some`, `every`, `map`, `map_columns`,
@@ -83,7 +83,7 @@ s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}).to_pandas(
 - **Threads:** every call lets go of Python's lock while it works, so calls
   from several Python threads run at the same time.
 
-Type hints for every method are in the package (`pond_rs.pyi`).
+Type hints for every method are in the package (`pond.pyi`).
 
 ## Finance studies
 
@@ -94,12 +94,12 @@ pond-ts to the last bit (one difference: a source column that is missing or
 not numbers is an error here, where pond-ts fills the output with gaps):
 
 ```python
-bars = pond_rs.TimeSeries(df)                      # open/high/low/close/volume
+bars = pond.TimeSeries(df)                      # open/high/low/close/volume
 bars.rsi(period=14).bollinger(period=20, std_dev=2).to_polars()
 bars.study("macd", fast_period=12)                 # the same, by name
 bars.partition_by("symbol").atr(period=14).collect()
 
-nyse = pond_rs.TradingCalendar.from_rules(
+nyse = pond.TradingCalendar.from_rules(
     "America/New_York", "09:30", "16:00", "2024-01-02", "2024-12-31",
     holidays=["2024-07-04"], early_closes={"2024-12-24": "13:00"},
 )
@@ -112,7 +112,7 @@ until the window fills). Columns it reads default to `close`, `high`, `low`,
 keywords in Python's spelling (`ema_period`, which the type hints list);
 pond-ts's `emaPeriod` also works. An option the study does not have, or one
 given twice, is a `TypeError`, so a typo cannot pass silently.
-`pond_rs.studies()` describes every study: the columns it reads, its
+`pond.studies()` describes every study: the columns it reads, its
 options with defaults and ranges, and the columns it writes.
 
 ## Live series
@@ -123,7 +123,7 @@ push, and each push returns what the nodes you `watch()` emitted. Results
 match pond-ts's live layer output for output.
 
 ```python
-live = pond_rs.LiveSeries({"time": "time", "host": "string", "cpu": "number"},
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"},
                           max_age="10m")
 avg = live.rolling("1m", {"avg": ("cpu", "avg")})
 per_min = live.aggregate("1m", {"max": ("cpu", "max")})
@@ -166,19 +166,19 @@ and ending with a frame of each library's own kind (so getting data in and
 out is counted). Median of 7 runs, milliseconds; `python bench/bench.py`
 re-runs it. Runs on this VM vary by about a third.
 
-| Case                                   | pond_rs | polars 2.1 | pandas 3.1 |
-| -------------------------------------- | ------: | ---------: | ---------: |
-| Round trip (in and out only)           |     7.4 |        0.4 |       11.7 |
-| Rolling 5-minute average               |    33.5 |       36.3 |       66.7 |
-| Aggregate into 1-minute buckets        |    15.2 |       12.4 |       17.0 |
-| Daily buckets in New York              |     7.4 |        4.8 |       16.0 |
-| `diff`                                 |    17.0 |        2.0 |       11.4 |
-| RSI (14)                               |    21.5 |       36.3 |       58.4 |
-| Bollinger bands (20, 2)                |    22.2 |       34.6 |       70.2 |
-| Rolling 5 minutes per host (100 hosts) |   195.8 |       81.1 |      323.6 |
+| Case                                   |  pond | polars 2.1 | pandas 3.1 |
+| -------------------------------------- | ----: | ---------: | ---------: |
+| Round trip (in and out only)           |   7.4 |        0.4 |       11.7 |
+| Rolling 5-minute average               |  33.5 |       36.3 |       66.7 |
+| Aggregate into 1-minute buckets        |  15.2 |       12.4 |       17.0 |
+| Daily buckets in New York              |   7.4 |        4.8 |       16.0 |
+| `diff`                                 |  17.0 |        2.0 |       11.4 |
+| RSI (14)                               |  21.5 |       36.3 |       58.4 |
+| Bollinger bands (20, 2)                |  22.2 |       34.6 |       70.2 |
+| Rolling 5 minutes per host (100 hosts) | 195.8 |       81.1 |      323.6 |
 
 polars and pandas have no RSI or Bollinger bands; their columns are the
-usual hand-written versions. pond_rs's rolling, bucket and Bollinger results
+usual hand-written versions. pond's rolling, bucket and Bollinger results
 match polars's to within 1e-13. Getting data in costs about 7 ms per million
 rows: the time column is copied and checked (in order, in range), and each
 number column is scanned once for gaps. So the cheapest operations (`diff`)

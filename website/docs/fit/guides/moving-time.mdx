@@ -104,8 +104,8 @@ polars work. Read the CSV and add both columns:
 
 ```python
 import polars as pl
-import pond_rs
-from pond_rs import col, when
+import pond
+from pond import col, when
 
 run = pl.read_csv("interval-run.csv", try_parse_dates=True)
 
@@ -127,7 +127,7 @@ spelling: `diff` with `output=`, expressions built from `col` and `when`
 
 ```python
 gaps = (
-    pond_rs.TimeSeries(run, key="time")
+    pond.TimeSeries(run, key="time")
     .diff("sec", output="dt")
     .with_column("speed", col("step") / col("dt"))
     .with_column("moving_dt", when(col("speed") >= 0.5, col("dt"), 0))

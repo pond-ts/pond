@@ -735,6 +735,18 @@ Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
 - **Expressions page** (`pond-ts/transforms/expressions`, 2026-10-31):
   `col` / `lit` / `when` with TypeScript, Rust and Python tabs, all checked
   against pond-ts.
+- **Python beside Rust** (Peter, 2026-11-22): a Python tab (`import pond`)
+  on every tabbed example across 23 pages, 178 runnable scripts with asserts
+  mirroring the Rust ones. `website/scripts/check-python-snippets.py` runs
+  each in a fresh interpreter, and CI's `python` job runs it against the
+  wheel it just built, on 3.9 and 3.13. `fit/` pages are excluded: their
+  blocks build on each other, and `check-fit-guides.mts` checks their Python
+  only by hand (CI runs it with `--no-python`). Where the Python bridge
+  lacks a call the page says so rather than working around it:
+  no `apply` on a partitioned series (chain steps, then `collect()`), no
+  `ValueSeries.read_ipc` (read with pyarrow, then `from_arrow`), no batch
+  custom-fold `cumulative` (use `scan`), no live `at_or_before` (use
+  `to_series()`).
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 
@@ -4740,6 +4752,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       still `pond_rs`. `pond-py` was refused in advance: PyPI's
       `ultranormalize_name` strips `-_.` and maps l/i->1, o->0, so it
       equals the unrelated `pondpy`; `py-pond` likewise equals `pypond`.
+      Import name (2026-11-22, Peter's choice): `import pond` from 0.79.0,
+      no `pond_rs` alias (0.78.0 had been out hours). Checked first: PyPI's
+      `pond` 0.1 (Feb 2025) is an empty placeholder whose wheel installs a
+      top-level `pond.py`; the only clash found. Rust keeps `pond_rs`.
     - [PND-RSTYPES] (DONE 2026-11-21): `packages/rs/index.d.ts`,
       hand-written. Decided **not** to import pond-ts's types: `@pond-ts/rs`
       has no dependency on pond-ts, and pond-ts's types follow the schema

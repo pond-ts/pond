@@ -77,6 +77,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 `rolling` uses the event trigger. `rolling_with` takes `RollingOptions`, which can set any trigger.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+# The same as rolling("1m", ..., trigger="event").
+rolling = live.rolling("1m", {"cpu": "avg"})
+rolling.watch("event")
+
+# One output per push, keyed at the pushed event.
+assert len(live.push(0, cpu=1.0)) == 1
+out = live.push(10_000, cpu=2.0)
+assert (out[0].event.begin, out[0].event["cpu"]) == (10_000, 1.5)
+```
+
+`rolling` uses the event trigger unless you pass `trigger=`.
+
+</TabItem>
 </Tabs>
 
 `Trigger.event()` is a frozen sentinel — calling it multiple times
@@ -179,6 +198,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Trigger::every` takes no anchor. For one, build the sequence with `Sequence::every(…)?.with_anchor(ms)` and pass it to `Trigger::clock`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+avg = {"cpu": "avg"}
+every_30s = live.rolling("1m", avg, trigger="30s")
+# Anchored at 5 s instead of the epoch.
+anchored = live.rolling("1m", avg, trigger=pond.Sequence.every("30s", anchor=5_000))
+
+for t, cpu in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, cpu=cpu)
+
+# Keyed at the boundary, not at the event that crossed it.
+def rows(node):
+    return [(e.begin, e["cpu"]) for e in node.events()]
+
+assert rows(every_30s) == [(30_000, 2.5), (60_000, 4.0), (90_000, 6.0)]
+assert rows(anchored) == [(5_000, 1.5), (35_000, 3.0), (95_000, 6.0)]
+
+# Calendar sequences have no fixed step and are refused.
+try:
+    live.rolling("1m", avg, trigger=pond.Sequence.calendar("day", "UTC"))
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+A duration takes no anchor. For one, pass `pond.Sequence.every(step, anchor=ms)` as the trigger.
+
+</TabItem>
 </Tabs>
 
 `duration` accepts the standard duration string format
@@ -250,6 +301,25 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(batch_ticks, [-25_000, 5_000, 35_000, 65_000, 95_000]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+tick_seq = pond.Sequence.every("30s", anchor=5_000)
+mapping = {"cpu": "avg"}
+rolling = live.rolling("1m", mapping, trigger=tick_seq)
+for t, cpu in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, cpu=cpu)
+batch = live.to_series().aggregate(tick_seq, mapping)
+
+# The same sequence puts both on one grid: 5 s, 35 s, 65 s, 95 s, …
+assert [e.begin for e in rolling.events()] == [5_000, 35_000, 95_000]
+assert [r.begin for r in batch] == [-25_000, 5_000, 35_000, 65_000, 95_000]
 ```
 
 </TabItem>
@@ -327,6 +397,29 @@ fn main() -> Result<(), pond_rs::PondError> {
 `n` is a `usize`, so a negative or fractional count cannot be written; 0 is an error.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "latency": "number"}, name="timings")
+rolling = live.rolling("5m", {"latency": "avg"}, trigger=3)
+for t, latency in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, latency=latency)
+
+# The 3rd and 6th events, keyed at those events.
+assert [(e.begin, e["latency"]) for e in rolling.events()] == [(25_000, 2.0), (61_000, 3.5)]
+
+try:
+    live.rolling("5m", {"latency": "avg"}, trigger=0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+An int trigger counts events; 0 is an error.
+
+</TabItem>
 </Tabs>
 
 Right choice for hot streams where event-time boundaries lag during
@@ -386,6 +479,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust the two consumers below are the outputs each push returns (after `live.watch(rolling, OutputKind::Event)`) and `value()`, read whenever you like. React hooks are TypeScript only.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+rolling = live.rolling("1m", {"cpu": "avg"}, trigger="30s")
+for t, cpu in [(0, 1.0), (10_000, 2.0), (20_000, 3.0)]:
+    live.push(t, cpu=cpu)
+
+# No 30-second boundary crossed yet, so nothing emitted...
+assert len(rolling) == 0
+# ...but the window is current.
+assert rolling.value() == {"cpu": 2.0}
+```
+
+In Python the two consumers below are the outputs each push returns (after `rolling.watch("event")`) and `value()`, read whenever you like. React hooks are TypeScript only.
 
 </TabItem>
 </Tabs>
@@ -521,6 +633,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 `partition_rolling` needs a clock trigger. Its host column is text.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"}, name="metrics")
+ticks = live.partition_by("host").rolling("1m", {"cpu": "avg"}, trigger="200ms")
+
+for t, host, cpu in [
+    (0, "a", 1.0),
+    (50, "b", 3.0),
+    (150, "a", 2.0),
+    (210, "b", 5.0),  # crosses 200 ms
+    (230, "c", 7.0),  # c is new: it joins from the next tick
+    (420, "a", None),  # crosses 400 ms
+]:
+    live.push(t, host=host, cpu=cpu)
+
+# Columns: time, host, then the reducers. Every host on each tick.
+assert ticks.columns[0] == "host"
+assert [(e.begin, e["host"], e["cpu"]) for e in ticks.events()] == [
+    (200, "a", 1.5),
+    (200, "b", 4.0),
+    (400, "a", 1.5),
+    (400, "b", 4.0),
+    (400, "c", 7.0),
+]
+```
+
+On a partitioned node a clock trigger makes one node with a row per host at each tick. It needs a clock trigger; its host column is text.
+
+</TabItem>
 </Tabs>
 
 The output is a `LiveSource` whose schema is
@@ -608,6 +752,30 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 The chain is built with `per_partition`, which runs the closure on every host, including hosts that appear later.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"}, name="metrics")
+# Per-host gap filling, then every host on one 200 ms clock.
+ticks = live.partition_by("host").fill({"cpu": "hold"}).rolling("1m", {"cpu": "avg"}, trigger="200ms")
+
+for t, host, cpu in [(0, "a", 1.0), (50, "b", 3.0), (150, "a", None), (210, "b", None), (420, "a", 4.0)]:
+    live.push(t, host=host, cpu=cpu)
+
+# a at 400 ms: 1, 1 (held) and 4.
+assert [(e.begin, e["host"], e["cpu"]) for e in ticks.events()] == [
+    (200, "a", 1.0),
+    (200, "b", 3.0),
+    (400, "a", 2.0),
+    (400, "b", 3.0),
+]
+```
+
+The fill step is built on every host, including hosts that appear later.
 
 </TabItem>
 </Tabs>

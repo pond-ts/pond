@@ -43,18 +43,18 @@ files into {DIR}:
    the reading that closed it. Rows in the order the buckets closed.
    Buckets still open after the last reading are not written.
 
-Use the `pond_rs` package for the time series work (it is installed, with
+Use the `pond` package for the time series work (it is installed, with
 pandas, polars and pyarrow). Its documentation is `{DIR}/docs.md`.
 
 Rules for this exercise:
 - Run your program ONLY with `{DIR}/attempt.sh` (it runs
   `python solution.py` in {DIR} and logs the run). Do not run Python any
   other way: no `python -c`, no REPL, no `help()`.
-- Read only the files in {DIR}. Do not read the pond_rs package's files
+- Read only the files in {DIR}. Do not read the pond package's files
   (its type hints or source), anything else on this machine, or the web.
 - When you believe the four files are right, stop. You can inspect your
   output only by having your program print things.
 
 When finished, reply with: whether you think each output is right, any
-problems you hit with pond_rs or its documentation (be specific: what you
+problems you hit with pond or its documentation (be specific: what you
 expected, what happened), and anything you were unsure about.

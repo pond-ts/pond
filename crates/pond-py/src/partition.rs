@@ -1,4 +1,4 @@
-//! `pond_rs.PartitionedSeries`: a series split by entity.
+//! `pond.PartitionedSeries`: a series split by entity.
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use crate::shared::shared_methods;
 /// `TimeSeries.partition_by`. Each operation runs per group, on several
 /// cores, and returns another partitioned series; `collect()` merges the
 /// groups back into one series, `to_dict()` hands them out.
-#[pyclass(name = "PartitionedSeries", module = "pond_rs", frozen)]
+#[pyclass(name = "PartitionedSeries", module = "pond", frozen)]
 pub struct PyPartitionedSeries {
     pub inner: Arc<PartitionedSeries>,
 }

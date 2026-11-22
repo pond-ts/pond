@@ -30,6 +30,6 @@ Homepage = "https://pond-ts.org"
 Repository = "https://github.com/pond-ts/pond"
 
 [tool.maturin]
-module-name = "pond_rs"
+module-name = "pond"
 # No debug symbols: 3.4 MB wheel instead of 3.8 MB.
 strip = true

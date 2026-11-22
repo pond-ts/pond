@@ -1,6 +1,6 @@
-# pond_rs docs trial (R4 step P3)
+# pond docs trial (R4 step P3)
 
-Can an agent solve typical tasks with `pond_rs` from the docs page alone
+Can an agent solve typical tasks with `pond` from the docs page alone
 ([`website/docs/pond-rs/python.mdx`](../../../website/docs/pond-rs/python.mdx))?
 This folder holds the trial, so it can be run again with fresh agents.
 
@@ -16,7 +16,7 @@ This folder holds the trial, so it can be run again with fresh agents.
   the docs page as `docs.md`, the prompt, and `attempt.sh`, which runs
   `solution.py` and logs each exit status in `attempts.log`.
 - [`check.py`](check.py) `RUN_DIR` grades the four answers against values
-  worked out with plain pandas / Python (not `pond_rs`), so a misuse of the
+  worked out with plain pandas / Python (not `pond`), so a misuse of the
   library shows as a wrong answer. Planted mistakes, each caught: rolling
   without `partition_by`, `"1d"` instead of New York days, counts left as
   floats (`57.0`), `std_dev=2.1`, live buckets not per host.
@@ -53,7 +53,7 @@ applies):
 
 1. **The type hints listed calendar units that do not exist.**
    `Sequence.calendar` was typed as taking `"minute"` and `"hour"`; pond-rs
-   refuses both ("for hours use `Sequence::every`"). Fixed in `pond_rs.pyi`,
+   refuses both ("for hours use `Sequence::every`"). Fixed in `pond.pyi`,
    the method's docstring and the page, which now says to use `"15m"` /
    `"1h"` steps.
 2. **pandas hands its index over.** After `sort_values("time")` (needed,

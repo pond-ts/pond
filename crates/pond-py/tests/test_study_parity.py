@@ -1,4 +1,4 @@
-"""pond_rs (Python) studies and trading calendars against pond-ts.
+"""pond (Python) studies and trading calendars against pond-ts.
 
 The fixtures the Rust crate's study tests read, run through the Python API:
 
@@ -22,8 +22,8 @@ import zlib
 import pyarrow as pa
 import pytest
 
-import pond_rs
-from pond_rs import TimeSeries, TradingCalendar
+import pond
+from pond import TimeSeries, TradingCalendar
 
 from test_core_parity import REPO, cell_number, same_number, to_series
 
@@ -57,7 +57,7 @@ def call(series, study, options):
     options = dict(options)
     if isinstance(options.get("sessions"), dict):
         options["sessions"] = calendar(options["sessions"])
-    method = pond_rs.study_info(study)["method"]
+    method = pond.study_info(study)["method"]
     if zlib.crc32(json.dumps([study, options], default=str).encode()) % 2:
         return series.study(study, **options)
     snake = {"".join("_" + c.lower() if c.isupper() else c for c in k): v for k, v in options.items()}
@@ -66,7 +66,7 @@ def call(series, study, options):
 
 def sources(study, options):
     """The columns a study reads with these options, from the catalog."""
-    info = pond_rs.study_info(study)
+    info = pond.study_info(study)
     out = []
     for i in info["inputs"]:
         default = i.get("default")
@@ -82,9 +82,9 @@ def sources(study, options):
 
 def unknown_options(study, options):
     """Option names the study does not have. pond-ts's types refuse them
-    when the code compiles, and its runtime ignores them; pond_rs refuses
+    when the code compiles, and its runtime ignores them; pond refuses
     them with a TypeError, as Python does for an unexpected keyword."""
-    info = pond_rs.study_info(study)
+    info = pond.study_info(study)
     known = {i["role"] for i in info["inputs"]} | set(info["params"]) | {info["naming"]["kind"]}
     known |= {"session": {"session", "sessions", "stamped"}, "time": {"anchor"}}.get(info.get("anchor"), set())
     if study == "medianPrice":
@@ -117,7 +117,7 @@ def test_studies_match_pond_ts():
             continue
         try:
             got = call(s, case["study"], case["options"])
-        except pond_rs.PondError as e:
+        except pond.PondError as e:
             got = e
         # Known difference: pond-rs refuses a missing or non-number source
         # column, where pond-ts reads it as all gaps.
@@ -130,16 +130,16 @@ def test_studies_match_pond_ts():
             if isinstance(got, Exception):
                 counts["errors"] += 1
             else:
-                failures.append(f"{label}: pond-ts throws ({case['error']['message']}), pond_rs succeeds")
+                failures.append(f"{label}: pond-ts throws ({case['error']['message']}), pond succeeds")
             continue
         if refused:
             if isinstance(got, Exception):
                 counts["refused"] += 1
             else:
-                failures.append(f"{label}: pond_rs should refuse this source column")
+                failures.append(f"{label}: pond should refuse this source column")
             continue
         if isinstance(got, Exception):
-            failures.append(f"{label}: pond_rs raised {got}")
+            failures.append(f"{label}: pond raised {got}")
             continue
         why = check_study(s, got, expected)
         if why:
@@ -211,7 +211,7 @@ def test_studies_match_the_oracle():
         label = f"{case['study']}({json.dumps(case['params'])})"
         try:
             out = call(oracle_bars(fixture, case), case["study"], params).to_pyarrow()
-        except pond_rs.PondError as e:
+        except pond.PondError as e:
             failures.append(f"{label}: {e}")
             continue
         for name, want in case["expected"].items():
@@ -235,7 +235,7 @@ def test_studies_match_the_oracle():
 
 def test_descriptors_match_pond_ts():
     fixture = load("catalog-parity.json")
-    mine = pond_rs.studies()
+    mine = pond.studies()
     assert [d["name"] for d in mine] == [d["name"] for d in fixture["studies"]]
     for d, want in zip(mine, fixture["studies"]):
         extra = {k: d.pop(k) for k in ("method", "output_names")}
@@ -256,7 +256,7 @@ def catalog_bars(fixture) -> TimeSeries:
 def test_every_study_runs_from_its_method_with_defaults():
     fixture = load("catalog-parity.json")
     bars = catalog_bars(fixture)
-    for d in pond_rs.studies():
+    for d in pond.studies():
         options = {}
         for i in d["inputs"]:
             if "default" not in i:
@@ -292,11 +292,11 @@ def test_study_errors():
     bars = catalog_bars(fixture)
     with pytest.raises(TypeError, match="unexpected option 'peroid'"):
         bars.rsi(peroid=5)
-    with pytest.raises(pond_rs.PondError, match="not a study"):
+    with pytest.raises(pond.PondError, match="not a study"):
         bars.study("nope")
-    with pytest.raises(pond_rs.PondError, match="whole number of bars"):
+    with pytest.raises(pond.PondError, match="whole number of bars"):
         bars.rsi(period=2.5)
-    with pytest.raises(pond_rs.PondError, match="finite"):
+    with pytest.raises(pond.PondError, match="finite"):
         bars.bollinger(period=20, std_dev=math.nan)
     with pytest.raises(AttributeError):
         bars.not_a_study
@@ -309,9 +309,9 @@ def test_study_errors():
     with pytest.raises(TypeError, match="twice"):
         bars.macd(fast_period=5, fastPeriod=50)
     np = pytest.importorskip("numpy")
-    with pytest.raises(pond_rs.PondError, match="must be a number"):
+    with pytest.raises(pond.PondError, match="must be a number"):
         bars.rsi(period=np.bool_(True))
-    with pytest.raises(pond_rs.PondError, match="must be a number"):
+    with pytest.raises(pond.PondError, match="must be a number"):
         bars.rsi(period=True)
     assert bars.rsi(period=np.int64(5)).column("rsi") == bars.rsi(period=5).column("rsi")
 
@@ -322,9 +322,9 @@ def test_calendar_dates_are_strict():
 
     nyse = TradingCalendar.from_rules("America/New_York", "09:30", "16:00", "2024-01-08", "2024-01-19", holidays=["2024-01-15"])
     for bad in ("Jan 12", "2024-01-12T10:00", "2024-1-12"):
-        with pytest.raises(pond_rs.PondError, match="YYYY-MM-DD"):
+        with pytest.raises(pond.PondError, match="YYYY-MM-DD"):
             nyse.session_on(bad)
-    with pytest.raises(pond_rs.PondError, match="YYYY-MM-DD"):
+    with pytest.raises(pond.PondError, match="YYYY-MM-DD"):
         nyse.is_trading_day("2024-01-12 ")
     # A date, however given, steps by trading day.
     for d in ("2024-01-12", dt.date(2024, 1, 12), np.datetime64("2024-01-12")):
@@ -372,15 +372,15 @@ FOREIGN = ("Unrecognized time zone", "invalid RFC 9557 string", "value out of ra
 def outcome(case, run, expected):
     try:
         got = run()
-    except pond_rs.PondError as e:
+    except pond.PondError as e:
         if "expected" in case:
-            return f"pond_rs raised {e}"
+            return f"pond raised {e}"
         want = case["error"]["message"]
         if want.startswith(FOREIGN) or want in str(e):
             return None
-        return f"message differs: pond-ts {want!r}, pond_rs {e}"
+        return f"message differs: pond-ts {want!r}, pond {e}"
     if "expected" not in case:
-        return f"pond-ts throws ({case['error']['message']}), pond_rs gave {got!r}"
+        return f"pond-ts throws ({case['error']['message']}), pond gave {got!r}"
     want = expected(case["expected"])
     return None if got == want else f"got {got!r}\nwant {want!r}"
 
@@ -431,11 +431,11 @@ def generate_case(case):
     cal = case.get("calendar")
     try:
         got = from_rules(case)
-    except pond_rs.PondError as e:
+    except pond.PondError as e:
         if cal is True:
             return f"from_rules raised {e}"
         if isinstance(cal, dict) and cal["message"] not in str(e):
-            return f"message differs: pond-ts {cal['message']!r}, pond_rs {e}"
+            return f"message differs: pond-ts {cal['message']!r}, pond {e}"
         if cal is None and "expected" in case:
             return f"generate succeeds in pond-ts, from_rules raised {e}"
         return None
@@ -459,12 +459,12 @@ def queries_case(case):
         c, a = q["call"], q["arg"]
         if isinstance(a, str) and not re.fullmatch(r"\d{4}-\d\d-\d\d", a):
             # Known difference: pond-ts compares any text with session dates
-            # as strings ("" sorts first); pond_rs takes YYYY-MM-DD as a
+            # as strings ("" sorts first); pond takes YYYY-MM-DD as a
             # date and reads other text as a time, so "" and "2024-01-08x"
             # are errors.
             try:
                 getattr(cal, re.sub(r"([A-Z])", lambda m: "_" + m.group(1).lower(), c))(a)
-            except pond_rs.PondError:
+            except pond.PondError:
                 continue
             return f"{c}({a!r}) should raise"
         if c == "length":

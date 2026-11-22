@@ -13,7 +13,7 @@ import TabItem from '@theme/TabItem';
 
 # pond
 
-Typed time-series primitives, in **TypeScript or Rust**. Schema-driven
+Typed time-series primitives, in **TypeScript, Rust or Python**. Schema-driven
 events, composable transforms, a live-ingest mode, financial studies, and
 an optional React integration — all immutable.
 
@@ -24,9 +24,10 @@ pond comes in two languages that give the same answers:
 - **pond-rs** is the same core written in Rust: the same operations and the
   same results, bit for bit, at native speed and on several cores. See
   [pond-rs (Rust)](./pond-rs/index.mdx).
-- **pond_rs** is pond-rs for Python (`pip install pond-timeseries`): polars,
-  pandas and pyarrow frames in and out, with the same answers. See
-  [Python (pond_rs)](./pond-rs/python.mdx).
+- **Python**: pond-rs for Python (`pip install pond-timeseries`, then
+  `import pond`): polars, pandas and pyarrow frames in and out, with the
+  same answers. See
+  [Python (pond)](./pond-rs/python.mdx).
 
 | Package                      | TypeScript                          | Rust                             |
 | ---------------------------- | ----------------------------------- | -------------------------------- |
@@ -37,7 +38,7 @@ pond comes in two languages that give the same answers:
 | React hooks, charts, fitness | `@pond-ts/react`, `/charts`, `/fit` | TypeScript only                  |
 
 Examples on these pages show TypeScript and, where pond-rs has the same
-thing, a **Rust** tab beside it. Pick one and every tabbed example on the site follows.
+thing, **Rust** and **Python** tabs beside it. Pick one and every tabbed example on the site follows.
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
@@ -54,6 +55,13 @@ npm install @pond-ts/react          # React hooks (optional)
 # Cargo.toml
 [dependencies]
 pond-rs = "0.1"
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```sh
+pip install pond-timeseries          # then: import pond
 ```
 
 </TabItem>
@@ -177,6 +185,49 @@ does, so pond-rs checks them when the code runs: a misspelt column or
 output of both tabs is the same, number for number.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# 1. The same rows and schema, as pond-ts JSON. Column kinds are checked
+#    when the code runs.
+cpu = pond.TimeSeries.from_json("""{
+  "name": "cpu",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "cpu", "kind": "number"},
+    {"name": "requests", "kind": "number"},
+    {"name": "host", "kind": "string"}
+  ],
+  "rows": [
+    ["2025-01-01T00:00:00Z", 0.31, 120, "host1"],
+    ["2025-01-01T00:01:00Z", 0.44, 135, "host2"],
+    ["2025-01-01T00:02:00Z", 0.52, 141, "host1"],
+    ["2025-01-01T00:03:00Z", 0.48, 128, "host1"],
+    ["2025-01-01T00:04:00Z", 0.63, 166, "host3"]
+  ]
+}""")
+
+# 2. Compose operations. Each returns a new series; the source is unchanged.
+by_minute = cpu.aggregate("1m", {"cpu": "avg", "requests": "sum", "host": "last"})
+
+# avg / sd / upper / lower columns in one rolling pass.
+bands = cpu.baseline("cpu", "2m", 2.0)
+
+# Same columns, only the spikes.
+anomalies = cpu.outliers("cpu", "2m", 2.0)
+
+# 3. Chart-ready output: one JSON object per row, or a frame.
+print(by_minute.to_points_json())
+print(bands.to_points_json())
+assert len(anomalies) == 0  # how many spikes tripped the 2σ band
+```
+
+Python, like Rust, checks column names and kinds when the code runs: a
+misspelt column is a `pond.PondError` that names the columns there are.
+
+</TabItem>
 </Tabs>
 
 The whole batch API is composable like this — `filter`, `map`,
@@ -269,17 +320,52 @@ pond-rs has no listeners: each `push` returns the outputs you asked for
 with `watch`, in the order pond-ts's listeners would fire.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# 1. Same schema; a live series that keeps only the last 10 minutes.
+live = pond.LiveSeries(
+    {"time": "time", "cpu": "number", "requests": "number", "host": "string"},
+    name="cpu",
+    max_age="10m",
+)
+
+# 2. Ask for the series' own events back from each push.
+live.root.watch("event")
+
+# 3. Push as events arrive; each push is checked against the schema
+#    and returns what you watched. React to them inline.
+now = 1_735_689_600_000
+out = live.push(now, cpu=0.95, requests=128.0, host="api-1")
+for output in out:
+    if output.kind == "event" and output.event["cpu"] > 0.9:
+        print("High CPU on", output.event["host"])
+assert len(out) == 1
+
+# 4. Copy it to an ordinary series for batch work at any time.
+snap = live.to_series()
+per_minute = snap.aggregate("1m", {"cpu": "avg"})
+assert len(per_minute) == 1
+```
+
+Python has no listeners either: each `push` returns the outputs you asked
+for with `watch`.
+
+</TabItem>
 </Tabs>
 
 The live side also has its own `aggregate` / `rolling` / `filter`
 views that stay incremental — good for continuously-updated dashboard
 numbers without snapshot overhead. See [Live](./pond-ts/live/live-series)
-(TypeScript) or [Live series](./pond-rs/live) (Rust).
+(TypeScript), [Live series](./pond-rs/live) (Rust) or
+[Python](./pond-rs/python.mdx#live-series).
 
 ## Third example: React (optional)
 
 You do **not** need React to use pond-ts. Everything above is the
-core package. React is TypeScript only, so this example has no Rust tab.
+core package. React is TypeScript only, so this example has no Rust or Python tab.
 `@pond-ts/react` is a separate install that wraps the
 live primitives in hooks — it's the bridge, not the library.
 

@@ -109,7 +109,7 @@ zone edges. `upper_inclusive=True` puts a value on an edge in the bin below:
 
 ```python
 import polars as pl
-import pond_rs
+import pond
 
 MAX_HR = 186
 run = pl.read_csv("interval-run.csv", try_parse_dates=True)
@@ -120,7 +120,7 @@ run = run.with_columns(
 bounds = [round(f * MAX_HR) for f in (0.65, 0.81, 0.89, 0.97)]
 edges = [0, *bounds, 1e9]  # 1e9: the top zone has no ceiling
 
-bins = pond_rs.TimeSeries(run, key="time").by_column(
+bins = pond.TimeSeries(run, key="time").by_column(
     "heart_rate", {"seconds": ("dt", "sum")}, edges=edges, upper_inclusive=True
 )
 labels = ["Recovery", "Endurance", "Tempo", "Threshold", "Anaerobic"]

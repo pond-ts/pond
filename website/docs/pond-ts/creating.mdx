@@ -99,6 +99,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 `TimeSeries::new` has no ordering option: it refuses rows out of order. To sort rows on the way in, read them as JSON with `KeyOrder::Reorder` (below).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A dict of columns. The key column is `time` (text, datetimes or epoch
+# milliseconds); the value columns take their kind from the values.
+cpu = pond.TimeSeries(
+    {
+        "time": ["2025-01-01T00:00:00Z", "2025-01-01T00:01:00Z"],
+        "cpu": [0.31, 0.44],
+        "host": ["api-1", "api-1"],
+    },
+    name="cpu",
+)
+assert cpu.to_json() == (
+    '{"name":"cpu","schema":[{"name":"time","kind":"time"},'
+    '{"name":"cpu","kind":"number"},{"name":"host","kind":"string"}],'
+    '"rows":[[1735689600000,0.31,"api-1"],[1735689660000,0.44,"api-1"]]}'
+)
+
+# Times out of order are refused.
+try:
+    pond.TimeSeries({"time": [2_000, 1_000], "cpu": [0.5, 0.6]})
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+`pond.TimeSeries` also takes a polars, pandas or pyarrow frame. It refuses rows out of order; sort the frame first, or read JSON with `order="reorder"` (below).
+
+</TabItem>
 </Tabs>
 
 The `as const` on the schema is load-bearing — without it, TypeScript widens the
@@ -185,6 +217,32 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust the options go in a `LiveOptions`; `max_events` is pond-ts's `retention.maxEvents`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries(
+    {"time": "time", "cpu": "number", "host": "string"},
+    name="cpu",
+    max_events=10_000,  # bounded buffer
+    ordering="reorder",  # accept moderately late events
+    grace_window="5s",  # ... up to 5s late
+)
+
+live.push(1_000, cpu=0.42, host="api-1")
+live.push_many([
+    (1_001, {"cpu": 0.43, "host": "api-1"}),
+    (1_002, {"cpu": 0.45, "host": "api-2"}),
+])
+
+# A snapshot, independent of later pushes.
+batch = live.to_series()
+assert len(batch) == 3
+assert [row.key for row in batch] == [1_000, 1_001, 1_002]
+```
 
 </TabItem>
 </Tabs>
@@ -313,6 +371,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 `from_json` takes JSON text. For JSON you have already parsed, `from_json_value` takes a `serde_json::Value`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# `from_json` reads JSON text, schema and all.
+payload = """{
+  "name": "cpu",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "cpu", "kind": "number"},
+    {"name": "host", "kind": "string"}
+  ],
+  "rows": [
+    [1735689600000, 0.31, "api-1"],
+    [1735689660000, 0.44, "api-1"]
+  ]
+}"""
+cpu = pond.TimeSeries.from_json(payload)
+
+assert len(cpu) == 2
+assert cpu.column("cpu")[1] == 0.44
+assert cpu.column("host")[0] == "api-1"
+```
+
+`from_json` takes JSON text. For JSON you have already parsed, `json.dumps` it first.
+
+</TabItem>
 </Tabs>
 
 In React, when the server emits a full pond-ts payload, the client is one line:
@@ -401,6 +487,34 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+text = """{
+  "name": "cpu",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "cpu", "kind": "number"},
+    {"name": "host", "kind": "string"}
+  ],
+  "rows": [
+    ["2025-01-01T09:00", 0.42, "api-1"],
+    ["2025-01-01T10:00", 0.51, "api-1"]
+  ]
+}"""
+
+# "2025-01-01 at 09:00 Madrid local" → 08:00:00 UTC.
+ts = pond.TimeSeries.from_json(text, time_zone="Europe/Madrid")
+assert ts[0].key == 1_735_718_400_000
+
+# Without a time zone the same text is read as UTC: an hour later.
+utc = pond.TimeSeries.from_json(text)
+assert utc[0].key - ts[0].key == 3_600_000
+```
+
+</TabItem>
 </Tabs>
 
 Does your input need it?
@@ -481,6 +595,36 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ts = pond.TimeSeries.from_json(
+    """{
+      "name": "windows",
+      "schema": [
+        {"name": "interval", "kind": "interval"},
+        {"name": "value", "kind": "number"},
+        {"name": "active", "kind": "boolean"}
+      ],
+      "rows": [
+        {
+          "interval": {"value": "a", "start": "2025-01-01", "end": "2025-01-02"},
+          "value": 1,
+          "active": true
+        }
+      ]
+    }""",
+    time_zone="UTC",
+)
+
+assert ts.key_kind == "interval"
+assert ts[0].key == ("a", 1_735_689_600_000, 1_735_776_000_000)  # label, begin, end
+assert ts.column("active") == [True]
+```
+
+</TabItem>
 </Tabs>
 
 Each row is read on its own shape, so a payload that mixes object rows and
@@ -546,6 +690,39 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert!(TimeSeries::from_json(required, &JsonOptions::new()).is_err());
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ts = pond.TimeSeries.from_json("""{
+  "name": "cpu",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "cpu", "kind": "number"},
+    {"name": "status", "kind": "string", "required": false}
+  ],
+  "rows": [
+    ["2025-01-01T00:00Z", 0.42, "ok"],
+    ["2025-01-01T00:01Z", 0.51, null]
+  ]
+}""")
+assert ts.column("status") == ["ok", None]  # a gap
+
+# `null` in a required column is refused.
+required = """{
+  "name": "cpu",
+  "schema": [{"name": "time", "kind": "time"}, {"name": "cpu", "kind": "number"}],
+  "rows": [[0, null]]
+}"""
+try:
+    pond.TimeSeries.from_json(required)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
 ```
 
 </TabItem>
@@ -623,6 +800,39 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust both formats come back as a JSON string, ready to send.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries(
+    {
+        "time": [1_735_689_600_000, 1_735_689_660_000],
+        "cpu": [0.31, 0.44],
+        "host": ["api-1", "api-1"],
+    },
+    name="cpu",
+)
+
+compact = series.to_json()
+assert compact.endswith(
+    '"rows":[[1735689600000,0.31,"api-1"],[1735689660000,0.44,"api-1"]]}'
+)
+
+keyed = series.to_json("object")
+assert keyed.endswith(
+    '"rows":[{"time":1735689600000,"cpu":0.31,"host":"api-1"},'
+    '{"time":1735689660000,"cpu":0.44,"host":"api-1"}]}'
+)
+
+# Both read back to the same rows.
+assert pond.TimeSeries.from_json(compact).to_json() == compact
+assert pond.TimeSeries.from_json(keyed).to_json() == compact
+```
+
+In Python both formats come back as a JSON string, ready to send.
 
 </TabItem>
 </Tabs>
@@ -816,6 +1026,62 @@ fn main() -> Result<(), pond_rs::PondError> {
 Columns JSON is read more strictly in pond-rs: a cell of the wrong kind is an error, where pond-ts converts it. See [Arrow and JSON](../pond-rs/arrow#json).
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Columns JSON, as it comes off the wire.
+bars = pond.TimeSeries.from_columns_json("""{
+  "name": "AAPL",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "open", "kind": "number"},
+    {"name": "close", "kind": "number"},
+    {"name": "venue", "kind": "string"}
+  ],
+  "columns": {
+    "time": [1735689600000, 1735689660000, 1735689720000],
+    "open": [193.1, 193.4, 193.2],
+    "close": [193.4, 193.2, 193.6],
+    "venue": ["XNAS", "XNAS", "XNAS"]
+  }
+}""")
+assert bars.column("close")[2] == 193.6
+
+# Already holding one list (or array) per column? A dict of columns is the
+# columnar door in Python; a polars or pyarrow frame works too.
+same = pond.TimeSeries(
+    {
+        "time": [1_735_689_600_000, 1_735_689_660_000, 1_735_689_720_000],
+        "open": [193.1, 193.4, 193.2],
+        "close": [193.4, 193.2, 193.6],
+        "venue": ["XNAS", "XNAS", "XNAS"],
+    },
+    name="AAPL",
+)
+assert same.to_columns_json() == bars.to_columns_json()
+
+# `null` is a gap; a column with gaps comes back optional.
+gaps = pond.TimeSeries.from_columns_json("""{
+  "name": "AAPL",
+  "schema": [
+    {"name": "time", "kind": "time"},
+    {"name": "close", "kind": "number"},
+    {"name": "venue", "kind": "string"}
+  ],
+  "columns": {
+    "time": [1735689600000, 1735689660000],
+    "close": [193.4, null],
+    "venue": ["XNAS", null]
+  }
+}""")
+assert gaps.column("close") == [193.4, None]
+assert gaps.column("venue") == ["XNAS", None]
+assert gaps.schema[1] == {"name": "close", "kind": "number", "required": False}
+```
+
+</TabItem>
 </Tabs>
 
 Each entry in `columns` is one column's values, aligned by index; every column
@@ -884,7 +1150,8 @@ String columns have no typed-array form — hand them a `string[]`. Passing a ty
 array for a `'string'`-kind column throws rather than stringifying numbers.
 
 In Rust, `Column::required(name, values)` takes a `Vec<f64>` without copying it,
-as in the `TimeSeries::new` call in the Rust tab above.
+as in the `TimeSeries::new` call in the Rust tab above. In Python, a float64
+column of a one-chunk Arrow table without gaps is used in place, not copied.
 
 :::warning[Adopted, not copied]
 Because a `Float64Array` column is adopted by reference, mutating the source
@@ -951,6 +1218,26 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(restored, series);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries({"time": [0, 60_000], "cpu": [0.5, None]}, name="cpu")
+
+wire = series.to_columns_json()
+assert wire == (
+    '{"name":"cpu","schema":[{"name":"time","kind":"time"},'
+    '{"name":"cpu","kind":"number","required":false}],'
+    '"columns":{"time":[0,60000],"cpu":[0.5,null]}}'
+)
+
+# … over HTTP / a WebSocket …
+restored = pond.TimeSeries.from_columns_json(wire)
+assert restored.to_columns_json() == wire
 ```
 
 </TabItem>
@@ -1040,6 +1327,30 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(back.to_columns_json()?, wire);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+trades = pond.TimeSeries(
+    {"time": [0, 3_600_000, 86_400_000, 90_000_000], "price": [10.0, 12.0, 20.0, 30.0]},
+    name="trades",
+)
+daily = trades.aggregate("1d", {"price": "avg"})
+
+wire = daily.to_columns_json()
+assert wire.endswith(
+    '"columns":{"interval":[0,86400000],"intervalEnd":[86400000,172800000],'
+    '"intervalLabel":[0,86400000],"price":[11,25]}}'
+)
+
+# Round-trips, key and all.
+back = pond.TimeSeries.from_columns_json(wire)
+assert back.key_kind == "interval"
+assert back.to_columns_json() == wire
 ```
 
 </TabItem>
@@ -1134,6 +1445,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 pond-rs reads Arrow itself, through the Rust Arrow crates it re-exports (`pond_rs::arrow_array` and friends): `from_arrow` for `RecordBatch`es you hold, `read_ipc` or `from_ipc_bytes` for an `.arrow` file or stream. See [Arrow and JSON](../pond-rs/arrow).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pyarrow as pa
+import pond
+
+# Arrow data from elsewhere, here built by hand: a `ts` field of epoch
+# milliseconds and a `close` field.
+table = pa.table({
+    "ts": pa.array([1_735_689_600_000, 1_735_689_660_000], pa.int64()),
+    "close": [193.4, 193.2],
+})
+
+# key= names the key field.
+bars = pond.TimeSeries(table, name="AAPL", key="ts")
+assert [row.key for row in bars] == [1_735_689_600_000, 1_735_689_660_000]
+assert bars.column("close")[1] == 193.2
+
+# For an IPC (`.arrow`) file, `read_ipc` takes a path or the bytes.
+data = bars.write_ipc()  # no path: the bytes
+again = pond.TimeSeries.read_ipc(data, name="AAPL", key="ts")
+assert again.to_json() == bars.to_json()
+```
+
+`pond.TimeSeries(...)` reads any Arrow table or record batch, and polars and pandas frames, through Arrow's C interface. `read_ipc` and `write_ipc` read and write `.arrow` files.
 
 </TabItem>
 </Tabs>
@@ -1243,6 +1581,27 @@ fn main() -> Result<(), pond_rs::PondError> {
 `to_arrow` returns an Arrow `RecordBatch`, so there is nothing to assemble; `write_ipc` writes it as an `.arrow` file or stream.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+series = pond.TimeSeries(
+    {"time": [1_735_689_600_000, 1_735_689_660_000], "close": [193.4, None]},
+    name="AAPL",
+)
+
+# A pyarrow Table, ready for any Arrow-based library.
+table = series.to_pyarrow()
+close = table["close"]
+assert close[0].as_py() == 193.4
+assert close[1].as_py() is None  # a gap is an Arrow null
+assert close.null_count == 1
+```
+
+`to_pyarrow()` returns a pyarrow `Table`, so there is nothing to assemble; `to_polars()` and `to_pandas()` give frames, and a series is itself an Arrow stream, so `pa.table(series)` works too.
+
+</TabItem>
 </Tabs>
 
 From there a consumer can reach whatever engine they like — polars, DuckDB,
@@ -1349,6 +1708,37 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(ValueSeries::from_ipc_bytes("chain", file, "strike")?, chain);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# schema[0] is the axis, with kind "value".
+rows = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"""
+chain = pond.ValueSeries.from_json(rows)
+
+columns = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"""
+assert pond.ValueSeries.from_columns_json(columns).to_json() == chain.to_json()
+
+# Arrow: name the field to use as the axis.
+again = pond.ValueSeries.from_arrow(chain.to_pyarrow(), "strike", name="chain")
+assert again.to_json() == chain.to_json()
+assert again.axis() == [90.0, 95.0, 100.0]
 ```
 
 </TabItem>
@@ -1522,6 +1912,33 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 In Rust the setting is `KeyOrder`, passed to `from_columns_json`, `from_json` (through `JsonOptions::order`) and the `ValueSeries` doors.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+feed = """{"name": "feed",
+  "schema": [{"name": "time", "kind": "time"}, {"name": "v", "kind": "number"}],
+  "columns": {"time": [0, 10, 5, 20], "v": [1, 2, 3, 4]}}"""
+
+try:
+    pond.TimeSeries.from_columns_json(feed)  # order="strict" is the default
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+clamped = pond.TimeSeries.from_columns_json(feed, order="clamp")
+assert [row.key for row in clamped] == [0, 10, 10, 20]
+assert clamped.column("v") == [1.0, 2.0, 3.0, 4.0]
+
+ordered = pond.TimeSeries.from_columns_json(feed, order="reorder")
+assert [row.key for row in ordered] == [0, 5, 10, 20]
+assert ordered.column("v") == [1.0, 3.0, 2.0, 4.0]
+```
+
+In Python the setting is `order=`, taken by `from_json`, `from_columns_json` and the `ValueSeries` doors.
 
 </TabItem>
 </Tabs>

@@ -1,4 +1,4 @@
-"""pond_rs (Python) against pond-ts for the JSON wire formats, value
+"""pond (Python) against pond-ts for the JSON wire formats, value
 series, and the Arrow files pond-ts writes. The same fixture sections and
 known differences as the Rust crate's `tests/core_parity.rs`."""
 
@@ -9,8 +9,8 @@ import json
 import pyarrow as pa
 import pyarrow.ipc
 
-import pond_rs
-from pond_rs import TimeSeries, ValueSeries
+import pond
+from pond import TimeSeries, ValueSeries
 
 from test_core_parity import FIXTURE, REPO, compare_series, decoded, outcome_series, to_series
 
@@ -35,22 +35,22 @@ def ordering(options):
 def judge(label, refused, expected, got, failures):
     if refused:
         if not isinstance(got, Exception):
-            failures.append(f"{label}: expected pond_rs to refuse it (a known difference)")
+            failures.append(f"{label}: expected pond to refuse it (a known difference)")
         return
     if expected is not None and not isinstance(got, Exception):
         why = compare_series(expected, outcome_series(got)[1], None)
         if why:
             failures.append(f"{label}: {why}")
     elif expected is not None:
-        failures.append(f"{label}: pond-ts reads it, pond_rs raised {got}")
+        failures.append(f"{label}: pond-ts reads it, pond raised {got}")
     elif not isinstance(got, Exception):
-        failures.append(f"{label}: pond-ts throws, pond_rs read it")
+        failures.append(f"{label}: pond-ts throws, pond read it")
 
 
 def attempt(f):
     try:
         return f()
-    except pond_rs.PondError as e:
+    except pond.PondError as e:
         return e
 
 
@@ -79,7 +79,7 @@ def test_columns_and_points_json_match_pond_ts():
             want = case.get("expected")
             if want is None:
                 if not isinstance(got, Exception):
-                    failures.append(f"{kind} {case['input']}: pond-ts throws, pond_rs wrote it")
+                    failures.append(f"{kind} {case['input']}: pond-ts throws, pond wrote it")
             elif isinstance(got, Exception) or not same_json(want, got):
                 failures.append(f"{kind} {case['input']}: expected {want}, got {got}")
     columns_refused = {"numberAsText", "numberAsBool", "textAsNumber", "keyAsText", "keyAsBool", "fractionKey", "farKey", "noName"}
@@ -104,7 +104,7 @@ def value_outcome(v: ValueSeries):
     try:
         table = v.to_pyarrow()
         cols = [table.column(v.axis_name).to_pylist()] + [table.column(c).to_pylist() for c in v.columns]
-    except pond_rs.PondError:
+    except pond.PondError:
         # Arrays mixing kinds cannot be Arrow lists; read the columns.
         cols = [v.axis()] + [v.column(c) for c in v.columns]
     return {"name": v.name, "schema": schema, "rows": [list(r) for r in zip(*cols)] if cols[0] else []}
@@ -119,10 +119,10 @@ def test_value_series_match_pond_ts():
         got = attempt(lambda: to_series(source).by_value(case["axis"]))
         if case.get("expected") is None:
             if not isinstance(got, Exception):
-                failures.append(f"{label}: pond-ts throws, pond_rs succeeded")
+                failures.append(f"{label}: pond-ts throws, pond succeeded")
             continue
         if isinstance(got, Exception):
-            failures.append(f"{label}: pond-ts succeeds, pond_rs raised {got}")
+            failures.append(f"{label}: pond-ts succeeds, pond raised {got}")
             continue
         why = compare_series(case["expected"], value_outcome(got), None)
         if why:
@@ -153,9 +153,9 @@ def _judge_value(label, expected, got, failures):
         if why:
             failures.append(f"{label}: {why}")
     elif expected is not None:
-        failures.append(f"{label}: pond-ts reads it, pond_rs raised {got}")
+        failures.append(f"{label}: pond-ts reads it, pond raised {got}")
     elif not isinstance(got, Exception):
-        failures.append(f"{label}: pond-ts throws, pond_rs read it")
+        failures.append(f"{label}: pond-ts throws, pond read it")
 
 
 def test_value_series_arrow_match_pond_ts():
@@ -190,7 +190,7 @@ def test_reads_the_pond_ts_arrow_exports():
         assert why is None, f"{file}: {why}"
         again = TimeSeries.read_ipc(s.write_ipc(), name=name, key=key, key_kind=kind)
         why = compare_series(FIXTURE["inputs"][name], outcome_series(again)[1], None)
-        assert why is None, f"{file} rewritten by pond_rs: {why}"
+        assert why is None, f"{file} rewritten by pond: {why}"
         # And through pyarrow: the file read by pyarrow, handed over.
         table = pa.ipc.open_file(str(path)).read_all()
         via = TimeSeries(table, name=name, key=key, key_kind=kind)

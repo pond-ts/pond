@@ -131,7 +131,7 @@ pond's `cumulative` for the running total:
 ```python
 import numpy as np
 import polars as pl
-import pond_rs
+import pond
 
 run = pl.read_csv("interval-run.csv", try_parse_dates=True)
 R = 6_371_008.8
@@ -143,7 +143,7 @@ run = run.with_columns(
     meters=(2 * R * a.sqrt().arcsin()).fill_null(0.0),
     sec=(pl.col("time") - pl.col("time").first()).dt.total_milliseconds() / 1000,
 )
-along = pond_rs.TimeSeries(run, key="time").cumulative({"meters": "sum"})
+along = pond.TimeSeries(run, key="time").cumulative({"meters": "sum"})
 ```
 
 `by_column` buckets rows by a value instead of by time: by distance, in

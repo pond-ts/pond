@@ -1,6 +1,6 @@
 //! Financial studies through pond-rs's catalog: `series.study("rsi",
 //! period=14)`, the named form `series.rsi(period=14)`, and
-//! `pond_rs.studies()` describing every study.
+//! `pond.studies()` describing every study.
 
 use std::sync::Arc;
 
@@ -138,7 +138,7 @@ impl StudyCall {
     pub fn new(name: &str, options: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let d = descriptor(name).ok_or_else(|| {
             value_error(format!(
-                "'{name}' is not a study; pond_rs.studies() lists them"
+                "'{name}' is not a study; pond.studies() lists them"
             ))
         })?;
         let known = option_names(d);
@@ -248,7 +248,7 @@ pub fn studies<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
 pub fn study_info<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
     let d = descriptor(name).ok_or_else(|| {
         value_error(format!(
-            "'{name}' is not a study; pond_rs.studies() lists them"
+            "'{name}' is not a study; pond.studies() lists them"
         ))
     })?;
     to_py(py, &describe(d))
@@ -276,7 +276,7 @@ pub fn study_attribute<'py>(target: &Bound<'py, PyAny>, name: &str) -> PyResult<
                 .import("functools")?
                 .call_method1("partial", (target.getattr("study")?, d.name))?;
             let doc = format!(
-                "{}.\n\nAdds {} ({}). Options are keywords; pond_rs.study_info({:?}) lists them with defaults and ranges.",
+                "{}.\n\nAdds {} ({}). Options are keywords; pond.study_info({:?}) lists them with defaults and ranges.",
                 d.summary.trim_end_matches('.'),
                 d.output_names().join(", "),
                 d.family.as_str(),

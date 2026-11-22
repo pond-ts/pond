@@ -1,4 +1,4 @@
-"""pond_rs (Python) against pond-ts's own output for the core operations.
+"""pond (Python) against pond-ts's own output for the core operations.
 
 The same fixture the Rust crate's `tests/core_parity.rs` reads:
 `packages/core/test/fixtures/parity.json`, written by pond-ts. Every case
@@ -20,8 +20,8 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-import pond_rs
-from pond_rs import TimeSeries
+import pond
+from pond import TimeSeries
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE = json.loads((REPO / "packages/core/test/fixtures/parity.json").read_text(encoding="utf-8"))
@@ -162,7 +162,7 @@ def series(name) -> TimeSeries:
 
 def outcome_series(s: TimeSeries):
     """A series as `{"name", "schema", "rows"}`, read through to_pyarrow
-    (pond_rs's Arrow output) where Arrow can hold its columns."""
+    (pond's Arrow output) where Arrow can hold its columns."""
     schema = []
     for d in s.schema:
         entry = {"name": d["name"], "kind": d["kind"]}
@@ -172,7 +172,7 @@ def outcome_series(s: TimeSeries):
     n = len(s)
     try:
         table = s.to_pyarrow()
-    except pond_rs.PondError:
+    except pond.PondError:
         # Arrays mixing kinds cannot be Arrow lists; read the columns.
         table = None
     key = s.key_name
@@ -309,7 +309,7 @@ def compare_record(e: dict, a: dict, tolerance):
 
 
 def check(case, actual):
-    """None when pond_rs agrees with pond-ts on this case, else why not."""
+    """None when pond agrees with pond-ts on this case, else why not."""
     kinds = [k for k in ("expected", "groups", "reduced", "records", "error") if case.get(k) is not None]
     assert len(kinds) == 1, f"{case['id']}: exactly one outcome"
     want = kinds[0]
@@ -318,9 +318,9 @@ def check(case, actual):
         if isinstance(actual, Exception):
             return None
         e = case["error"]
-        return f"pond-ts throws ({e['name']}: {e['message']}), pond_rs succeeded"
+        return f"pond-ts throws ({e['name']}: {e['message']}), pond succeeded"
     if isinstance(actual, Exception):
-        return f"pond-ts succeeds, pond_rs raised {type(actual).__name__}: {actual}"
+        return f"pond-ts succeeds, pond raised {type(actual).__name__}: {actual}"
     shape, value = actual
     if want == "expected" and shape == "series":
         return compare_series(case["expected"], value, tol)
@@ -344,7 +344,7 @@ def check(case, actual):
             if why:
                 return f"record {i}: {why}"
         return None
-    return "pond-ts and pond_rs give different result shapes"
+    return "pond-ts and pond give different result shapes"
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +355,8 @@ def check(case, actual):
 def sequence(spec):
     seq = spec["sequence"]
     if "every" in seq:
-        return pond_rs.Sequence.every(seq["every"])
-    return pond_rs.Sequence.calendar(
+        return pond.Sequence.every(seq["every"])
+    return pond.Sequence.calendar(
         seq["calendar"], seq["timeZone"], week_starts_on=seq.get("weekStartsOn")
     )
 
@@ -371,7 +371,7 @@ def aggs(mapping):
 
 
 def whole(v):
-    """An option count: an int when whole, else as given (pond_rs then
+    """An option count: an int when whole, else as given (pond then
     refuses it, as pond-ts does)."""
     if isinstance(v, float) and v.is_integer():
         return int(v)
@@ -473,11 +473,11 @@ EXPR_METHODS = {"sqrt", "sin", "cos", "asin", "atan2"}
 
 
 def expr_of(tree):
-    """A pond-ts expression tree, built with pond_rs's own builder."""
+    """A pond-ts expression tree, built with pond's own builder."""
     if "col" in tree:
-        return pond_rs.col(tree["col"])
+        return pond.col(tree["col"])
     if "lit" in tree:
-        return pond_rs.lit(tree["lit"])
+        return pond.lit(tree["lit"])
     args = [expr_of(a) for a in tree["args"]]
     op = tree["op"]
     if op in EXPR_OPS:
@@ -485,7 +485,7 @@ def expr_of(tree):
     if op in EXPR_METHODS:
         return getattr(args[0], op)(*args[1:])
     if op == "when":
-        return pond_rs.when(*args)
+        return pond.when(*args)
     if op == "in":
         return args[0].is_in(tree["values"])
     if op == "not":
@@ -740,7 +740,7 @@ def run(case):
         return groups_outcome(s.group_by(args[0]), "undefined")
     if op == "mapColumns":
         if not args[0]:
-            raise pond_rs.PondError("map needs a column")  # stand-in: pond_rs maps one column per call
+            raise pond.PondError("map needs a column")  # stand-in: pond maps one column per call
         out = s
         exprs = {c: expr_of(m["expr"]) for c, m in args[0].items() if "expr" in m}
         if exprs:
@@ -841,7 +841,7 @@ CASES = {c["id"]: c for c in FIXTURE["cases"]}
 # Cases where pond-ts throws and Python itself refuses the argument before
 # pond-rs sees it (a fractional count where an int is needed): these may
 # raise TypeError / OverflowError. Every other expected error must be a
-# pond_rs.PondError, so a harness mistake (a wrong keyword, a missing
+# pond.PondError, so a harness mistake (a wrong keyword, a missing
 # fixture key) cannot pass as a matching error.
 PYTHON_TYPE_ERRORS = {
     "error-shift-fraction",
@@ -856,7 +856,7 @@ PYTHON_TYPE_ERRORS = {
 def attempt(case):
     try:
         return run(case)
-    except pond_rs.PondError as e:
+    except pond.PondError as e:
         return e
     except (TypeError, OverflowError) as e:
         if case["id"] in PYTHON_TYPE_ERRORS:
@@ -871,7 +871,7 @@ def test_core_case(case):
     if cid in EMPTY_BACKWARDS:
         # pond-ts never builds the range on an empty series; pond-rs
         # checks a key when it is built.
-        assert isinstance(actual, Exception), "pond_rs should refuse the key"
+        assert isinstance(actual, Exception), "pond should refuse the key"
         return
     if cid in KIND_FROM_ELEMENTS:
         # pond-rs takes array elements' kind; pond-ts needs kind: 'number'.
@@ -881,7 +881,7 @@ def test_core_case(case):
         return
     if cid in REFUSED:
         assert case.get("expected") is not None
-        assert isinstance(actual, Exception), "pond_rs should refuse"
+        assert isinstance(actual, Exception), "pond should refuse"
         return
     why = check(case, actual)
     assert why is None, why
@@ -924,7 +924,7 @@ def test_row_lookups_match_pond_ts():
         try:
             got = run_query(q)
             err = None
-        except pond_rs.PondError as e:
+        except pond.PondError as e:
             got, err = None, e
         want_error = q.get("error") is not None
         want = None if want_error else q.get("expected")
@@ -937,7 +937,7 @@ def test_row_lookups_match_pond_ts():
         else:
             ok = not want_error and got == want and type(got) is type(want) if isinstance(want, bool) else (not want_error and got == want)
         if not ok:
-            failures.append(f"{q['input']}.{q['op']}({q['arg']}): pond_rs {err or got!r}, pond-ts {q.get('error') or want!r}")
+            failures.append(f"{q['input']}.{q['op']}({q['arg']}): pond {err or got!r}, pond-ts {q.get('error') or want!r}")
     assert not failures, f"{len(failures)} of {len(FIXTURE['queries'])} differ:\n" + "\n".join(failures[:50])
 
 
@@ -945,11 +945,11 @@ def test_times_parse_as_pond_ts():
     failures = []
     for c in FIXTURE["timeParse"]:
         try:
-            got = pond_rs.parse_time(c["input"], c["timeZone"])
-        except pond_rs.PondError:
+            got = pond.parse_time(c["input"], c["timeZone"])
+        except pond.PondError:
             got = None
         if got != c.get("expected"):
-            failures.append(f"{c['input']!r} in {c['timeZone']}: pond_rs {got}, pond-ts {c.get('expected', c.get('error'))}")
+            failures.append(f"{c['input']!r} in {c['timeZone']}: pond {got}, pond-ts {c.get('expected', c.get('error'))}")
     assert not failures, "\n".join(failures)
 
 

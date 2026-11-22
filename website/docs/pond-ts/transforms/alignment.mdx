@@ -121,6 +121,28 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Align`'s `Default` is pond-ts's default (hold, sampled at the start, over the series' own range), so set only what you change: `Align { method: AlignMethod::Linear, ..Align::default() }`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": ["2025-01-01T00:00:00Z", "2025-01-01T00:00:30Z", "2025-01-01T00:01:30Z"],
+    "cpu": [0.31, 0.44, 0.48],
+})
+
+# One row per minute, holding the latest reading at or before it.
+aligned = cpu.align("1m", method="hold", sample="begin")  # range: the series' own
+assert aligned.column("cpu") == [0.31, 0.44]
+
+# Linear: a straight line between the readings either side.
+lined = cpu.align("1m", method="linear")
+assert lined.column("cpu") == [0.31, 0.45999999999999996]
+```
+
+The keywords default to pond-ts's defaults (hold, sampled at the start, over the series' own range), so pass only what you change.
+
+</TabItem>
 </Tabs>
 
 ## Parameters
@@ -199,6 +221,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 `range` is a pair of epoch milliseconds, `Some((begin, end))`, rather than a `TimeRange`. A grid point counts when its sample point falls in it, both ends included.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [10_000, 22_000], "cpu": [1.0, 2.0]})
+
+# Every 5 s from 0 to 60 s, both ends included.
+padded = cpu.align("5s", range=(0, 60_000))
+assert len(padded) == 13
+values = padded.column("cpu")
+assert values[0] is None  # before the first reading
+assert values[2] == 1.0  # 10 s
+assert values[12] == 2.0  # 60 s, held from 22 s
+```
+
+`range` is a `(begin, end)` pair of times (epoch milliseconds, datetimes or text). A grid point counts when its sample point falls in it, both ends included.
+
+</TabItem>
 </Tabs>
 
 Pins the output range explicitly. Default is the source's own
@@ -242,6 +283,22 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(aligned.at(0).unwrap().number("cpu")?, Some(0.31));
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 30_000, 90_000], "cpu": [0.31, 0.44, 0.48]})
+aligned = cpu.align("1m")
+
+assert aligned.key_name == "interval"
+row = aligned[0]
+assert row.key == (0.0, 0, 60_000)  # (label, start, end): labelled by its start
+assert (row.begin, row.end) == (0, 60_000)
+assert row["cpu"] == 0.31
 ```
 
 </TabItem>
@@ -300,6 +357,26 @@ fn main() -> Result<(), pond_rs::PondError> {
 `as_time` takes `At::Begin`, `At::Center` or `At::End`.
 
 </TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+cpu = pond.TimeSeries({
+    "time": [0, 4 * minute, 7 * minute, 12 * minute, 16 * minute],
+    "cpu": [0.1, 0.2, 0.3, 0.4, 0.5],
+})
+
+points = cpu.align("5m", sample="end").as_time("end")
+assert points.key_name == "time"
+assert [row.key for row in points] == [5 * minute, 10 * minute, 15 * minute]
+assert points.column("cpu") == [0.2, 0.3, 0.4]
+```
+
+`as_time` takes `"begin"`, `"center"` or `"end"`.
+
+</TabItem>
 </Tabs>
 
 `asTime`'s `at` option (`'begin' | 'center' | 'end'`) picks where
@@ -352,6 +429,23 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(got, [Some(0.30000000000000004), Some(0.6)]);
     Ok(())
 }
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 30_000, 90_000], "cpu": [0.2, 0.4, 0.6]})
+
+# align: one row per minute, value sampled at each minute's start.
+held = cpu.align("1m")
+assert held.column("cpu") == [0.2, 0.4]
+
+# aggregate: one row per minute, value reduced from the rows inside.
+avg = cpu.aggregate("1m", {"cpu": "avg"})
+assert avg.column("cpu") == [0.30000000000000004, 0.6]
 ```
 
 </TabItem>

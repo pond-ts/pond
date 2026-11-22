@@ -1,4 +1,4 @@
-"""pond_rs.LiveSeries (Python) against pond-ts's live layer.
+"""pond.LiveSeries (Python) against pond-ts's live layer.
 
 The committed fixture `packages/core/test/fixtures/live-parity.json` (the
 same one the Rust `tests/live_parity.rs` reads): each case is a scripted
@@ -24,7 +24,7 @@ import json
 import pytest
 from test_core_parity import REPO, cell_number, compare_cell, expr_of
 
-from pond_rs import LiveSeries, Sequence
+from pond import LiveSeries, Sequence
 
 FIXTURE = json.loads((REPO / "packages/core/test/fixtures/live-parity.json").read_text(encoding="utf-8"))
 
