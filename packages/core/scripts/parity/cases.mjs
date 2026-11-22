@@ -3869,7 +3869,8 @@ const CASES = [
     'mapColumns',
     [{ value: { expr: { op: 'mul', args: [{ col: 'value' }, { lit: 2 }] } } }],
   ],
-  // …and an overflow turns cells into gaps ([PND-MAPREQ] in pond-ts).
+  // …and an overflow turns cells into gaps, so it becomes optional
+  // ([PND-MAPREQ]).
   [
     'mapColumns-expr-overflow',
     'dense',

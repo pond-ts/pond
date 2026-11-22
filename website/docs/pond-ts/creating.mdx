@@ -647,11 +647,10 @@ It does **not** preserve:
 - Comments, whitespace, or any non-payload metadata you might be tempted to
   attach.
 
-One known gap: a series built with `fromColumns` keeps its gaps even in a
-column the schema marks required (the default), so its own `toJSON` does
-not read back: `fromJSON` throws "… is required" at the
-first gap. Mark such columns `required: false` in the schema until this is
-fixed (tracked as [PND-COLSREQ] in PLAN.md).
+A series built with `fromColumns` keeps its gaps even in a column the schema
+marks required (the default); that column comes out `required: false` in the
+series' schema, so its own `toJSON` reads back too. The TypeScript type still
+says what you declared.
 
 (`toJSON` emits the schema verbatim, so `required: false` flags do survive.)
 
@@ -1142,7 +1141,10 @@ pond-rs reads Arrow itself, through the Rust Arrow crates it re-exports (`pond_r
 The schema is derived from the Arrow fields, so you don't declare one. (You may
 supply `S` as `fromArrow<MySchema>(…)` for downstream typing — pond takes that on
 trust and does not verify the fields match, exactly as `fromEvents` trusts its
-schema.)
+schema.) A value column is `required: false` when its Arrow field is nullable
+(pyarrow and polars mark fields nullable by default) or when it holds a gap;
+otherwise it is required. So the series always reloads through its own
+`toJSON` → `fromJSON`.
 
 | Option     | Default                                  | Meaning                                                                                                                                                    |
 | ---------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |

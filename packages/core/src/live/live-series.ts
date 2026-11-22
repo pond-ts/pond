@@ -945,9 +945,10 @@ export class LiveSeries<S extends SeriesSchema> {
         );
       }
     }
-    // Required is judged by this series' schema, not the batch's:
-    // `fromColumns` doesn't enforce `required`, so the batch's flag
-    // proves nothing. No validity bitmap means every cell is defined.
+    // Required is judged by this series' schema, not the batch's: a batch
+    // may hold gaps (and say so — `fromColumns` marks such a column
+    // optional) in a column this series requires. No validity bitmap
+    // means every cell is defined.
     // Name the first bad cell in row order, as `pushMany` does.
     let badRow = Infinity;
     let badCol = 0;
