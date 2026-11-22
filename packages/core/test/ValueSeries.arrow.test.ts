@@ -287,6 +287,23 @@ describe('ValueSeries.toArrow', () => {
     ]);
   });
 
+  it('gives each field its nullable flag [PND-TOARROWREQ]', () => {
+    const vs = ValueSeries.fromColumns({
+      name: 'chain',
+      schema: [
+        { name: 'strike', kind: 'value' },
+        { name: 'iv', kind: 'number' },
+        { name: 'bid', kind: 'number', required: false },
+      ] as const,
+      columns: { strike: [90, 95], iv: [0.31, 0.27], bid: [1.2, 1.1] },
+    });
+    expect(vs.toArrow().fields.map((f) => [f.name, f.nullable])).toEqual([
+      ['strike', false],
+      ['iv', false],
+      ['bid', true],
+    ]);
+  });
+
   it('hands over the live buffers — no copy', () => {
     const axis = Float64Array.from([90, 95, 100]);
     const vs = ValueSeries.fromColumns({

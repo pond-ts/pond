@@ -277,7 +277,17 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
         );
       }
     }
-    return new Table(entries);
+    // Keep each field's nullable flag, so required columns stay required.
+    const table = new Table(entries);
+    const schema = new Schema(
+      table.schema.fields.map((f, i) =>
+        f.clone({ nullable: out.fields[i]!.nullable }),
+      ),
+    );
+    return new Table(
+      schema,
+      table.batches.map((b) => new RecordBatch(schema, b.data)),
+    );
   }
 
   it('toArrow → Table → fromArrow({ keyKind: "timeRange" })', () => {
@@ -291,12 +301,7 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'ranges',
       keyKind: 'timeRange',
     });
-    // A `Table` built from vectors marks every field nullable, so `load`
-    // comes back optional ([PND-ARROWREQ]); the key is what this pins.
-    expect(back.schema).toEqual([
-      series.schema[0],
-      { ...series.schema[1], required: false },
-    ]);
+    expect(back.schema).toEqual(series.schema);
     expect(back.toRows()).toEqual(series.toRows());
   });
 
@@ -316,10 +321,7 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'shifts',
       keyKind: 'interval',
     });
-    expect(back.schema).toEqual([
-      series.schema[0],
-      { ...series.schema[1], required: false },
-    ]);
+    expect(back.schema).toEqual(series.schema);
     expect(back.toRows()).toEqual(series.toRows());
   });
 
@@ -361,12 +363,9 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'bars',
       keyKind: 'interval',
     });
-    // Names and kinds round-trip; `required: false` does not, because an Arrow
-    // field carries no such flag — `fromArrow` derives its schema from the
-    // table, as its trust contract says. The KEY is what this test is about.
-    expect(back.schema.map((c) => [c.name, c.kind])).toEqual(
-      agg.schema.map((c) => [c.name, c.kind]),
-    );
+    // The whole schema round-trips, `required` flags included: `assembled`
+    // keeps each field's `nullable` flag ([PND-TOARROWREQ]).
+    expect(back.schema).toEqual(agg.schema);
     expect(back.toRows()).toEqual(agg.toRows());
     expect(back.at(0)!.key().end()).toBe(agg.at(0)!.key().end());
   });
@@ -465,9 +464,7 @@ describe('[PND-TOARROWREQ] toArrow says which columns are required', () => {
   });
 
   it('marks the key and required columns non-nullable, optional ones nullable', () => {
-    expect(
-      series.toArrow().fields.map((f) => [f.name, f.nullable]),
-    ).toEqual([
+    expect(series.toArrow().fields.map((f) => [f.name, f.nullable])).toEqual([
       ['time', false],
       ['price', false],
       ['note', false],

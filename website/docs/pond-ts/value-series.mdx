@@ -658,13 +658,15 @@ projecting (`series.select(…).byValue(axis)`) if you need the round trip.
 layout, with no copy — the same `{ length, fields }` shape `TimeSeries.toArrow`
 returns (the exporter is shared; a `'value'` axis simply exports as a plain
 `float64` field where a time key would come out `timestamp`). pond takes no
-dependency on `apache-arrow`, so the caller assembles the `Table`:
+dependency on `apache-arrow`, so the caller assembles the `Table`. Pass each
+field's `nullable` to Arrow's `Field` so required columns stay required on the
+way back in (a plain `new Table({ iv: vec })` marks every field nullable):
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
 
 ```ts
-import { makeData, makeVector, Float64 } from 'apache-arrow';
+import { Field, makeData, makeVector, Float64 } from 'apache-arrow';
 
 const { fields } = chain.toArrow();
 const f = fields.find((x) => x.name === 'iv')!;
@@ -678,6 +680,11 @@ const vec = makeVector(
     data: f.values,
   }),
 );
+
+// Build the Arrow field with toArrow's `nullable` flag (false for the key and
+// required columns, true for optional ones), so fromArrow — or pond-rs —
+// reads the column back with the same `required` flag.
+const field = new Field(f.name, vec.type, f.nullable);
 ```
 
 </TabItem>

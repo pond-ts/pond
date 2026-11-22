@@ -1525,7 +1525,8 @@ fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
 /// input series exactly. `noisy` is every field Float64, the key included
 /// (pond-ts's documented recipe); `mixed` adds Utf8, Dictionary<Int32, Utf8>
 /// and Boolean fields (`toArrow`'s `utf8`, `dictionary` and `bool`). The
-/// script, not pond-ts, picks the Arrow types and which fields are nullable.
+/// script, not pond-ts, picks the Arrow types; which fields are nullable is
+/// `toArrow`'s own `nullable` flag ([PND-TOARROWREQ]).
 #[test]
 fn reads_the_pond_ts_arrow_exports() {
     let fixture = load_core_fixture();

@@ -44,7 +44,7 @@ import { KEY_END_SUFFIX, KEY_LABEL_SUFFIX } from './flat-keys.js';
  * `f.values` doesn't typecheck against `makeData`'s `data:` unnarrowed):
  *
  * ```ts
- * import { makeData, makeVector, Float64 } from 'apache-arrow';
+ * import { Field, makeData, makeVector, Float64 } from 'apache-arrow';
  * const { fields } = series.toArrow();
  * const f = fields.find((x) => x.name === 'close')!;
  * if (f.type !== 'float64' && f.type !== 'timestamp') throw new Error(f.type);
@@ -57,6 +57,9 @@ import { KEY_END_SUFFIX, KEY_LABEL_SUFFIX } from './flat-keys.js';
  *     data: f.values, // narrowed to Float64Array by the guard above
  *   }),
  * );
+ * // Keep the column's required flag ([PND-TOARROWREQ]): `new Table({...})`
+ * // would mark every field nullable, so every column reads back optional.
+ * const field = new Field(f.name, vec.type, f.nullable);
  * ```
  *
  * From there a consumer can reach whatever engine they like — polars,
@@ -90,6 +93,17 @@ interface ArrowExportFieldBase {
   readonly length: number;
   /** Slots the bitmap marks invalid. `0` ⇒ `nullBitmap` is absent. */
   readonly nullCount: number;
+  /**
+   * Arrow's nullable flag for this field: `false` for the key field(s) and
+   * the interval labels, `false` for a required value column, `true` for an
+   * optional one (`required: false`). Pass it to `new Field(name, type,
+   * nullable)` when building the Arrow schema, so `fromArrow` (and pond-rs,
+   * which writes the same flag) reads the columns back with the same
+   * `required` flags ([PND-TOARROWREQ]). Building the table with
+   * `new Table({ ...vectors })` instead marks every field nullable, and
+   * every column then reads back optional.
+   */
+  readonly nullable: boolean;
   /**
    * LSB-first validity bitmap, one bit per slot, 1 = valid — Arrow's
    * `nullBitmap` with no translation. Absent when every slot is valid
@@ -169,6 +183,19 @@ function nullCountOf(col: {
     : col.length - col.validity.definedCount;
 }
 
+/**
+ * Arrow's nullable flag for a value column: `true` when the column is
+ * optional, as pond-rs `to_arrow` writes it — or when it holds a gap anyway,
+ * since a non-nullable field holding nulls is an invalid Arrow batch
+ * (arrow-rs refuses to build one).
+ */
+function nullableField(
+  optional: boolean,
+  col: { length: number; validity?: { definedCount: number } | undefined },
+): boolean {
+  return optional || nullCountOf(col) > 0;
+}
+
 /** The validity bitmap trimmed to the bytes this column's length needs. */
 function bitmapOf(col: {
   length: number;
@@ -189,6 +216,7 @@ function numericField(
   name: string,
   col: Float64Column,
   type: 'float64' | 'timestamp',
+  optional: boolean,
 ): ArrowExportField {
   const bitmap = bitmapOf(col);
   return {
@@ -196,6 +224,7 @@ function numericField(
     type,
     length: col.length,
     nullCount: nullCountOf(col),
+    nullable: nullableField(optional, col),
     ...(bitmap === undefined ? {} : { nullBitmap: bitmap }),
     values: valuesOf(col._values, col.length),
   };
@@ -208,15 +237,27 @@ function keyEdgeField(
   length: number,
   type: 'float64' | 'timestamp',
 ): ArrowExportField {
-  return { name, type, length, nullCount: 0, values: valuesOf(edge, length) };
+  return {
+    name,
+    type,
+    length,
+    nullCount: 0,
+    nullable: false,
+    values: valuesOf(edge, length),
+  };
 }
 
-function stringField(name: string, col: StringColumn): ArrowExportField {
+function stringField(
+  name: string,
+  col: StringColumn,
+  optional: boolean,
+): ArrowExportField {
   const bitmap = bitmapOf(col);
   const base = {
     name,
     length: col.length,
     nullCount: nullCountOf(col),
+    nullable: nullableField(optional, col),
     ...(bitmap === undefined ? {} : { nullBitmap: bitmap }),
   };
   if (col.indices !== undefined && col.dictionary !== undefined) {
@@ -235,7 +276,11 @@ function stringField(name: string, col: StringColumn): ArrowExportField {
   return { ...base, type: 'utf8', values };
 }
 
-function booleanField(name: string, col: BooleanColumn): ArrowExportField {
+function booleanField(
+  name: string,
+  col: BooleanColumn,
+  optional: boolean,
+): ArrowExportField {
   const bitmap = bitmapOf(col);
   const needed = bitmapByteCount(col.length);
   return {
@@ -243,6 +288,7 @@ function booleanField(name: string, col: BooleanColumn): ArrowExportField {
     type: 'bool',
     length: col.length,
     nullCount: nullCountOf(col),
+    nullable: nullableField(optional, col),
     ...(bitmap === undefined ? {} : { nullBitmap: bitmap }),
     values:
       col.values.length === needed
@@ -266,11 +312,16 @@ function packed(col: ColumnarColumn): ColumnarColumn {
   return col;
 }
 
-function valueField(name: string, raw: ColumnarColumn): ArrowExportField {
+function valueField(
+  name: string,
+  raw: ColumnarColumn,
+  optional: boolean,
+): ArrowExportField {
   const col = packed(raw);
-  if (col instanceof Float64Column) return numericField(name, col, 'float64');
-  if (col instanceof StringColumn) return stringField(name, col);
-  if (col instanceof BooleanColumn) return booleanField(name, col);
+  if (col instanceof Float64Column)
+    return numericField(name, col, 'float64', optional);
+  if (col instanceof StringColumn) return stringField(name, col, optional);
+  if (col instanceof BooleanColumn) return booleanField(name, col, optional);
   throw new ValidationError(
     `toArrow: column '${name}' is a '${col.kind}' column — toArrow supports ` +
       `'number', 'string' and 'boolean' columns; drop it or select a ` +
@@ -331,7 +382,8 @@ export function storeToArrow(
     if (col === undefined) {
       throw new ValidationError(`toArrow: column '${name}' not found`);
     }
-    fields.push(valueField(name, col));
+    const def = store.schema.find((c) => c.name === name);
+    fields.push(valueField(name, col, def?.required === false));
   }
 
   // An interval key carries labels; they are part of the key's identity
@@ -350,7 +402,7 @@ export function storeToArrow(
           `select it out via { columns: [...] }`,
       );
     }
-    fields.push(valueField(labelName, keys.labels));
+    fields.push(valueField(labelName, keys.labels, false));
   }
 
   return { length, fields };
