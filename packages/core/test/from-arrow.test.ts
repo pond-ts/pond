@@ -75,6 +75,8 @@ interface FieldSpec {
   unit?: number;
   /** Arrow `Type` enum ordinal (Timestamp=10, Date=8), set on the field's type. */
   typeId?: number;
+  /** The field's `nullable` flag; left off unless set. */
+  nullable?: boolean;
 }
 
 function table(
@@ -91,6 +93,7 @@ function table(
           ...(s.typeId === undefined ? {} : { typeId: s.typeId }),
           ...(s.unit === undefined ? {} : { unit: s.unit }),
         },
+        ...(s.nullable === undefined ? {} : { nullable: s.nullable }),
       })),
     },
     getChild: (name) => byName.get(name) ?? null,
@@ -253,6 +256,56 @@ describe('TimeSeries.fromArrow', () => {
     ]);
     expect(series.column('value').at(1)).toBeUndefined();
     expect(col(series, 'value')).toEqual([10, undefined, 30]);
+  });
+
+  it('[PND-ARROWREQ] without a nullable flag, a column is optional only if it has gaps', () => {
+    const series = build(3, [
+      { name: 'time', vector: f64([0, 1, 2]) },
+      { name: 'dense', vector: f64([1, 2, 3]) },
+      { name: 'nulls', vector: f64([1, null, 3]) },
+      { name: 'nan', vector: f64([1, NaN, 3]) },
+      { name: 'name', vector: str(['a', 'b', 'c']) },
+      { name: 'label', vector: str(['a', null, 'c']) },
+    ]);
+    expect(series.schema.map((c) => [c.name, c.required])).toEqual([
+      ['time', undefined],
+      ['dense', undefined],
+      ['nulls', false],
+      ['nan', false],
+      ['name', undefined],
+      ['label', false],
+    ]);
+    // The point of the rule: the series reloads through its own JSON.
+    const back = TimeSeries.fromJSON(series.toJSON() as never);
+    expect(back.toRows()).toEqual(series.toRows());
+  });
+
+  it('[PND-ARROWREQ] a nullable flag makes a column optional; a false one does not hide gaps', () => {
+    const series = build(2, [
+      { name: 'time', vector: f64([0, 1]) },
+      { name: 'a', vector: f64([1, 2]), nullable: true },
+      { name: 'b', vector: f64([1, 2]), nullable: false },
+      { name: 'c', vector: f64([1, null]), nullable: false },
+    ]);
+    expect(series.schema.map((c) => c.required)).toEqual([
+      undefined,
+      false,
+      undefined,
+      false,
+    ]);
+  });
+
+  it('[PND-ARROWREQ] holds when the null-bearing column is read on the sorted path', () => {
+    const series = build(
+      2,
+      [
+        { name: 'time', vector: f64([1, 0]) },
+        { name: 'v', vector: f64([null, 2]) },
+      ],
+      { ordering: 'reorder' },
+    );
+    expect(series.schema[1]!.required).toBe(false);
+    expect(col(series, 'v')).toEqual([2, undefined]);
   });
 
   it('reads an int64 value column, and maps its nulls to missing', () => {

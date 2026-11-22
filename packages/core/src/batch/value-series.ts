@@ -11,7 +11,10 @@ import {
   type ArrowTableLike,
   type FromArrowValueOptions,
 } from './operators/from-arrow.js';
-import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import {
+  ingestColumnsToStore,
+  optionalWhereGaps,
+} from './operators/ingest-columns.js';
 import { resolveOrdering } from './operators/out-of-order.js';
 import type { BatchOrderingMode } from '../schema/events.js';
 import { storeToColumns } from './operators/to-columns.js';
@@ -117,7 +120,9 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    * values, keyed by schema column name and aligned by index. Values may be a
    * plain `number[]` **or** a `Float64Array`; a value cell is a gap (missing)
    * iff it's `null`/`undefined` or non-finite — identical rule for both input
-   * types.
+   * types. A column with gaps comes out `required: false` in the runtime
+   * schema whatever the schema said (the TypeScript type is unchanged), so
+   * the series reloads through its own `toJSON` → `fromJSON`.
    *
    * **`Float64Array` inputs are adopted, not copied** (zero-copy): the
    * resulting series' columns alias the caller's buffers; pass a fresh buffer
@@ -165,7 +170,9 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       columns,
       ordering,
     });
-    return new ValueSeries(name, schema, store);
+    // As `TimeSeries.fromColumns`: a required column with gaps comes out
+    // optional at run time ([PND-COLSREQ]).
+    return new ValueSeries(name, optionalWhereGaps(schema, store), store);
   }
 
   /**
@@ -189,8 +196,9 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    * declared `required` (the default) rejects a missing cell. `null` and
    * `undefined` both mean *missing* and are accepted for a
    * `required: false` column. The columnar doors are deliberately looser —
-   * they treat a non-finite number as a gap and ignore `required`, because a
-   * decoded buffer has no way to distinguish "absent" from "not a number".
+   * they treat a non-finite number as a gap and mark a column with gaps
+   * `required: false` rather than reject it, because a decoded buffer has no
+   * way to distinguish "absent" from "not a number".
    *
    * **Ordering.** As every door: the axis must be non-decreasing, or pass
    * `ordering: 'reorder'` to stable-sort the rows by axis value first (or
@@ -296,7 +304,11 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
-    return new ValueSeries(name, schema as unknown as VS, store);
+    return new ValueSeries(
+      name,
+      optionalWhereGaps(schema, store) as unknown as VS,
+      store,
+    );
   }
 
   private constructor(
