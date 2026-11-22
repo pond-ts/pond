@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.77.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.78.0...HEAD
+[0.78.0]: https://github.com/pond-ts/pond/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/pond-ts/pond/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/pond-ts/pond/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/pond-ts/pond/compare/v0.74.0...v0.75.0
@@ -80,14 +81,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Changed
-
-- **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
-  `@pond-ts/rs` in the repo, but never reached npm under that name: the
-  release workflow skipped it until a first publish by hand). Same package,
-  same code: pond-rs compiled to WebAssembly for Node and browsers, with
-  pond-ts's method names. `npm install @pond-ts/wasm`. The Rust crate and the
-  Python package keep the name `pond-rs`; the source stays in `packages/rs`.
+## [0.78.0] — 2026-11-22
 
 ### Added
 
@@ -126,6 +120,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   `log`.
 
 ### Changed
+
+- **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
+  `@pond-ts/rs` in the repo, but never reached npm under that name: the
+  release workflow skipped it until a first publish by hand). Same package,
+  same code: pond-rs compiled to WebAssembly for Node and browsers, with
+  pond-ts's method names. `npm install @pond-ts/wasm`. The Rust crate and the
+  Python package keep the name `pond-rs`; the source stays in `packages/rs`.
 
 - **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
   `series.events` on a series whose events were not built yet (and so the
