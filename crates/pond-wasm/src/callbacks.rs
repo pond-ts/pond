@@ -280,7 +280,7 @@ fn map_columns<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcom
             }
             Some(ColumnKind::Array) => {
                 return Err(format!(
-                    "mapColumns: array column '{column}' is not supported by @pond-ts/rs yet"
+                    "mapColumns: array column '{column}' is not supported by @pond-ts/wasm yet"
                 ));
             }
             // Numbers, and unknown names (pond-rs names the error).
@@ -301,7 +301,7 @@ fn map_columns<C: Callbacks>(input: &TimeSeries, a: &Args, cb: &C) -> Res<Outcom
 
 /// `s` with column `name` holding `data` instead, in the same place. It
 /// stays required if it was and `data` has no gaps (as pond-rs's own
-/// `map_*`; pond-ts keeps it required either way: [PND-MAPREQ]).
+/// `map_*` and pond-ts's `mapColumns`).
 fn replace(s: &TimeSeries, name: &str, data: pond_rs::ColumnData) -> pond_rs::Result<TimeSeries> {
     let at = s.columns().iter().position(|c| c.name() == name);
     let Some(at) = at else {

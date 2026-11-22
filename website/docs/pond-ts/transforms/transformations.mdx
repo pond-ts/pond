@@ -304,7 +304,10 @@ The closure gets the whole row and returns `Ok(Some(Scalar))`, or `Ok(None)` for
 </Tabs>
 
 The named columns are removed by default; `{ append: true }` keeps
-them and adds the new one alongside.
+them and adds the new one alongside. A result that is not a finite number
+(`0 / 0`) is stored as a gap; the new column is required unless it holds a
+gap, when it is marked `required: false`, so the series still reloads
+through its own `toJSON` → `fromJSON`.
 
 ### `Event.set(field, value)` and `Event.merge(patch)`
 
@@ -599,7 +602,7 @@ A `Reducer` mixes in with `.into()`:
 
 The first value starts the total at 0, and both directions share one
 reference point. Because it is a named accumulator rather than a step
-function, `@pond-ts/rs` runs it without calling back into JavaScript.
+function, `@pond-ts/wasm` runs it without calling back into JavaScript.
 
 ### `scan(source, step, init, options?)` — typed-accumulator running fold \{#scan\}
 

@@ -183,4 +183,4 @@ assert.throws(() => b.filter(rs.col('host').gt(0)));
 
 b.free();
 assert.equal(rs.alive(), 0);
-console.log('expressions through @pond-ts/rs match pond-ts');
+console.log('expressions through @pond-ts/wasm match pond-ts');

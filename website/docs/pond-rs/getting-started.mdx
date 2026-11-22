@@ -2,7 +2,7 @@
 id: getting-started
 title: Getting started
 sidebar_position: 2
-description: Add pond-rs to a Rust project (or @pond-ts/rs to a JavaScript one), build a series, bucket it by calendar day in New York, and read the result.
+description: Add pond-rs to a Rust project (or @pond-ts/wasm to a JavaScript one), build a series, bucket it by calendar day in New York, and read the result.
 ---
 
 import Tabs from '@theme/Tabs';
@@ -40,11 +40,11 @@ The crate is named `pond-rs`; in code it is `pond_rs`.
 <TabItem value="js" label="JavaScript">
 
 The same Rust code, compiled to WebAssembly, is on npm as
-[`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs), with pond-ts's
+[`@pond-ts/wasm`](https://www.npmjs.com/package/@pond-ts/wasm), with pond-ts's
 method names and argument shapes:
 
 ```sh
-npm install @pond-ts/rs
+npm install @pond-ts/wasm
 ```
 
 It runs in Node 20.19 or newer and in browsers (through a bundler or plain
@@ -121,7 +121,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ```js
 import assert from 'node:assert/strict';
-import { Sequence, Time, TimeSeries } from '@pond-ts/rs';
+import { Sequence, Time, TimeSeries } from '@pond-ts/wasm';
 
 // One reading an hour for 72 hours, starting at midnight in New York on
 // Saturday 7 March 2026. Times are epoch milliseconds.

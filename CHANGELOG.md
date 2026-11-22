@@ -80,6 +80,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
+  `@pond-ts/rs` in the repo, but never reached npm under that name: the
+  release workflow skipped it until a first publish by hand). Same package,
+  same code: pond-rs compiled to WebAssembly for Node and browsers, with
+  pond-ts's method names. `npm install @pond-ts/wasm`. The Rust crate and the
+  Python package keep the name `pond-rs`; the source stays in `packages/rs`.
+
 ### Added
 
 - **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's
@@ -88,6 +97,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   role in the theme, as with colour and width. The legend swatch shows the
   dashed outline over the fill. Asked for by a consumer drawing a comparison
   area in the same hue as the series it compares to.
+
+- **`@pond-ts/wasm`: type declarations** — the package ships `index.d.ts`, so
+  a strict TypeScript import no longer fails with TS7016 and the
+  `declare module '@pond-ts/wasm'` workaround can go. Every class, method and
+  option is typed, with one options type per study. A cell read is `Cell`,
+  not the column's kind (the types do not follow the schema the way
+  pond-ts's do). CI compiles every call in the parity fixtures against it.
+- **`@pond-ts/wasm`: `TimeSeries.toColumns()`** — the series as pond-ts's
+  columnar object, the same as pond-ts's `toColumns()`. pond-ts's
+  `TimeSeries.fromColumns` reads it back, which is how a series computed in
+  the WebAssembly bridge reaches `@pond-ts/charts`:
+  `TimeSeries.fromColumns(rs.toColumns<'number'>())`.
 
 - **`@pond-ts/process`: `log` and `sqrt` basic steps.** The natural log
   and the square root of a column, row by row; a gap where either is
@@ -105,6 +126,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   `log`.
 
 ### Changed
+
+- **Building every row's `Event` is ~3× faster** ([PND-EVENTMAP]).
+  `series.events` on a series whose events were not built yet (and so the
+  first `filter`, `toArray`, `map`, … on it) built each row through two
+  per-row `Map` caches; it now builds rows straight into the array, reusing
+  any event already handed out. Same objects and identity rules. 1M rows:
+  `events` ~1.0 s → ~0.35 s, `filter` ~1.05 s → ~0.36 s.
+
+- **`fromArrow`: tables from pyarrow, polars or apache-arrow's
+  `new Table({...})` now read as optional columns** ([PND-ARROWREQ]). Those
+  libraries mark every field nullable by default, and `fromArrow` now
+  follows the field's flag, so their value columns come back
+  `required: false` even when they hold no nulls.
 
 - **pond-rs: per-entity work no longer copies every column per entity.**
   After `partition_by`, the operations that keep each row and work on number
@@ -132,6 +166,39 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`TimeSeries.fromArrow` / `ValueSeries.fromArrow`: a value column with
+  nulls is marked optional** ([PND-ARROWREQ]). Every value column used to
+  come out required, even one holding nulls, so the series' own `toJSON` →
+  `fromJSON` round trip threw ("row 1 col 1 (v) is required"). A column is
+  now `required: false` when its Arrow field is nullable, or when it holds a
+  gap (a null, `NaN` or an infinity); otherwise it stays required. A field
+  that says nothing about nullability (a hand-built stand-in) is optional
+  only if it holds a gap. pond-rs reads the same file to the same schema.
+  Run time only: the schema's TypeScript type is unchanged.
+- **`mapColumns`: a required column that gains a gap is marked optional**
+  ([PND-MAPREQ]). A non-finite mapper result (`v => v * 1e308 + 1e308`) is
+  stored as a gap, but the column stayed `required`, so the series' own
+  `toJSON` → `fromJSON` round trip threw ("row 3 col 1 (value) is
+  required"). Such a column is now `required: false` in the result's
+  schema, for functions and expressions alike; a mapping that leaves no gap,
+  and columns not mapped, keep their flag. As pond-rs. Run time only: the
+  schema's TypeScript type is unchanged.
+- **`TimeSeries.fromColumns` / `ValueSeries.fromColumns`: a required column
+  with gaps is marked optional** ([PND-COLSREQ]). Both read a gap (`null`,
+  `NaN`, an infinity) in a column the schema marks required (the default)
+  and kept it marked required, so the series' own `toJSON` → `fromJSON`
+  round trip threw. Such a column is now `required: false` in the series'
+  schema; gaps are still accepted, not refused. As pond-rs. Run time only:
+  the schema's TypeScript type is unchanged.
+- **`collapse`: the output column is required only when it has no gaps**
+  ([PND-COLLAPSEREQ]). A non-finite result (`0 / 0`) or a reducer returning
+  `undefined` left gaps in a column marked required, so the series' own
+  `toJSON` → `fromJSON` round trip threw. The output is now
+  `required: false` when it holds a gap, and stays required otherwise. As
+  pond-rs. Run time only: the reducer's type and the schema's TypeScript
+  type are unchanged.
+- **`@pond-ts/wasm` tarball now carries `AGENTS.md`**, the agent guide every
+  other package ships.
 - **`@pond-ts/process`: one step feeding both inputs of an op.**
   `multiply(x, x)`, where `x` is a computed step rather than a source
   column, was refused with "column name … already exists in the schema"

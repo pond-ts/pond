@@ -40,7 +40,7 @@ try {
   await build({
     stdin: {
       contents: `
-        import * as rs from '@pond-ts/rs';
+        import * as rs from '@pond-ts/wasm';
         import { workload } from './test/browser-workload.mjs';
         let codegen;
         try { codegen = new Function('return true')(); } catch { codegen = false; }
@@ -53,7 +53,7 @@ try {
       sourcefile: 'page.js',
     },
     // The package resolving itself by name, as an app would import it.
-    alias: { '@pond-ts/rs': here('../index.js') },
+    alias: { '@pond-ts/wasm': here('../index.js') },
     bundle: true,
     format: 'esm',
     platform: 'browser',

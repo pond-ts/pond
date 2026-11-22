@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 172" width="800" height="172" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-label="pond-rs: 7.5× median speed-up over pond-ts, 4 cores. Against pond-ts: faster in 170 of 173 cases. Against polars, 4 cores each: faster in 73 cases, level in 9, slower in 59">
+<text x="0" y="62" font-size="64" fill="#0b0b0b" text-anchor="start" font-weight="600">7.5×</text>
+<text x="2" y="88" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">median speed-up</text>
+<text x="2" y="105" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">over pond-ts, 4 cores</text>
+<text x="200" y="17" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="600">Against pond-ts: faster in 170 of 173 cases</text>
+<rect x="200.0" y="26" width="587.6" height="28" rx="4" fill="#2a78d6"/>
+<text x="208" y="45" font-size="13" fill="#ffffff" text-anchor="start" font-weight="600">170</text>
+<rect x="789.6" y="26" width="10.4" height="28" rx="4" fill="#e34948"/>
+<text x="200" y="85" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="600">Against polars, 4 cores each: faster in 73 cases, level in 9, slower in 59</text>
+<rect x="200.0" y="94" width="308.6" height="28" rx="4" fill="#2a78d6"/>
+<text x="208" y="113" font-size="13" fill="#ffffff" text-anchor="start" font-weight="600">73</text>
+<rect x="510.6" y="94" width="38.0" height="28" rx="4" fill="#b9b7ae"/>
+<text x="518.5673758865248" y="113" font-size="13" fill="#0b0b0b" text-anchor="start" font-weight="600">9</text>
+<rect x="550.6" y="94" width="249.4" height="28" rx="4" fill="#e34948"/>
+<text x="558.6099290780141" y="113" font-size="13" fill="#ffffff" text-anchor="start" font-weight="600">59</text>
+<rect x="200" y="156" width="12" height="12" rx="3" fill="#2a78d6"/>
+<text x="218" y="166.5" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">pond-rs faster</text>
+<rect x="336.4" y="156" width="12" height="12" rx="3" fill="#b9b7ae"/>
+<text x="354.4" y="166.5" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">level</text>
+<rect x="413.4" y="156" width="12" height="12" rx="3" fill="#e34948"/>
+<text x="431.4" y="166.5" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">pond-rs slower</text>
+</svg>

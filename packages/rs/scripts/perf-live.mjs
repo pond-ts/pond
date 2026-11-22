@@ -1,4 +1,4 @@
-// LiveSeries through @pond-ts/rs ([PND-RUST-R4] J2b) against pond-ts's
+// LiveSeries through @pond-ts/wasm ([PND-RUST-R4] J2b) against pond-ts's
 // LiveSeries on the same 1M events (10 ms apart, one number column, the
 // Python bridge's bench_live.py data), no retention (pond-ts's single
 // `push` with `retention: { maxAge }` costs ~25 us an event, which would

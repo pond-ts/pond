@@ -10,7 +10,9 @@
   …: sorted by name).
 - Each case's answer is checked against pond-rs's (`../check_outputs.py`).
 - pond's collapse calls a function once a row; polars adds two columns in
-  one vectorised step. Same answer, different kind of work.
+  one vectorised step. Same answer, different kind of work. The
+  `(expression)` rows are pond doing it polars' way (`with_column_expr`, and
+  `select` to drop the inputs); polars' call is the same in both rows.
 """
 
 import numpy as np
@@ -63,6 +65,8 @@ run(
         ("concat 1000 x 1k", lambda: pl.concat(many).sort("time")),
         ("collapse sum", lambda: wide.select("time", "host", (v + w).alias("out"))),
         ("collapse_keep sum", lambda: wide.with_columns((v + w).alias("out"))),
+        ("collapse sum (expression)", lambda: wide.select("time", "host", (v + w).alias("out"))),
+        ("collapse_keep sum (expression)", lambda: wide.with_columns((v + w).alias("out"))),
         ("pivot 100 hosts", lambda: pivot(wide)),
         ("pivot 4 hosts", lambda: pivot(few)),
         ("pivot 100 hosts x2 avg", lambda: pivot(twice, "mean")),

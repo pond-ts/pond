@@ -77,7 +77,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ```js
 import assert from 'node:assert/strict';
-import { LiveSeries } from '@pond-ts/rs';
+import { LiveSeries } from '@pond-ts/wasm';
 
 const live = new LiveSeries({
   name: 'cpu',
@@ -107,7 +107,7 @@ batch.free();
 live.free(); // frees every view built on it too
 ```
 
-In JavaScript (`@pond-ts/rs`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
+In JavaScript (`@pond-ts/wasm`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
 
 </TabItem>
 </Tabs>

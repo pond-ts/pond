@@ -93,7 +93,7 @@ const AREAS = [
     key: 'pond-rs',
     title: 'pond-rs (Rust)',
     blurb:
-      "The Rust crate (`pond-rs` on crates.io, API at docs.rs/pond-rs): the core and the financial studies, same answers as pond-ts, with threads and Arrow I/O; also as `@pond-ts/rs`, compiled to WebAssembly for Node and browsers with pond-ts's method names.",
+      "The Rust crate (`pond-rs` on crates.io, API at docs.rs/pond-rs): the core and the financial studies, same answers as pond-ts, with threads and Arrow I/O; also as `@pond-ts/wasm`, compiled to WebAssembly for Node and browsers with pond-ts's method names.",
     match: (/** @type {string} */ p) => p.startsWith('docs/pond-rs/'),
   },
   {
@@ -213,7 +213,7 @@ function renderIndex(site, docs, areaFiles) {
   const out = [
     `# ${site.title}`,
     '',
-    `> Typed time series in TypeScript or Rust, batch and streaming. On npm: seven packages that release together, \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`, \`@pond-ts/rs\` (pond-rs as WebAssembly). Rust: the \`pond-rs\` crate, which covers the core (batch and live) and the financial studies with the same answers as pond-ts.`,
+    `> Typed time series in TypeScript or Rust, batch and streaming. On npm: seven packages that release together, \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`, \`@pond-ts/wasm\` (pond-rs as WebAssembly). Rust: the \`pond-rs\` crate, which covers the core (batch and live) and the financial studies with the same answers as pond-ts.`,
     '',
     'For a coding agent: the shortest route to working code is the agent guide',
     `(\`AGENTS.md\`, also shipped inside every npm tarball) and the export map (\`API.md\`,`,

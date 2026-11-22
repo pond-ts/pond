@@ -1,5 +1,5 @@
 // The WebAssembly module for Node (and Deno, Bun): read and instantiated
-// synchronously, so importing @pond-ts/rs needs no await.
+// synchronously, so importing @pond-ts/wasm needs no await.
 import { readFileSync } from 'node:fs';
 import { initSync } from './pkg/pond_wasm.js';
 

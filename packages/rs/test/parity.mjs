@@ -1,4 +1,4 @@
-// Runs pond-ts's core parity fixture through @pond-ts/rs: every case must
+// Runs pond-ts's core parity fixture through @pond-ts/wasm: every case must
 // give what pond-ts gave (or throw where pond-ts threw), through the public
 // JS API. The same fixture checks pond-rs natively in
 // crates/pond-rs/tests/core_parity.rs; this run checks the bridge on top.
@@ -292,22 +292,6 @@ function check(c, got) {
   return 'fixture case has no expectation';
 }
 
-function adjust(c) {
-  // [PND-MAPREQ]: pond-rs marks a mapped column that gained a gap optional.
-  if (c.id === 'mapColumns-overflow' || c.id === 'mapColumns-expr-overflow') {
-    const expected = structuredClone(c.expected);
-    expected.schema[1].required = false;
-    return { ...c, expected };
-  }
-  // [PND-COLLAPSEREQ]: pond-rs marks a collapse output with gaps optional.
-  if (c.op !== 'collapse' || !c.expected) return c;
-  const expected = structuredClone(c.expected);
-  const at = expected.schema.findIndex((d) => d.name === c.args[1]);
-  if (expected.rows.some((r) => r[at] === null))
-    expected.schema[at].required = false;
-  return { ...c, expected };
-}
-
 // ---- main -----------------------------------------------------------------
 
 const byId = new Map(fixture.cases.map((c) => [c.id, c]));
@@ -330,7 +314,7 @@ for (const c of fixture.cases) {
   } else if (SAME_AS.has(c.id)) {
     why = check(byId.get(SAME_AS.get(c.id)), got);
   } else {
-    why = check(adjust(c), got);
+    why = check(c, got);
   }
   if (why) failures.push(`${c.id} (${c.op}): ${why}`);
 }
@@ -412,7 +396,7 @@ for (const s of inputs.values()) s.free();
 const leaked = alive();
 
 console.log(
-  `core parity through @pond-ts/rs, matching pond-ts: ` +
+  `core parity through @pond-ts/wasm, matching pond-ts: ` +
     `cases ${ran - caseFailures}/${ran} (${skipped} skipped: ops not in the bridge); ` +
     `row lookups ${queriesRan - queryFailures}/${queriesRan}; ` +
     `Time.parse ${fixture.timeParse.length - parseFailures}/${fixture.timeParse.length}; ` +

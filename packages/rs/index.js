@@ -1,4 +1,4 @@
-// @pond-ts/rs: pond-rs (Rust) compiled to WebAssembly, behind pond-ts's
+// @pond-ts/wasm: pond-rs (Rust) compiled to WebAssembly, behind pond-ts's
 // method names and argument shapes. A series lives in WebAssembly memory;
 // call `free()` when done with it (a finalizer frees forgotten ones
 // eventually, but WebAssembly memory never shrinks, so do not rely on it).
@@ -670,6 +670,22 @@ function cellReader(p) {
   }
 }
 
+// Part `p` as a plain array of `n` cells (`null` for a gap).
+function columnArray(p, n) {
+  const out = new Array(n);
+  if (p instanceof Float64Array) {
+    // A non-finite value is a gap; `-0` stays.
+    for (let i = 0; i < n; i++) {
+      const x = p[i];
+      out[i] = x - x === 0 ? x : null;
+    }
+    return out;
+  }
+  const read = cellReader(p);
+  for (let i = 0; i < n; i++) out[i] = read(i);
+  return out;
+}
+
 // The generated loop's rows, cell by cell.
 function plainRows(schema, parts, object) {
   const [, begin, end] = parts;
@@ -798,6 +814,56 @@ export class TimeSeries {
       schema,
       rows: rowBuilder(schema, parts, object)(parts),
     };
+  }
+
+  /**
+   * pond-ts `toColumns()`: `{ name, schema, columns }`, one plain array per
+   * column (`null` for a gap). A `timeRange` key adds `timeRangeEnd`, an
+   * `interval` key `intervalEnd` and `intervalLabel`. pond-ts's
+   * `TimeSeries.fromColumns` reads it back (number and text columns), which
+   * is how a series reaches `@pond-ts/charts`:
+   * `TimeSeries.fromColumns(rs.toColumns())`.
+   */
+  toColumns() {
+    const parts = wasm.series_columns(this.id);
+    const schema = this.schema;
+    const key = schema[0];
+    const n = parts[1].length;
+    const flat = { [key.name]: columnArray(parts[1], n) };
+    const reserved = new Map();
+    if (parts[2] !== null) {
+      flat[`${key.name}End`] = columnArray(parts[2], n);
+      reserved.set(`${key.name}End`, 'second edge');
+    }
+    if (key.kind === 'interval') {
+      flat[`${key.name}Label`] = columnArray(parts[3], n);
+      reserved.set(`${key.name}Label`, 'label');
+    }
+    for (let c = 1; c < schema.length; c++) {
+      const name = schema[c].name;
+      // As pond-ts: a value column may not take the key's flattened names.
+      if (reserved.has(name))
+        throw new Error(
+          `toColumns: value column '${name}' collides with the ${reserved.get(name)} of the '${key.kind}' key, which flattens to ${Object.keys(
+            flat,
+          )
+            .map((k) => `'${k}'`)
+            .join(' + ')} — rename the column`,
+        );
+    }
+    // `__proto__` would set the prototype in a plain assignment.
+    const columns = {};
+    const put = (name, values) =>
+      Object.defineProperty(columns, name, {
+        value: values,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    for (const [name, values] of Object.entries(flat)) put(name, values);
+    for (let c = 1; c < schema.length; c++)
+      put(schema[c].name, columnArray(parts[c + 3], n));
+    return { name: parts[0], schema, columns };
   }
 
   /** The series as an Arrow IPC file (bytes). */
@@ -1270,7 +1336,7 @@ const wrapMap = (f) => (row, schema) => {
     out.key().value !== e.key().value
   )
     throw new TypeError(
-      "map: the function changed the event's key; @pond-ts/rs keeps each event's key",
+      "map: the function changed the event's key; @pond-ts/wasm keeps each event's key",
     );
   return schema.slice(1).map((d) => out.get(d.name) ?? null);
 };
@@ -1485,7 +1551,7 @@ export class LiveSeries extends LiveNode {
   pushJson(rows, options = {}) {
     if (options.timeZone !== undefined && options.timeZone !== 'UTC')
       throw new TypeError(
-        'pushJson: @pond-ts/rs reads JSON times as ms or UTC text; timeZone is not supported',
+        'pushJson: @pond-ts/wasm reads JSON times as ms or UTC text; timeZone is not supported',
       );
     this.#rootOnly('pushJson');
     if (rows.length === 0) return;
@@ -1514,7 +1580,7 @@ export class LiveSeries extends LiveNode {
   #rootOnly(call) {
     if (this._handle !== 0)
       throw new TypeError(
-        `${call}: @pond-ts/rs pushes into (and clears) the root LiveSeries only, not one partition`,
+        `${call}: @pond-ts/wasm pushes into (and clears) the root LiveSeries only, not one partition`,
       );
   }
 

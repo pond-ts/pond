@@ -1,4 +1,5 @@
-// `toJSON()` through @pond-ts/rs against pond-ts's own, on random series:
+// `toJSON()` and `toColumns()` through @pond-ts/wasm against pond-ts's own, on
+// random series:
 // every key kind (interval labels as text and as numbers), number columns
 // with gaps and -0, text with repeats, empty text and gaps, booleans, lists,
 // both row formats, column names that need escaping. Equal means
@@ -122,6 +123,7 @@ function randomSpec(n) {
 }
 
 let cases = 0;
+let roundTrips = 0;
 for (let k = 0; k < 300; k++) {
   const spec = randomSpec(pick([0, 1, 2, 5, 50, 300]));
   const a = new ts.TimeSeries(spec);
@@ -143,6 +145,53 @@ for (let k = 0; k < 300; k++) {
     cases++;
   }
   assert.equal(JSON.stringify(b), JSON.stringify(a), `case ${k}: JSON text`);
+  // toColumns: the same object as pond-ts's, and (number and text columns
+  // only, as pond-ts's door takes) pond-ts's `fromColumns` reads it back to
+  // the series pond-ts built itself: the route to `@pond-ts/charts`.
+  const wantColumns = a.toColumns();
+  const gotColumns = b.toColumns();
+  assert.deepStrictEqual(
+    gotColumns,
+    {
+      name: wantColumns.name,
+      schema: wantColumns.schema,
+      columns: wantColumns.columns,
+    },
+    `case ${k} toColumns: ${JSON.stringify(spec.schema)}`,
+  );
+  if (
+    spec.schema
+      .slice(1)
+      .every((d) => d.kind === 'number' || d.kind === 'string')
+  ) {
+    assert.deepStrictEqual(
+      ts.TimeSeries.fromColumns(gotColumns).toJSON(),
+      a.toJSON(),
+      `case ${k} fromColumns(toColumns())`,
+    );
+    roundTrips++;
+  }
+  b.free();
+}
+
+// toColumns refuses a value column named like the key's flattened edges,
+// as pond-ts's does (it would overwrite them).
+for (const [key, name] of [
+  ['timeRange', 'timeRangeEnd'],
+  ['interval', 'intervalEnd'],
+  ['interval', 'intervalLabel'],
+]) {
+  const spec = {
+    name: 'c',
+    schema: [
+      { name: key, kind: key },
+      { name, kind: 'number' },
+    ],
+    rows: [[key === 'interval' ? ['a', 0, 1] : [0, 1], 5]],
+  };
+  assert.throws(() => new ts.TimeSeries(spec).toColumns(), /collides/);
+  const b = new rs.TimeSeries(spec);
+  assert.throws(() => b.toColumns(), /collides/, `${key} + ${name}`);
   b.free();
 }
 
@@ -205,6 +254,10 @@ for (const name of ['__proto__', 'constructor']) {
     b.toJSON({ rowFormat: 'object' }).rows,
     cells.map((c, i) => ({ time: i * 1000, d: c })),
   );
+  assert.deepStrictEqual(b.toColumns().columns, {
+    time: [0, 1000, 2000, 3000],
+    d: cells,
+  });
   b.free();
 }
 
@@ -241,5 +294,5 @@ if (!CHILD) {
   process.stdout.write(child.stdout);
 }
 console.log(
-  `toJSON through @pond-ts/rs matches pond-ts: ${cases} cases${CHILD ? ' (plain loop, no code generation)' : ''}`,
+  `toJSON and toColumns through @pond-ts/wasm match pond-ts: ${cases} toJSON cases, ${roundTrips} fromColumns round trips${CHILD ? ' (plain loop, no code generation)' : ''}`,
 );

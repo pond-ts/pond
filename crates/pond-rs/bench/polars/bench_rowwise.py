@@ -3,6 +3,8 @@
 - cumulative sum: pond carries the running total through gap rows, so
   `cum_sum().forward_fill()` (polars' `cum_sum` alone leaves the gaps).
 - No polars counterpart: linear fill with a maximum gap length.
+- filter: pond is timed with a closure and with a column expression; polars
+  has the one form, so both rows time the same call.
 """
 
 import numpy as np
@@ -43,6 +45,7 @@ run(
         ("fill hold", lambda: df.with_columns(v_.forward_fill())),
         ("fill linear", lambda: df.with_columns(v_.interpolate())),
         ("filter v > 500 (by name)", lambda: df.filter(v_ > 500)),
+        ("filter v > 500 (expression)", lambda: df.filter(v_ > 500)),
         ("map_numbers v * 2", lambda: df.with_columns(v_ * 2)),
         ("with_column", lambda: df.with_columns(extra)),
         ("slice middle half", lambda: df.slice(250_000, 500_000)),

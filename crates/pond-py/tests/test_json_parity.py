@@ -54,18 +54,6 @@ def attempt(f):
         return e
 
 
-def mark_gaps_optional(expected):
-    """pond-ts keeps a column with gaps marked required when reading
-    columns JSON; pond-rs marks it optional (a known difference)."""
-    if expected is None:
-        return None
-    e = json.loads(json.dumps(expected))
-    for c, d in enumerate(e["schema"][1:], start=1):
-        if "required" not in d and any(r[c] is None for r in e["rows"]):
-            d["required"] = False
-    return e
-
-
 def test_row_json_matches_pond_ts():
     failures = []
     for case in FIXTURE["json"]["toJSON"]:
@@ -98,7 +86,7 @@ def test_columns_and_points_json_match_pond_ts():
     for case in cases["fromColumns"]:
         got = attempt(lambda: TimeSeries.from_columns_json(json.dumps(case["payload"]), order=ordering(case.get("options"))))
         refused = case["id"] in columns_refused
-        judge(f"fromColumns {case['id']}", refused, None if refused else mark_gaps_optional(case.get("expected")), got, failures)
+        judge(f"fromColumns {case['id']}", refused, None if refused else case.get("expected"), got, failures)
     points_refused = {"fractionTs", "farTs", "tsColumn"}
     for case in cases["fromPoints"]:
         got = attempt(lambda: TimeSeries.from_points_json(json.dumps(case["points"]), "p", case["schema"]))
@@ -155,7 +143,7 @@ def test_value_series_match_pond_ts():
         _judge_value(f"ValueSeries.fromJSON {case['id']}", case.get("expected"), got, failures)
     for case in vs["fromColumns"]:
         got = attempt(lambda: ValueSeries.from_columns_json(json.dumps(case["payload"]), order=ordering(case.get("options"))))
-        _judge_value(f"ValueSeries.fromColumns {case['id']}", mark_gaps_optional(case.get("expected")), got, failures)
+        _judge_value(f"ValueSeries.fromColumns {case['id']}", case.get("expected"), got, failures)
     assert not failures, "\n".join(failures)
 
 
@@ -185,13 +173,7 @@ def test_value_series_arrow_match_pond_ts():
             if not ok:
                 failures.append(f"{cid}: expected the known difference")
             continue
-        expected = case.get("expected")
-        if expected is not None:
-            expected = json.loads(json.dumps(expected))
-            for d in expected["schema"][1:]:
-                if table.schema.field(d["name"]).nullable:
-                    d.setdefault("required", False)
-        _judge_value(cid, expected, got, failures)
+        _judge_value(cid, case.get("expected"), got, failures)
     assert not failures, "\n".join(failures)
 
 

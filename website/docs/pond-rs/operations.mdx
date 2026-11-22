@@ -1209,6 +1209,12 @@ output's kind is the kind of the first value that is not a gap, and every
 other value must be that kind. A number that is not finite (a division by
 zero, say) is stored as a gap.
 
+The closure runs once per row. When the rule is plain arithmetic, a column
+expression gives the same answer over whole columns and is much faster on a
+long series: `s.with_column_expr("loss", &col("lost").div(col("sent")))?`,
+then `.select(&["host", "loss"])?` to drop the inputs. `collapse` is for
+rules an expression cannot say.
+
 ```rust
 use pond_rs::{Column, Scalar, TimeSeries};
 
