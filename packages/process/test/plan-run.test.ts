@@ -785,9 +785,10 @@ describe('run — reductions', () => {
   });
 
   it('shape holds its bound when the series is under 2× the request', () => {
-    // The floor() stride rounded to 1 whenever length < 2·points, so a
-    // 200-point request over 399 rows returned all 399 — the token bound
-    // is the fold's whole purpose.
+    // A regression pin from the old every-Nth-row loop: its floor() stride
+    // rounded to 1 whenever length < 2·points, so a 200-point request over
+    // 399 rows returned all 399. Row bins now cap the count at `points`;
+    // the token bound is the fold's whole purpose.
     const { registry } = makeRegistry();
     const graph = bind(series(399), { registry, units });
     const res = run(graph, {
@@ -796,9 +797,9 @@ describe('run — reductions', () => {
     });
     const points = res.facts[0]!['points'] as number;
     expect(points).toBeLessThanOrEqual(200);
-    // Bounded, not starved: a stride of ceil(399/200)=2 still samples
-    // the whole series.
-    expect(points).toBeGreaterThan(150);
+    // Bounded, not starved: 200 row bins cover the whole series, and only
+    // the first, all warm-up, is dropped.
+    expect(points).toBe(199);
   });
 
   it('a facts-only response is JSON-safe by construction', () => {

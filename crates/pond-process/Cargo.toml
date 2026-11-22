@@ -1,0 +1,17 @@
+[package]
+name = "pond-process"
+version = "0.1.0"
+description = "Computations as data over pond-rs: a Rust port of @pond-ts/process that gives the same answers."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# Not published yet: the crates.io name is still to be chosen, and the port
+# is incomplete until it covers what @pond-ts/process covers ([PND-RUST-R5]).
+publish = false
+
+[dependencies]
+pond-rs = { path = "../pond-rs" }
+# preserve_order: a plan's params and a describe() answer keep the order
+# they were written in, as JavaScript objects do.
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

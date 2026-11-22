@@ -38,6 +38,7 @@
  */
 
 import { ProcessError } from '../errors.js';
+import type { ShapeHow } from './folds.js';
 import type { Select } from './run.js';
 import type { SourceRef } from './source.js';
 import type { SlotDef, Slots } from './slots.js';
@@ -111,8 +112,8 @@ export interface NodeHandle {
   extremes(): NodeHandle;
   /** Where the latest value sits in its own history. */
   percentileRank(): NodeHandle;
-  /** A bounded sample of the whole series. */
-  shape(options?: { points?: number }): NodeHandle;
+  /** The whole series in at most `points` bins, each summed up by `how`. */
+  shape(options?: { points?: number; how?: ShapeHow }): NodeHandle;
 }
 
 /** The envelope a builder produces — what `Host.run` takes. */
@@ -204,11 +205,16 @@ export class PlanBuilder<From extends string | SourceRef = string> {
       last: () => this.#fold(slot, 'last'),
       extremes: () => this.#fold(slot, 'extremes'),
       percentileRank: () => this.#fold(slot, 'percentileRank'),
-      shape: (options = {}) =>
+      shape: ({ points, how } = {}) =>
         this.#fold(
           slot,
           'shape',
-          options.points !== undefined ? { points: options.points } : undefined,
+          points === undefined && how === undefined
+            ? undefined
+            : {
+                ...(points !== undefined && { points }),
+                ...(how !== undefined && { how }),
+              },
         ),
     };
   }

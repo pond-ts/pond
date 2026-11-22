@@ -67,10 +67,17 @@ const theme = cssVarTheme(defaultTheme, (v) => ({
 
 A role can set any of `color`, `fillOpacity`, `dash` (px on/off lengths for
 the mark's **lines** — fills are never dashed; `dash` can also be set once on
-the register to apply to every mark) and `depth` (see below). Each field the
-role leaves out comes from the base register, and an unknown or unset `role` is
-the base register. Colour stays a **theme** concern (there is no per-mark
-colour prop): the theme owns the palette, the mark just names a role.
+the register to apply to every mark), `lineWidth` (px stroke for a
+`Baseline`'s or `Marker`'s line; a mark's own `lineWidth` prop wins) and
+`depth` (see below). Each field the role leaves out comes from the base
+register, and an unknown or unset `role` is the base register. Colour stays a
+**theme** concern (there is no per-mark colour prop): the theme owns the
+palette, the mark just names a role.
+
+The base register can be partial too. A theme can set only `roles` (as above)
+or only `depth`; every field it leaves out comes from pond's exported
+`defaultAnnotation`. See
+[the annotation register](../theming.mdx#the-annotation-register-set-only-what-you-change).
 
 This is also how a **scale** is styled: a [`Zone`](./zone.mdx) set names one
 role per band (`good`, `moderate`, …) and the theme holds the whole palette in
@@ -110,7 +117,9 @@ in front:
 You don't set levels directly; they follow from `selected` / `editing` /
 `selectable` (see [Editing & creating](./editing-and-creating.mdx)). How bright
 each level draws is the theme's `annotation.depth` ramp — or the mark's role's
-own `depth`, if it has one.
+own `depth`, if it has one. That is how to draw one inert line stronger than
+the rest: see
+[Stronger reference lines](./region-baseline-marker.mdx#stronger-reference-lines).
 
 ## Three interaction modes
 

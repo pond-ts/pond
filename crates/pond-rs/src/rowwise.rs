@@ -65,6 +65,11 @@ impl Change {
         self.output = Some(name.to_string());
         self
     }
+
+    /// True when the first row is dropped from the result.
+    pub(crate) fn drops_first(&self) -> bool {
+        self.first == FirstRow::Drop
+    }
 }
 
 /// How [`TimeSeries::fill`] fills a run of gaps.
@@ -977,6 +982,11 @@ fn fillable(
         (false, false) => 0,
     };
     span <= max_gap
+}
+
+/// True when [`TimeSeries::fill_all`] with `fill` fills this column.
+pub(crate) fn fills(column: &Column, fill: &Fill) -> bool {
+    check_fill(column, fill).is_ok()
 }
 
 /// Whether `fill` can apply to this column's kind.

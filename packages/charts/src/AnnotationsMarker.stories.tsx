@@ -119,6 +119,17 @@ export const Inert: Story = {
   ),
 };
 
+/** **Line width** — `lineWidth` sets the stroke in px: the default 1px line
+ *  against a 3px one. */
+export const LineWidth: Story = {
+  render: () => (
+    <Chart>
+      <Marker at={at(30)} label="1px" />
+      <Marker at={at(60)} label="3px" lineWidth={3} />
+    </Chart>
+  ),
+};
+
 /** **Multiple** — several markers across the window, each auto-labelled. */
 export const Multiple: Story = {
   render: () => (

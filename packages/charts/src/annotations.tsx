@@ -15,8 +15,9 @@ import {
   type ContainerFrame,
   type LabelPlacement,
 } from './context.js';
-import type { ChartTheme } from './theme.js';
+import { resolveAnnotation, type ChartTheme } from './theme.js';
 import {
+  FLAG_LINE_HEIGHT,
   flagChipStyle,
   flagChipX,
   axisPillX,
@@ -59,13 +60,6 @@ import { useSlotKey } from './use-slot-key.js';
  * ({@link ContainerFrame.annotations}), which draws each mark's **guide** across the
  * other rows and lets a drag **snap** to other marks' x-positions.
  */
-
-/** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
-const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
-  color: '#14b8a6',
-  fillOpacity: 0.1,
-  depth: [1, 0.7, 0.4],
-};
 
 /** Handle-pill geometry (px) — long axis vs short axis. */
 const HANDLE_LONG = 18;
@@ -138,11 +132,11 @@ const overlayStyle: CSSProperties = {
  * Read the container + row frames an annotation needs (throw if misplaced), and
  * resolve the mark's annotation style for its optional `role`. A `role` restyles
  * *this* mark from the theme's `annotation.roles[role]` map — any of `color`,
- * `fillOpacity`, `dash` and `depth`, each falling back to the base register — so
- * a smile can place a green ATM baseline, a neutral vertical, and a distinct
- * marker at once without splitting the whole register, and a quiet `wash` and a
- * loud `argument` can rest at different alphas. An unknown / unset role is the
- * base `annotation` register.
+ * `fillOpacity`, `dash`, `lineWidth` and `depth`, each falling back to the base
+ * register — so a smile can place a green ATM baseline, a neutral vertical, and
+ * a distinct marker at once without splitting the whole register, and a quiet
+ * `wash` and a loud `argument` can rest at different alphas. An unknown / unset
+ * role is the base `annotation` register.
  */
 function useAnnotationFrame(name: string, role?: string) {
   const container = useContext(ContainerContext);
@@ -153,7 +147,9 @@ function useAnnotationFrame(name: string, role?: string) {
   if (row === null) {
     throw new Error(`<${name}> must be rendered inside a <ChartRow>`);
   }
-  const base = container.theme.annotation ?? DEFAULT_ANNOTATION;
+  // The theme's register over pond's default — a partial `annotation` (only
+  // `roles`, say) fills the rest from `defaultAnnotation`.
+  const base = resolveAnnotation(container.theme.annotation);
   const roleStyle = role !== undefined ? base.roles?.[role] : undefined;
   // Each field the role sets wins; the rest is the base register. The level
   // logic (selected / hover / edit / resting) is shared — a role's `depth` only
@@ -164,10 +160,17 @@ function useAnnotationFrame(name: string, role?: string) {
         color: roleStyle.color ?? base.color,
         fillOpacity: roleStyle.fillOpacity ?? base.fillOpacity,
         dash: roleStyle.dash ?? base.dash,
+        lineWidth: roleStyle.lineWidth ?? base.lineWidth,
         depth: roleStyle.depth ?? base.depth,
       }
     : base;
   return { container, row, ann };
+}
+
+/** The half-width (px) of a line's invisible grab area — {@link HIT_PAD}, or
+ *  wider for a line thick enough that the pad would not cover it. */
+function hitPad(strokeWidth: number): number {
+  return Math.max(HIT_PAD, Math.ceil(strokeWidth / 2));
 }
 
 /** The register's dash as an SVG `stroke-dasharray`, or `undefined` for solid
@@ -663,11 +666,12 @@ export interface MarkerProps {
    *  no hover, no select, no edit. */
   selectable?: boolean;
   /** Theme **role** — restyles this mark from `theme.annotation.roles[role]`
-   *  (any of `color`, `fillOpacity`, `dash`, `depth`), so several marks can
-   *  differ (a green ATM baseline, a distinct marker) without splitting the
-   *  register. The shipped themes define `wash` (quiet, behind data) and
-   *  `argument` (loud, legible at rest). Omitted / unknown ⇒ the base register.
-   *  Colour is a theme concern — there is no per-mark colour prop. */
+   *  (any of `color`, `fillOpacity`, `dash`, `lineWidth`, `depth`), so several
+   *  marks can differ (a green ATM baseline, a distinct marker) without
+   *  splitting the register. The shipped themes define `wash` (quiet, behind
+   *  data) and `argument` (loud, legible at rest).
+   *  Omitted / unknown ⇒ the base register. Colour is a theme concern — there
+   *  is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
@@ -688,6 +692,10 @@ export interface MarkerProps {
    *  near-line chip) — an indicator reads like a tick. A connector links the
    *  marker line to its pill. */
   indicator?: boolean;
+  /** Stroke width of the line, in px. Wins over the theme role's / register's
+   *  `lineWidth`; all unset ⇒ 1. The invisible grab area widens to cover a
+   *  line thicker than it. */
+  lineWidth?: number;
 }
 
 /** A vertical line at an x position (a time, a distance, a lap boundary). */
@@ -702,6 +710,7 @@ export function Marker({
   onChange,
   indicator = false,
   role,
+  lineWidth,
 }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker', role);
   const selfKey = useSlotKey();
@@ -757,6 +766,9 @@ export function Marker({
   // The staff (vertical line) hangs from the top of its flag — so a flag stacked
   // into a lower lane doesn't leave line poking above it. No label ⇒ full height.
   const staffTop = text ? FLAG_TOP + lane * LANE_H : 0;
+  // The mark's prop wins over the resolved register (role over base); else 1.
+  const strokeWidth = lineWidth ?? ann.lineWidth ?? 1;
+  const pad = hitPad(strokeWidth);
   return (
     <>
       <svg width={container.plotWidth} height={h} style={overlayStyle}>
@@ -766,7 +778,7 @@ export function Marker({
           x2={x}
           y2={h}
           stroke={ann.color}
-          strokeWidth={1}
+          strokeWidth={strokeWidth}
           opacity={opacity}
           strokeDasharray={dashArray(ann.dash)}
           shapeRendering="crispEdges"
@@ -782,9 +794,9 @@ export function Marker({
         )}
         {selectable && (
           <DragArea
-            x={x - HIT_PAD}
+            x={x - pad}
             y={0}
-            w={2 * HIT_PAD}
+            w={2 * pad}
             h={h}
             cursor={editing ? 'ew-resize' : 'inherit'}
             editable={editable}
@@ -842,11 +854,12 @@ export interface BaselineProps {
    *  `false` it's inert background context — drawn at the back (level 3) always. */
   selectable?: boolean;
   /** Theme **role** — restyles this mark from `theme.annotation.roles[role]`
-   *  (any of `color`, `fillOpacity`, `dash`, `depth`), so several marks can
-   *  differ (a green ATM baseline, a distinct marker) without splitting the
-   *  register. The shipped themes define `wash` (quiet, behind data) and
-   *  `argument` (loud, legible at rest). Omitted / unknown ⇒ the base register.
-   *  Colour is a theme concern — there is no per-mark colour prop. */
+   *  (any of `color`, `fillOpacity`, `dash`, `lineWidth`, `depth`), so several
+   *  marks can differ (a green ATM baseline, a distinct marker) without
+   *  splitting the register. The shipped themes define `wash` (quiet, behind
+   *  data) and `argument` (loud, legible at rest).
+   *  Omitted / unknown ⇒ the base register. Colour is a theme concern — there
+   *  is no per-mark colour prop. */
   role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
@@ -866,10 +879,16 @@ export interface BaselineProps {
    *  coordinate), never the custom `label` (which stays the near-line chip) — an
    *  indicator reads like a tick. */
   indicator?: boolean;
+  /** Stroke width of the line, in px. Wins over the theme role's / register's
+   *  `lineWidth`; all unset ⇒ 1. The invisible grab area widens to cover a
+   *  line thicker than it. */
+  lineWidth?: number;
 }
 
 /** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
- *  Its label anchors at the left, at the line's height. */
+ *  Its label anchors at the left, at the line's height, kept inside the row. A
+ *  value outside the row's visible y-range draws no line and no label (an
+ *  `indicator` pill stays pinned at the nearest edge). */
 export function Baseline({
   value,
   axis,
@@ -884,6 +903,7 @@ export function Baseline({
   onChange,
   indicator = false,
   role,
+  lineWidth,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline', role);
   const selfKey = useSlotKey();
@@ -930,6 +950,13 @@ export function Baseline({
   if (yScale === undefined) return null;
   const y = yScale(value);
   const w = container.plotWidth;
+  const h = row.height;
+  // A level outside the row's visible y-range (the axis panned / zoomed away
+  // from it, or a value past a fixed domain) has nowhere in the row to be, so
+  // its line, handle and label are not drawn — the label would otherwise float
+  // outside the row. The hit area stays mounted (clipped by the SVG) so a drag
+  // that carries the line past the edge keeps its pointer capture.
+  const onRow = y >= 0 && y <= h;
   const opacity = rampAt(
     ann.depth,
     lineLevel(selectable, editable, hovering, selected),
@@ -941,21 +968,35 @@ export function Baseline({
     label === false ? '' : (label ?? (fmt ? fmt(value) : String(value)));
   // Handle pill near the right end (clears the left-anchored label).
   const handleX = w - 14;
+  // The mark's prop wins over the resolved register (role over base); else 1.
+  const strokeWidth = lineWidth ?? ann.lineWidth ?? 1;
+  const pad = hitPad(strokeWidth);
+  // Keep the chip's box inside the row: near an edge it stops at the edge
+  // instead of riding the line out of the row (as the indicator pill does).
+  const chipH = container.theme.font.size * FLAG_LINE_HEIGHT;
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, v));
+  const chipTop =
+    labelPosition === 'above'
+      ? clamp(y, chipH, h)
+      : clamp(y, chipH / 2, h - chipH / 2);
   return (
     <>
-      <svg width={w} height={row.height} style={overlayStyle}>
-        <line
-          x1={0}
-          y1={y}
-          x2={w}
-          y2={y}
-          stroke={ann.color}
-          strokeWidth={1}
-          opacity={opacity}
-          strokeDasharray={dashArray(ann.dash)}
-          shapeRendering="crispEdges"
-        />
-        {showHandle && (
+      <svg width={w} height={h} style={overlayStyle}>
+        {onRow && (
+          <line
+            x1={0}
+            y1={y}
+            x2={w}
+            y2={y}
+            stroke={ann.color}
+            strokeWidth={strokeWidth}
+            opacity={opacity}
+            strokeDasharray={dashArray(ann.dash)}
+            shapeRendering="crispEdges"
+          />
+        )}
+        {onRow && showHandle && (
           <Pill
             cx={handleX}
             cy={y}
@@ -967,9 +1008,9 @@ export function Baseline({
         {selectable && (
           <DragArea
             x={0}
-            y={y - HIT_PAD}
+            y={y - pad}
             w={w}
-            h={2 * HIT_PAD}
+            h={2 * pad}
             cursor={editing ? 'ns-resize' : 'inherit'}
             editable={editable}
             onHover={reportHover}
@@ -980,12 +1021,12 @@ export function Baseline({
           />
         )}
       </svg>
-      {text && (
+      {text && onRow && (
         <Chip
           theme={container.theme}
           color={ann.color}
           style={{
-            top: `${y}px`,
+            top: `${chipTop}px`,
             [labelSide === 'right' ? 'right' : 'left']: '2px',
             // `center` rides on the line; `above` sits its bottom edge on the line.
             transform:

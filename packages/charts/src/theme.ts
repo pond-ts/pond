@@ -210,10 +210,15 @@ export interface ChartTheme {
    * (forward / brightest — a selected mark, or an edit-mode line), `[1]` = level 2
    * (mid — a hovered mark, or an edit-mode region body), `[2]` = level 3 (back —
    * the resting, backgrounded state). Cross-row guides draw fainter still (a
-   * notional level 4, set in `Layers`). Falls back to a built-in turquoise.
+   * notional level 4, set in `Layers`).
+   *
+   * **Every field is optional**: whatever the theme leaves out comes from
+   * {@link defaultAnnotation} (a turquoise `color`, `fillOpacity` 0.1, `depth`
+   * `[1, 0.7, 0.4]`), so a theme can set only `roles`, or only `depth`, without
+   * copying the rest. No `annotation` at all is the same as `{}`.
    */
   readonly annotation?: {
-    readonly color: string;
+    readonly color?: string;
     /**
      * **EXPERIMENTAL ([PND-ANNSNAP]).** Ink for the vertical rules at a swept
      * window's edges — a preview of what promoting the sweep to an annotation
@@ -226,8 +231,8 @@ export interface ChartTheme {
      * look is kept, that mismatch has to be resolved rather than papered over.
      */
     readonly spanEdge?: string;
-    readonly fillOpacity: number;
-    readonly depth: readonly [number, number, number];
+    readonly fillOpacity?: number;
+    readonly depth?: readonly [number, number, number];
     /**
      * Optional dash pattern for the register's **lines** — px on/off lengths,
      * the same shape as {@link LineStyle.dash} (`[6, 4]` = 6 on, 4 off). Omit or
@@ -241,16 +246,23 @@ export interface ChartTheme {
      */
     readonly dash?: readonly number[];
     /**
+     * Optional stroke width (px) for a `<Baseline>`'s / `<Marker>`'s line.
+     * **Omitted ⇒ 1.** Set it per {@link roles | role} to thicken one kind of
+     * reference line only; a mark's own `lineWidth` prop wins over both. Region
+     * edges, zone boundaries and the cross-row guides stay 1 px.
+     */
+    readonly lineWidth?: number;
+    /**
      * **Optional per-role overrides** — a small map from a role name to any of
-     * `color` / `fillOpacity` / `dash` / `depth`, so distinct marks can be
-     * styled at once without splitting the whole register: a `<Baseline
-     * role="atm">` green, a `<Marker role="ref">` in another hue, a `<Zone
-     * role="good">` per band of a value-axis scale. A mark's `role` resolves
-     * each field as `roles[role].field ?? annotation.field` (an unknown/unset
-     * role is the base register). Colour stays a **theme** concern — there is
-     * no per-mark colour prop (the one-styling-channel discipline), which is
-     * why a *scale* of bands (AQI categories, HR zones) is a role map and not
-     * six colours at the call site.
+     * `color` / `fillOpacity` / `dash` / `lineWidth` / `depth`, so distinct
+     * marks can be styled at once without splitting the whole register: a
+     * `<Baseline role="atm">` green, a `<Marker role="ref">` in another hue, a
+     * `<Zone role="good">` per band of a value-axis scale. A mark's `role`
+     * resolves each field as `roles[role].field ?? annotation.field` (an
+     * unknown/unset role is the base register). Colour stays a **theme**
+     * concern — there is no per-mark colour prop (the one-styling-channel
+     * discipline), which is why a *scale* of bands (AQI categories, HR zones)
+     * is a role map and not six colours at the call site.
      *
      * A role's `depth` replaces the register's ramp for that role — what a
      * mark is *for* decides how loud it rests, not one alpha for every mark.
@@ -272,6 +284,7 @@ export interface ChartTheme {
         readonly color?: string;
         readonly fillOpacity?: number;
         readonly dash?: readonly number[];
+        readonly lineWidth?: number;
         readonly depth?: readonly [number, number, number];
       };
     };
@@ -693,8 +706,11 @@ export interface CandleStyle {
  * A resolved area style: an outline stroke plus a graded fill. `color`/`width`
  * stroke the value line on top; `fill` is the gradient base colour, opaque
  * (scaled by `fillOpacity`, 0–1) at the line and grading to transparent at the
- * baseline. `fill` must be a CSS hex (`#rgb` / `#rrggbb`) so the transparent
- * stop can be derived; other formats fall back to a flat fill.
+ * baseline. `fill` and `color` are independent, so the shade can be a
+ * different hue from the line. Any CSS colour works for `fill`: a hex has its
+ * transparent stop derived exactly, any other format fades to the keyword
+ * `transparent`, which canvas gradients blend in premultiplied alpha, so the
+ * fade looks the same (checked in Chromium).
  */
 export interface AreaStyle {
   readonly color: string;
@@ -713,6 +729,15 @@ export interface AreaStyle {
    * a stack can be uniformly translucent — just not *graded*.)
    */
   readonly flatFill?: boolean;
+  /**
+   * Optional dash pattern for the area's **outline** (its top edge) — px
+   * on/off lengths, the same shape and meaning as {@link LineStyle.dash}
+   * (`[6, 4]` = 6 on, 4 off). Omit or `[]` for a solid edge. The fill is
+   * never dashed: it stays whole, so a dashed area reads as the same shape
+   * with a dashed rim. Use it to set one area apart from another drawn in
+   * the same hue, such as a comparison against the series it compares to.
+   */
+  readonly dash?: readonly number[];
   /**
    * Interaction state, the area's counterpart of `LineStyle`'s
    * ([PND-TRACESEL]) — and the channels differ because what carries the mark
@@ -970,6 +995,49 @@ const ANNOTATION_ROLES = {
 } as const satisfies NonNullable<
   NonNullable<ChartTheme['annotation']>['roles']
 >;
+
+/** The annotation register with its base fields filled — what the charts
+ *  draw with once a theme's partial `annotation` is merged over
+ *  {@link defaultAnnotation}. */
+export type ResolvedAnnotation = NonNullable<ChartTheme['annotation']> & {
+  readonly color: string;
+  readonly fillOpacity: number;
+  readonly depth: readonly [number, number, number];
+};
+
+/**
+ * Pond's **default annotation register** — what every field a theme's
+ * `annotation` leaves out falls back to (a theme with no `annotation` draws in
+ * exactly this). A neutral turquoise `color`, region fill at `fillOpacity` 0.1,
+ * and the `[1, 0.7, 0.4]` depth ramp. Every place the charts read the register
+ * (the marks, the cross-row guides, the x-axis marker pills, the list's
+ * selected-row edge) falls back to this one object, so a host never needs to
+ * copy it into its own theme.
+ *
+ * `defaultTheme` sets its own register (an amber `color` and the shipped
+ * `wash` / `argument` roles); this is the fallback beneath any theme.
+ */
+export const defaultAnnotation: ResolvedAnnotation = {
+  color: '#14b8a6',
+  fillOpacity: 0.1,
+  depth: [1, 0.7, 0.4],
+};
+
+/** Merge a theme's (possibly partial, possibly absent) `annotation` over
+ *  {@link defaultAnnotation}: each field the theme sets wins, the rest come
+ *  from the default. `roles` is taken whole from the theme when it sets one. */
+export function resolveAnnotation(
+  annotation: ChartTheme['annotation'],
+): ResolvedAnnotation {
+  if (annotation === undefined) return defaultAnnotation;
+  return {
+    ...defaultAnnotation,
+    ...annotation,
+    color: annotation.color ?? defaultAnnotation.color,
+    fillOpacity: annotation.fillOpacity ?? defaultAnnotation.fillOpacity,
+    depth: annotation.depth ?? defaultAnnotation.depth,
+  };
+}
 
 /**
  * The neutral default theme. The shared data hue is a cerulean (`#0284c7`)

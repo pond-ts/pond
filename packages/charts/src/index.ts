@@ -192,6 +192,9 @@ export type { GapMode } from './gaps.js';
 export type { DecimateOption } from './decimate.js';
 
 export { defaultTheme, estelaTheme } from './theme.js';
+// Pond's default annotation register — what a theme's partial (or absent)
+// `annotation` fills its missing fields from.
+export { defaultAnnotation } from './theme.js';
 export type {
   ChartTheme,
   LineStyle,

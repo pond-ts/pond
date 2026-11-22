@@ -201,11 +201,13 @@ function firstParagraph(body) {
  */
 function renderIndex(site, docs, areaFiles) {
   const base = site.siteUrl.replace(/\/$/, '');
+  /** @type {Map<string, DocEntry[]>} */
   const byArea = new Map();
   for (const d of docs) {
     const a = areaOf(d.source);
-    if (!byArea.has(a.key)) byArea.set(a.key, []);
-    byArea.get(a.key).push(d);
+    let entries = byArea.get(a.key);
+    if (!entries) byArea.set(a.key, (entries = []));
+    entries.push(d);
   }
 
   const out = [

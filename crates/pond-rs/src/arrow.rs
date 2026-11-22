@@ -25,14 +25,14 @@
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{
     Decimal32Type, Decimal64Type, Decimal128Type, Float16Type, Float32Type, Float64Type, Int8Type,
     Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
 };
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Float64Array, ListArray, RecordBatch, TimestampMillisecondArray,
+    Array, ArrayRef, BooleanArray, Float64Array, ListArray, RecordBatch, StringArray,
+    TimestampMillisecondArray,
 };
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer};
 use arrow_ipc::convert::fb_to_schema;
@@ -42,7 +42,7 @@ use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
 use crate::column::{
     ArrayColumn, BooleanColumn, Cell, ColumnData, DecimalColumn, Float64Column, Scalar,
-    StringColumn,
+    StringColumn, canonical_list,
 };
 use crate::error::{PondError, Result};
 use crate::series::ColumnKind;
@@ -265,6 +265,15 @@ impl TimeSeries {
     ///   text or true/false values. A null item, or a `NaN` or infinite
     ///   number, is an error, since array elements cannot be gaps; so is any
     ///   other item type (decimals, nested lists, …).
+    ///
+    ///   Cost: a `List` of `Float64` or `Utf8` items, none null, is kept as
+    ///   the Arrow list and shares its buffers; the rows'
+    ///   [`Scalar`](crate::Scalar) lists are built the first time
+    ///   [`ArrayColumn::get`] or [`ArrayColumn::iter`] is called (one
+    ///   allocation per row and per text item), and never if only
+    ///   [`TimeSeries::to_arrow`] or a number reducer of
+    ///   [`TimeSeries::array_aggregate`] reads the column. Other lists are
+    ///   decoded in full here.
     /// - Any other field type (`Decimal256`, binary, structs, …) is
     ///   an error naming it.
     ///   Drop such fields first with [`RecordBatch::project`].
@@ -399,8 +408,9 @@ impl TimeSeries {
     /// pond-ts `toArrow` uses.
     ///
     /// An array column is written as a `List` of `Float64`, `Utf8` or
-    /// `Boolean` items (never null), gaps as null lists; this copies its
-    /// elements. pond-ts cannot read it back. Every element in the column
+    /// `Boolean` items (never null), gaps as null lists. Cost: this copies
+    /// its elements, unless the column is still the Arrow list it was read
+    /// as, which is handed back as it is. pond-ts cannot read it back. Every element in the column
     /// must be the same kind, since an Arrow list holds one item type; a
     /// column that mixes them is an error naming the first element that
     /// differs. A column with no elements at all is written as a list of
@@ -725,7 +735,7 @@ impl ValueSeries {
     /// The series as one Arrow record batch, as pond-ts `toArrow`: the axis
     /// first as a non-nullable `Float64` field, then each value column as
     /// [`TimeSeries::to_arrow`] writes it. Nothing is copied but list
-    /// columns.
+    /// columns held as cells.
     pub fn to_arrow(&self) -> Result<RecordBatch> {
         let mut fields = vec![Field::new(self.axis_name(), DataType::Float64, false)];
         let mut arrays: Vec<ArrayRef> = vec![Arc::new(Float64Array::new(
@@ -995,76 +1005,149 @@ fn read_strings(batches: &[RecordBatch], c: usize, name: &str) -> Result<StringC
     Ok(StringColumn::from_options(values))
 }
 
+/// Why [`gather_rows`] stopped: an element of another kind at (row,
+/// element), or more elements than an Arrow list holds.
+enum Stop {
+    Mixed(usize, usize),
+    TooMany,
+}
+
+/// Each cell of `data` through `push`, which copies the cell's elements
+/// out or gives the place of the first one it cannot take. Gives the rows'
+/// list offsets (a gap is an empty range).
+fn gather_rows(
+    data: &ArrayColumn,
+    mut push: impl FnMut(&[Scalar]) -> Option<usize>,
+) -> std::result::Result<Vec<i32>, Stop> {
+    let mut offsets = Vec::with_capacity(data.len() + 1);
+    offsets.push(0i32);
+    let mut total = 0usize;
+    for (r, cell) in data.cells().iter().enumerate() {
+        if let Some(cell) = cell {
+            if let Some(e) = push(cell) {
+                return Err(Stop::Mixed(r, e));
+            }
+            total += cell.len();
+            if total > i32::MAX as usize {
+                return Err(Stop::TooMany);
+            }
+        }
+        offsets.push(total as i32);
+    }
+    Ok(offsets)
+}
+
 /// An array column as an Arrow `List`. Every element in the column must be
 /// the same kind: the list's items are `Float64`, `Utf8` or `Boolean` (and
 /// `Utf8` when the column holds no elements at all). Gaps are null lists;
 /// items are never null.
+///
+/// Cost: a column still held as the Arrow list it was read from (or that a
+/// kernel wrote) is handed over as that list, nothing copied. Otherwise
+/// every element is checked and copied into new buffers in one pass.
 fn list_array(name: &str, data: &ArrayColumn) -> Result<ArrayRef> {
+    if let Some(list) = data.list() {
+        return Ok(Arc::new(list));
+    }
     let mixed = |reason: String| PondError::WrongKind {
         call: TO,
         column: name.to_string(),
         kind: "array",
         reason,
     };
-    // The kind of the first element, and where it was.
-    let mut first: Option<(ColumnKind, usize, usize)> = None;
-    let mut offsets = Vec::with_capacity(data.len() + 1);
-    offsets.push(0i32);
-    let mut total = 0usize;
-    for (r, cell) in data.iter().enumerate() {
-        let Some(cell) = cell else {
-            offsets.push(offsets[r]);
-            continue;
-        };
-        for (e, x) in cell.iter().enumerate() {
-            match first {
-                None => first = Some((x.kind(), r, e)),
-                Some((kind, r0, e0)) if kind != x.kind() => {
-                    return Err(mixed(format!(
-                        "row {r} element {e} is a {} but row {r0} element {e0} is a {}; an Arrow list holds one kind of element, so convert the elements first (map_arrays) or drop the column with select",
-                        x.kind().as_str(),
-                        kind.as_str()
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-        total += cell.len();
-        let end = i32::try_from(total).map_err(|_| {
+    // The kind of the first element, and the row it is in (as element 0).
+    let first: Option<(ColumnKind, usize)> = data
+        .iter()
+        .enumerate()
+        .find_map(|(r, cell)| cell?.first().map(|x| (x.kind(), r)));
+    let kind = first.map_or(ColumnKind::String, |(kind, _)| kind);
+    // Sized from the cells' lengths, which are read without touching the
+    // elements.
+    let capacity: usize = data.iter().flatten().map(<[Scalar]>::len).sum();
+    let capacity = capacity.min(i32::MAX as usize);
+    // What stopped `gather_rows`, as this call's error.
+    let stopped = |stop: Stop| match stop {
+        Stop::Mixed(r, e) => {
+            let (kind, r0) = first.expect("an element was found");
+            let found = data.get(r).expect("a row with elements")[e].kind();
             mixed(format!(
-                "it holds more than {} elements, more than an Arrow list holds",
-                i32::MAX
+                "row {r} element {e} is a {} but row {r0} element 0 is a {}; an Arrow list holds one kind of element, so convert the elements first (map_arrays) or drop the column with select",
+                found.as_str(),
+                kind.as_str()
             ))
-        })?;
-        offsets.push(end);
-    }
-    let elements = || data.iter().flatten().flatten();
-    let values: ArrayRef = match first.map_or(ColumnKind::String, |(kind, ..)| kind) {
-        ColumnKind::Number => Arc::new(Float64Array::from_iter_values(
-            elements().map(|x| x.as_f64().expect("one kind")),
+        }
+        Stop::TooMany => mixed(format!(
+            "it holds more than {} elements, more than an Arrow list holds",
+            i32::MAX
         )),
-        ColumnKind::Boolean => Arc::new(BooleanArray::from(
-            elements()
-                .map(|x| x.as_bool().expect("one kind"))
-                .collect::<Vec<bool>>(),
-        )),
+    };
+    // For each kind: a cell's elements copied out, or the place of the
+    // first one of another kind.
+    let (offsets, values): (Vec<i32>, ArrayRef) = match kind {
+        ColumnKind::Number => {
+            let mut out: Vec<f64> = Vec::with_capacity(capacity);
+            let offsets = gather_rows(data, |cell| {
+                let other = cell.iter().position(|x| !matches!(x, Scalar::Number(_)));
+                if other.is_none() {
+                    out.extend(cell.iter().map(|x| x.as_f64().expect("checked")));
+                }
+                other
+            })
+            .map_err(stopped)?;
+            (offsets, Arc::new(Float64Array::new(out.into(), None)))
+        }
+        ColumnKind::Boolean => {
+            let mut out: Vec<bool> = Vec::with_capacity(capacity);
+            let offsets = gather_rows(data, |cell| {
+                let other = cell.iter().position(|x| !matches!(x, Scalar::Boolean(_)));
+                if other.is_none() {
+                    out.extend(cell.iter().map(|x| x.as_bool().expect("checked")));
+                }
+                other
+            })
+            .map_err(stopped)?;
+            (offsets, Arc::new(BooleanArray::from(out)))
+        }
         _ => {
-            let bytes: usize = elements().map(|x| x.as_str().map_or(0, str::len)).sum();
-            if bytes > i32::MAX as usize {
+            // Each item's end, and the bytes run together.
+            let mut ends: Vec<i32> = Vec::with_capacity(capacity + 1);
+            ends.push(0);
+            let mut bytes: Vec<u8> = Vec::new();
+            let offsets = gather_rows(data, |cell| {
+                for (e, x) in cell.iter().enumerate() {
+                    let Scalar::String(v) = x else {
+                        return Some(e);
+                    };
+                    bytes.extend_from_slice(v.as_bytes());
+                    // Past `i32::MAX` bytes this wraps; the total is
+                    // checked once every row has been.
+                    ends.push(bytes.len() as i32);
+                }
+                None
+            })
+            .map_err(stopped)?;
+            if bytes.len() > i32::MAX as usize {
                 return Err(mixed(format!(
-                    "its text elements hold {bytes} bytes; an Arrow Utf8 list holds at most {}",
+                    "its text elements hold {} bytes; an Arrow Utf8 list holds at most {}",
+                    bytes.len(),
                     i32::MAX
                 )));
             }
-            let mut texts = StringBuilder::with_capacity(total, bytes);
-            for x in elements() {
-                texts.append_value(x.as_str().expect("one kind"));
-            }
-            Arc::new(texts.finish())
+            let texts = StringArray::try_new(
+                OffsetBuffer::new(ends.into()),
+                Buffer::from_vec(bytes),
+                None,
+            )
+            .map_err(|e| invalid(TO, e.to_string()))?;
+            (offsets, Arc::new(texts))
         }
     };
-    let nulls = (data.missing_count() > 0)
-        .then(|| NullBuffer::from_iter(data.iter().map(|cell| cell.is_some())));
+    let cells = data.cells();
+    let nulls = (data.missing_count() > 0).then(|| {
+        NullBuffer::new(BooleanBuffer::collect_bool(cells.len(), |r| {
+            cells[r].is_some()
+        }))
+    });
     let item = Arc::new(Field::new_list_field(values.data_type().clone(), false));
     let list = ListArray::try_new(item, OffsetBuffer::new(offsets.into()), values, nulls)
         .map_err(|e| invalid(TO, e.to_string()))?;
@@ -1076,7 +1159,21 @@ fn list_array(name: &str, data: &ArrayColumn) -> Result<ArrayRef> {
 /// numbers, as for a value column), text or true/false values; a null list
 /// is a gap, and a null item is an error, since array elements cannot be
 /// gaps.
+///
+/// Cost: a `List` of `Float64` or `Utf8` items with no null item is kept as
+/// it is (see [`shared_list`]): nothing is copied and no cell is built
+/// until one is read. Any other list is decoded item by item here, one
+/// allocation per row and one per text item.
 fn read_lists(batches: &[RecordBatch], c: usize, name: &str) -> Result<ArrayColumn> {
+    if let Some(list) = shared_list(batches, c) {
+        return Ok(ArrayColumn::from_list(list));
+    }
+    decode_lists(batches, c, name)
+}
+
+/// [`read_lists`] for a list that cannot be kept as it is: every item is
+/// read into a cell.
+fn decode_lists(batches: &[RecordBatch], c: usize, name: &str) -> Result<ArrayColumn> {
     let mut cells: Vec<Option<Cell>> = Vec::new();
     for batch in batches {
         let array = batch.column(c);
@@ -1181,6 +1278,26 @@ fn read_lists(batches: &[RecordBatch], c: usize, name: &str) -> Result<ArrayColu
         }
     }
     Ok(ArrayColumn::from_cells(cells))
+}
+
+/// Field `c` of `batches` as one list an array column can keep without
+/// decoding it ([`canonical_list`]); `None` when it has to be decoded.
+/// Several batches are joined first, which copies their items once.
+fn shared_list(batches: &[RecordBatch], c: usize) -> Option<ListArray> {
+    let plain = |b: &RecordBatch| match b.column(c).data_type() {
+        DataType::List(item) => matches!(item.data_type(), DataType::Float64 | DataType::Utf8),
+        _ => false,
+    };
+    if batches.is_empty() || !batches.iter().all(plain) {
+        return None;
+    }
+    if let [batch] = batches {
+        return canonical_list(batch.column(c).as_list::<i32>());
+    }
+    // `concat` needs one item field; batches of one schema have it.
+    let parts: Vec<&dyn Array> = batches.iter().map(|b| b.column(c).as_ref()).collect();
+    let joined = arrow_select::concat::concat(&parts).ok()?;
+    canonical_list(joined.as_list::<i32>())
 }
 
 /// The items of a list field as array elements, nulls as `None`. `locate`
@@ -1349,7 +1466,7 @@ fn read_number(array: &ArrayRef, name: &str, out: &mut Vec<f64>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Int32Array, StringArray, TimestampMicrosecondArray};
+    use arrow_array::{Int32Array, TimestampMicrosecondArray};
 
     fn sample() -> TimeSeries {
         TimeSeries::new(
@@ -2245,6 +2362,181 @@ mod tests {
             e,
             "TimeSeries::to_arrow: column 'm' is an array column; row 2 element 1 is a string but row 0 element 0 is a number; an Arrow list holds one kind of element, so convert the elements first (map_arrays) or drop the column with select"
         );
+    }
+
+    /// A list column of `rows` (`None` a null list) under a time key.
+    fn list_batch<T: Copy>(
+        rows: &[Option<Vec<T>>],
+        items: impl Fn(Vec<T>) -> ArrayRef,
+        keep_null_buffer: bool,
+    ) -> RecordBatch {
+        let mut offsets = vec![0i32];
+        let mut flat = Vec::new();
+        for row in rows {
+            flat.extend(row.iter().flatten().copied());
+            offsets.push(flat.len() as i32);
+        }
+        let values = items(flat);
+        let nulls = (keep_null_buffer || rows.iter().any(Option::is_none))
+            .then(|| NullBuffer::from_iter(rows.iter().map(Option::is_some)));
+        let list = ListArray::new(
+            Arc::new(Field::new("element", values.data_type().clone(), true)),
+            OffsetBuffer::new(offsets.into()),
+            values,
+            nulls,
+        );
+        let times: ArrayRef = Arc::new(arrow_array::Int64Array::from(
+            (0..rows.len() as i64).collect::<Vec<_>>(),
+        ));
+        RecordBatch::try_from_iter([("time", times), ("v", Arc::new(list) as ArrayRef)]).unwrap()
+    }
+
+    /// A list kept as it was read gives what decoding it gives: the same
+    /// cells, gaps and errors, and the same bytes written back out.
+    #[test]
+    fn kept_lists_are_the_decoded_ones() {
+        let numbers = |v: Vec<f64>| Arc::new(Float64Array::from(v)) as ArrayRef;
+        let texts = |v: Vec<&str>| Arc::new(StringArray::from(v)) as ArrayRef;
+        let num_rows = vec![
+            Some(vec![1.5, -0.0]),
+            None,
+            Some(vec![]),
+            Some(vec![0.0]),
+            None,
+            Some(vec![7.0, 8.0, 9.0]),
+            Some(vec![]),
+        ];
+        let text_rows = vec![
+            Some(vec!["a", "", "héllo"]),
+            Some(vec![]),
+            None,
+            Some(vec!["😀"]),
+            Some(vec!["b", "a"]),
+            None,
+            Some(vec!["z"]),
+        ];
+        let dense = vec![Some(vec![1.0]), Some(vec![2.0, 3.0]), Some(vec![])];
+        let batches = [
+            list_batch(&num_rows, numbers, false),
+            list_batch(&text_rows, texts, false),
+            // A null buffer with no null in it is not written back.
+            list_batch(&dense, numbers, true),
+        ];
+        let ipc = |a: &ArrayRef| {
+            let b = RecordBatch::try_from_iter([("v", a.clone())]).unwrap();
+            let mut out = Vec::new();
+            let mut w = FileWriter::try_new(&mut out, &b.schema()).unwrap();
+            w.write(&b).unwrap();
+            w.finish().unwrap();
+            drop(w);
+            out
+        };
+        for batch in &batches {
+            let n = batch.num_rows();
+            // Whole, every slice, and split in two at every row.
+            let mut inputs: Vec<Vec<RecordBatch>> = Vec::new();
+            for from in 0..n {
+                for len in 1..=n - from {
+                    inputs.push(vec![batch.slice(from, len)]);
+                }
+            }
+            for at in 0..=n {
+                inputs.push(vec![batch.slice(0, at), batch.slice(at, n - at)]);
+            }
+            for input in &inputs {
+                let decoded = decode_lists(input, 1, "v").unwrap();
+                let Some(list) = shared_list(input, 1) else {
+                    // Only rows with no item at all are not kept.
+                    assert!(decoded.iter().flatten().all(<[Scalar]>::is_empty));
+                    continue;
+                };
+                let kept = ArrayColumn::from_list(list.clone());
+                // Before any cell is built.
+                assert_eq!(kept.missing_count(), decoded.missing_count());
+                assert_eq!(kept.first_bad_element(), None);
+                for r in 0..kept.len() {
+                    assert_eq!(kept.is_present(r), decoded.get(r).is_some());
+                }
+                let written = list_array("v", &kept).unwrap();
+                let rewritten = list_array("v", &decoded).unwrap();
+                assert_eq!(written.to_data(), rewritten.to_data());
+                assert_eq!(ipc(&written), ipc(&rewritten));
+                // Slices of the kept column, written and read.
+                for from in 0..kept.len() {
+                    for len in 0..=kept.len() - from {
+                        let a = ColumnData::Array(ArrayColumn::from_list(list.clone()))
+                            .slice(from..from + len);
+                        let b = ColumnData::Array(decoded.clone()).slice(from..from + len);
+                        assert_eq!(a.missing_count(), b.missing_count());
+                        let (ColumnData::Array(a), ColumnData::Array(b)) = (a, b) else {
+                            unreachable!()
+                        };
+                        let (wa, wb) = (list_array("v", &a).unwrap(), list_array("v", &b).unwrap());
+                        assert_eq!(wa.to_data(), wb.to_data());
+                        assert_eq!(ipc(&wa), ipc(&wb));
+                        assert_eq!(a, b);
+                    }
+                }
+                // The cells, and what they print as.
+                assert_eq!(kept, decoded);
+                assert_eq!(format!("{kept:?}"), format!("{decoded:?}"));
+                assert_eq!(kept.missing_count(), decoded.missing_count());
+            }
+            // Through the public calls too.
+            let s = TimeSeries::from_arrow("s", std::slice::from_ref(batch), "time").unwrap();
+            let again = TimeSeries::from_arrow("s", &[s.to_arrow().unwrap()], "time").unwrap();
+            assert_eq!(
+                s.column("v").unwrap().data(),
+                again.column("v").unwrap().data()
+            );
+        }
+
+        // A number that is not finite is found where decoding finds it.
+        let bad = vec![
+            Some(vec![1.0]),
+            Some(vec![]),
+            None,
+            Some(vec![]),
+            Some(vec![2.0, f64::INFINITY, f64::NAN]),
+            Some(vec![3.0]),
+        ];
+        let batch = list_batch(&bad, numbers, false);
+        for from in 0..=4 {
+            let input = [batch.slice(from, 6 - from)];
+            let kept = ArrayColumn::from_list(shared_list(&input, 1).unwrap());
+            let decoded = decode_lists(&input, 1, "v").unwrap();
+            assert_eq!(kept.first_bad_element(), Some((4 - from, 1)));
+            assert_eq!(kept.first_bad_element(), decoded.first_bad_element());
+        }
+        let e = TimeSeries::from_arrow("s", &[batch], "time").unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "TimeSeries::from_arrow: column 'v' row 4: array element 1 must be a finite number, string, or boolean"
+        );
+
+        // Lists that have to be decoded: a null item, items under a null
+        // list, and item types other than Float64 and Utf8.
+        let with_null = |v: Vec<f64>| {
+            Arc::new(Float64Array::from(
+                v.into_iter()
+                    .map(|x| (x != 9.0).then_some(x))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef
+        };
+        let batch = list_batch(&[Some(vec![1.0, 9.0])], with_null, false);
+        assert!(shared_list(std::slice::from_ref(&batch), 1).is_none());
+        assert!(TimeSeries::from_arrow("s", &[batch], "time").is_err());
+        let hidden = ListArray::new(
+            Arc::new(Field::new_list_field(DataType::Float64, false)),
+            OffsetBuffer::new(vec![0, 1, 2].into()),
+            numbers(vec![1.0, 2.0]),
+            Some(NullBuffer::from(vec![false, true])),
+        );
+        assert!(canonical_list(&hidden).is_none());
+        let ints = |v: Vec<i32>| Arc::new(Int32Array::from(v)) as ArrayRef;
+        let batch = list_batch(&[Some(vec![1, 2])], ints, false);
+        assert!(shared_list(&[batch], 1).is_none());
+        assert!(shared_list(&[], 1).is_none());
     }
 
     #[test]

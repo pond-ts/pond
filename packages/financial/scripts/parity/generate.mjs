@@ -1,8 +1,8 @@
-// Writes test/fixtures/study-parity.json, calendar-parity.json and
-// catalog-parity.json from the
-// compiled packages.
-// Run after building pond-ts and @pond-ts/financial:
+// Writes test/fixtures/study-parity.json, calendar-parity.json,
+// catalog-parity.json and process-parity.json from the compiled packages.
+// Run after building pond-ts, @pond-ts/process and @pond-ts/financial:
 //   npm run build --workspace=pond-ts
+//   npm run build --workspace=@pond-ts/process
 //   npm run build --workspace=@pond-ts/financial
 //   node packages/financial/scripts/parity/generate.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -13,6 +13,9 @@ import { buildFixture } from './cases.mjs';
 import * as catalog from '../../dist/catalog/index.js';
 import { buildCalendarFixture } from './calendar.mjs';
 import { buildCatalogFixture } from './catalog.mjs';
+import * as proc from '@pond-ts/process';
+import * as bridge from '../../dist/process/index.js';
+import { buildProcessFixture } from './process.mjs';
 
 const oracle = JSON.parse(
   readFileSync(
@@ -40,3 +43,10 @@ const catalogOut = fileURLToPath(
 const described = buildCatalogFixture(catalog);
 writeFileSync(catalogOut, JSON.stringify(described) + '\n');
 console.log(`wrote ${described.studies.length} studies to ${catalogOut}`);
+
+const processOut = fileURLToPath(
+  new URL('../../test/fixtures/process-parity.json', import.meta.url),
+);
+const bridged = buildProcessFixture(pond, proc, bridge);
+writeFileSync(processOut, JSON.stringify(bridged) + '\n');
+console.log(`wrote ${bridged.runs.length} runs to ${processOut}`);

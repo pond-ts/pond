@@ -1,5 +1,9 @@
 # Docs restructure plan
 
+> **Archived 2026-11-17.** Every phase below is done (see Status). Moved here
+> from the repo root `DOCPLAN.md`, which PLAN.md never linked; open docs work
+> lives in PLAN.md's docs section and `docs/plans/PND_DOCS_PLAN.md`.
+
 Restructure the website docs around the concepts a user is trying to
 learn (windowing, triggers, late-data, partitioning) rather than the
 features as they shipped (rolling, aggregate, sample, etc.). Three

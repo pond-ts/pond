@@ -22,7 +22,14 @@
  */
 
 import { int, num } from './params.js';
-import { read, round, stamper } from './folds.js';
+import {
+  firstDefined,
+  lastDefined,
+  read,
+  round,
+  stamper,
+  valueAt,
+} from './folds.js';
 import type { FoldDef, Params } from './types.js';
 
 const source = [{ role: 'source' }] as const;
@@ -406,21 +413,14 @@ export const change: FoldDef = {
   fold: (ctx) => {
     const v = read(ctx);
     const fmt = stamper(ctx, v.length);
-    let first = -1;
-    for (let i = 0; i < v.length; i += 1) {
-      if (v.defined(i)) {
-        first = i;
-        break;
-      }
-    }
+    const first = firstDefined(v);
     if (first === -1) return { first: null, last: null };
-    let last = v.length - 1;
-    while (!v.defined(last)) last -= 1;
+    const last = lastDefined(v);
     const a = v.value(first);
     const b = v.value(last);
     return {
-      first: { value: round(a), at: fmt(ctx.at(first)) },
-      last: { value: round(b), at: fmt(ctx.at(last)) },
+      first: valueAt(ctx, v, fmt, first),
+      last: valueAt(ctx, v, fmt, last),
       change: round(b - a),
       percent: a === 0 ? null : round((b / a - 1) * 100),
     };

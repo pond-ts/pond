@@ -31,6 +31,7 @@ import {
   type GraphJson,
   type Node,
   type Outlet,
+  type ShapeHow,
 } from '../dist/index.js';
 import type { LiveSeries, TimeSeries } from 'pond-ts';
 
@@ -147,6 +148,11 @@ fluent.outputs({
 px.scale({ as: 'bad-param', by: '4' });
 // @ts-expect-error Params come from the selected op only.
 px.scale({ as: 'bad-name', period: 20 });
+// `shape`'s `how` keeps its reducer names in the emitted declarations.
+const how: ShapeHow = 'minMaxFirstLast';
+fluent.outputs({ line: scaled.shape({ points: 20, how }) });
+// @ts-expect-error `how` is one of core bin's reducer names, not any string.
+scaled.shape({ how: 'sum' });
 // @ts-expect-error Multi-output suffixes come from the registry.
 band.output('Middle');
 // @ts-expect-error The second input role is required and named.

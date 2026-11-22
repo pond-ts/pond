@@ -58,10 +58,19 @@ at the line's height.
 | `labelSide`     | `'left' \| 'right'`       | `'left'`    | Which side the near-line label chip sits.                                             |
 | `labelPosition` | `'center' \| 'above'`     | `'center'`  | `center` rides on the line; `above` sits just on top of it.                           |
 | `indicator`     | `boolean`                 | `false`     | Also pin `value` to its **y-axis** as an on-axis pill.                                |
+| `lineWidth`     | `number`                  | `1`         | Stroke width in px. Wins over the theme role's / register's `lineWidth`.              |
 | `onChange`      | `(value: number) => void` | —           | Editable: drag vertically to report a new `value`.                                    |
 
 Plus the shared interaction props. Like `Marker`, the `indicator` pill shows
 the formatted `value`, never the `label`.
+
+**Off the y-range.** When the axis is panned or zoomed so that `value` sits
+outside the row's visible y-range (or `value` is past a fixed `min`/`max`),
+the baseline draws neither its line nor its label, so no chip floats outside
+the row; both come back when the level returns. A level near the edge keeps its
+label inside the row: the chip stops at the edge instead of riding the line
+out. If you want an off-range level still flagged, opt in to `indicator`: the
+axis pill stays pinned at the nearest edge, showing the value.
 
 ## `Marker`
 
@@ -76,6 +85,7 @@ A vertical line at an x position (a time, a distance, a lap boundary).
 | `at`        | `number`               | —       | x position in axis units — epoch ms on a time axis, the value on a value axis.              |
 | `label`     | `string \| false`      | auto    | Chip label. Omit ⇒ auto-label with the shared x formatter; `false`/`''` ⇒ no chip.          |
 | `indicator` | `boolean`              | `false` | Also pin `at` to the **x-axis** as an on-axis pill (the axis-edge counterpart of the chip). |
+| `lineWidth` | `number`               | `1`     | Stroke width in px. Wins over the theme role's / register's `lineWidth`.                    |
 | `onChange`  | `(at: number) => void` | —       | Editable: drag the line to report a new `at` (controlled — wire it back).                   |
 
 Plus the shared interaction props. Note the [indicator law](./the-annotation-model.mdx#pills-vs-flags--the-indicator-law):
@@ -86,11 +96,74 @@ the `indicator` pill always shows the formatted `at`, never the custom `label`
 
 All three take an optional **`role`** — a name into the theme's
 `annotation.roles` map — to restyle that mark (any of `color`, `fillOpacity`,
-`dash` and `depth`) while staying in the annotation register. The built-in
-themes ship `wash` (quiet, behind data) and `argument` (stays legible at rest).
-See
+`dash`, `lineWidth` and `depth`) while staying in the annotation register.
+The built-in themes ship `wash` (quiet, behind data) and `argument` (stays
+legible at rest). See
 [Roles within the register](./the-annotation-model.mdx#roles-within-the-register).
 There is no per-mark colour prop; the theme owns the palette.
+
+## Stronger reference lines
+
+An inert mark (`selectable={false}`) always draws at depth level 3, which is
+`depth[2]` of the theme's `annotation.depth` ramp — `0.4` by default. To draw
+one reference line near full strength, don't raise `depth[2]`: that dims or
+lifts every annotation on every chart. Give the line a **role** with its own
+ramp instead. An inert mark reads the third value of its role's `depth`, and
+every mark without that role keeps the register's ramp.
+
+The built-in themes already ship one: `argument` rests at `0.85`.
+
+```tsx
+<Baseline value={target} label="target" role="argument" selectable={false} />
+```
+
+Or define your own role, with exactly the strength you want:
+
+```tsx
+const theme: ChartTheme = {
+  ...defaultTheme,
+  annotation: {
+    ...defaultTheme.annotation!,
+    roles: {
+      ...defaultTheme.annotation!.roles,
+      reference: { depth: [1, 0.85, 0.8] },
+    },
+  },
+};
+// …
+<Baseline value={limit} role="reference" selectable={false} />;
+```
+
+That baseline draws at `0.8`; a plain inert baseline beside it still draws at
+`0.4`. Hover and selection don't apply to an inert mark, so only the role's
+third value matters for it (the first two apply if a selectable mark uses the
+same role).
+
+**How opacity combines with depth.** The depth value is the line's SVG
+`opacity`, and there is no per-mark opacity prop. Any other opacity
+multiplies with it: an alpha in the colour (`rgba(…)` or `#rrggbbaa`) or a CSS
+`opacity` on an element around the chart. A colour at alpha `0.6` on an inert
+line at depth `0.4` draws at `0.6 × 0.4 = 0.24`. So keep the colour opaque and
+set the strength in the role's `depth`. Depth dims only the line: the label
+chip's text is drawn in the colour as given.
+
+A baseline casts no guide on other rows. A marker's guides on other rows are
+drawn the same faint dashed way for every mark, in the register colour, so a
+strong role does not change them.
+
+## Line width
+
+`Baseline` and `Marker` draw a 1px line by default. Set `lineWidth` (px) on the
+mark, or `lineWidth` on a theme role (`annotation.roles[role].lineWidth`) or on
+the whole register (`annotation.lineWidth`). The mark's prop wins over the
+role, and the role wins over the register. The invisible grab area stays at
+least as wide as the line. Region edges, zone boundaries and the faint guides a
+mark casts on other rows stay 1px.
+
+```tsx
+<Baseline value={200} label="1px" />
+<Baseline value={180} label="3px" lineWidth={3} />
+```
 
 ## Auto-labels and suppression
 

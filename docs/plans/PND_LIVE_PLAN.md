@@ -117,6 +117,13 @@ reduce is still held by its one queued microtask until the end). Test:
 
 ### [PND-EVICTSPLICE] — done 2026-10-28
 
+(Update 2026-11-13: of the three buffers [PND-EVICTDEQUE] names, `LiveView`
+got its start index with [PND-LVWIN] (#761, below): every view eviction,
+the mirror of a source's `'evict'` included, advances `#head` and compacts
+only once the evicted prefix outgrows the view. The `drop` / `reorder` row
+backing (`live-storage.ts`) and rolling history (`live-history.ts`) still
+use `dropFront` / `removeFront`, so [PND-EVICTDEQUE] stays open for them.)
+
 Found timing pond-rs R3 step 3 against pond-ts: views on a
 `maxEvents: 10_000` series took ~38 µs a push each (three `diff`-style views
 on 1M pushes: 115 s). Every per-event buffer dropped its oldest events with
@@ -195,6 +202,15 @@ in the type but throws at runtime — design it as fused-rolling-with-one-entry)
 `live.timeRange()`, `live.eventRate()` on `LiveSeries`, the
 `count()`-vs-`length` naming decision. Tier 3 (range-slicing parity +
 `window`-vs-`tail` naming) waits until Tier 1 usage shapes it.
+
+**Checked 2026-11-13: most of that Tier 1 list had shipped in v0.16.0**
+(#122, "buffer-as-window Tier 1"): `live.reduce(mapping, options)`
+returning a `LiveReduce`, and `LiveSeries.timeRange()` /
+`LiveSeries.eventRate()`. Still open: the `'buffer'` window key in a fused
+rolling mapping, which `live-fused-rolling.ts` still refuses ("reserved
+for live.reduce(); not yet implemented"), and the naming call (`LiveView`
+has `count()` and `length`, `LiveSeries` only `length`). PLAN.md now lists
+only those and Tier 3.
 
 ### [PND-TRIG] — Trigger taxonomy expansion
 

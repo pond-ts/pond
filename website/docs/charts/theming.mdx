@@ -93,7 +93,7 @@ so a chart always renders even for an unnamed identifier.
 | Slot                                                         | Role-keyed? | Style shape                                                                                                                    |
 | ------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `line`                                                       | yes         | `{ color, width, dash? }`                                                                                                      |
-| `area`                                                       | yes         | `{ color, width, fill, fillOpacity }` (`fill` must be **CSS hex**)                                                             |
+| `area`                                                       | yes         | `{ color, width, fill, fillOpacity, dash? }` (`fill` must be **CSS hex**; `dash` dashes the outline only)                      |
 | `band`                                                       | yes         | `{ fill, opacity }`                                                                                                            |
 | `scatter`                                                    | yes         | `{ color, radius, outline, outlineWidth, selectedOutline, selectedWidth, label }`                                              |
 | `bar`                                                        | yes         | `{ fill, opacity, highlight, gap, minWidth, outlineWidth, hover?, dimmed?, emphasisOpacity?, selectedOutline?, bands? }`       |
@@ -101,7 +101,7 @@ so a chart always renders even for an unnamed identifier.
 | `candle`                                                     | yes         | `{ rising:{body,wick}, falling:{body,wick}, neutral?:{…}, bodyWidth?, wickWidth }` — a direction **pair**, not a single colour |
 | `axis`                                                       | no          | `{ label, grid, gridDash, sessionDivider?, band?, title? }`                                                                    |
 | `font`                                                       | no          | `{ family, size }`                                                                                                             |
-| `background?` / `cursor?` / `chip?` / `gap?` / `annotation?` | no          | `string` / `string` / `{ background }` / `{ connectorOpacity }` / `{ color, fillOpacity, depth:[n,n,n] }`                      |
+| `background?` / `cursor?` / `chip?` / `gap?` / `annotation?` | no          | `string` / `string` / `{ background }` / `{ connectorOpacity }` / `{ color?, fillOpacity?, depth?, … }`                        |
 | `brush?`                                                     | no          | `{ fill, edge? }` — the drag band (see [below](#bar-states))                                                                   |
 
 Two built-ins ship: **`defaultTheme`** (a neutral light base) and
@@ -133,6 +133,41 @@ const darkTheme: ChartTheme = {
 Ship your own theme with your app — `@pond-ts/charts` provides `defaultTheme` as
 a neutral base plus the `ChartTheme` type; per-brand themes live in your code,
 not the library.
+
+### The annotation register: set only what you change
+
+Every field of `annotation` is optional. Whatever your theme leaves out comes
+from pond's **`defaultAnnotation`**: a turquoise `color` (`#14b8a6`), region
+fill at `fillOpacity` 0.1, and the `[1, 0.7, 0.4]` depth ramp. A theme with no
+`annotation` at all draws in exactly that. So a theme that only adds roles, or
+only changes the depth ramp, doesn't copy the rest:
+
+```ts
+import { defaultTheme, type ChartTheme } from '@pond-ts/charts';
+
+const theme: ChartTheme = {
+  ...defaultTheme,
+  // colour, fill and depth come from `defaultAnnotation`
+  annotation: { roles: { target: { dash: [6, 4] } } },
+};
+```
+
+The marks, the guides a mark casts on other rows, the x-axis pills of
+`<Marker indicator>` and the list's selected-row edge all fill from that one
+object, so they can't drift apart. `defaultAnnotation` is exported if you need
+its values, for example to match a colour elsewhere in your app:
+
+```ts
+import { defaultAnnotation } from '@pond-ts/charts';
+
+const markColor = theme.annotation?.color ?? defaultAnnotation.color;
+```
+
+`defaultTheme` sets its own register (an amber `color` plus the `wash` and
+`argument` roles), so `{ ...defaultTheme }` keeps that. Replacing
+`annotation` with a partial object, as above, fills from `defaultAnnotation`,
+not from `defaultTheme.annotation`; spread `...defaultTheme.annotation` first
+if you want to keep the amber register.
 
 ## Interaction states, and the channel rule
 

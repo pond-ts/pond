@@ -80,6 +80,12 @@ dependency** (it had none — the plan's L4 "fit is a name with no home").
 Still to write: the **top-level Introduction** platform story (§5a/§5c), which
 is the remaining narrative gap.
 
+(Checked 2026-11-13: the branch above has merged, as f5f2c8ff on
+2026-07-25, and the core pages it wrote are live under `pond-ts/`. The
+top-level `website/docs/introduction.mdx` still carries the
+`TODO(core-IA restructure)` note asking for the platform story, so the
+remaining gap above stands.)
+
 ### [PND-APIREF] — In-site API reference completion
 
 The pilot replaced `/api` typedoc sub-sites for core + charts. Remaining

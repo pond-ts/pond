@@ -306,6 +306,14 @@ and with `NaN` on 0.74 and on main. Estela can delete its two converters.
 moving time from samples; per-length sections. Cropping a swim is done in
 [PND-FITCUT].
 
+**Outcome (checked 2026-11-13): all four shipped**, each in its own entry in
+this file: [PND-FITSTATS] (item 1), [PND-FITSWIM] (2), [PND-FITFILES] (3)
+and [PND-FITCUT] (4), released in 0.76.0 (CHANGELOG). The same wave also
+brought [PND-FITCLEAN], [PND-FITOUTLINE], [PND-FITBREAKS] and
+[PND-FITLAPGROUPS] across. What each left undone is written under its own
+entry; none is tracked on PLAN.md, whose [PND-FITESTELA] entry was removed
+on 2026-11-13.
+
 ## [PND-FITLAPGROUPS] — lap groups by type and name (part of [PND-FITESTELA])
 
 **Built.** The grouping half of Estela's `ui/lapSummaryData.ts`: which laps go
@@ -323,6 +331,26 @@ keys could, once types are free strings); repeated lap ids throw;
 (`fastestLapMps`, `highestLapHr`) instead of Estela's column ids. Stays in
 Estela: the column sets, narrowing steps and chart-channel mapping (display),
 and the user's interval type list with its colours.
+
+## [PND-FITLEFT] — leftovers from [PND-FITESTELA]
+
+Opened 2026-11-17, when a check of the breakout plans against PLAN.md found
+the "Not done" notes under the [PND-FITESTELA] parts tracked nowhere. Each
+was checked against `main`:
+
+- **Still open — outline vs summary polyline** ([PND-FITOUTLINE]): the
+  summary's `polyline` still comes from the private metres-based
+  `geo.simplify` (`packages/fit/src/summary/index.ts`), not the outline code.
+  Output is unchanged either way; folding the two is a tidy-up.
+- **Still open — a split inside a pool length** ([PND-FITCUT]): a lap split
+  that falls inside a length is not moved to the length's edge; nothing in
+  `packages/fit/src/edit` snaps it.
+- **Done since — editing an `Activity`** ([PND-FITCUT] said the edit worked
+  only on the imported activity): `activity.edit({ crop, laps, parts })`
+  shipped with [PND-FITAPI] (#898).
+- **Done since — swim time inside a range or lap, and per-length sections**
+  ([PND-FITSWIM]): any section now has a `swimming` clock
+  (`activity/stats.ts`), and `activity.lengths` gives one section per length.
 
 ## [PND-FITAPI] — records, sections, analysis
 
@@ -352,3 +380,50 @@ only (running and swimming load need their own models); pace zones from a
 `computePower` did, until checked against real numbers. Not yet: `edit` in
 durations with parts (RFC §17), `views`, `explain`, and the sport depth in RFC
 §14–§16.
+
+**Outcome (checked 2026-11-13): shipped in 0.76.0.** The four pieces the
+next release waited on (`readActivity`, `stats()` over any section, the
+clocks, the typed pool swim) and `analyze` came in #892–#895 (merged
+together as #896). The "not yet" list above followed in #898:
+`section.series.<channel>` (with `toTimeSeries()`), `activity.route`,
+`activity.edit({ crop, laps, parts })` in durations on the original,
+`activity.explain(quantity)`, and
+`@pond-ts/fit/views` (`chartData`, `mapData`), with docs pages for series,
+views, editing and explaining. The sport depth of RFC §14–§16 is
+[PND-FITDEPTH] below. The PLAN.md entry was removed on 2026-11-13.
+
+## [PND-FITDEPTH] — the sport layers after 0.76
+
+pjm17971's first-release lists in [docs/rfcs/fit-api.md](../rfcs/fit-api.md)
+§14.8, §15.8 and §16.9: one-activity work first, on any `Section`, then
+`TrainingHistory`. This section was opened on 2026-11-13 to hold the shipped
+half, which until then was written only in PLAN.md.
+
+**Built (2026-11-07, PRs #916–#921; CHANGELOG `[Unreleased]`):**
+
+- **Aerobic efficiency and decoupling** (#916, RFC §14.1, §15.2):
+  `section.analyze({ athlete }).aerobic` with `efficiency({ output })`,
+  `efficiencyFactor` and `decoupling({ output, method: 'halves' })`, with
+  `cautions` so an interval session doesn't read as a steady effort.
+- **Distributions and coasting** (#917, RFC §14.1):
+  `analysis.distribution(channel, { binWidth, time })`, binned with pond's
+  `byColumn`, and `analysis.coasting`.
+- **Running dynamics** (#918, RFC §15.7): `section.dynamics` (cadence in
+  steps per minute, step length, vertical ratio, ground contact time,
+  vertical oscillation), each with its `source`.
+- **Swim stroke metrics** (#919, RFC §16.4): `analyze().technique` over the
+  pool lengths in a section.
+- **Efforts and recoveries** (#920, RFC §14.2, §15.3, §16.3):
+  `analysis.efforts.fromLaps()` and `efforts.detect(…)`, with `compare()`.
+- **Grade-adjusted pace** (#921, RFC §15.1):
+  `section.pace.adjustedForGrade()`, the model named in the result. ACSM
+  running is the default for runs, Minetti 2002 by name (and for walks and
+  hikes); `aerobic` takes `output: 'grade-adjusted-speed'`. Why ACSM is the
+  run default: on a real 50 km trail race Minetti read descents 2 to 8
+  min/mi slower than Strava's grade-adjusted pace while ACSM stayed within
+  about a minute. pjm17971 chose to ship both (2026-11-07).
+
+**Left (on PLAN.md):** `TrainingHistory` (records, season curve, weekly
+volume, load timeline), on per-activity digests. Each activity's load
+records the method that made it (power TSS, heart-rate load, none), since
+devices come and go across a history (pjm17971, 2026-11-07).

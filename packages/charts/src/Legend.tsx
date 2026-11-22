@@ -78,6 +78,9 @@ function SwatchGlyph({ spec }: { spec: SwatchSpec }): ReactNode {
       );
     }
     case 'area':
+      // A dashed outline takes the line swatch's three canonical dashes, for
+      // the same reason (the layer's own cadence aliases at 20px); the fill
+      // stays whole, as it does on the plot.
       return (
         <g>
           <rect
@@ -88,14 +91,22 @@ function SwatchGlyph({ spec }: { spec: SwatchSpec }): ReactNode {
             fill={spec.fill}
             fillOpacity={spec.fillOpacity}
           />
-          <line
-            x1={0}
-            y1={3}
-            x2={w}
-            y2={3}
-            stroke={spec.line}
-            strokeWidth={1.5}
-          />
+          {spec.dash && spec.dash.length > 0 ? (
+            <g stroke={spec.line} strokeWidth={1.5} strokeLinecap="butt">
+              <line x1={0} y1={3} x2={4.6} y2={3} />
+              <line x1={7.7} y1={3} x2={12.3} y2={3} />
+              <line x1={15.4} y1={3} x2={w} y2={3} />
+            </g>
+          ) : (
+            <line
+              x1={0}
+              y1={3}
+              x2={w}
+              y2={3}
+              stroke={spec.line}
+              strokeWidth={1.5}
+            />
+          )}
         </g>
       );
     case 'band':

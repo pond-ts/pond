@@ -898,3 +898,271 @@ describe('annotation dash (register + per-role)', () => {
     ]);
   });
 });
+
+describe('Baseline / Marker lineWidth [PND-BASELINEWIDTH]', () => {
+  /** A register with no `lineWidth` anywhere except one role — so the default
+   *  path is exercised against a theme that leaves the slot absent. */
+  const theme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: { thick: { lineWidth: 4 } },
+    },
+  };
+
+  /** Render one mark and report its line's stroke-width and the grab rect's
+   *  extent across the line (height for a baseline, width for a marker). */
+  const draw = (child: ReactNode, t: ChartTheme = theme) => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={t}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const line = container.querySelector('svg line');
+    const hit = container.querySelector('svg rect[fill="transparent"]');
+    const out = {
+      width: line?.getAttribute('stroke-width'),
+      hitH: Number(hit?.getAttribute('height')),
+      hitW: Number(hit?.getAttribute('width')),
+    };
+    unmount();
+    return out;
+  };
+
+  it('defaults to 1px when neither prop, role nor register sets it', () => {
+    expect(draw(<Baseline value={50} label={false} />).width).toBe('1');
+    expect(draw(<Marker at={2} label={false} />).width).toBe('1');
+  });
+
+  it('the lineWidth prop sets the stroke-width', () => {
+    expect(draw(<Baseline value={50} label={false} lineWidth={3} />).width) //
+      .toBe('3');
+    expect(draw(<Marker at={2} label={false} lineWidth={3} />).width) //
+      .toBe('3');
+  });
+
+  it('a role sets it, and the prop wins over the role', () => {
+    expect(draw(<Baseline value={50} label={false} role="thick" />).width) //
+      .toBe('4');
+    expect(
+      draw(<Baseline value={50} label={false} role="thick" lineWidth={2} />)
+        .width,
+    ).toBe('2');
+    expect(draw(<Marker at={2} label={false} role="thick" />).width).toBe('4');
+  });
+
+  it('a role wins over the register lineWidth', () => {
+    const base: ChartTheme = {
+      ...theme,
+      annotation: { ...theme.annotation!, lineWidth: 2 },
+    };
+    expect(draw(<Baseline value={50} label={false} />, base).width).toBe('2');
+    expect(
+      draw(<Baseline value={50} label={false} role="thick" />, base).width,
+    ).toBe('4');
+  });
+
+  it('keeps the grab area at least as wide as the drawn line', () => {
+    // The 5px-each-side pad covers thin lines; a thicker line widens it.
+    expect(draw(<Baseline value={50} label={false} />).hitH).toBe(10);
+    expect(draw(<Baseline value={50} label={false} lineWidth={3} />).hitH) //
+      .toBe(10);
+    expect(draw(<Baseline value={50} label={false} lineWidth={16} />).hitH) //
+      .toBe(16);
+    expect(draw(<Marker at={2} label={false} lineWidth={16} />).hitW).toBe(16);
+  });
+});
+
+describe('a stronger inert line through a role [PND-INERTLINESTRENGTH]', () => {
+  // Built from scratch (not defaultTheme): the register's own ramp rests inert
+  // marks at 0.4, and one role carries a near-full ramp of its own.
+  const theme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: { reference: { depth: [1, 0.85, 0.8] } },
+    },
+  };
+
+  /** Render `children` in one row (y axis `[0, 100]` over 120 px, so value v
+   *  draws at y = 120 − 1.2·v) and return each SVG line's opacity, keyed by
+   *  `y<px>` for a horizontal line, `x` for the (single) vertical one. */
+  const opacities = (children: ReactNode, t: ChartTheme = theme) => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={t}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {children}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const out: Record<string, number> = {};
+    for (const l of Array.from(container.querySelectorAll('svg line'))) {
+      const y1 = l.getAttribute('y1');
+      const y2 = l.getAttribute('y2');
+      const key = y1 === y2 ? `y${y1}` : 'x';
+      out[key] = Number(l.getAttribute('opacity'));
+    }
+    unmount();
+    return out;
+  };
+
+  it("an inert baseline with the role rests at the role's depth[2]", () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="reference"
+          selectable={false}
+          label={false}
+        />,
+      ),
+    ).toEqual({ y60: 0.8 });
+  });
+
+  it('every other annotation keeps the base ramp', () => {
+    expect(
+      opacities(
+        <>
+          <Baseline
+            value={50}
+            axis="a"
+            role="reference"
+            selectable={false}
+            label={false}
+          />
+          <Baseline value={25} axis="a" selectable={false} label={false} />
+          <Baseline value={75} axis="a" label={false} />
+          <Marker at={2} selectable={false} label={false} />
+        </>,
+      ),
+    ).toEqual({ y60: 0.8, y90: 0.4, y30: 0.4, x: 0.4 });
+  });
+
+  it('inert ignores hover and selection, so the role alpha holds', () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="reference"
+          selectable={false}
+          selected
+          hovered
+          label={false}
+        />,
+      ),
+    ).toEqual({ y60: 0.8 });
+  });
+
+  it("defaultTheme's argument role gives a near-full inert line", () => {
+    expect(
+      opacities(
+        <Baseline
+          value={50}
+          axis="a"
+          role="argument"
+          selectable={false}
+          label={false}
+        />,
+        defaultTheme,
+      ),
+    ).toEqual({ y60: 0.85 });
+  });
+});
+
+describe('Baseline off the y-range [PND-BASELINELABELCULL]', () => {
+  // `renderAnn`: a 120 px row over a [0, 100] axis, so y = 120 − 1.2·value.
+  const H = 120;
+  const chipH = defaultTheme.font.size * 1.5;
+
+  /** The baseline's drawn line y (or null), its chip's `top` in px (or null),
+   *  and whether its hit rect and indicator pill are mounted. */
+  const look = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const line = container.querySelector('svg line');
+    const chip = within(container).queryByText('lvl') as HTMLElement | null;
+    const out = {
+      lineY: line ? Number(line.getAttribute('y1')) : null,
+      chipTop: chip ? parseFloat(chip.style.top) : null,
+      hit: container.querySelector('svg rect[fill="transparent"]') !== null,
+    };
+    unmount();
+    return out;
+  };
+
+  it('draws no line and no label for a level above the domain', () => {
+    expect(look(<Baseline value={150} axis="a" label="lvl" />)) //
+      .toMatchObject({ lineY: null, chipTop: null });
+  });
+
+  it('draws no line and no label for a level below the domain', () => {
+    expect(look(<Baseline value={-20} axis="a" label="lvl" />)) //
+      .toMatchObject({ lineY: null, chipTop: null });
+  });
+
+  it('keeps the hit area mounted off-row (a drag past the edge holds)', () => {
+    expect(look(<Baseline value={150} axis="a" label="lvl" />).hit).toBe(true);
+  });
+
+  it('a level in the row draws its line and label as before', () => {
+    expect(look(<Baseline value={50} axis="a" label="lvl" />)).toMatchObject({
+      lineY: 60,
+      chipTop: 60,
+    });
+  });
+
+  it('a level on the domain edge still draws, its label clamped inside', () => {
+    const top = look(<Baseline value={100} axis="a" label="lvl" />);
+    expect(top).toMatchObject({ lineY: 0, chipTop: chipH / 2 });
+    const bottom = look(<Baseline value={0} axis="a" label="lvl" />);
+    expect(bottom).toMatchObject({ lineY: H, chipTop: H - chipH / 2 });
+    // `above` hangs the chip's bottom on the line, so its top bound is chipH.
+    expect(
+      look(<Baseline value={100} axis="a" label="lvl" labelPosition="above" />)
+        .chipTop,
+    ).toBe(chipH);
+  });
+
+  it('every label it draws stays inside the row', () => {
+    for (const value of [-50, -1, 0, 1, 50, 99, 100, 101, 200]) {
+      for (const labelPosition of ['center', 'above'] as const) {
+        const { chipTop } = look(
+          <Baseline
+            value={value}
+            axis="a"
+            label="lvl"
+            labelPosition={labelPosition}
+          />,
+        );
+        if (chipTop === null) continue;
+        const chipTopEdge =
+          labelPosition === 'above' ? chipTop - chipH : chipTop - chipH / 2;
+        expect(chipTopEdge).toBeGreaterThanOrEqual(0);
+        expect(chipTopEdge + chipH).toBeLessThanOrEqual(H);
+      }
+    }
+  });
+
+  it('the opt-in indicator pill stays pinned at the nearest edge', () => {
+    const { container, unmount } = renderAnn(
+      <Baseline value={150} axis="a" label={false} indicator />,
+    );
+    expect(within(container).queryByText('150')).not.toBeNull();
+    unmount();
+  });
+});

@@ -127,7 +127,7 @@ breakout plan. Plan:
   to what PR #634's body claimed. Fix: slice from the already-decimated
   polyline (or reuse buffers across frames), plus
   `scripts/perf-trace-sweep.mjs` and a before/after table. Not written as of
-  v0.70.0.
+  v0.76.0.
 
 - **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
   Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to
@@ -262,9 +262,9 @@ breakout plan. Plan:
   `selectionMode` and the `snapToClosest | snapToClosestSelected` prop —
   re-decide whether either is still wanted now that `<MultiSelector>` exists.
   RFC: [selection.md](docs/rfcs/selection.md).
-- **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
-  px `offset` for same-x pairs, line-only shape. (Selection `id` and the
-  crosshair snap are done — see the breakout plan.)
+- **[PND-BOXPLT]** — Finish BoxPlot: a line-only / stem-without-caps
+  `shape` (today `whisker`, `solid` or `none`). The rest of the ticket has
+  shipped (write-up in the breakout plan).
 - **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
   its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
   centre: with the solid shape, ink and hit are both ~50px wide everywhere
@@ -297,14 +297,31 @@ yScale, mode)` and uses `mode` to let hover claim the whole slot while
 - **[PND-AXES]** — Axis backlog (label align, custom ticks, scale variety) +
   the deferred value-axis naming follow-up. (Relative/elapsed time is done —
   `<ChartContainer origin>`; **symlog is done** — `<YAxis scale="symlog"
-linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
-  **declined 2026-08-11** — the reporting consumer dropped dual mirrored axes
-  across their whole set, so the ask has no consumer; reasoning in the breakout
-  plan.)
+linearWindow>`, [PND-SYMLOG].)
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the
   `ValueSeries` algebra only when a second consumer (geo) pulls.
 - **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var
   naming convention, no new plumbing).
+- **[PND-YFIT]** — `<YAxis>` can only fit the whole series, never the visible
+  window, so a narrow band (a 20-period Bollinger on 150k bars) is a few pixels
+  tall and zooming in can't recover it. The process demo works around it with
+  ~40 lines of its own (`apps/process-demo/web/Viz.tsx`, `useVisibleExtent`).
+  Likely shape: opt-in `<YAxis fit="visible">`, default unchanged; open
+  questions (pan stability, readout) in the breakout plan.
+- **[PND-LOGTICK-N18]** — Unexplained sixth log-axis label on Node 18 (CI only;
+  blocked the v0.56.0 publish twice). The test was loosened to a subsequence
+  check, which is a workaround, not a diagnosis. Next: run the charts suite on
+  Node 18 and dump every digit-bearing label to see whether the tick selector
+  depends on the environment.
+- **[PND-HEATLABEL]** — Heat map leftovers: the cell's value drawn in the cell
+  when it fits (text colour must stay readable at both ends of the ramp), and
+  smooth colour instead of steps if a consumer asks. (The grouped two-level x
+  axis it also listed belongs to [PND-AXES].)
+- **[PND-AREAFADE]** — When an area's zero line is off the plot, start the
+  colour fade at the real zero line rather than the clamped edge, so the fill
+  runs off the bottom instead of fading out at it. Raised with the owner when
+  the baseline stopped widening the axis (2026-10-08); not decided. Gradient
+  fill only: a solid fill (`AreaStyle.flatFill`) has no fade to anchor.
 - **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
   charts layers take only `TimeSeries`, forcing a fresh per-tick handle
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
@@ -329,20 +346,18 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   `boundaries = []` default (defeats the M4 cache for direct callers)
   before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
-  (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
-  fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
-  Line/Area/Band, plus core `offsetTime`; what remains is the **bar-count**
-  form below, which differs across a session break. `ichimoku`
-  now ships its spans keyed to the bar they are computed from and
-  `ichimokuOffsets` says how far to draw them (+26 forward, chikou −26
-  back); Alligator / Gator would use the same lever. Charts needs (a)
-  x-domain padding measured in **bars** past the last datum and (b) a
-  per-layer `xOffsetBars` — trivial on a daily grid, calendar arithmetic
-  intraday (it lands on `scaleTradingTime`) — and (c) a `BandChart` mode
-  that fills between two _crossing_ columns with the colour flipping by
-  which is on top (the cloud; generally useful for price-vs-MA shading).
-  Data side is done; this is the charts half. Breakout:
-  `docs/plans/PND_CHARTS_PLAN.md`.
+  (the assessment's **C2**), plus a crossing-band fill (**C3**). The
+  fixed-time half (`xOffset`, core `offsetTime`) has shipped (write-up in
+  the breakout plan); what remains is the **bar-count** form, which differs
+  across a session break. `ichimokuOffsets` says how far to draw Ichimoku's
+  spans (+26 forward, chikou −26 back); Alligator / Gator would use the same
+  lever. Charts needs (a) x-domain padding measured in **bars** past the
+  last datum and (b) a per-layer `xOffsetBars` — trivial on a daily grid,
+  calendar arithmetic intraday (it lands on `scaleTradingTime`) — and (c) a
+  `BandChart` mode that fills between two _crossing_ columns with the
+  colour flipping by which is on top (the cloud; generally useful for
+  price-vs-MA shading). Data side is done; this is the charts half.
+  Breakout: `docs/plans/PND_CHARTS_PLAN.md`.
 - **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
   record the owner asked for (confirm still wanted).
 - **[PND-APIREV-REST]** — What the 2026-08 API review left open after
@@ -372,30 +387,22 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
 
 ### Time zones
 
-Two asks, in order: an **arbitrary IANA zone on the chart time axis** (ticks
-on that zone's midnights / Mondays / month starts, labels, bands, grid and
-cursor readouts all in it — today everything is runtime-local with no knob),
-and **aggregations in that zone** (`Sequence.calendar(unit, { timeZone })`
-already buckets day / week / month DST-correctly in batch; the gaps are
-`quarter` / `year`, unit validation, the live path, and the zone being
-unrecoverable from the output). Design: a zone is a parameter, never state on
-`Time` / `TimeRange` / `Interval`; **one** zone-arithmetic implementation in
-core, consumed by charts, so the bucket `aggregate` used and the tick that
-labels it are the same instant; defaults do not move (core UTC, charts
-viewer-local); the d3 specifier strings stay the format API. Plan:
+Two asks, in order: an **arbitrary IANA zone on the chart time axis** and
+**aggregations in that zone**. Phase 1 shipped both on 2026-09-13
+(`TimeZone`, `quarter` / `year` calendar units, `<ChartContainer timeZone>`,
+`TradingCalendar.timeZone`; outcomes in the breakout plan). Design: a zone
+is a parameter, never state on `Time` / `TimeRange` / `Interval`; **one**
+zone-arithmetic implementation in core, consumed by charts, so the bucket
+`aggregate` used and the tick that labels it are the same instant; defaults
+do not move (core UTC, charts viewer-local); the d3 specifier strings stay
+the format API. What is left is Phase 2. Plan:
 [PND_TIMEZONE_PLAN.md](docs/plans/PND_TIMEZONE_PLAN.md).
 
-- **Phase 1 shipped 2026-09-13** — [PND-TZCAL] (#728: `TimeZone`,
-  `quarter` / `year`, unit validation), [PND-TZAXIS] + [PND-TZFIN] (#732:
-  `<ChartContainer timeZone>`, `<XAxis timeZone>` for a second strip in
-  another zone, `TradingCalendar.timeZone`), [PND-TZTEST] (#721 Sydney CI
-  leg + #733 non-UTC operator sweep), [PND-TZDOCS] (docs PR). Outcomes and
-  the decisions the build settled are in the breakout plan.
 - **Phase 2, consumer-gated:** **[PND-TZLIVE]** calendar sequences on
-  `LiveAggregation` / `Trigger.clock` (today a `TypeError`); **[PND-TZFLOW]**
-  the zone flows from the sequence to the aggregate's output so the chart can
-  default to it; **[PND-TZDAYGRID]** sub-day grids anchored at zone-local
-  midnight.
+  `Trigger.clock` (still refused; live `aggregate` takes them since #844);
+  **[PND-TZFLOW]** the zone flows from the sequence to the aggregate's
+  output so the chart can default to it; **[PND-TZDAYGRID]** sub-day grids
+  anchored at zone-local midnight.
 
 ### Docs site, landing, and API reference
 
@@ -456,7 +463,8 @@ per-task reasoning, deferred alternatives).
     Write-up and next steps:
     [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
     harness in `docs/adoption/cold-start/`. [PND-PARTCOL] (the library friction
-    it surfaced) shipped; re-run of arms C/D against the fix pending.
+    it surfaced) shipped, and run 1b re-ran arms C/D against a local build of
+    the fix; a re-run against the published package is pending.
 - **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
   danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
   index phrased the way an agent receives the job. Source:
@@ -578,95 +586,38 @@ Not a commitment. Red-team it before anything commits to it.
 of pond's core and financial studies, for agents writing Rust, with a WASM
 bridge back into pond-ts later where it measurably pays. Building started
 2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
-shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
-(workspace, CI incl. a wasm32 build, parity harness over the core fixture and
-the study oracle) is done.
+shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
+(batch core, financial studies, live layer) are complete, and the R4 bridges
+and column expressions ([PND-EXPR]) are built. Most entries below are
+pond-ts bugs found while porting.
 
-- **[PND-RUST-R1B]** — Rest of batch core, adopted 2026-10-18 after R1a met
-  every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
-  Steps, each bit-for-bit against pond-ts:
-  1. ~~Reshape and output layout~~ — done (#770).
-  2. ~~Column kinds: (a) text and true/false columns (#771); (b)
-     `TimeRange` keys and text interval labels (#772); (c) more Arrow
-     input (#773); (d) exact decimals~~ — done.
-  3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
-     `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
-     `with_column` / `map`~~ — done.
-  4. ~~Groups: (a) `partition_by` / `group_by`, threaded across
-     partitions (#778); (b) agent trial on the partitioned workload
-     ([PND-AGENTBENCH] Q11)~~ — done.
-  5. ~~`align` / `materialize` / `dedupe`~~ — done.
-  6. ~~`join`~~ — done.
-  7. The rest, as friction asks: (a) ~~reading times written as text
-     ([PND-RUSTTIME], `parse_time`)~~ — done; (b) ~~the step 4b agent-trial
-     fixes ([PND-RUSTQ11]: `tail` / `reduce` / `first` / `last`, partition
-     key helpers, docs)~~ — done.
-  8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
-     2026-10-20 by pjm17971 as core work that needs no further case:
-     (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
-     (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
-     columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) ~~reducers `unique` / `top` /
-     `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
-     samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
-     `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
-     `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
-     (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) ~~`ValueSeries` Arrow
-     in and out~~ — done; (j) ~~the (h) operations per group~~ — done.
-     Same rules as steps 1–7. **R1b is complete** with (j).
+- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (npm `@pond-ts/rs`)
+  and Python (PyPI `pond-rs`): every step (J1–J3, P1–P3) is built and merged
+  (outcomes in the breakout plan). Left, both owner actions: the first
+  `@pond-ts/rs` publish by hand on npmjs.com (npm trusted publishing needs
+  the package to exist), and PyPI's pending trusted publisher for `pond-rs`
+  (owner `pond-ts`, repo `pond`, workflow `python-wheels.yml`, environment
+  `pypi`) before the first upload. As of 2026-11-13 neither package is on
+  its registry.
 
-  Detail in the breakout plan.
-
-- **[PND-RUST-R2]** — The financial studies in pond-rs, planned 2026-10-21.
-  Every study must match pond-ts bit for bit (a new pond-ts study fixture)
-  AND the pandas / TA-Lib oracle within 5e-10 (pjm17971 chose both). Studies
-  are methods on `TimeSeries` in a `pond_rs::financial` module of the same
-  crate; no worker pool (kernels that restart every `period` rows split
-  rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
-  shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
-  `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
-  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. ~~the
-  catalog~~ — done; 5. ~~perf check and an agent trial~~ — done
-  (2026-10-23): all 109 studies same bits, 2.3–32.5x pond-ts on 4 cores;
-  trial pond-rs 9/10 right (one wrong column order) vs polars 10/10,
-  0 failed runs vs polars' 12. **R2 is
-  complete.** Detail in the breakout plan.
-
-- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (WebAssembly, npm
-  `@pond-ts/rs`) and Python (PyO3, PyPI `pond-rs`, `import pond_rs`),
-  planned 2026-10-29; pjm17971 chose "Yes, all" on 2026-10-30: separate
-  npm package, both bridges built at once, same version as pond-ts on every
-  `v*` tag. Steps J1 (`crates/pond-wasm`, batch core, core parity fixture
-  through JS), J2 (studies, `LiveSeries`), J3 (browser build, npm publish,
-  docs tab); P1 (`crates/pond-py`, frames in and out, core parity through
-  pytest), P2 (studies, live), P3 (wheels in CI, PyPI, docs, agent trial).
-  P1 merged 2026-10-30 (#860). P2 split: P2a studies + trading calendars
-  merged 2026-10-30 (#862); P2b `LiveSeries` built 2026-10-30. ~~P3 (wheels
-  in CI, PyPI on `v*`, docs page, agent trial)~~ — built 2026-11-02
-  (`python-wheels.yml`); the first upload needs PyPI's trusted publisher set
-  up by the owner. The Python steps are complete. J2 split the same way: J2a studies + trading calendars built 2026-10-31;
-  J2b `LiveSeries` built 2026-10-31; `toJSON` sped up 2026-10-31 (whole
-  columns across, rows built in JS). J3 built 2026-10-31: one glue for Node
-  and browsers (top-level await in browsers), browser test in headless
-  Chromium incl. a strict CSP, `release.yml` publishes `@pond-ts/rs` after
-  the workspaces; first publish needs Peter on npmjs.com (trusted
-  publishing needs the package to exist). Next P3. Detail in the breakout
-  plan.
-
+- **[PND-RUST-R5]** — A Rust port of `@pond-ts/process` (adopted by
+  pjm17971, 2026-11-17), so a host can run process plans on pond-rs: the
+  long-lived `Host` with its byte budget and async sources, the registry and
+  `specId`, slot and nested requests, the basic ops, the standard and summary
+  folds, the 105 bridged studies and `toWire`. First consumer: a desktop
+  app's local MCP server. Scope is that consumer's subset; joins, the worker
+  pool, the authoring builders, the live graph and `toJsonSchema` are left
+  for later. Every answer is checked against
+  `packages/process/test/fixtures/parity.json`, which a test keeps in step
+  with the TypeScript package, so process keeps changing in TypeScript first
+  and the port follows. Also adds the pointwise basic ops a consumer needs to
+  write its own ratio and volatility steps as compositions. Steps and
+  decisions in the breakout plan.
 - **[PND-RSTYPES]** — TypeScript declarations for `@pond-ts/rs`. It ships
   no `.d.ts` today, so a strict TypeScript import fails with TS7016 (docs
   give the `declare module` workaround). Write an `index.d.ts` from
   pond-ts's types where the shapes match, and check it in CI against the
   parity tests' calls. Detail in the breakout plan ([PND-RUST-R4]).
-
-- **[PND-EXPR]** — Column expressions (`col('v').gt(0)`), adopted
-  2026-10-31 from [`docs/rfcs/expressions.md`](docs/rfcs/expressions.md):
-  per-row rules written as data so pond-ts, pond-rs and both bridges run
-  them over whole columns instead of calling a function per row (bridge
-  `filter` with a function is 8x slower than pond-ts today). E1 pond-ts
-  (`col` / `lit` / `when`, accepted by `filter`, `find`, `some`, `every`,
-  `mapColumns`, `withColumn`, live `filter`) merged #865; E2a pond-rs crate and
-  E2b both bridges built (PR #867); bridge J2 follows. Detail in
-  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md).
 
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
@@ -685,31 +636,17 @@ the study oracle) is done.
   it (9 with a `first` / `keep` reducer on the key column). Options: write
   the partition column into gathered outputs, or pass the key to the
   `apply` recipe. An API change in both libraries; needs a decision.
-- **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
-  independent).
-- **[PND-RUSTPUB]** — Publish pond-rs on crates.io with docs.rs API docs.
-  Prep (metadata, README, full rustdoc, MSRV 1.88, `release-rs.yml`) in the
-  publish-prep PR #851. Version 0.1.0, own numbering (Peter, 2026-10-29;
-  settles the old [PND-RUSTRFC] versioning question). First publish via
-  `release-rs.yml` with the `CARGO_REGISTRY_TOKEN` secret. Then switch to trusted
-  publishing. Details in `docs/plans/PND_RUST_PLAN.md`.
+- **[PND-RUSTPUB]** — pond-rs 0.1.0 is on crates.io (first publish
+  2026-10-29, with the `CARGO_REGISTRY_TOKEN` secret). Left: set up crates.io
+  trusted publishing for the crate and delete the secret; `release-rs.yml`
+  already falls back to trusted publishing when the secret is gone. Details
+  in `docs/plans/PND_RUST_PLAN.md`.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
-  (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
-  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g, 8h, 8i, 8i2, 8i3, 8i4 and 8j, and R2 steps 1, 2a–2g, 3 and 4 (finance studies page), and R3 steps 2–7 (live series page). Keep them in step as each step lands. Every Rust example is a
-  whole program checked by `website/scripts/check-rust-snippets.sh` (now every
-  docs page, not only `pond-rs/`); not yet run in CI. Rust-beside-TypeScript
-  sweep (Peter, 2026-10-29): TypeScript / Rust tabs (`groupId="language"`)
-  on the introduction, getting started, financial overview, and an
-  "also in Rust" note on the core overview pages; process marked
-  TypeScript only (#850). Then 158 more tabs on the per-operator core pages
-  (`pond-ts/creating`, `value-series`, `transforms/*`, `live/*`); 252
-  snippets in all, each checked against pond-ts output. Install lines now say
-  `pond-rs = "0.1"` (crates.io) and the Rust pages link docs.rs; all 252
-  snippets also pass against the published 0.1.0. Expressions page
-  (`pond-ts/transforms/expressions`, 2026-10-31): `col` / `lit` / `when` with
-  TypeScript, Rust and Python tabs, all checked against pond-ts; `rust ignore`
-  fences are skipped by the script (excerpts from other repos). Open: run the script in
-  CI.
+  (`website/docs/pond-rs/`) and the Rust / Python tabs on the core pages
+  (what is covered so far is in the breakout plan). Left: run
+  `website/scripts/check-rust-snippets.sh`, which checks every Rust example
+  as a whole program, in CI (today it runs by hand); keep the pages in step
+  as pond-rs changes.
 - **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
   column that is missing (a typo) or not a number column return an output of
   all gaps instead of an error, so a mistake looks like "no data". Except
@@ -734,11 +671,6 @@ the study oracle) is done.
   (measured). A picker's slider or an agent can reach that. Fix: return all
   gaps when `period >= length` (pond-rs does, same output). Found by the
   pond-rs catalog's huge-option sweep (R2 step 4).
-- **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
-  few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
-  take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra
-  time in writing results out and in garbage collection; the cause is not yet
-  found. Repro: `crates/pond-rs/bench/` with and without the outages.
 - **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".
@@ -746,13 +678,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   More from the pond-rs R1b step 3a survey (2026-10-19; each reproduced
   against the built package): an unknown or key column in `rate` /
   `pctChange` / `cumulative` / `shift` is a raw V8 `TypeError` too;
-  `cumulative({ a: 'avg' })` throws `apply is not a function` (and only
-  when the column has a value); `fill('bogus')` silently does nothing;
-  `fill({ nope: 'hold' })` silently ignores the unknown column; `fill`'s
-  `limit` is never checked (`NaN` means no limit); `parseDuration` rejects
-  the number `0` but accepts `'0s'`; `fill` on an empty series skips all
-  checks; the `maxGap` doc says "prior known value to next known value",
-  but gaps at either end are measured to their own first or last row.
+  `fill('bogus')` silently does nothing; `fill({ nope: 'hold' })` silently
+  ignores the unknown column; `fill`'s `limit` is never checked (`NaN`
+  means no limit); `parseDuration` rejects the number `0` but accepts
+  `'0s'`; `fill` on an empty series skips all checks; the `maxGap` doc says
+  "prior known value to next known value", but gaps at either end are
+  measured to their own first or last row.
 - **[PND-ARROWTSVAL]** — pond-ts `fromArrow` reads a `Timestamp` value
   column (not the key) as raw counts in its own unit: a microsecond column
   holding 1 comes in as `1`, not `0.001` ms. `Date32` value columns are
@@ -772,32 +703,12 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   described as `time` while the series really calls it `ts`. The docs
   (`creating.mdx`) suggest exactly that pair. Found 2026-10-22 writing a whole
   read-Arrow-then-chain program (thread "Chaining studies and operators").
-- **[PND-ARROWREQ]** — pond-ts `fromArrow` declares every value column
-  required, even one with nulls, so its own `toJSON` → `fromJSON` round trip
-  then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a
-  nullable Float64 column `[1, null]`. Proposed fix: take `required` from the
-  Arrow field's nullability, as pond-rs now does (Codex review of pond-rs,
-  finding 5), so both read the same file to the same schema. Until then they
-  differ on every pyarrow / polars file (both mark fields nullable by
-  default): pond-rs reads such columns as optional, pond-ts as required.
 - **[PND-ARROWNUM]** — the pond-rs step 8i4 bench saw a nullable number
   column add ~60 ms per 1M rows to pond-ts `fromArrow`. Not reproduced on a
   single-chunk `vectorFromArray` table (6.6 → 16 ms, 2026-10-22); the bench
   read an IPC file, which may give a shape the bulk null-copy path declines
   (`copyNumericWithNulls`) and so falls back to per-row `get`. Check with
   that file before changing anything. Split out of [PND-ARROWTEXT].
-- **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
-  even when the mapping leaves a gap (a non-finite result is stored as a
-  gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
-  1 (value) is required"). Repro: parity case `mapColumns-overflow`
-  (`v => v * 1e308 + 1e308` on a required column). Same class as
-  [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
-  pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
-- **[PND-COLSREQ]** — pond-ts `fromColumns` ignores `required`: a column
-  the schema marks required (the default) is read with its gaps and stays
-  marked required, so the series' own `toJSON` → `fromJSON` round trip
-  then throws. Same class as [PND-ARROWREQ] / [PND-MAPREQ]. pond-rs marks
-  such a column optional. Found 2026-10-20 (pond-rs R1b step 8d2).
 - **[PND-POINTSTS]** — a value column named `ts` collides with the time
   in pond-ts's points: `toPoints` writes the column's value over the time
   (and `JSON.stringify` then drops the time where the column has a gap),
@@ -839,25 +750,11 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `aggregate`; the fast path already drives the same window states, so
   answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
   Found 2026-10-20 (pond-rs R1b step 8g).
-- **[PND-ROLLTIME]** — pond-ts duration `rolling` (`rolling('5m', …)`)
-  takes ~330 ms per number reducer on 1M rows (`avg` 330 ms, `avg` + `stdev`
-  ~550 ms). After [PND-SMOOTHSLOW] it is the whole cost of `baseline` and
-  `outliers` (~0.8 s). Not profiled yet. Repro:
-  `packages/core/scripts/perf-smooth.mjs` (`baseline-5m-1M`). Found
-  2026-10-22.
 - **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
   unknown name gives the series back unchanged, and a text column gives a
   gap in every row (`baseline` on a text column also gives gaps). pond-rs
   refuses both. Proposed fix: the `RangeError` `scan` already gives.
   Found 2026-10-21 (pond-rs R1b step 8h).
-- **[PND-COLLAPSEREQ]** — pond-ts `collapse` marks its output column
-  required, but a non-finite result (`0 / 0`) or a reducer returning
-  `undefined` leaves gaps in it, and the series then fails to reload
-  through `fromJSON`. The reducer's type returns `ScalarValue` (no
-  `undefined`), so the fix (output `required: false`, typed `R |
-undefined`, or required only when it has no gaps) changes a public
-  type and needs a yes. pond-rs marks it required only when it has no
-  gaps. Found 2026-10-21 (pond-rs R1b step 8i).
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
@@ -867,13 +764,14 @@ undefined`, or required only when it has no gaps) changes a public
   when the window is flat (needs a cheap flatness check), or document it.
   Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
   guarded against it).
-- **[PND-DEQUEALLOC]** — pond-ts rolling `min` / `max` (`rollingMonotoneDeque`)
-  allocate an object per row and, on small windows, copy the deque's array
-  on almost every row (it compacts whenever half of it is used up): rolling
-  `min` on 1M rows takes ~280 ms with a 1-row window against ~210 ms with 5
-  minutes. The [PND-ROLLDIFF] state avoids both (plain number arrays,
-  compacts only past 1,024 used entries) and runs a 1-row window in ~125
-  ms. Proposed fix: give `min` / `max` the same deque. Found 2026-10-20.
+- **[PND-DEQUEALLOC]** — The `min` / `max` reducer state
+  (`rollingMonotoneDeque`) allocates an object per row and, on small
+  windows, copies the deque's array on almost every row. Batch rolling over
+  number columns no longer uses it (#929 gave that sweep its own
+  `Int32Array` deque; write-up in the columnar plan), but live rolling and
+  the generic batch sweep (a call with a non-number output, for one) still
+  do. Proposed fix: give the state the [PND-ROLLDIFF] deque (plain number
+  arrays, compacts only past 1,024 used entries). Found 2026-10-20.
 
 ### `@pond-ts/financial`
 
@@ -894,10 +792,9 @@ pandas-oracle-verified) have shipped. Plan:
     repaint contract — a decision.
   - **G4 — calendar-gated** (2): Projected Aggregate Volume and Projected
     Volume at Time; low value, deferred.
-  - Six skipped by decision. Package-wide questions, none blocking: `ema()`'s
-    seed vs TA-Lib's and `rollingValues`' inconsistent answer to a misnamed
-    column. (Core's rolling min/max fast path shipped 2026-11-08: Donchian,
-    %R, stochastics ~2x; see PND_FINANCIAL_PLAN.)
+  - Six skipped by decision. Package-wide questions, none blocking:
+    `ema()`'s seed against TA-Lib's, and the inconsistent answer
+    `rollingValues` gives to a misnamed column.
 - **[PND-STUDYCAT]** — Runtime study catalog **shipped complete in v0.67.0**
   (all 109 fluent methods; F-charts-27 resolved in #736). **Open only for a
   decision:** F-charts-26 (no per-output _mark_ — nothing says `macdHist` is a
@@ -906,9 +803,8 @@ pandas-oracle-verified) have shipped. Plan:
   much rendering meaning belongs in a data package. Close this task, or split
   those two out, once that is decided.
 - **[PND-TCAL]** — Trading-time deferred items: point-key slot widths on the
-  discontinuous axis, overnight sessions in `fromRules`. (Exchange-tz tick
-  grain and cursor timezone control moved to [PND-TZFIN] / [PND-TZAXIS] in
-  the Time zones section.)
+  discontinuous axis, overnight sessions in `fromRules`. (The exchange-zone
+  items shipped with the time-zone work; see PND_TIMEZONE_PLAN.)
 
 ### Live layer
 
@@ -919,18 +815,20 @@ Robustness debt plus the queued composition workstreams. Plan:
   (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
   longer throw on a late event (2026-10-28, they insert it in order); the
   recompute of later rows is what remains.
-- **[PND-EVICTDEQUE]** — Live per-event buffers (`LiveView`, the
-  `drop` / `reorder` row backing, rolling history) past ~16k events still
-  copy the whole array on each eviction (~150 µs at 100k events), because
-  V8 cannot move a large array's start in place. Needs a start index with
-  occasional compaction behind every reader. Found 2026-10-28 reviewing
-  [PND-EVICTSPLICE].
+- **[PND-EVICTDEQUE]** — Two live per-event buffers, the `drop` /
+  `reorder` row backing and rolling history, past ~16k events still copy
+  the whole array on each eviction (~150 µs at 100k events), because V8
+  cannot move a large array's start in place. Needs a start index with
+  occasional compaction behind every reader. (`LiveView` has one since
+  [PND-LVWIN], #761.) Found 2026-10-28 reviewing [PND-EVICTSPLICE].
 - **[PND-LJOIN]** — Live merge / join across sources.
 - **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
   prerequisite-or-sibling of [PND-LJOIN].
 - **[PND-LDEDUP]** — Live dedupe converging on the batch `keep` shape.
-- **[PND-BUFWIN]** — Buffer-as-window Tier 1 (`live.reduce` sugar,
-  `timeRange`, `eventRate`, naming) + Tier 3 slicing later.
+- **[PND-BUFWIN]** — Buffer-as-window: the `'buffer'` window key in a
+  fused rolling mapping (reserved, throws today), the `count()`-vs-`length`
+  naming decision, then Tier 3 slicing. (`live.reduce`, `timeRange` and
+  `eventRate` shipped in v0.16.0.)
 - **[PND-TRIG]** — Trigger taxonomy: `Trigger.any` composition; the
   `Trigger.idle` wall-clock RFC moment (gate on a second signal).
 - **[PND-RESV]** — Live-side reservoir sampling; gated on [PND-CHANGE]'s
@@ -1071,15 +969,6 @@ consumer signal. Plan:
   Friction-gated: no consumer has asked yet.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
-- **[PND-HOOKSIGNAL]** — The React hooks `useSnapshot`, `useLatest` and
-  `useLiveVersion` subscribe to `'event'` (and `useLiveVersion` to
-  `'evict'`) only as a "something changed" signal, but on the column-native
-  `LiveSeries` backing any such listener makes every push build one `Event`
-  per row (and one per evicted row). Measured: 200k rows pushed in batches
-  of 1000 into a 10k-row buffer take 25 ms with no listener, 64 ms with an
-  `'event'` listener, 126 ms with `'event'` + `'evict'`. Fix: an internal
-  payload-free change signal the hooks use when the source offers it.
-  `useEventRate` gains nothing (its window view stores `Event`s anyway).
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
   only lever for the gRPC ceiling; parked at 2.1× headroom.
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
@@ -1141,6 +1030,11 @@ consumer signal. Plan:
   Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
   [PND-NANREP] — so a `{ missing }` fill option is only worth adding if a
   consumer needs a value other than `NaN`.)
+- **[PND-DISTINCT]** — A column's distinct values
+  (`column(name).distinct()`, string and number), using the dictionary where
+  the column has one. Today an agent builds one `TimeSeries` per value via
+  `partitionBy(col).toMap().keys()` to read the names; only `uniqueCount()`
+  exists. Small. Surfaced by cold-start run 1b.
 - **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
   append; design settled, build when the binary WS feed consumer arrives.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:
@@ -1165,8 +1059,8 @@ commitment). Task detail, and the measurements each task is sized against:
 [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
 Ordering note: `PROCIDENT`'s slider half blocks any interactive (slider-style)
-consumer, and `PROCJOIN` is now on Tidal's path (see its entry). `PROCCOL` and
-`PROCKERN` have shipped (write-ups in the breakout plan). The engine landed in
+consumer. `PROCCOL`, `PROCKERN`, `PROCJOIN`, `PROCRANGE` and `PROCSLOT` have
+shipped (write-ups in the breakout plan). The engine landed in
 [#544](https://github.com/pond-ts/pond/pull/544); the package **published as
 experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
 [PND-PROCSUB] (outcome in the breakout plan).
@@ -1183,29 +1077,12 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   process demo's M5 (content-addressing, bounded by [PND-PROCCACHE]'s
   engine-wide budget); **the slider half is still open and blocks any
   interactive consumer.**
-- **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
-  bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
-  and its consumer idle, because the op hands back the same instance. Document
-  it, and let the registry declare which params each output depends on so the
-  corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
-  cutoff cannot fire" — true for whole-series identity compares, false per-Out.
-- **[PND-PROCJOIN]** — Make the join a node: n series in, one aligned column
-  set out, alignment policy in the id (inner vs as-of changes the answer). This
-  is what lets a cross-source spec exist at all — separate graphs cannot hold
-  one, and hand-combining misaligned instruments silently pairs different
-  dates. Needs no engine change; `Graph` has no per-graph boundary today.
-  **Now on a consumer's path:** Tidal is building pair charts (A vs B, often
-  across tickers) on `process` and joins the legs by hand meanwhile. Its two
-  design asks — each input names `(binding, column)`, and invalidation is
-  tracked per source — plus a unit rule for multi-input ops are in
-  [tidal-process-consumer-positions-2026-08.md](docs/notes/tidal-process-consumer-positions-2026-08.md).
-- **[PND-PROCRANGE]** — Range recompute: **mechanism shipped**
-  (`setSourceFrom` + opt-in `OpDef.runRange`, 209 → 55 ms/tick, bit-identical
-  to a from-scratch pass). **Remaining, the larger half of the win:** 4×
-  against a projected 26×. The gap is in the op — a `runRange` that copies the
-  whole prefix out of `previous` is O(n) per tick — so it needs a
-  **capacity-buffer contract** letting an op extend its previous column rather
-  than rebuild it.
+- **[PND-PROCSEL]** — Selective per-Out invalidation by declaration. The
+  hook has shipped: an output may declare `dependsOn` (the params it reads),
+  and `registry.mdx` documents it. Left: the multi-output studies the
+  finance bridge registers (`studyOps()` in `@pond-ts/financial/process`,
+  e.g. `bollinger`, `envelope`) declare none, so a param edit still
+  re-versions every output. Declare it there.
 - **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
   compiled graph does not; persisted views recompile from the stored plan.
   Deliberately no `fromJSON` yet. Two verified properties must become stated
@@ -1217,31 +1094,40 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   with `toJsonSchema({ base })`. Open: the projection carries no units, in either
   direction, so a caller cannot know `annualise` refuses a raw price without a
   `describe()` table in the prompt.
-- **[PND-PROCSLOT]** — Caller-assigned **slots**, separating topology from value.
-  Params are part of a node's id but do not change the shape, so the format uses
-  one identity for two jobs. A slot (`bb`) is stable across a param edit and
-  names a position; `specId` still keys the cache. Fixes `on` restating whole
-  nested specs, makes refinement a patch, stops the pipeline view re-laying-out
-  on a param change, and lets surfaced outputs carry the requester's own names
-  — which is what a Tidal card is. Slots are an alias layer, not a replacement:
-  M5's 2.811 ms return trip works _because_ the node persisted under its content
-  id. Connections stay on the node (no full node editor is wanted); how a slot
-  reference is disambiguated from a source column name is open.
 - **[PND-PROCSOURCE]** — Harden the new opaque async-source boundary. The first
   slice (`defineSource`, `SourceRegistry`, `Host.runAsync`) keeps loaders and
   credentials host-side, preserves a bound graph across equal revisions, and
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
+- **[PND-PROCHELD]** — Let a caller ask what the host already holds before it
+  composes a request. In the demo a model refused to compare with its last
+  answer, though those results were still in memory, until the prompt told it
+  re-asking was cheap. A read-only view (not a cache API, not
+  [PND-PROCCACHE]); the hard part is a summary small enough for a model's
+  context.
+- **[PND-PROCDRAW]** — Let a request say "draw this". Today a model asking
+  for a chart adds `shape` folds and calls the numbers a plot, while the demo
+  quietly adds the real columns behind its back. Open: where the intent lives,
+  who renders (process must not depend on charts), and what `shape` is for
+  once a response can carry a chart.
 - **[PND-PROCFIN]** — Finance questions for an agent / MCP server: close the
   gaps the 48-question catalogue found after the finance kit. 23 of 48 are
   answerable today; the rest need date windows, several datasets per request,
-  roll-ups and grouping, and one question run across many tickers, and the
-  `shape` fold (the sparkline) needs to end at the newest bar and show spikes.
-  19 tasks with their own ids, order and decisions for Peter in
+  roll-ups and grouping, and one question run across many tickers. 16 tasks
+  remain, with their own ids, order and decisions for Peter in
   [PND_PROCFIN_PLAN.md](docs/plans/PND_PROCFIN_PLAN.md); it replaces the
-  placeholders [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN]. First
-  step: sparklines ([PND-SHAPEEND], [PND-SHAPEHOW], [PND-SHAPESCALE]).
+  placeholders [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN]. The first
+  step, sparklines, has shipped (the `shape` fold now ends at the newest bar
+  whenever that bar's bin has a value, shows spikes and carries its scale;
+  outcomes in the breakout plan). The 16, in build order: date windows
+  [PND-WINOUT], [PND-WINANCHOR]; several datasets per request [PND-MULTIFROM],
+  [PND-MULTIUNIT], [PND-MULTITEST]; trading sessions [PND-WINSESSION],
+  [PND-SESSMIN]; roll-ups and grouping [PND-ROLLBARS], [PND-GROUPBY]; missing
+  bars [PND-CALGAPS]; across many tickers [PND-FANRUN], [PND-FANCOLLECT],
+  [PND-FANLABEL], [PND-FANPAIRS]; any time: [PND-PARAMKIND]; inside every
+  task: [PND-FINREC]. New request fields (WINOUT, MULTIFROM, ROLLBARS, FANRUN)
+  need Peter's OK to merge.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —
@@ -1262,7 +1148,7 @@ Its job was to **decide the library's shape**, and **every milestone has
 landed (M0–M6)**; what each one decided is recorded in
 [PND_PROCESS_DEMO_PLAN.md](docs/plans/PND_PROCESS_DEMO_PLAN.md). The library
 questions it left open live in the process section above ([PND-PROCIDENT]'s
-slider half, [PND-PROCSCHEMA]'s units, [PND-PROCSLOT]).
+slider half, [PND-PROCSCHEMA]'s units); [PND-PROCSLOT] has since shipped.
 
 ### Ecosystem (Phase 6)
 
@@ -1275,41 +1161,19 @@ depend on. Plan:
   policy). Depends on [PND-FINAL] + [PND-KEYED].
 - **[PND-NODE]** — Node stream adapters + third-party chart bridge helpers
   (`toRecharts`, `toObservablePlot`).
-- **[PND-FITPUB]** — `@pond-ts/fit` first-publish pass. The package is
-  already public and on npm (`private: false`, published lock-step with the
-  rest; 0.70.0 is current), so what is left is the deliberate part: decide
-  which of `simplify`, `elevationProfile`, `profileByDistance` and
-  `rollingSpread` get a public path (all four are in `src/geo/` and none is
-  exported today), the units-preference home, then hand estela the swap.
-- **[PND-FITESTELA]** — take Estela's general activity code into fit, from its
-  2026-11-04 review: section stats + public moving/climb/NP rules (shipped as
-  [PND-FITSTATS]), then swims, the FIT/GPX/TCX readers, and cutting a
-  recording (crop, lap split/join). One PR each; plan in
-  [PND_ECOSYSTEM_PLAN.md](docs/plans/PND_ECOSYSTEM_PLAN.md).
-- **[PND-FITAPI]** — the `@pond-ts/fit` API redesign
-  ([docs/rfcs/fit-api.md](docs/rfcs/fit-api.md)): `readActivity` returning an
-  `Activity`, one `stats()` contract over any `Section`, explicit clocks
-  (elapsed / timer / moving / swimming), and a typed pool-swim model. The next
-  release waits on these four (pjm17971, 2026-11-04). Built, with `analyze`
-  and best efforts by metric (#892–#895); `edit` in durations and `views`
-  follow.
+- **[PND-FITLEFT]** — Two small leftovers from moving Estela's activity code
+  into fit: the summary's `polyline` still uses the old metres-based
+  `simplify` instead of the outline code (folding them together was left for
+  later), and a lap split that falls inside a pool length is not moved to the
+  length's edge. Detail in the breakout plan.
 - **[PND-FITDEPTH]** — the sport layers after 0.76: pjm17971's first-release
   lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
-  One-activity work first, on any `Section`: aerobic efficiency and
-  decoupling (`analysis.aerobic`) and distributions and coasting
-  (`analysis.distribution`, `analysis.coasting`) and running dynamics
-  (`section.dynamics`), swim stroke metrics (`analysis.technique`) and
-  efforts with recoveries (`analysis.efforts`) and grade-adjusted pace
-  (`section.pace.adjustedForGrade()`, ACSM running by default, Minetti 2002
-  by name, the model named in the result;
-  aerobic output `'grade-adjusted-speed'`) built. ACSM is the run default
-  because on a real 50 km trail race Minetti read descents 2 to 8 min/mi
-  slower than Strava's grade-adjusted pace while ACSM stayed within about a
-  minute (pjm17971 chose to ship both, 2026-11-07).
-  Then `TrainingHistory` (records, season curve, weekly volume, load
-  timeline), on per-activity digests; each activity's load records the
-  method that made it (power TSS, heart-rate load, none), since devices
-  come and go across a history (pjm17971, 2026-11-07).
+  The one-activity layers on any `Section` are built (aerobic, distribution,
+  coasting, dynamics, technique, efforts, grade-adjusted pace; outcome in
+  the breakout plan). Left: `TrainingHistory` (records, season curve, weekly
+  volume, load timeline), on per-activity digests; each activity's load
+  records the method that made it (power TSS, heart-rate load, none), since
+  devices come and go across a history (pjm17971, 2026-11-07).
 
 ---
 
@@ -1322,13 +1186,13 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 | Track               | Agent  | Status / next                                                                                                                |
 | ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | Tidal (financial)   | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
-| estela (geo/power)  | Claude | Waiting on [PND-FITPUB]'s export decision (fit is already on npm); then adopts fit + charts from npm, deletes local copy     |
+| estela (geo/power)  | Claude | fit export decision made (`docs/notes/estela-fit-swap-2026-10.md`); next: adopt fit + charts from npm, delete local copy     |
 | Dashboard           | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts                                                    |
 | gRPC pipeline       | Claude | Revived 2026-10 on pond-rs; Node vs Rust race + writeup done; remaining: M5 extraction sweep → [PND-SERVER]                  |
 | Webapp telemetry    | Codex  | In production; watch for friction reports                                                                                    |
 | Charts experiment   | Claude | First `@pond-ts/charts` package consumer; annotation dogfood, ongoing                                                        |
 | Robustness audits   | fresh  | Re-run as the available model improves; residue → [PND-AUDIT] ([PND-LIVFIX] shipped 2026-09-06)                              |
-| Cold-start adoption | fresh  | [PND-COLDSTART] run 1 done 2026-09-12; re-run of arms C/D against the [PND-PARTCOL] fix pending                              |
+| Cold-start adoption | fresh  | [PND-COLDSTART] run 1 done 2026-09-12; run 1b (arms C/D, local build of the [PND-PARTCOL] fix) passed; npm re-run pending    |
 
 ---
 
@@ -1367,10 +1231,8 @@ argument for the rest.
   `collapse` key that names no column is an unguarded `TypeError` rather than a
   named error, `TimeSeries<SeriesSchema>` resolves its data-column names to
   `never` so no method compiles against it, and `collapse`'s result type
-  survives only while it is inferred. Plus the second card in one track to want
-  a **y-span annotation** — threshold bands have to be drawn as N `<Baseline>`s
-  because `<Region>` is x-only. Itemised, with the workaround each one forced,
-  in [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
+  survives only while it is inferred. Itemised, with the workaround each one
+  forced, in [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
 
 - **[PND-SPARCFRIC]** — A **17-item friction survey** from an external consumer
   planning the replacement of seven hand-rolled SVG charts with pond
@@ -1388,9 +1250,10 @@ argument for the rest.
   the report's own best finding: three independent items where the library did
   something defensible, the chart rendered, and the consumer had no way to see
   which branch was taken. **All four groups are now shipped** (see the breakout
-  plan for what each landed as); what remains is the "decided at the regroup"
-  set — [PND-CATRANGE], [PND-THEMEBASE], [PND-BINSWATCH], [PND-TICKCENSUS],
-  [PND-BARCAP] — plus the deferred **dev-mode warning sweep**, which the trio
+  plan for what each landed as); what remains is [PND-BINSWATCH],
+  [PND-TICKCENSUS] and [PND-BARCAP] ([PND-CATRANGE] was folded into the
+  drag-to-select design; a fifth item was declined, reasoning in the breakout
+  plan), plus the deferred **dev-mode warning sweep**, which the trio
   argued for as one pass rather than three fixes and which only [PND-BANDBAR2]
   and [PND-SYMLOG] actually got. **[PND-CATSTACK], [PND-BARWIDTH] and
   [PND-SYMLOG] shipped 2026-08-11** as stack #644, and the consumer migrated for
@@ -1403,15 +1266,14 @@ argument for the rest.
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
 
 - **[PND-CATID]** — **Split category display label from category identity.**
-  Second SPARC filing (2026-08-14, alongside the shipped [PND-CATFIT] label
-  fit): a category's `label` is today ALSO its selection identity
-  (`SelectInfo.mark`), so two categories that render the same string silently
-  merge into one mark, and a consumer with duplicate-prone keys carries a
-  `uniqueLabels` + `keyOfLabel` side-channel that produced two real bugs in
-  their migration in one week. Sketch: `CategoryDatum.key?: string` (defaults
-  to `label`), `mark` carries the key, the axis/readouts draw the label; the
-  container `categories` prop widens likewise. **Public type widening on the
-  selection currency — owner gate required.** Write-up in
+  The split has shipped (wave "Path to 1.0", #836): `CategoryDatum.key`,
+  `mark` carries the key, the axis and readouts draw the label. Left, two
+  questions the implementation put to the owner: (a) `sameMark` keeps
+  `label` in a keyed category's identity, so an entry holding only a key, or
+  a stale label, highlights on the canvas but fails `selectionContains`
+  against a fresh hit (accept as documented, or let a mark say whether its
+  label is identity); (b) duplicate keys still collapse to one slot
+  silently (add a dev warning?). Write-up in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-catid--split-category-display-label-from-category-identity).
 
 - **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
@@ -1432,8 +1294,9 @@ argument for the rest.
   was the cheaper P0**, because `scaleBand`'s domain is already numeric so a
   value-keyed layer lands where the bars do; and theme A's placement half was
   already structurally supported, leaving only the numbers missing. **PG-16
-  reopens [PND-AXISMIRROR]**, declined 2026-08-11 for want of a consumer, one
-  day before this arrived. Remaining, in the report's order: the in-plot
+  asks again for the mirrored second axis** declined on 2026-08-11 for want
+  of a consumer, one day before this arrived; it now sits in the
+  axis-parity pass below. Remaining, in the report's order: the in-plot
   `<CustomLayer>` (theme A's better option, now that the frame exists), a
   **ramp swatch** in the legend (PG-4, P1, cheap — a pure function of `colors`
   and `domain`), then P2's style escape hatches, band gap-parity and the
@@ -1441,35 +1304,19 @@ argument for the rest.
   close, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-ignite--ignite-charts-friction-2026-08-11).
 
-- **[PND-ANNROLE] — annotation roles.** `theme.annotation.depth` draws a
-  resting mark at 0.4 alpha, and **two consumers overrode that in opposite
-  directions in one week**: the measles gallery card went louder (the vaccine
-  dates _are_ the argument), estela went much quieter (`fillOpacity: 0.07`, a
-  focus wash behind selected data). Both patched `theme.annotation` wholesale
-  because the shipped themes define no `roles`, so the existing `<Marker role>`
-  / `<Zone role>` had nothing to select. A single resting alpha cannot serve
-  both — it is a role question, not a level question. Define a role vocabulary
-  (at minimum _wash_ and _argument_) carrying its own depth ramp. Estela would
-  adopt immediately and drop its override. Detail in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-annrole--annotation-roles-a-resting-marks-alpha-is-a-role-question).
-
 - **The estela two-families wave.** Four reports that are two families, not four
   asks — **X/Y asymmetry** and **`<BarList>` lags `<BarChart>`** — each with the
   same character: the mechanism exists and only points one way. **Shipped
   2026-08-12** as [#653]: [PND-XLOG] (landed as `<ChartContainer xScale>`, not
   `<XAxis scale>` — the container owns the one shared x scale) and
   [PND-LISTCOLOR] (`<BarList barColors>`, keyed on `row.key` so a `sortBy`
-  cannot repaint the ramp onto the wrong rows). **Still open:**
-  [PND-AXISGUT] / [#607] (the X strip doesn't participate in layout — the Y
-  gutter does), [PND-LISTHOVER] / [#608] (the list has selection but no hover),
-  [PND-CASTDOC] (the union-per-series-kind cast has no prose), and
-  **[PND-XAXISOWN]** — a mounted `<XAxis>` should win over the container's
-  implicit strip, or warn at the conflict. That last one has **three sightings
-  now** (a `<GalleryCard>` comment telling callers to budget for the auto-strip,
-  estela's #607 mis-subtraction, and stories drawing two axes); the tell is that
-  every story in `Axes.stories.tsx` passes `showAxis={false}` to work around a
-  default. It pairs with [PND-AXISGUT], since mounted-wins is what makes the
-  height-reservation question answerable at all.
+  cannot repaint the ramp onto the wrong rows). [PND-LISTHOVER] (the list's
+  `hovered` / `onHover`, #618) and [PND-XAXISOWN] (a mounted `<XAxis>` wins
+  over the implicit strip, wave "Path to 1.0") have shipped since. **Still
+  open:** [PND-AXISGUT] / [#607] (the X strip doesn't participate in layout,
+  though the Y gutter does; mounted-wins now makes its height reservation
+  answerable) and [PND-CASTDOC] (the charts docs have no prose on the
+  union-per-series-kind cast).
 
   Newly surfaced by that wave: **[PND-XSYMKNEE]** — x `'symlog'` uses d3's
   default knee (absolute 1) with no `linearWindow` counterpart, so on a
@@ -1478,7 +1325,6 @@ argument for the rest.
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#two-families-not-four-issues).
 
 [#607]: https://github.com/pond-ts/pond/issues/607
-[#608]: https://github.com/pond-ts/pond/issues/608
 [#653]: https://github.com/pond-ts/pond/pull/653
 
 ---
