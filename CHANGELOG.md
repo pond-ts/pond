@@ -84,9 +84,11 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Changed
 
 - **Python: the import is now `import pond`** (was `import pond_rs`). The
-  PyPI package stays `pond-timeseries`; classes, functions and behaviour are
-  unchanged, and `pond.__version__` reports the version. No `pond_rs` alias is
-  kept: 0.78.0 was the only release with that import, and it had been out for
+  PyPI package stays `pond-timeseries`, and the classes and functions behave
+  the same; what changes is the module name everywhere it shows: each class's
+  `__module__`, the exception's qualified name (`pond.PondError`) and error
+  text such as "pond.studies() lists them". No `pond_rs` alias is kept:
+  0.78.0 was the only PyPI release with that import, and it had been out for
   hours. Update `import pond_rs` / `from pond_rs import …` to `pond`. Heads
   up: an unrelated, empty PyPI package called `pond` (0.1) also installs a
   `pond` module; don't install both.
