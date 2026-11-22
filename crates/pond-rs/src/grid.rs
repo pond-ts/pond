@@ -3,11 +3,14 @@
 
 use std::collections::HashMap;
 
-use crate::column::ColumnData;
+use arrow_array::{Array, UInt32Array};
+use arrow_buffer::{BooleanBuffer, NullBuffer};
+
+use crate::column::{ColumnData, StringColumn};
 use crate::error::{PondError, Result};
 use crate::reshape::At;
 use crate::sequence::Sequence;
-use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeSeries};
+use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries};
 
 /// How [`TimeSeries::align`] fills each grid point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,23 +84,176 @@ pub enum Keep {
     Max(String),
 }
 
-/// What one grid point takes from the source.
-#[derive(Clone, Copy)]
-enum Take {
-    Nothing,
-    Row(usize),
-    /// Between two rows, `ratio` of the way from the first.
-    Between(usize, usize, f64),
+/// A source row number as the grid walks store it: `u32` when the source
+/// has under 2^32 rows, which is a quarter of the memory of the
+/// `Option<usize>` the column gathers otherwise take (4 against 16 bytes a
+/// grid point), else `usize`. Both give the same result.
+trait RowNumber: Copy + PartialEq {
+    /// Stands for "no row". Never a row number: a source the type is used
+    /// for has fewer rows than this.
+    const GAP: Self;
+    /// `row` in this form. `row` must be under [`RowNumber::GAP`].
+    fn of(row: usize) -> Self;
+    /// The row number. Not for [`RowNumber::GAP`].
+    fn row(self) -> usize;
+    /// `rows` (with `gaps` of them [`RowNumber::GAP`]) as [`Picks`].
+    fn picks(rows: Vec<Self>, gaps: usize) -> Picks;
 }
 
-impl Take {
-    /// The row a non-interpolated column reads.
-    fn row(self) -> Option<usize> {
-        match self {
-            Take::Nothing => None,
-            Take::Row(i) | Take::Between(i, _, _) => Some(i),
+impl RowNumber for u32 {
+    const GAP: Self = u32::MAX;
+
+    fn of(row: usize) -> Self {
+        row as u32
+    }
+
+    fn row(self) -> usize {
+        self as usize
+    }
+
+    fn picks(mut rows: Vec<Self>, gaps: usize) -> Picks {
+        // No validity buffer when nothing is a gap, as collecting
+        // `Option<u32>` builds it: a gathered text column then has one only
+        // when it has gaps.
+        let valid = (gaps > 0).then(|| {
+            let valid = BooleanBuffer::collect_bool(rows.len(), |i| rows[i] != Self::GAP);
+            // Row 0 under a gap, also as collecting leaves it.
+            for row in &mut rows {
+                if *row == Self::GAP {
+                    *row = 0;
+                }
+            }
+            NullBuffer::new(valid)
+        });
+        Picks::Narrow(UInt32Array::new(rows.into(), valid))
+    }
+}
+
+impl RowNumber for usize {
+    const GAP: Self = usize::MAX;
+
+    fn of(row: usize) -> Self {
+        row
+    }
+
+    fn row(self) -> usize {
+        self
+    }
+
+    fn picks(rows: Vec<Self>, _gaps: usize) -> Picks {
+        Picks::Wide(
+            rows.into_iter()
+                .map(|row| (row != Self::GAP).then_some(row))
+                .collect(),
+        )
+    }
+}
+
+/// A grid's sample point, in the form the walks compare with row starts.
+trait Point: Copy {
+    /// True when the point is later than `start` (ms).
+    fn is_after(self, start: i64) -> bool;
+    /// True when the point is at `start` (ms).
+    fn is_at(self, start: i64) -> bool;
+    /// The point in ms as pond-ts holds it, an f64.
+    fn ms(self) -> f64;
+}
+
+/// A point on a whole millisecond: a bucket's start or end.
+#[derive(Clone, Copy)]
+struct Whole(i64);
+
+/// A point in half milliseconds (twice its ms), so that the middle of a
+/// bucket an odd number of ms long is exact.
+#[derive(Clone, Copy)]
+struct Doubled(i128);
+
+impl Point for Whole {
+    fn is_after(self, start: i64) -> bool {
+        start < self.0
+    }
+
+    fn is_at(self, start: i64) -> bool {
+        start == self.0
+    }
+
+    /// The same f64 as [`Doubled`] gives for twice the value: doubling and
+    /// halving change only the exponent, so both round alike.
+    fn ms(self) -> f64 {
+        self.0 as f64
+    }
+}
+
+impl Point for Doubled {
+    fn is_after(self, start: i64) -> bool {
+        2 * i128::from(start) < self.0
+    }
+
+    fn is_at(self, start: i64) -> bool {
+        2 * i128::from(start) == self.0
+    }
+
+    fn ms(self) -> f64 {
+        self.0 as f64 / 2.0
+    }
+}
+
+/// The source row each output row reads, or a gap.
+enum Picks {
+    /// Arrow row numbers; a null is a gap.
+    Narrow(UInt32Array),
+    /// Plain row numbers, for a source of 2^32 rows or more.
+    Wide(Vec<Option<usize>>),
+}
+
+impl Picks {
+    /// `data`'s values at the picked rows, in order.
+    ///
+    /// Cost: one pass over the picks per column. Numbers are read straight
+    /// through the row numbers; text, true/false and decimal columns go to
+    /// Arrow's gather kernel.
+    fn gather(&self, data: &ColumnData) -> ColumnData {
+        match (self, data) {
+            (Picks::Narrow(rows), ColumnData::Number(c)) => {
+                let v = c.values();
+                let numbers: Vec<f64> = match rows.nulls().filter(|n| n.null_count() > 0) {
+                    None => rows.values().iter().map(|&i| v[i as usize]).collect(),
+                    Some(valid) => rows
+                        .values()
+                        .iter()
+                        .zip(valid.iter())
+                        .map(|(&i, valid)| if valid { v[i as usize] } else { f64::NAN })
+                        .collect(),
+                };
+                ColumnData::from(numbers)
+            }
+            (Picks::Narrow(rows), data) => data.take_indices(rows),
+            (Picks::Wide(rows), data) => data.take(rows),
         }
     }
+
+    /// `text`'s values at the picked rows, in order.
+    fn gather_text(&self, text: &StringColumn) -> StringColumn {
+        match self {
+            Picks::Narrow(rows) => text.take_indices(rows),
+            Picks::Wide(rows) => text.take(rows),
+        }
+    }
+}
+
+/// What each grid point takes from the source under
+/// [`AlignMethod::Linear`], a column per part.
+struct LinearTakes<I> {
+    /// The row a held column reads, and the earlier of the two an
+    /// interpolated one does; [`RowNumber::GAP`] before the first row.
+    first: Vec<I>,
+    /// The later row when the point lies between two; else as `first`.
+    second: Vec<I>,
+    /// How far from `first` to `second` the point lies (0 when they are
+    /// the same row, where it is not read).
+    ratio: Vec<f64>,
+    /// How many of `first` are gaps.
+    gaps: usize,
 }
 
 impl TimeSeries {
@@ -143,6 +299,15 @@ impl TimeSeries {
     /// `"interval"` is an error, as in pond-ts. Across entities, align each
     /// with [`TimeSeries::partition_by`] first.
     pub fn align(&self, sequence: &Sequence, options: Align) -> Result<TimeSeries> {
+        if fits_narrow(self.len()) {
+            self.align_as::<u32>(sequence, options)
+        } else {
+            self.align_as::<usize>(sequence, options)
+        }
+    }
+
+    /// [`TimeSeries::align`], holding row numbers as `I`.
+    fn align_as<I: RowNumber>(&self, sequence: &Sequence, options: Align) -> Result<TimeSeries> {
         const CALL: &str = "align";
         self.check_new_key_name(CALL, "interval")?;
         let Some((begin, end)) = self.grid_range(CALL, options.range)? else {
@@ -155,58 +320,84 @@ impl TimeSeries {
             });
         }
         let buckets = sequence.buckets_sampled(begin, end, options.sample)?;
-        let points = sample_points(&buckets, options.sample);
-        // Hold reads one row per point. Linear also needs the rows either
-        // side; the plain rows are then only built if a column holds.
-        let (takes, rows) = match options.method {
-            AlignMethod::Hold => (Vec::new(), self.hold_rows(points)),
-            AlignMethod::Linear => {
-                let takes = self.linear_takes(points);
-                let holds = self
-                    .columns()
-                    .iter()
-                    .any(|c| !matches!(c.data(), ColumnData::Number(_)));
-                let rows = if holds {
-                    takes.iter().map(|t| t.row()).collect()
-                } else {
-                    Vec::new()
-                };
-                (takes, rows)
+        // A start or an end is a whole millisecond, compared as it is; only
+        // a middle needs the doubled form.
+        let columns = match options.sample {
+            At::Begin => {
+                self.aligned::<I, _>(options.method, buckets.begin.iter().map(|&b| Whole(b)))
             }
+            At::End => self.aligned::<I, _>(options.method, buckets.end.iter().map(|&e| Whole(e))),
+            At::Center => self.aligned::<I, _>(
+                options.method,
+                sample_points(&buckets, At::Center).map(Doubled),
+            ),
         };
-        let columns = self
-            .columns()
-            .iter()
-            .map(|c| {
-                let data = match c.data() {
-                    ColumnData::Number(n) if options.method == AlignMethod::Linear => {
-                        let v = n.values();
-                        let present = |i: usize| n.get(i);
-                        ColumnData::from(
-                            takes
-                                .iter()
-                                .map(|t| match *t {
-                                    Take::Nothing => f64::NAN,
-                                    Take::Row(i) => v[i],
-                                    Take::Between(p, q, ratio) => match (present(p), present(q)) {
-                                        (Some(a), Some(b)) => a + (b - a) * ratio,
-                                        _ => v[p],
-                                    },
-                                })
-                                .collect::<Vec<f64>>(),
-                        )
-                    }
-                    data => data.take(&rows),
-                };
-                Column::from_data(c.name().to_string(), data, false)
-            })
-            .collect();
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             "interval".to_string(),
             Key::Interval(buckets),
             columns,
         ))
+    }
+
+    /// [`TimeSeries::align`]'s value columns: each column's value at each of
+    /// `points`.
+    ///
+    /// Cost, for N rows, P points and C columns: one walk of rows and points
+    /// together (O(N + P)), then one pass over the points per column
+    /// (O(P·C)).
+    fn aligned<I: RowNumber, P: Point>(
+        &self,
+        method: AlignMethod,
+        points: impl Iterator<Item = P>,
+    ) -> Vec<Column> {
+        // Hold reads one row per point. Linear also needs the rows either
+        // side; the plain rows are then only built if a column holds.
+        let (takes, picks) = match method {
+            AlignMethod::Hold => {
+                let (rows, gaps) = self.hold_rows::<I, P>(points);
+                (None, Some(I::picks(rows, gaps)))
+            }
+            AlignMethod::Linear => {
+                let takes = self.linear_takes::<I, P>(points);
+                let holds = self
+                    .columns()
+                    .iter()
+                    .any(|c| !matches!(c.data(), ColumnData::Number(_)));
+                let picks = holds.then(|| I::picks(takes.first.clone(), takes.gaps));
+                (Some(takes), picks)
+            }
+        };
+        self.columns()
+            .iter()
+            .map(|c| {
+                let data = match (c.data(), &takes, &picks) {
+                    (ColumnData::Number(n), Some(takes), _) => {
+                        let v = n.values();
+                        let present = |i: I| n.get(i.row());
+                        let line = takes.first.iter().zip(&takes.second).zip(&takes.ratio);
+                        ColumnData::from(
+                            line.map(|((&p, &q), &ratio)| {
+                                if p == I::GAP {
+                                    f64::NAN
+                                } else if q == p {
+                                    v[p.row()]
+                                } else {
+                                    match (present(p), present(q)) {
+                                        (Some(a), Some(b)) => a + (b - a) * ratio,
+                                        _ => v[p.row()],
+                                    }
+                                }
+                            })
+                            .collect::<Vec<f64>>(),
+                        )
+                    }
+                    (data, _, Some(picks)) => picks.gather(data),
+                    (_, _, None) => unreachable!("picks are built when a column holds"),
+                };
+                Column::from_data(c.name().to_string(), data, false)
+            })
+            .collect()
     }
 
     /// One time-keyed row per bucket of `sequence`, taking one source row
@@ -235,34 +426,38 @@ impl TimeSeries {
     /// is an error, as in pond-ts. With [`TimeSeries::partition_by`], the
     /// partition columns are filled in on empty buckets too.
     pub fn materialize(&self, sequence: &Sequence, options: Materialize) -> Result<TimeSeries> {
+        if fits_narrow(self.len()) {
+            self.materialize_as::<u32>(sequence, options)
+        } else {
+            self.materialize_as::<usize>(sequence, options)
+        }
+    }
+
+    /// [`TimeSeries::materialize`], holding row numbers as `I`.
+    fn materialize_as<I: RowNumber>(
+        &self,
+        sequence: &Sequence,
+        options: Materialize,
+    ) -> Result<TimeSeries> {
         const CALL: &str = "materialize";
         self.check_new_key_name(CALL, "time")?;
         let Some((begin, end)) = self.grid_range(CALL, options.range)? else {
             return Ok(self.empty_grid("time", Key::Time(vec![])));
         };
         let buckets = sequence.buckets_sampled(begin, end, options.sample)?;
-        let mut time = Vec::with_capacity(buckets.begin.len());
-        for (i, p2) in sample_points(&buckets, options.sample).enumerate() {
-            if p2 % 2 != 0 {
-                return Err(PondError::Unsupported {
-                    call: CALL,
-                    message: format!(
-                        "the middle of bucket {i} ({} to {} ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End, or a step of an even number of milliseconds",
-                        buckets.begin[i], buckets.end[i]
-                    ),
-                });
-            }
-            time.push(i64::try_from(p2 / 2).map_err(|_| PondError::InvalidData {
-                call: CALL,
-                message: format!("bucket {i}'s time is out of range"),
-            })?);
-        }
+        // A middle can be on a half millisecond, so those are checked and
+        // built here; a start or an end is taken from the buckets below.
+        let middles = if options.sample == At::Center {
+            middle_times(&buckets)?
+        } else {
+            Vec::new()
+        };
         let starts = self.key().begin();
         let n = starts.len();
         let mut cursor = 0;
-        let mut rows = Vec::with_capacity(time.len());
-        for (i, p2) in sample_points(&buckets, options.sample).enumerate() {
-            let (b, e) = (buckets.begin[i], buckets.end[i]);
+        let mut rows = Vec::with_capacity(buckets.begin.len());
+        let mut gaps = 0;
+        for (&b, &e) in buckets.begin.iter().zip(&buckets.end) {
             while cursor < n && starts[cursor] < b {
                 cursor += 1;
             }
@@ -281,6 +476,7 @@ impl TimeSeries {
                     }
                 }
                 Pick::Nearest => {
+                    let p2 = sample_point(b, e, options.sample);
                     let mut best = u128::MAX;
                     let mut s = cursor;
                     while s < n && starts[s] < e {
@@ -293,17 +489,28 @@ impl TimeSeries {
                     }
                 }
             }
-            rows.push(pick);
+            rows.push(match pick {
+                Some(row) => I::of(row),
+                None => {
+                    gaps += 1;
+                    I::GAP
+                }
+            });
         }
+        let picks = I::picks(rows, gaps);
         let columns = self
             .columns()
             .iter()
-            .map(|c| Column::from_data(c.name().to_string(), c.data().take(&rows), false))
+            .map(|c| Column::from_data(c.name().to_string(), picks.gather(c.data()), false))
             .collect();
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             "time".to_string(),
-            Key::Time(time),
+            Key::Time(match options.sample {
+                At::Begin => buckets.begin,
+                At::Center => middles,
+                At::End => buckets.end,
+            }),
             columns,
         ))
     }
@@ -329,8 +536,22 @@ impl TimeSeries {
     /// builds the surviving row; pond-rs does not have that yet. Across
     /// entities, dedupe each with [`TimeSeries::partition_by`] first.
     pub fn dedupe(&self, keep: Keep) -> Result<TimeSeries> {
+        if fits_narrow(self.len()) {
+            self.dedupe_as::<u32>(&keep)
+        } else {
+            self.dedupe_as::<usize>(&keep)
+        }
+    }
+
+    /// [`TimeSeries::dedupe`], holding row numbers as `I`.
+    ///
+    /// Cost, for N rows and C columns: one walk of the keys (O(N); interval
+    /// keys also hash the labels within a run of equal spans), then, only
+    /// if a key repeats, one pass over the kept rows for the key and for
+    /// each column (O(N·C)).
+    fn dedupe_as<I: RowNumber>(&self, keep: &Keep) -> Result<TimeSeries> {
         const CALL: &str = "dedupe";
-        let by = match &keep {
+        let by = match keep {
             Keep::Min(c) | Keep::Max(c) => {
                 let column = self.column_index(CALL, c)?;
                 let kind = self.columns()[column].kind();
@@ -348,15 +569,15 @@ impl TimeSeries {
         };
         let mut kept = Vec::with_capacity(self.len());
         let mut repeated = false;
-        let mut resolve = |group: &[usize]| -> Result<()> {
+        let mut resolve = |group: Group<'_>| -> Result<()> {
             if group.len() == 1 {
-                kept.push(group[0]);
+                kept.push(I::of(group.first()));
                 return Ok(());
             }
             repeated = true;
-            match &keep {
-                Keep::First => kept.push(group[0]),
-                Keep::Last => kept.push(group[group.len() - 1]),
+            match keep {
+                Keep::First => kept.push(I::of(group.first())),
+                Keep::Last => kept.push(I::of(group.last())),
                 Keep::Drop => {}
                 Keep::Error => {
                     return Err(PondError::InvalidData {
@@ -364,14 +585,20 @@ impl TimeSeries {
                         message: format!(
                             "{} events at {}. Specify a different 'keep' policy or fix upstream.",
                             group.len(),
-                            self.describe_key(group[0])
+                            self.describe_key(group.first())
                         ),
                     });
                 }
                 Keep::Min(_) | Keep::Max(_) => {
                     let wants_min = matches!(keep, Keep::Min(_));
                     let column = by.expect("checked above");
-                    kept.push(best_row(column.data(), group, wants_min));
+                    let best = match group {
+                        Group::Run(first, stop) => best_row(column.data(), first..stop, wants_min),
+                        Group::Rows(rows) => {
+                            best_row(column.data(), rows.iter().copied(), wants_min)
+                        }
+                    };
+                    kept.push(I::of(best));
                 }
             }
             Ok(())
@@ -380,18 +607,52 @@ impl TimeSeries {
         if !repeated {
             return Ok(self.clone());
         }
-        Ok(self.take_rows(&kept))
+        let pick = |v: &[i64]| kept.iter().map(|&i| v[i.row()]).collect::<Vec<i64>>();
+        let key = match self.key() {
+            Key::Time(t) => Key::Time(pick(t)),
+            Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {
+                begin: pick(&k.begin),
+                end: pick(&k.end),
+            }),
+            Key::Interval(k) => Key::Interval(IntervalKeys {
+                label: match &k.label {
+                    Labels::Number(v) => Labels::Number(kept.iter().map(|&i| v[i.row()]).collect()),
+                    Labels::String(text) => {
+                        Labels::String(I::picks(kept.clone(), 0).gather_text(text))
+                    }
+                },
+                begin: pick(&k.begin),
+                end: pick(&k.end),
+            }),
+        };
+        let picks = I::picks(kept, 0);
+        let columns = self
+            .columns()
+            .iter()
+            .map(|c| {
+                Column::from_data(
+                    c.name().to_string(),
+                    picks.gather(c.data()),
+                    c.is_required(),
+                )
+            })
+            .collect();
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            self.key_name().to_string(),
+            key,
+            columns,
+        ))
     }
 
     /// Each group of rows sharing a whole key, in the order its key first
     /// appears (pond-ts groups through a `Map`, which keeps that order).
-    fn for_each_key_group(&self, visit: &mut impl FnMut(&[usize]) -> Result<()>) -> Result<()> {
+    fn for_each_key_group(&self, visit: &mut impl FnMut(Group<'_>) -> Result<()>) -> Result<()> {
         let key = self.key();
         let begin = key.begin();
         let end = key.end();
         let n = begin.len();
         let mut run = 0;
-        let mut group = Vec::new();
         while run < n {
             // Rows are ordered by (begin, end), so equal ones are adjacent.
             let same = |i: usize| begin[i] == begin[run] && end.is_none_or(|e| e[i] == e[run]);
@@ -413,14 +674,10 @@ impl TimeSeries {
                         groups[g].push(i);
                     }
                     for g in &groups {
-                        visit(g)?;
+                        visit(Group::Rows(g))?;
                     }
                 }
-                _ => {
-                    group.clear();
-                    group.extend(run..stop);
-                    visit(&group)?;
-                }
+                _ => visit(Group::Run(run, stop))?,
             }
             run = stop;
         }
@@ -494,9 +751,12 @@ impl TimeSeries {
         TimeSeries::from_parts(self.name().to_string(), key_name.to_string(), key, columns)
     }
 
-    /// Hold: for each point (doubled ms), the row pond-ts `atOrBefore`
-    /// gives.
-    fn hold_rows(&self, points: impl Iterator<Item = i128>) -> Vec<Option<usize>> {
+    /// Hold: for each point, the row pond-ts `atOrBefore` gives
+    /// ([`RowNumber::GAP`] for none), and how many have none.
+    fn hold_rows<I: RowNumber, P: Point>(
+        &self,
+        points: impl Iterator<Item = P>,
+    ) -> (Vec<I>, usize) {
         let key = self.key();
         let begin = key.begin();
         let n = begin.len();
@@ -509,53 +769,68 @@ impl TimeSeries {
         };
         let is_time = matches!(key, Key::Time(_));
         let mut idx = 0;
-        points
-            .map(|p2| {
-                while idx < n {
-                    let b2 = 2 * i128::from(begin[idx]);
-                    if b2 < p2 || (b2 == p2 && zero_interval(idx)) {
-                        idx += 1;
-                    } else {
-                        break;
-                    }
+        let mut gaps = 0;
+        let rows = points
+            .map(|point| {
+                while idx < n
+                    && (point.is_after(begin[idx])
+                        || (point.is_at(begin[idx]) && zero_interval(idx)))
+                {
+                    idx += 1;
                 }
                 // Only a time key can equal a time, so only then is the row
                 // at the point itself taken.
-                if is_time && idx < n && 2 * i128::from(begin[idx]) == p2 {
-                    Some(idx)
+                if is_time && idx < n && point.is_at(begin[idx]) {
+                    I::of(idx)
+                } else if idx == 0 {
+                    gaps += 1;
+                    I::GAP
                 } else {
-                    idx.checked_sub(1)
+                    I::of(idx - 1)
                 }
             })
-            .collect()
+            .collect();
+        (rows, gaps)
     }
 
     /// Linear (time keys): pond-ts `alignLinearAt` with its cursor.
-    fn linear_takes(&self, points: impl Iterator<Item = i128>) -> Vec<Take> {
+    fn linear_takes<I: RowNumber, P: Point>(
+        &self,
+        points: impl Iterator<Item = P>,
+    ) -> LinearTakes<I> {
         let begin = self.key().begin();
         let n = begin.len();
+        let count = points.size_hint().0;
+        let mut takes = LinearTakes {
+            first: Vec::with_capacity(count),
+            second: Vec::with_capacity(count),
+            ratio: Vec::with_capacity(count),
+            gaps: 0,
+        };
         let mut idx = 0;
-        points
-            .map(|p2| {
-                while idx < n && 2 * i128::from(begin[idx]) < p2 {
-                    idx += 1;
-                }
-                if idx < n && 2 * i128::from(begin[idx]) == p2 {
-                    return Take::Row(idx);
-                }
-                if idx == 0 {
-                    return Take::Nothing;
-                }
-                if idx == n {
-                    return Take::Row(n - 1);
-                }
+        for point in points {
+            while idx < n && point.is_after(begin[idx]) {
+                idx += 1;
+            }
+            let (first, second, ratio) = if idx < n && point.is_at(begin[idx]) {
+                (I::of(idx), I::of(idx), 0.0)
+            } else if idx == 0 {
+                takes.gaps += 1;
+                (I::GAP, I::GAP, 0.0)
+            } else if idx == n {
+                (I::of(n - 1), I::of(n - 1), 0.0)
+            } else {
                 let (p, q) = (idx - 1, idx);
                 // As pond-ts computes it, in f64.
-                let t = p2 as f64 / 2.0;
+                let t = point.ms();
                 let (bp, bq) = (begin[p] as f64, begin[q] as f64);
-                Take::Between(p, q, (t - bp) / (bq - bp))
-            })
-            .collect()
+                (I::of(p), I::of(q), (t - bp) / (bq - bp))
+            };
+            takes.first.push(first);
+            takes.second.push(second);
+            takes.ratio.push(ratio);
+        }
+        takes
     }
 }
 
@@ -565,11 +840,45 @@ fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> +
         .begin
         .iter()
         .zip(&buckets.end)
-        .map(move |(&b, &e)| match at {
-            At::Begin => 2 * i128::from(b),
-            At::Center => i128::from(b) + i128::from(e),
-            At::End => 2 * i128::from(e),
-        })
+        .map(move |(&b, &e)| sample_point(b, e, at))
+}
+
+/// Each bucket's middle in whole ms, for [`TimeSeries::materialize`]; an
+/// error if one is on a half millisecond.
+fn middle_times(buckets: &IntervalKeys) -> Result<Vec<i64>> {
+    const CALL: &str = "materialize";
+    let mut time = Vec::with_capacity(buckets.begin.len());
+    for (i, p2) in sample_points(buckets, At::Center).enumerate() {
+        if p2 % 2 != 0 {
+            return Err(PondError::Unsupported {
+                call: CALL,
+                message: format!(
+                    "the middle of bucket {i} ({} to {} ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End, or a step of an even number of milliseconds",
+                    buckets.begin[i], buckets.end[i]
+                ),
+            });
+        }
+        time.push(i64::try_from(p2 / 2).map_err(|_| PondError::InvalidData {
+            call: CALL,
+            message: format!("bucket {i}'s time is out of range"),
+        })?);
+    }
+    Ok(time)
+}
+
+/// The sample point of the bucket `[begin, end)`, doubled.
+fn sample_point(begin: i64, end: i64, at: At) -> i128 {
+    match at {
+        At::Begin => 2 * i128::from(begin),
+        At::Center => i128::from(begin) + i128::from(end),
+        At::End => 2 * i128::from(end),
+    }
+}
+
+/// True when a source of `rows` rows has row numbers that fit `u32` with
+/// [`RowNumber::GAP`] to spare.
+fn fits_narrow(rows: usize) -> bool {
+    u32::try_from(rows).is_ok()
 }
 
 pub(crate) fn no_buckets() -> IntervalKeys {
@@ -580,9 +889,42 @@ pub(crate) fn no_buckets() -> IntervalKeys {
     }
 }
 
-/// The row of `group` with the smallest (or largest) value; gaps lose, and
-/// the earlier row wins a tie.
-fn best_row(data: &ColumnData, group: &[usize], min: bool) -> usize {
+/// Rows that share a whole key, in row order.
+#[derive(Clone, Copy)]
+enum Group<'a> {
+    /// Neighbours: the rows from the first number up to, not including, the
+    /// second.
+    Run(usize, usize),
+    /// Rows listed one by one (never none).
+    Rows(&'a [usize]),
+}
+
+impl Group<'_> {
+    fn len(self) -> usize {
+        match self {
+            Group::Run(first, stop) => stop - first,
+            Group::Rows(rows) => rows.len(),
+        }
+    }
+
+    fn first(self) -> usize {
+        match self {
+            Group::Run(first, _) => first,
+            Group::Rows(rows) => rows[0],
+        }
+    }
+
+    fn last(self) -> usize {
+        match self {
+            Group::Run(_, stop) => stop - 1,
+            Group::Rows(rows) => rows[rows.len() - 1],
+        }
+    }
+}
+
+/// The row of `group` (not empty) with the smallest (or largest) value;
+/// gaps lose, and the earlier row wins a tie.
+fn best_row(data: &ColumnData, mut group: impl Iterator<Item = usize>, min: bool) -> usize {
     let better = |a: std::cmp::Ordering| {
         if min {
             a == std::cmp::Ordering::Less
@@ -590,11 +932,11 @@ fn best_row(data: &ColumnData, group: &[usize], min: bool) -> usize {
             a == std::cmp::Ordering::Greater
         }
     };
-    let mut best = group[0];
+    let mut best = group.next().expect("a group has a row");
     match data {
         ColumnData::Number(c) => {
             let mut best_v = c.get(best);
-            for &i in &group[1..] {
+            for i in group {
                 let Some(v) = c.get(i) else { continue };
                 if best_v.is_none_or(|b| v.partial_cmp(&b).is_some_and(better)) {
                     best = i;
@@ -604,7 +946,7 @@ fn best_row(data: &ColumnData, group: &[usize], min: bool) -> usize {
         }
         ColumnData::Decimal(c) => {
             let mut best_v = c.get(best).map(|d| d.value);
-            for &i in &group[1..] {
+            for i in group {
                 let Some(v) = c.get(i).map(|d| d.value) else {
                     continue;
                 };
@@ -700,7 +1042,7 @@ pub fn js_number(x: f64) -> String {
 mod tests {
     use super::*;
 
-    use crate::column::DecimalColumn;
+    use crate::column::{DecimalColumn, Float64Column, Scalar};
     use crate::error::PondError;
 
     fn s(times: Vec<i64>, columns: Vec<Column>) -> TimeSeries {
@@ -808,6 +1150,230 @@ mod tests {
             "dedupe: 2 events at key \"0:10:1.5\". \
              Specify a different 'keep' policy or fix upstream."
         );
+    }
+
+    /// A series with every column kind, gaps, repeated times, an infinity
+    /// (a gap) and a negative zero.
+    fn mixed(times: Vec<i64>) -> TimeSeries {
+        let n = times.len();
+        let numbers: Vec<f64> = (0..n)
+            .map(|i| match i % 5 {
+                0 => f64::NAN,
+                1 => -0.0,
+                2 => f64::INFINITY,
+                _ => i as f64 * 1.25,
+            })
+            .collect();
+        let text: Vec<Option<String>> = (0..n)
+            .map(|i| (i % 4 != 1).then(|| format!("t{i}")))
+            .collect();
+        let flags: Vec<Option<bool>> = (0..n).map(|i| (i % 3 != 2).then_some(i % 2 == 0)).collect();
+        let lists: Vec<Option<Vec<Scalar>>> = (0..n)
+            .map(|i| (i % 6 != 3).then(|| vec![Scalar::Number(i as f64)]))
+            .collect();
+        let decimals = DecimalColumn::from_values((0..n).map(|i| i as i128 * 7).collect(), 2);
+        s(
+            times,
+            vec![
+                Column::optional("v", numbers),
+                Column::required("w", (0..n).map(|i| i as f64).collect::<Vec<f64>>()),
+                Column::optional("t", text),
+                Column::required("r", (0..n).map(|i| format!("r{i}")).collect::<Vec<_>>()),
+                Column::optional("b", flags),
+                Column::optional("l", lists),
+                Column::required("d", decimals.unwrap()),
+            ],
+        )
+    }
+
+    /// Whether each text column carries an Arrow validity buffer, which
+    /// `==` does not look at.
+    fn text_validity(x: &TimeSeries) -> Vec<bool> {
+        x.columns()
+            .iter()
+            .filter_map(|c| c.strings().ok())
+            .map(|c| c.arrow().nulls().is_some())
+            .collect()
+    }
+
+    #[test]
+    fn row_numbers_as_u32_and_as_usize_give_the_same_series() {
+        let same = |a: Result<TimeSeries>, b: Result<TimeSeries>| {
+            if let (Err(a), Err(b)) = (&a, &b) {
+                assert_eq!(a.to_string(), b.to_string());
+                return;
+            }
+            let (a, b) = (a.unwrap(), b.unwrap());
+            assert_eq!(a, b);
+            assert_eq!(format!("{a:?}"), format!("{b:?}"));
+            assert_eq!(text_validity(&a), text_validity(&b));
+            for (x, y) in a.columns().iter().zip(b.columns()) {
+                assert_eq!(x.is_required(), y.is_required());
+                if let (Ok(x), Ok(y)) = (x.numbers(), y.numbers()) {
+                    let bits = |c: &Float64Column| {
+                        c.values().iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                    };
+                    assert_eq!(bits(x), bits(y));
+                }
+            }
+        };
+        let times = vec![
+            -2_500, -2_500, -400, 0, 0, 1_000, 1_001, 2_999, 3_000, 3_000, 7_500, 9_000,
+        ];
+        let by_time = mixed(times.clone());
+        let keys = IntervalKeys {
+            label: (0..times.len())
+                .map(|i| (i % 3) as f64)
+                .collect::<Vec<f64>>()
+                .into(),
+            end: times
+                .iter()
+                .zip([0, 500, 0, 0, 500, 300, 0, 0, 0, 500, 0, 250])
+                .map(|(t, length)| t + length)
+                .collect(),
+            begin: times,
+        };
+        let by_interval =
+            TimeSeries::from_intervals("i", keys, by_time.columns().to_vec()).unwrap();
+        let labelled = IntervalKeys {
+            label: ["a", "b", "a", "c", "c", "a", "b", "b", "a", "a", "z", "z"]
+                .to_vec()
+                .into(),
+            begin: vec![0, 0, 0, 0, 0, 5, 5, 5, 5, 9, 9, 9],
+            end: vec![1, 1, 1, 1, 1, 6, 6, 7, 7, 9, 9, 9],
+        };
+        let by_label =
+            TimeSeries::from_intervals("l", labelled, by_time.columns().to_vec()).unwrap();
+        let ranges_key = TimeSeries::from_time_ranges(
+            "r",
+            TimeRangeKeys {
+                begin: vec![0, 0, 0, 0, 0, 5, 5, 5, 5, 9, 9, 9],
+                end: vec![1, 1, 1, 2, 2, 6, 6, 7, 7, 9, 9, 9],
+            },
+            by_time.columns().to_vec(),
+        )
+        .unwrap();
+        let unique = mixed(vec![1, 2, 3]);
+        for series in [&by_time, &by_interval, &by_label, &ranges_key, &unique] {
+            for keep in [
+                Keep::First,
+                Keep::Last,
+                Keep::Drop,
+                Keep::Min("v".into()),
+                Keep::Max("v".into()),
+                Keep::Min("d".into()),
+                Keep::Max("w".into()),
+            ] {
+                same(
+                    series.dedupe_as::<u32>(&keep),
+                    series.dedupe_as::<usize>(&keep),
+                );
+            }
+            // Against grouping by the whole key written out, and the
+            // general row gather.
+            let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+            for i in 0..series.len() {
+                let key = series.describe_key(i);
+                match groups.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, rows)) => rows.push(i),
+                    None => groups.push((key, vec![i])),
+                }
+            }
+            for (keep, choose) in [(Keep::First, 0usize), (Keep::Last, 1), (Keep::Drop, 2)] {
+                let kept: Vec<usize> = groups
+                    .iter()
+                    .filter_map(|(_, rows)| match choose {
+                        0 => rows.first().copied(),
+                        1 => rows.last().copied(),
+                        _ => (rows.len() == 1).then(|| rows[0]),
+                    })
+                    .collect();
+                same(series.dedupe(keep), Ok(series.take_rows(&kept)));
+            }
+            same(
+                series.dedupe_as::<u32>(&Keep::Error),
+                series.dedupe_as::<usize>(&Keep::Error),
+            );
+        }
+        let empty = mixed(vec![]);
+        let sequences = [
+            Sequence::every("1s").unwrap(),
+            Sequence::every_ms(700).unwrap(),
+            // An odd step: middles on half milliseconds.
+            Sequence::every_ms(333).unwrap(),
+        ];
+        let ranges = [
+            None,
+            Some((-6_000, 12_000)),
+            Some((500, 2_000)),
+            Some((20_000, 21_000)),
+        ];
+        for series in [&by_time, &by_interval, &empty] {
+            for sequence in &sequences {
+                for range in ranges {
+                    for sample in [At::Begin, At::Center, At::End] {
+                        for method in [AlignMethod::Hold, AlignMethod::Linear] {
+                            let options = Align {
+                                method,
+                                sample,
+                                range,
+                            };
+                            if method == AlignMethod::Linear
+                                && !matches!(series.key(), Key::Time(_))
+                            {
+                                continue;
+                            }
+                            same(
+                                series.align_as::<u32>(sequence, options),
+                                series.align_as::<usize>(sequence, options),
+                            );
+                        }
+                        for pick in [Pick::First, Pick::Last, Pick::Nearest] {
+                            let options = Materialize {
+                                pick,
+                                sample,
+                                range,
+                            };
+                            same(
+                                series.materialize_as::<u32>(sequence, options),
+                                series.materialize_as::<usize>(sequence, options),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_whole_point_reads_as_its_doubled_form() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut times = vec![0, 1, -1, i64::MAX, i64::MIN, i64::MAX - 1, (1 << 53) + 1];
+        times.extend((0..10_000).map(|i| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x as i64) >> (i % 64)
+        }));
+        for &t in &times {
+            let (whole, doubled) = (Whole(t), Doubled(2 * i128::from(t)));
+            assert_eq!(whole.ms().to_bits(), doubled.ms().to_bits(), "{t}");
+            for start in [
+                t,
+                t.saturating_sub(1),
+                t.saturating_add(1),
+                0,
+                i64::MIN,
+                i64::MAX,
+            ] {
+                assert_eq!(
+                    whole.is_after(start),
+                    doubled.is_after(start),
+                    "{t} {start}"
+                );
+                assert_eq!(whole.is_at(start), doubled.is_at(start), "{t} {start}");
+            }
+        }
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::elements::Elements;
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, clamp_at_zero, input_kind, output_column,
-    percentile_of_sorted,
+    percentile_of_sorted, sum_range,
 };
 use crate::reshape::At;
 use crate::sequence::Sequence;
@@ -329,6 +329,14 @@ impl StdevState {
         self.k + (self.s1h + self.s1l) / self.n
     }
 
+    /// Cost: a few operations when the shift stays where it is, which is
+    /// nearly always. It is inlined, and the rare move of the shift is a
+    /// call that is handed the sums as plain numbers ([`reshift`]), not a
+    /// reference to this state, so a caller's loop can keep the running
+    /// sums in registers from row to row. (With the move done in place
+    /// behind `&mut self` the sums lived in memory, and each row waited on
+    /// reading back what the row before had just written.)
+    #[inline]
     pub(crate) fn m2(&mut self) -> f64 {
         let n = self.n;
         if n <= 1.0 {
@@ -337,55 +345,58 @@ impl StdevState {
         let mut mh = self.s1h / n;
         let mut q = self.s1h * mh;
         if q > 0.5 * self.s2h {
-            self.reshift(mh);
+            let sums = [self.s1h, self.s1l, self.s2h, self.s2l];
+            [self.k, self.s1h, self.s1l, self.s2h, self.s2l] = reshift(n, self.k, sums, mh);
             mh = self.s1h / n;
             q = self.s1h * mh;
         }
         self.s2h - q + self.s2l - 2.0 * mh * self.s1l
     }
+}
 
-    fn reshift(&mut self, delta: f64) {
-        let k = self.k;
-        let n = self.n;
-        let k_new = k + delta;
-        let gh = k_new - k;
-        let mut bb = gh - k_new;
-        let gl = k_new - (gh - bb) + (-k - bb);
-        let mut c = SPLIT * gh;
-        let ah = c - (c - gh);
-        let al = gh - ah;
-        c = SPLIT * n;
-        let bh = c - (c - n);
-        let bl = n - bh;
-        let nh = n * gh;
-        let nl = ah * bh - nh + ah * bl + al * bh + al * bl + n * gl;
-        let (s1h, s1l) = (self.s1h, self.s1l);
-        let mut s = s1h - nh;
-        bb = s - s1h;
-        let mut e = s1h - (s - bb) + (-nh - bb) + s1l - nl;
-        let u1h = s + e;
-        let u1l = e - (u1h - s);
-        s = s1h + u1h;
-        bb = s - s1h;
-        e = s1h - (s - bb) + (u1h - bb) + s1l + u1l;
-        let th = s + e;
-        let tl = e - (th - s);
-        c = SPLIT * th;
-        let ch = c - (c - th);
-        let cl = th - ch;
-        let ph = gh * th;
-        let pl = ah * ch - ph + ah * cl + al * ch + al * cl + gh * tl + gl * th;
-        let s2h = self.s2h;
-        s = s2h - ph;
-        bb = s - s2h;
-        e = s2h - (s - bb) + (-ph - bb) + self.s2l - pl;
-        let u2h = s + e;
-        self.s2l = e - (u2h - s);
-        self.s2h = u2h;
-        self.s1h = u1h;
-        self.s1l = u1l;
-        self.k = k_new;
-    }
+/// pond-ts `WindowStdev.reshift`: move the shift `k` of `n` values by
+/// `delta`, rewriting the sums `[s1h, s1l, s2h, s2l]` exactly for the new
+/// shift. Gives `[k, s1h, s1l, s2h, s2l]` as they then stand.
+///
+/// Kept out of line and given numbers, not the state: see
+/// [`StdevState::m2`].
+#[cold]
+#[inline(never)]
+fn reshift(n: f64, k: f64, sums: [f64; 4], delta: f64) -> [f64; 5] {
+    let [s1h, s1l, s2h, s2l] = sums;
+    let k_new = k + delta;
+    let gh = k_new - k;
+    let mut bb = gh - k_new;
+    let gl = k_new - (gh - bb) + (-k - bb);
+    let mut c = SPLIT * gh;
+    let ah = c - (c - gh);
+    let al = gh - ah;
+    c = SPLIT * n;
+    let bh = c - (c - n);
+    let bl = n - bh;
+    let nh = n * gh;
+    let nl = ah * bh - nh + ah * bl + al * bh + al * bl + n * gl;
+    let mut s = s1h - nh;
+    bb = s - s1h;
+    let mut e = s1h - (s - bb) + (-nh - bb) + s1l - nl;
+    let u1h = s + e;
+    let u1l = e - (u1h - s);
+    s = s1h + u1h;
+    bb = s - s1h;
+    e = s1h - (s - bb) + (u1h - bb) + s1l + u1l;
+    let th = s + e;
+    let tl = e - (th - s);
+    c = SPLIT * th;
+    let ch = c - (c - th);
+    let cl = th - ch;
+    let ph = gh * th;
+    let pl = ah * ch - ph + ah * cl + al * ch + al * cl + gh * tl + gl * th;
+    s = s2h - ph;
+    bb = s - s2h;
+    e = s2h - (s - bb) + (-ph - bb) + s2l - pl;
+    let u2h = s + e;
+    let u2l = e - (u2h - s);
+    [k_new, u1h, u1l, u2h, u2l]
 }
 
 impl WindowState for StdevState {
@@ -946,6 +957,14 @@ impl TimeSeries {
     /// otherwise); columns come out in the order [`TimeSeries::rolling`]
     /// gives. An empty series with no range gives an empty result. An
     /// output named `"interval"` is an error.
+    ///
+    /// Cost: the windows are found in one pass over the rows and the
+    /// buckets, O(N + B). Each is then reduced on its own, which reads the
+    /// rows it holds: O(B·W) for B buckets whose windows hold W rows. A
+    /// `count` is cheaper when the windows overlap (O(N + B) for a number
+    /// column); `sum` and `avg` are not, because pond-ts adds each
+    /// bucket's values in an order of its own, and a sum carried from one
+    /// window to the next would differ in its last bits.
     pub fn rolling_over(
         &self,
         sequence: &Sequence,
@@ -970,7 +989,7 @@ impl TimeSeries {
             .into_iter()
             .map(|(source, agg)| (agg, source))
             .collect();
-        let mut columns = self.reduce_columns(CALL, &plan, &ranges)?;
+        let mut columns = self.reduce_windows(&plan, &ranges)?;
         if ranges.iter().any(|r| r.len() < options.min_samples) {
             let keep: Vec<Option<usize>> = ranges
                 .iter()
@@ -987,6 +1006,62 @@ impl TimeSeries {
             Key::Interval(buckets),
             columns,
         ))
+    }
+
+    /// Each entry of `plan` reduced over each window of `ranges`, giving
+    /// what [`TimeSeries::reduce_columns`] gives, bit for bit.
+    ///
+    /// Cost: `reduce_columns` reads every row of every window, O(B·W) for B
+    /// windows of W rows, and for `avg` reads them twice (once to count the
+    /// present values, once to add them, testing each for a gap). When the
+    /// windows hold every row eight times over, `count`, `sum`
+    /// and `avg` of a number column instead take two passes over the
+    /// column first ([`present_before`], [`gaps_as_zero`]): a window's count
+    /// is then one subtraction, and its sum adds the same values in the
+    /// same order with no test per value ([`window_sum`]). The sum is still
+    /// O(B·W); the lanes pond-ts adds in start at each window's first row,
+    /// so one window's sum cannot be carried to the next.
+    fn reduce_windows(
+        &self,
+        plan: &[(&Agg, usize)],
+        ranges: &[std::ops::Range<usize>],
+    ) -> Result<Vec<Column>> {
+        let held = ranges.iter().fold(0usize, |n, r| n.saturating_add(r.len()));
+        // From eight times over: at five (a 5-minute window on a 1-minute
+        // grid over 1M rows) the two O(N) passes cost more than the tests
+        // they save (6.5 ms by the old path, 7.7 ms by this one).
+        let quick = |&(agg, source): &(&Agg, usize)| {
+            held / 8 >= self.len()
+                && matches!(agg.reducer, Reducer::Count | Reducer::Sum | Reducer::Avg)
+                && matches!(self.columns()[source].data(), ColumnData::Number(_))
+        };
+        let (fast, slow): (Vec<_>, Vec<_>) = plan.iter().copied().partition(quick);
+        if fast.is_empty() {
+            return self.reduce_columns(CALL, plan, ranges);
+        }
+        // The other entries first: they can fail, the quick ones cannot.
+        let mut slow = self.reduce_columns(CALL, &slow, ranges)?.into_iter();
+        let mut fast = crate::par::map(&fast, |&(agg, source)| {
+            let ColumnData::Number(c) = self.columns()[source].data() else {
+                unreachable!("quick entries read number columns")
+            };
+            Column::optional_raw(
+                agg.output.clone(),
+                reduce_number_windows(c.values(), agg.reducer, ranges),
+            )
+        })
+        .into_iter();
+        Ok(plan
+            .iter()
+            .map(|entry| {
+                let column = if quick(entry) {
+                    fast.next()
+                } else {
+                    slow.next()
+                };
+                column.expect("one column per entry")
+            })
+            .collect())
     }
 
     /// Check `aggs` for a rolling call and pair each with its source
@@ -1058,6 +1133,98 @@ fn grid_windows(
             lo..hi
         })
         .collect()
+}
+
+/// pond-ts `BLOCKED_MIN`: from this many rows a bucket's sum is taken in
+/// eight lanes (`reducer.rs`).
+const LANES_FROM: usize = 32;
+
+/// `values` with every gap (non-finite value) as `0`.
+fn gaps_as_zero(values: &[f64]) -> Vec<f64> {
+    values
+        .iter()
+        .map(|&v| if v.is_finite() { v } else { 0.0 })
+        .collect()
+}
+
+/// How many of `values[..i]` are present, for each `i` up to the length.
+fn present_before(values: &[f64]) -> Vec<usize> {
+    let mut counts = vec![0; values.len() + 1];
+    let mut n = 0;
+    for (count, v) in counts[1..].iter_mut().zip(values) {
+        n += usize::from(v.is_finite());
+        *count = n;
+    }
+    counts
+}
+
+/// `count`, `sum` or `avg` of the present values of each window of
+/// `values`, a gap where [`reduce_range`](crate::reducer::reduce_range)
+/// gives none (an `avg` of nothing, a sum that overflowed).
+///
+/// Cost: O(N) to prepare, then O(1) a window for `count` and one pass over
+/// each window for `sum` and `avg`.
+fn reduce_number_windows(
+    values: &[f64],
+    reducer: Reducer,
+    ranges: &[std::ops::Range<usize>],
+) -> Vec<f64> {
+    let gap_unless_finite = |v: f64| if v.is_finite() { v } else { f64::NAN };
+    let counts = if reducer == Reducer::Sum {
+        Vec::new()
+    } else {
+        present_before(values)
+    };
+    let present = |r: &std::ops::Range<usize>| counts[r.end] - counts[r.start];
+    if reducer == Reducer::Count {
+        return ranges.iter().map(|r| present(r) as f64).collect();
+    }
+    // Only windows long enough for the lanes read the copy.
+    let zeroed = if ranges.iter().any(|r| r.len() >= LANES_FROM) {
+        gaps_as_zero(values)
+    } else {
+        Vec::new()
+    };
+    let sum = |r: &std::ops::Range<usize>| window_sum(values, &zeroed, r);
+    if reducer == Reducer::Sum {
+        return ranges.iter().map(|r| gap_unless_finite(sum(r))).collect();
+    }
+    ranges
+        .iter()
+        .map(|r| match present(r) {
+            0 => f64::NAN,
+            n => gap_unless_finite(sum(r) / n as f64),
+        })
+        .collect()
+}
+
+/// The sum of the present values in `values[rows]`, bit for bit as
+/// [`sum_range`] gives it. `zeroed` is `values` through [`gaps_as_zero`].
+///
+/// From [`LANES_FROM`] rows this is pond-ts's `blockedSumFinite`: eight
+/// running sums over the whole blocks of eight, where a gap adds `+0`
+/// (here read from `zeroed`, so there is no test per value), combined in
+/// order, then the rows left over, where a gap is skipped.
+fn window_sum(values: &[f64], zeroed: &[f64], rows: &std::ops::Range<usize>) -> f64 {
+    let window = &values[rows.clone()];
+    if window.len() < LANES_FROM {
+        return sum_range(window);
+    }
+    let (blocks, _) = zeroed[rows.clone()].as_chunks::<8>();
+    let (_, left_over) = window.as_chunks::<8>();
+    let mut a = [0.0f64; 8];
+    for block in blocks {
+        for (lane, &v) in a.iter_mut().zip(block) {
+            *lane += v;
+        }
+    }
+    let mut s = a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7];
+    for &v in left_over {
+        if v.is_finite() {
+            s += v;
+        }
+    }
+    s
 }
 
 /// Refuse values pond-ts would route to its big-integer lanes.
@@ -1177,6 +1344,54 @@ mod tests {
             let got = roll(DiffState::default(), &frame, &values);
             let bits = |xs: &[f64]| xs.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
             assert_eq!(bits(&got), bits(&want), "{times:?} {values:?} {window}");
+        }
+    }
+
+    /// The quick `count` / `sum` / `avg` over windows against the bucket
+    /// kernels `aggregate` uses, on windows of every length around the
+    /// eight-lane threshold, with gaps, infinities, zeros of both signs and
+    /// sums that overflow.
+    #[test]
+    fn number_windows_match_the_bucket_kernels_bit_for_bit() {
+        use crate::reducer::reduce_range;
+        let mut seed = 7u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            seed >> 33
+        };
+        let pools: [&[f64]; 4] = [
+            &[1.5, -2.25, 1e16, -1e16, 0.1, f64::NAN, 3.0, 1e-300],
+            &[0.0, -0.0, -0.0, f64::NAN, -0.0],
+            &[
+                f64::MAX,
+                f64::MAX,
+                -f64::MAX,
+                1.0,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            &[f64::NAN, f64::NAN, f64::NAN, -0.0],
+        ];
+        for pool in pools {
+            let values: Vec<f64> = (0..400)
+                .map(|_| pool[next() as usize % pool.len()])
+                .collect();
+            let mut ranges = Vec::new();
+            for len in 0..=100 {
+                for start in [0, 1, 7, 8, 9, 150, 400 - len] {
+                    ranges.push(start..start + len);
+                }
+            }
+            ranges.push(0..400);
+            for reducer in [Reducer::Count, Reducer::Sum, Reducer::Avg] {
+                let got = reduce_number_windows(&values, reducer, &ranges);
+                for (r, got) in ranges.iter().zip(got) {
+                    let want = reduce_range(reducer, &values[r.clone()]).unwrap_or(f64::NAN);
+                    assert_eq!(got.to_bits(), want.to_bits(), "{reducer:?} {r:?} {pool:?}");
+                }
+            }
         }
     }
 

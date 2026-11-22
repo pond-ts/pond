@@ -306,12 +306,17 @@ impl Sequence {
                         ))
                     })
                 };
-                let mut starts = Vec::with_capacity(count);
-                let mut ends = Vec::with_capacity(count);
-                for k in first..=last {
-                    starts.push(edge(k)?);
-                    ends.push(edge(k + 1)?);
-                }
+                // Edges rise with k, so when the first start and the last
+                // end are in range every edge between them is. Each start
+                // is the one before plus a step, not the first plus k
+                // steps: k·step can pass i64 even when every edge fits.
+                let first_start = edge(first)?;
+                edge(last + 1)?;
+                let starts: Vec<i64> =
+                    std::iter::successors(Some(first_start), |&start| Some(start + step_ms))
+                        .take(count)
+                        .collect();
+                let ends = starts.iter().map(|start| start + step_ms).collect();
                 Ok(labelled_by_start(starts, ends))
             }
             Grid::Calendar { .. } => {
@@ -479,6 +484,21 @@ fn labelled_by_start(begin: Vec<i64>, end: Vec<i64>) -> IntervalKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Edges close to both ends of i64, where the k-th start is in range
+    /// but k steps alone are not (k·step passes i64::MAX): the buckets must
+    /// still come out, in debug builds too, as they did with i128 edges.
+    #[test]
+    fn fixed_step_edges_near_the_ends_of_i64() {
+        let step = 5_000_000_000_000_000_000;
+        let anchor = -4_200_000_000_000_000_000;
+        let grid = Sequence::every_ms(step).unwrap().with_anchor(anchor);
+        let b = grid
+            .buckets_sampled(anchor - step, 5_000_000_000_000_000_000, At::Begin)
+            .unwrap();
+        assert_eq!(b.begin, vec![anchor - step, anchor, anchor + step]);
+        assert_eq!(b.end, vec![anchor, anchor + step, anchor + step + step]);
+    }
 
     #[test]
     #[cfg(feature = "live")]
