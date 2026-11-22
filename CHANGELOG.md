@@ -103,6 +103,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   up: an unrelated, empty PyPI package called `pond` (0.1) also installs a
   `pond` module; don't install both.
 
+- **pond-rs: `filter_expr` is faster** (about 15% on 1M rows, `v > 500`
+  keeping 56%). A number column against a constant is tested straight into a
+  packed mask in one pass, without first looking for gaps stored as
+  infinities; the mask is prepared once and Arrow's filter kernel copies
+  every column from it, with no list of row numbers in between. Same rows,
+  same order, same answers.
+
 - **pond-rs: `align`, `materialize` and `dedupe` are faster.** The walks keep
   4-byte row numbers that go straight to the column gathers, fixed-step
   bucket edges are built in 64-bit after one range check, whole-millisecond

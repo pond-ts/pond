@@ -419,6 +419,30 @@ impl TimeSeries {
         Ok(self.with_value_columns(columns))
     }
 
+    /// The rows where `mask` is set, in order: `take_rows` for the rows of a
+    /// mask, without building their row numbers. Each column is copied
+    /// straight from the mask by Arrow's filter kernel.
+    pub(crate) fn filter_rows(&self, mask: arrow_buffer::BooleanBuffer) -> TimeSeries {
+        let keep = crate::column::RowFilter::new(mask);
+        let columns = self
+            .columns()
+            .iter()
+            .map(|c| {
+                Column::from_data(
+                    c.name().to_string(),
+                    c.data().filter(&keep),
+                    c.is_required(),
+                )
+            })
+            .collect();
+        TimeSeries::from_parts(
+            self.name().to_string(),
+            self.key_name().to_string(),
+            self.key().filter(&keep),
+            columns,
+        )
+    }
+
     /// The rows at `rows` (in that order); value columns and key copied.
     pub(crate) fn take_rows(&self, rows: &[usize]) -> TimeSeries {
         let picks: Vec<Option<usize>> = rows.iter().map(|&i| Some(i)).collect();
