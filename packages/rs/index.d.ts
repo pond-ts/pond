@@ -1,4 +1,4 @@
-// Type declarations for @pond-ts/rs ([PND-RSTYPES]).
+// Type declarations for @pond-ts/wasm ([PND-RSTYPES]).
 //
 // Written by hand over index.js, which is itself hand-written over a JSON
 // dispatcher in crates/pond-wasm, so nothing generates them, except the

@@ -1,4 +1,4 @@
-// `toJSON()` and `toColumns()` through @pond-ts/rs against pond-ts's own, on
+// `toJSON()` and `toColumns()` through @pond-ts/wasm against pond-ts's own, on
 // random series:
 // every key kind (interval labels as text and as numbers), number columns
 // with gaps and -0, text with repeats, empty text and gaps, booleans, lists,
@@ -294,5 +294,5 @@ if (!CHILD) {
   process.stdout.write(child.stdout);
 }
 console.log(
-  `toJSON and toColumns through @pond-ts/rs match pond-ts: ${cases} toJSON cases, ${roundTrips} fromColumns round trips${CHILD ? ' (plain loop, no code generation)' : ''}`,
+  `toJSON and toColumns through @pond-ts/wasm match pond-ts: ${cases} toJSON cases, ${roundTrips} fromColumns round trips${CHILD ? ' (plain loop, no code generation)' : ''}`,
 );

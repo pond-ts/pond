@@ -29,7 +29,7 @@ A function is opaque. The library cannot look inside it, so it must call it
 once per row, and must hand it a row in the shape the function expects. That
 costs a lot in two places:
 
-- **Through the WebAssembly bridge** (`@pond-ts/rs`), each call crosses from
+- **Through the WebAssembly bridge** (`@pond-ts/wasm`), each call crosses from
   WebAssembly into JavaScript. Measured on 1M rows (2026-10-30, merged J1b,
   median of 7 runs; benchmark script not committed):
 
@@ -63,7 +63,7 @@ remain the escape hatch for anything the vocabulary cannot say.
 ### 3. What it looks like
 
 ```js
-import { col, lit } from 'pond-ts'; // the same names from '@pond-ts/rs'
+import { col, lit } from 'pond-ts'; // the same names from '@pond-ts/wasm'
 
 // filter / find / some / every: a true/false expression
 s.filter(col('value').gt(0).and(col('host').eq('a')));
@@ -186,7 +186,7 @@ could carry, which a function never can.
   Perf script per CLAUDE.md. New public API, so it needs pjm17971's
   approval before merge.
 - **E2, pond-rs + bridges:** `Expr` in pond-rs evaluated over columns;
-  `@pond-ts/rs` and `pond_rs` pass the JSON tree through. Same fixture.
+  `@pond-ts/wasm` and `pond_rs` pass the JSON tree through. Same fixture.
 - **E3:** vocabulary growth driven by friction reports.
 
 Bridge J2 (studies, `LiveSeries`, column handoff for functions) follows E2.

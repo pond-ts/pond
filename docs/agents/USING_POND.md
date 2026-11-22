@@ -32,9 +32,9 @@ Docs: <https://pond-ts.org> · index for agents: <https://pond-ts.org/llms.txt>
 | OHLCV bars, SMA/EMA/RSI/MACD/Bollinger/ATR/VWAP…, market-hours calendar | `@pond-ts/financial`                 | `'@pond-ts/financial'`, `'@pond-ts/financial/fluent'` |
 | GPS / power / heart-rate activity analytics                             | `@pond-ts/fit`                       | `'@pond-ts/fit'`                                      |
 | Computations as JSON plans with caching + provenance (experimental)     | `@pond-ts/process`                   | `'@pond-ts/process'`                                  |
-| The same series operations, run in Rust compiled to WebAssembly         | `@pond-ts/rs`                        | `'@pond-ts/rs'`                                       |
+| The same series operations, run in Rust compiled to WebAssembly         | `@pond-ts/wasm`                      | `'@pond-ts/wasm'`                                     |
 
-All seven release together under one version and release often. `@pond-ts/rs`
+All seven release together under one version and release often. `@pond-ts/wasm`
 keeps pond-ts's method names; its series live in WebAssembly memory, so call
 `free()` when done, and hand one to `@pond-ts/charts` with
 `TimeSeries.fromColumns(rsSeries.toColumns<'number'>())` from pond-ts. Install with

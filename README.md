@@ -92,11 +92,11 @@ of data from Rust or Python, and get the same numbers.
 **pond-rs, the Rust version** — same operations, same results as pond-ts (a
 test suite checks every operation against output written by pond-ts):
 
-| Package                                                    | What it's for                                                                                                     | Folder           |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)  | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
-| [`@pond-ts/rs`](https://www.npmjs.com/package/@pond-ts/rs) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
-| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)      | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
+| Package                                                        | What it's for                                                                                                     | Folder           |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
+| [`pond-rs`](https://crates.io/crates/pond-rs) (crates.io)      | The Rust library: batch and live series, all 109 studies, Arrow files in and out, work spread over several cores. | `crates/pond-rs` |
+| [`@pond-ts/wasm`](https://www.npmjs.com/package/@pond-ts/wasm) | pond-rs compiled to WebAssembly for Node and browsers, called with pond-ts's method names.                        | `packages/rs`    |
+| [`pond-rs`](https://pypi.org/project/pond-rs/) (PyPI)          | pond-rs from Python. pandas, polars and pyarrow tables go in and come back out.                                   | `crates/pond-py` |
 
 **Also here:** the docs site [pond-ts.org](https://pond-ts.org) (`website/`), a
 Claude Code plugin with skills for using pond (`plugins/pond-ts`), worked
@@ -118,7 +118,7 @@ pip install pond-rs                                   # Python
   read the series directly.
 - **Heavy computation in Rust or Python:** `pond-rs`. It is several times
   faster and can use several cores.
-- **The Rust engine from JavaScript:** `@pond-ts/rs` is 3–11× faster than
+- **The Rust engine from JavaScript:** `@pond-ts/wasm` is 3–11× faster than
   pond-ts on the financial studies, on one thread. It is younger than the
   rest: it has no TypeScript types yet, you release each series yourself with
   `free()`, it needs Node 20.19 or newer, and the charts do not take its
@@ -329,7 +329,7 @@ of React and pond-ts.</sub>
   where a rule is written as a function that pond calls once per row
   (`filter`, `collapse`). Write the rule as a column expression where you
   can, and it runs over whole columns instead.
-- **From JavaScript,** `@pond-ts/rs` runs the same engine as WebAssembly on
+- **From JavaScript,** `@pond-ts/wasm` runs the same engine as WebAssembly on
   one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
   on live series. Write filters as expressions (`col('v').gt(0)`); a filter
   written as a JavaScript function is about 18× slower than in pond-ts
@@ -367,7 +367,7 @@ The full guide is at **<https://pond-ts.org/>**.
 
 ## Versioning
 
-All seven npm packages (the six above plus `@pond-ts/rs`, pond-rs compiled
+All seven npm packages (the six above plus `@pond-ts/wasm`, pond-rs compiled
 to WebAssembly) release together under one version — keep them in step.
 
 - **Today (0.x):** a minor release may contain breaking changes; each is
@@ -422,7 +422,7 @@ is `pond-ts`; the rest match their scoped names). The Rust crates live under
 `crates/` as a Cargo workspace, and `packages/rs` is built from them. The docs
 site in `website/` has its own `package.json` and is not a workspace.
 
-Node 18 or newer runs the TypeScript packages; `@pond-ts/rs` needs 20.19, and
+Node 18 or newer runs the TypeScript packages; `@pond-ts/wasm` needs 20.19, and
 the docs site (Docusaurus) needs 20.
 
 ```sh

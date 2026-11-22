@@ -674,7 +674,7 @@ To cut a release from `main`:
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
    them lock-step — the release tag covers the whole monorepo. That is
    **seven** manifests: the six npm workspaces plus `packages/rs`
-   (`@pond-ts/rs`, the WebAssembly bridge). `packages/rs` is not a workspace,
+   (`@pond-ts/wasm`, the WebAssembly bridge). `packages/rs` is not a workspace,
    so it is not in `package-lock.json` (step 3 stays at six), and it has no
    peer ranges (step 2 skips it); CI and `release.yml` fail while its version
    differs from pond-ts's. The Python

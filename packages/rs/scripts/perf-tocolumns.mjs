@@ -1,4 +1,4 @@
-// The hand-over from @pond-ts/rs to a pond-ts series (what
+// The hand-over from @pond-ts/wasm to a pond-ts series (what
 // `@pond-ts/charts` takes): `TimeSeries.fromColumns(rs.toColumns())`
 // against `TimeSeries.fromJSON(rs.toJSON())`, on a time column and two
 // number columns, at 10k, 100k and 1M rows. Median of 7 after 2 warm-ups.

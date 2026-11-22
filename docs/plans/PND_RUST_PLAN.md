@@ -4691,7 +4691,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         it is not in package-lock.json. First publish is manual: npm's
         `npm trust` docs say "The package you're configuring must already
         exist on the npm registry", so trusted publishing for
-        `@pond-ts/rs` can only be set up after a first publish by hand.
+        `@pond-ts/wasm` can only be set up after a first publish by hand.
         Docs: JavaScript tabs on the pond-rs index, getting-started,
         finance-studies and live pages (examples run against the packed
         tarball), a new "From JavaScript" page, and a speed table on
@@ -4701,11 +4701,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
         rolling + buckets via pushMany 337 vs 944; a function filter 623
         vs 35 (pond-ts with a function, timed apart). llms.txt, the
         versioning page and README now say seven packages.
-    - J3: Node + browser builds, npm `@pond-ts/rs` published on `v*`,
+    - J3: Node + browser builds, npm `@pond-ts/wasm` published on `v*`,
       docs JavaScript tab, speed table vs pond-ts. Built 2026-10-31 (see
       the J3 outcome above); waits on the first manual publish.
       Review (PR #875) fixes: the rs publish step skips with a warning
-      while `npm view @pond-ts/rs` gives E404 (a tag pushed before the
+      while `npm view @pond-ts/wasm` gives E404 (a tag pushed before the
       manual first publish no longer goes red after six packages ship;
       other `npm view` failures still fail); release and CI js-bridge
       pin Rust 1.97.0 and `build.sh` builds `--locked`; `engines` is
@@ -4714,6 +4714,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       Rollup needs a plugin for `new URL(…, import.meta.url)` (docs said
       it did not); no types yet, documented with the `declare module`
       workaround.
+      Name (2026-11-21, Peter's choice): npm name changed from
+      `@pond-ts/rs` to `@pond-ts/wasm` before anything was published
+      (`npm view` gave E404 for both). Why: the name says what a
+      JavaScript user installs (a WebAssembly build, browser-ready),
+      as `@duckdb/duckdb-wasm` does. Cost accepted: the crate and the
+      PyPI package stay `pond-rs`, so not one name everywhere. The folder
+      stays `packages/rs` (less churn; only the npm name is public).
     - [PND-RSTYPES] (DONE 2026-11-21): `packages/rs/index.d.ts`,
       hand-written. Decided **not** to import pond-ts's types: `@pond-ts/rs`
       has no dependency on pond-ts, and pond-ts's types follow the schema
@@ -4942,7 +4949,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     #862, P2b #864, P3 #882. Neither package is on its registry yet (npm
     and PyPI both answer "not found" for `@pond-ts/rs` and `pond-rs`). Two
     owner actions are left, and PLAN.md's [PND-RUST-R4] entry now holds only
-    those: the first `@pond-ts/rs` publish by hand, and PyPI's pending
+    those: the first `@pond-ts/wasm` publish by hand, and PyPI's pending
     trusted publisher for `pond-rs`.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one

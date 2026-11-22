@@ -327,7 +327,7 @@ mkdirSync(out, { recursive: true });
 writeFileSync(
   `${out}/fixture-calls.ts`,
   `// Written by test/types/check.mjs from the parity fixtures: do not edit.
-import * as rs from '@pond-ts/rs';
+import * as rs from '@pond-ts/wasm';
 import {
   TimeSeries,
   TradingCalendar,
@@ -347,7 +347,7 @@ import {
   col,
   lit,
   when,
-} from '@pond-ts/rs';
+} from '@pond-ts/wasm';
 
 declare const input: TimeSeries;
 declare const other: TimeSeries;

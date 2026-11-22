@@ -2,19 +2,19 @@
 id: javascript
 title: From JavaScript
 sidebar_position: 7.5
-description: "@pond-ts/rs is pond-rs compiled to WebAssembly, with pond-ts's method names, for Node and browsers. Install it, set up a bundler, and see where it differs from pond-ts."
+description: "@pond-ts/wasm is pond-rs compiled to WebAssembly, with pond-ts's method names, for Node and browsers. Install it, set up a bundler, and see where it differs from pond-ts."
 ---
 
-# From JavaScript: `@pond-ts/rs`
+# From JavaScript: `@pond-ts/wasm`
 
-`@pond-ts/rs` is pond-rs compiled to WebAssembly and called with pond-ts's
+`@pond-ts/wasm` is pond-rs compiled to WebAssembly and called with pond-ts's
 method names and argument shapes. Code written for pond-ts mostly runs as
 is; the work happens in Rust, with the same answers as pond-ts, to the bit
 (pond-ts's own test cases run through it in CI). It has pond-ts's version
 number and is released with every pond-ts release.
 
 ```sh
-npm install @pond-ts/rs
+npm install @pond-ts/wasm
 ```
 
 ## In Node
@@ -24,7 +24,7 @@ as Node loads an ES module with `require` from 20.19); the WebAssembly is loaded
 while the import runs, so there is nothing to wait for:
 
 ```js
-import { TimeSeries, Sequence, col } from '@pond-ts/rs';
+import { TimeSeries, Sequence, col } from '@pond-ts/wasm';
 
 const cpu = new TimeSeries({
   name: 'cpu',
@@ -61,7 +61,7 @@ for the browser take the browser one.
   // vite.config.js
   export default {
     build: { target: 'es2022' },
-    optimizeDeps: { exclude: ['@pond-ts/rs'] },
+    optimizeDeps: { exclude: ['@pond-ts/wasm'] },
   };
   ```
 
@@ -72,11 +72,11 @@ for the browser take the browser one.
   file; webpack 5 has top-level `await` on by default. **Rollup** needs a
   plugin for that, such as `@web/rollup-plugin-import-meta-assets`.
 - **esbuild**: bundle with `--format=esm --target=es2022`, then copy
-  `node_modules/@pond-ts/rs/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
+  `node_modules/@pond-ts/wasm/pkg/pond_wasm_bg.wasm` to `<outdir>/pkg/`
   (esbuild leaves the `new URL` as is, so the file is looked for next to
   the bundle).
-- **No bundler**: serve `node_modules/@pond-ts/rs` and map two names in
-  an import map, `"@pond-ts/rs"` to its `index.js` and `"#wasm"` to
+- **No bundler**: serve `node_modules/@pond-ts/wasm` and map two names in
+  an import map, `"@pond-ts/wasm"` to its `index.js` and `"#wasm"` to
   its `wasm.browser.js`.
 
 The `.wasm` file is about 7.5 MB, 1.4 MB with brotli (which most
@@ -101,7 +101,7 @@ the listener. Every financial study has its own options type, so
 `s.bollinger()` is one too (a period is required).
 
 ```ts
-import { TimeSeries, Sequence, col, type Event } from '@pond-ts/rs';
+import { TimeSeries, Sequence, col, type Event } from '@pond-ts/wasm';
 
 const cpu = new TimeSeries({
   name: 'cpu',
@@ -129,7 +129,7 @@ package has at runtime has to be declared.
 
 The charts take a pond-ts `TimeSeries`. `toColumns()` gives the series as
 pond-ts's columnar object, and pond-ts's `TimeSeries.fromColumns` reads it
-back, so a series from `@pond-ts/rs` reaches a chart with one call:
+back, so a series from `@pond-ts/wasm` reaches a chart with one call:
 
 ```tsx
 import { TimeSeries } from 'pond-ts';
@@ -140,7 +140,7 @@ import {
   LineChart,
   YAxis,
 } from '@pond-ts/charts';
-import * as rs from '@pond-ts/rs';
+import * as rs from '@pond-ts/wasm';
 
 const cpu = rs.TimeSeries.fromArrow(bytes); // read in pond-rs
 const smoothed = cpu.rolling('5m', { value: 'avg' }); // computed in pond-rs
@@ -163,7 +163,7 @@ of column the series holds; `fromColumns` takes number and text columns, so
 `select` the ones to draw first if it has true/false or list columns. It is
 not checked, as pond-ts's own `toColumns` type argument is not.
 
-How long the hand-over takes, from `@pond-ts/rs` to a pond-ts series (a time
+How long the hand-over takes, from `@pond-ts/wasm` to a pond-ts series (a time
 column and two number columns, 4-core Xeon, Node 22, median of 7, measured by
 `packages/rs/scripts/perf-tocolumns.mjs`): about 1.5 ms at 10,000 rows, 7 ms
 at 100,000 and 75 to 105 ms at a million (it varied between runs). Going
@@ -197,16 +197,16 @@ The ones you meet first:
   `TypeError` or `RangeError`.
 
 Not included: `@pond-ts/react`, `@pond-ts/charts` and
-`@pond-ts/process`; a series from `@pond-ts/rs` is not a pond-ts
+`@pond-ts/process`; a series from `@pond-ts/wasm` is not a pond-ts
 `TimeSeries`. Pass it to them with `toColumns()` and
 `TimeSeries.fromColumns` ([above](#drawing-with-pond-tscharts)), or as
 JSON: `toJSON()` on one side, `TimeSeries.fromJSON` on the other.
-(`@pond-ts/rs` also reads and writes Arrow IPC bytes:
+(`@pond-ts/wasm` also reads and writes Arrow IPC bytes:
 `TimeSeries.fromArrow`, `toArrow()`.)
 
 ## Speed
 
-Against pond-ts on one million rows, `@pond-ts/rs` is about 3–11× faster
+Against pond-ts on one million rows, `@pond-ts/wasm` is about 3–11× faster
 for studies, 2.6–4.3× for `toJSON`, 2–3.5× for expressions and 1.4–5.5×
 for live series, and much slower wherever a JavaScript function runs once
 per row. The table is on [Performance](./performance#from-javascript).

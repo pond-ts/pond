@@ -37,7 +37,7 @@ __pycache__/
 # Rust build output (pond-rs workspace)
 /target/
 
-# @pond-ts/rs WebAssembly build output (packages/rs/build.sh)
+# @pond-ts/wasm WebAssembly build output (packages/rs/build.sh)
 packages/rs/pkg/
 # Written by packages/rs/test/types/check.mjs from the parity fixtures
 packages/rs/test/types/generated/

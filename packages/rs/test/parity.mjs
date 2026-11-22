@@ -1,4 +1,4 @@
-// Runs pond-ts's core parity fixture through @pond-ts/rs: every case must
+// Runs pond-ts's core parity fixture through @pond-ts/wasm: every case must
 // give what pond-ts gave (or throw where pond-ts threw), through the public
 // JS API. The same fixture checks pond-rs natively in
 // crates/pond-rs/tests/core_parity.rs; this run checks the bridge on top.
@@ -396,7 +396,7 @@ for (const s of inputs.values()) s.free();
 const leaked = alive();
 
 console.log(
-  `core parity through @pond-ts/rs, matching pond-ts: ` +
+  `core parity through @pond-ts/wasm, matching pond-ts: ` +
     `cases ${ran - caseFailures}/${ran} (${skipped} skipped: ops not in the bridge); ` +
     `row lookups ${queriesRan - queryFailures}/${queriesRan}; ` +
     `Time.parse ${fixture.timeParse.length - parseFailures}/${fixture.timeParse.length}; ` +

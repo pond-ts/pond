@@ -1,4 +1,4 @@
-// Runs pond-ts's live parity fixture through @pond-ts/rs's public JS API.
+// Runs pond-ts's live parity fixture through @pond-ts/wasm's public JS API.
 //
 // The fixture (packages/core/test/fixtures/live-parity.json) is what
 // pond-ts's live layer emits for scripted sessions. Here the generator that
@@ -638,7 +638,7 @@ const leaked = livesAlive() - before;
 check(`${leaked} live series left after free()`, leaked === 0);
 
 console.log(
-  `live parity through @pond-ts/rs: ${matched}/${fixture.cases.length} cases ` +
+  `live parity through @pond-ts/wasm: ${matched}/${fixture.cases.length} cases ` +
     `(${outputs} outputs and ${rows} final rows equal, ${errorsAgree} errors agree; ` +
     `${refusedNodes} nodes and ${refusedPushes} push refused on purpose, as the Rust harness); ` +
     `${extra} extra checks`,

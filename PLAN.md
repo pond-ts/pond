@@ -591,14 +591,15 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
 and column expressions ([PND-EXPR]) are built. Most entries below are
 pond-ts bugs found while porting.
 
-- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (npm `@pond-ts/rs`)
+- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (npm `@pond-ts/wasm`)
   and Python (PyPI `pond-rs`): every step (J1–J3, P1–P3) is built and merged
   (outcomes in the breakout plan). Left, both owner actions: the first
-  `@pond-ts/rs` publish by hand on npmjs.com (npm trusted publishing needs
+  `@pond-ts/wasm` publish by hand on npmjs.com (npm trusted publishing needs
   the package to exist), and PyPI's pending trusted publisher for `pond-rs`
   (owner `pond-ts`, repo `pond`, workflow `python-wheels.yml`, environment
   `pypi`) before the first upload. As of 2026-11-13 neither package is on
-  its registry.
+  its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
+  on 2026-11-21, before any publish.
 
 - **[PND-RUST-R5]** — A Rust port of `@pond-ts/process` (adopted by
   pjm17971, 2026-11-17), so a host can run process plans on pond-rs: the
@@ -873,7 +874,7 @@ Robustness debt plus the queued composition workstreams. Plan:
   5M rows held) `pushSeries` alone cost 29–67 ms a second with `maxAge`
   against 1–2 with `maxEvents` (`apps/worker-chart/bench/retention.mjs`,
   2026-11-01).
-- **[PND-RSPUSHSERIES]** — `@pond-ts/rs` has no `pushSeries` (pond-rs has
+- **[PND-RSPUSHSERIES]** — `@pond-ts/wasm` has no `pushSeries` (pond-rs has
   `push_series`). Add it with a `{ pushSeries }` step in the live parity
   generator (`packages/core/scripts/parity/live.mjs`) and
   `crates/pond-rs/tests/live_parity.rs` in one PR: `packages/rs/test/live.mjs`

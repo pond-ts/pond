@@ -1,4 +1,4 @@
-// Hand-written uses of @pond-ts/rs, compiled by test/types/check.mjs:
+// Hand-written uses of @pond-ts/wasm, compiled by test/types/check.mjs:
 // what the README and docs show must compile, return types must be what
 // the runtime gives, and mistakes must not compile (`@ts-expect-error`
 // fails the build if the line after it compiles).
@@ -21,7 +21,7 @@ import {
   type Cell,
   type LiveRollingAggregation,
   type ReducedRecord,
-} from '@pond-ts/rs';
+} from '@pond-ts/wasm';
 import { TimeSeries as PondSeries } from 'pond-ts';
 
 // The README's first example.

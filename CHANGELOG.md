@@ -80,6 +80,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **The WebAssembly build is published as `@pond-ts/wasm`** (it was named
+  `@pond-ts/rs` in the repo, but never reached npm under that name: the
+  release workflow skipped it until a first publish by hand). Same package,
+  same code: pond-rs compiled to WebAssembly for Node and browsers, with
+  pond-ts's method names. `npm install @pond-ts/wasm`. The Rust crate and the
+  Python package keep the name `pond-rs`; the source stays in `packages/rs`.
+
 ### Added
 
 - **`@pond-ts/charts`: `AreaStyle.dash`** — a dash pattern for an area's
@@ -89,13 +98,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   dashed outline over the fill. Asked for by a consumer drawing a comparison
   area in the same hue as the series it compares to.
 
-- **`@pond-ts/rs`: type declarations** — the package ships `index.d.ts`, so
+- **`@pond-ts/wasm`: type declarations** — the package ships `index.d.ts`, so
   a strict TypeScript import no longer fails with TS7016 and the
-  `declare module '@pond-ts/rs'` workaround can go. Every class, method and
+  `declare module '@pond-ts/wasm'` workaround can go. Every class, method and
   option is typed, with one options type per study. A cell read is `Cell`,
   not the column's kind (the types do not follow the schema the way
   pond-ts's do). CI compiles every call in the parity fixtures against it.
-- **`@pond-ts/rs`: `TimeSeries.toColumns()`** — the series as pond-ts's
+- **`@pond-ts/wasm`: `TimeSeries.toColumns()`** — the series as pond-ts's
   columnar object, the same as pond-ts's `toColumns()`. pond-ts's
   `TimeSeries.fromColumns` reads it back, which is how a series computed in
   the WebAssembly bridge reaches `@pond-ts/charts`:
@@ -188,7 +197,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   `required: false` when it holds a gap, and stays required otherwise. As
   pond-rs. Run time only: the reducer's type and the schema's TypeScript
   type are unchanged.
-- **`@pond-ts/rs` tarball now carries `AGENTS.md`**, the agent guide every
+- **`@pond-ts/wasm` tarball now carries `AGENTS.md`**, the agent guide every
   other package ships.
 
 ## [0.77.0] — 2026-11-19
