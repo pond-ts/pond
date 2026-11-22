@@ -4,6 +4,10 @@
 //! `workloads.mjs` (the same 32-bit generator, the same arithmetic in the
 //! same order), runs the request through a fresh [`Host`] `runs` times and
 //! once more warm, and prints one JSON line.
+//!
+//! With `ask` in place of `<runs>` it runs the request once and prints the
+//! wire response without timings, or the error: the agent trial's tool
+//! (`bench/agent-trial/`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -126,7 +130,8 @@ fn main() {
         std::process::exit(2);
     };
     let rows: usize = rows.parse().expect("rows");
-    let runs: usize = runs.parse().expect("runs");
+    let ask = runs == "ask";
+    let runs: usize = if ask { 1 } else { runs.parse().expect("runs") };
     let request: Value =
         serde_json::from_str(&std::fs::read_to_string(request).expect("read request"))
             .expect("parse request");
@@ -156,6 +161,25 @@ fn main() {
         .collect();
     let series = Arc::new(TimeSeries::new(workload.as_str(), time, columns).expect("series"));
     let load_ms = ms(t);
+
+    if ask {
+        let mut host = Host::new(registry.clone(), HashMap::new());
+        host.add("d", series.clone());
+        let out = match host.run(&request) {
+            Ok(result) => {
+                let mut wire = result.to_wire(None);
+                for node in wire["nodes"].as_array_mut().into_iter().flatten() {
+                    if let Some(node) = node.as_object_mut() {
+                        node.remove("ms");
+                    }
+                }
+                wire
+            }
+            Err(e) => json!({ "error": e.to_string() }),
+        };
+        println!("{}", serde_json::to_string_pretty(&out).expect("json"));
+        return;
+    }
 
     // THREADS sets how many steps may run at once (default 1).
     let threads: usize = std::env::var("THREADS")

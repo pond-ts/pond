@@ -601,19 +601,6 @@ pond-ts bugs found while porting.
   its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
   on 2026-11-21, before any publish.
 
-- **[PND-RUST-R5]** — A Rust port of `@pond-ts/process` (adopted by
-  pjm17971, 2026-11-17), so a host can run process plans on pond-rs: the
-  long-lived `Host` with its byte budget and async sources, the registry and
-  `specId`, slot and nested requests, the basic ops, the standard and summary
-  folds, the 105 bridged studies and `toWire`. First consumer: a desktop
-  app's local MCP server. Scope is that consumer's subset; joins, the worker
-  pool, the authoring builders, the live graph and `toJsonSchema` are left
-  for later. Every answer is checked against
-  `packages/process/test/fixtures/parity.json`, which a test keeps in step
-  with the TypeScript package, so process keeps changing in TypeScript first
-  and the port follows. Also adds the pointwise basic ops a consumer needs to
-  write its own ratio and volatility steps as compositions. Steps and
-  decisions in the breakout plan.
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
   300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
@@ -1134,6 +1121,16 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   (`spikes/parallel-scan/`, 3.14× measured, 99.91% bit-identical).
   Assessment:
   [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+- **[PND-PROCAGENTDOCS]** — What agents writing process requests could not
+  learn from the docs, found by the R5 agent trial: `requests.md` shows only
+  TypeScript calls, never a JSON request, and never says `from` names the
+  dataset; `describe()` lists `outputs: []` for every fold, so what a fact
+  holds is learned by asking; op summaries leave out definitions an answer
+  depends on (`historicalVolatility`'s n vs n − 1 and decimal, `rsi`'s seed,
+  `percentChange` already × 100, `extremes` on a tie); facts are rounded to
+  six significant digits without saying so; units mislead after `scale`; and
+  a slot named like a source column refuses the whole request, even under
+  `onError: 'collect'`. Detail in the breakout plan.
 
 ### Process demo — composer / request / results
 

@@ -1743,6 +1743,32 @@ that exemption.
 
 ---
 
+### [PND-PROCAGENTDOCS] — what agents could not learn from the docs
+
+Found by the R5 agent trial (2026-11-21,
+`crates/pond-process/bench/agent-trial/README.md`): ten agents answered
+four questions by writing requests, given only `requests.md` and the
+registry's `describe()`. All ten got every answer, but each had to guess or
+test the following, the same on both engines:
+
+- **No JSON request in `requests.md`.** It shows `host.run({...})` calls.
+  Nine of ten said they had to guess the JSON shape and that `from` names
+  the dataset; their guesses were right. A short "the request as JSON"
+  example would settle it.
+- **Fact shapes.** `describe()` lists `outputs: []` for every fold, so a
+  caller learns what `extremes`, `shareTrue` or `last` return only by
+  asking. A fold entry could carry its fact's fields.
+- **Definitions missing from summaries.** `historicalVolatility` does not
+  say it divides by n and returns a decimal (all ten tested it by hand);
+  `rsi` does not say how its first average is seeded; `percentChange` does
+  not say it is already × 100; `extremes` does not say which date wins a
+  tie.
+- **Rounding.** Facts carry six significant digits and nothing says so.
+- **Units after `scale`.** A volatility in percent comes back `delta`, a
+  hand-built percent change `ratio`. `scale`'s summary already warns.
+- **A slot named like a source column** (`low`) refuses the whole request,
+  even under `onError: 'collect'`, so one bad name loses every fact.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly
