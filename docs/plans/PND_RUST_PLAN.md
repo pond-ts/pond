@@ -414,7 +414,8 @@ all checked against the code and all real; all fixed in one PR:
 5. **Arrow intake guessed required/optional from the values**, so an
    optional column without gaps came back required. Now the field's
    nullability decides (NaN in a non-nullable float field still makes it
-   optional). pond-ts has the opposite problem: [PND-ARROWREQ].
+   optional). pond-ts had the opposite problem: [PND-ARROWREQ] (fixed in
+   #942; `toArrow` now also gives each field's nullable flag, [PND-TOARROWREQ]).
 6. **The fixture did not regenerate the same on Node 26 / ARM64**: the
    `noisy` input used `Math.sin` / `Math.cos`, which JavaScript does not
    require to round identically everywhere. Replaced with integer
@@ -2954,8 +2955,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - As pond-ts: a `Float16` axis is refused. Known differences: pond-ts
     reads a `Timestamp` axis as its stored numbers (pond-rs refuses a
     time-typed axis); pond-ts refuses true/false, decimal and list value
-    fields, pond-rs reads them; pond-ts marks a value field with nulls
-    required ([PND-ARROWREQ]), pond-rs optional. No `ordering` and
+    fields, pond-rs reads them. (pond-ts used to mark a value field with
+    nulls required, [PND-ARROWREQ]; since #942 both follow the field's
+    nullable flag.) No `ordering` and
     `columns` options, as for `TimeSeries::from_arrow`.
   - Parity: `parity-value-arrow.json`, 18 Arrow files (hex) made by
     apache-arrow in `export.mjs` (Int32, Int64, UInt8 and UInt64 axes,

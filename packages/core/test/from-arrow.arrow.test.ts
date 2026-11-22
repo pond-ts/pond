@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  Bool,
+  Dictionary,
+  Field,
+  Int32,
+  RecordBatch,
+  Schema,
+  Struct,
   Table,
   Timestamp,
   TimeUnit,
@@ -270,7 +277,17 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
         );
       }
     }
-    return new Table(entries);
+    // Keep each field's nullable flag, so required columns stay required.
+    const table = new Table(entries);
+    const schema = new Schema(
+      table.schema.fields.map((f, i) =>
+        f.clone({ nullable: out.fields[i]!.nullable }),
+      ),
+    );
+    return new Table(
+      schema,
+      table.batches.map((b) => new RecordBatch(schema, b.data)),
+    );
   }
 
   it('toArrow → Table → fromArrow({ keyKind: "timeRange" })', () => {
@@ -284,12 +301,7 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'ranges',
       keyKind: 'timeRange',
     });
-    // A `Table` built from vectors marks every field nullable, so `load`
-    // comes back optional ([PND-ARROWREQ]); the key is what this pins.
-    expect(back.schema).toEqual([
-      series.schema[0],
-      { ...series.schema[1], required: false },
-    ]);
+    expect(back.schema).toEqual(series.schema);
     expect(back.toRows()).toEqual(series.toRows());
   });
 
@@ -309,10 +321,7 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'shifts',
       keyKind: 'interval',
     });
-    expect(back.schema).toEqual([
-      series.schema[0],
-      { ...series.schema[1], required: false },
-    ]);
+    expect(back.schema).toEqual(series.schema);
     expect(back.toRows()).toEqual(series.toRows());
   });
 
@@ -354,12 +363,9 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       name: 'bars',
       keyKind: 'interval',
     });
-    // Names and kinds round-trip; `required: false` does not, because an Arrow
-    // field carries no such flag — `fromArrow` derives its schema from the
-    // table, as its trust contract says. The KEY is what this test is about.
-    expect(back.schema.map((c) => [c.name, c.kind])).toEqual(
-      agg.schema.map((c) => [c.name, c.kind]),
-    );
+    // The whole schema round-trips, `required` flags included: `assembled`
+    // keeps each field's `nullable` flag ([PND-TOARROWREQ]).
+    expect(back.schema).toEqual(agg.schema);
     expect(back.toRows()).toEqual(agg.toRows());
     expect(back.at(0)!.key().end()).toBe(agg.at(0)!.key().end());
   });
@@ -384,5 +390,124 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
     expect(() =>
       TimeSeries.fromArrow(table as never, { keyKind: 'timeRange' }),
     ).toThrow(/key column 'timeRangeEnd' not found/);
+  });
+});
+
+describe('[PND-TOARROWREQ] toArrow says which columns are required', () => {
+  // `toArrow` hands back buffers, not a `Table`, so the caller builds the
+  // Arrow fields. Each exported field carries `nullable` (false for the key
+  // and for required columns, true for optional ones) for the caller to
+  // pass to `new Field(...)`. Without it the usual `new Table({...vectors})`
+  // marks every field nullable, and `fromArrow` then reads every required
+  // column back as optional.
+  function build(out: ReturnType<TimeSeries<never>['toArrow']>) {
+    const vectors: Record<string, ReturnType<typeof makeVector>> = {};
+    for (const f of out.fields) {
+      const base = {
+        length: f.length,
+        nullCount: f.nullCount,
+        nullBitmap: f.nullBitmap,
+      };
+      if (f.type === 'float64' || f.type === 'timestamp') {
+        vectors[f.name] = makeVector(
+          makeData({ type: new Float64(), ...base, data: f.values }),
+        );
+      } else if (f.type === 'bool') {
+        vectors[f.name] = makeVector(
+          makeData({ type: new Bool(), ...base, data: f.values }),
+        );
+      } else if (f.type === 'dictionary') {
+        vectors[f.name] = makeVector(
+          makeData({
+            type: new Dictionary(new Utf8(), new Int32()),
+            ...base,
+            data: f.values,
+            dictionary: vectorFromArray(f.dictionary, new Utf8()),
+          }),
+        );
+      } else {
+        vectors[f.name] = vectorFromArray(f.values, new Utf8());
+      }
+    }
+    const schema = new Schema(
+      out.fields.map(
+        (f) => new Field(f.name, vectors[f.name]!.type, f.nullable),
+      ),
+    );
+    const data = out.fields.map((f) => vectors[f.name]!.data[0]!);
+    const batch = new RecordBatch(
+      schema,
+      makeData({
+        type: new Struct(schema.fields),
+        length: out.length,
+        children: data,
+      }),
+    );
+    return new Table([batch]);
+  }
+
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'price', kind: 'number' },
+    { name: 'note', kind: 'string' },
+    { name: 'bid', kind: 'number', required: false },
+    { name: 'tag', kind: 'string', required: false },
+    { name: 'gap', kind: 'number', required: false },
+  ] as const;
+  const series = new TimeSeries({
+    name: 'quotes',
+    schema,
+    rows: [
+      [0, 1.5, 'a', 1.4, 'x', 7],
+      [1000, 1.6, 'b', 1.5, 'y', undefined],
+    ],
+  });
+
+  it('marks the key and required columns non-nullable, optional ones nullable', () => {
+    expect(series.toArrow().fields.map((f) => [f.name, f.nullable])).toEqual([
+      ['time', false],
+      ['price', false],
+      ['note', false],
+      ['bid', true],
+      ['tag', true],
+      ['gap', true],
+    ]);
+    // true/false columns too (pond-ts `fromArrow` can't read them back, so
+    // they sit out the round trips below; pond-rs can).
+    const flags = new TimeSeries({
+      name: 'flags',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'on', kind: 'boolean' },
+        { name: 'maybe', kind: 'boolean', required: false },
+      ] as const,
+      rows: [[0, true, undefined]],
+    });
+    expect(flags.toArrow().fields.map((f) => f.nullable)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('toArrow → Table → fromArrow keeps every required / optional flag', () => {
+    const back = TimeSeries.fromArrow(build(series.toArrow() as never));
+    expect(back.schema).toEqual(series.schema);
+    expect(back.toRows()).toEqual(series.toRows());
+  });
+
+  it('gives the right flag to a reordered { columns } subset', () => {
+    const out = series.toArrow({ columns: ['gap', 'price'] });
+    expect(out.fields.map((f) => [f.name, f.nullable])).toEqual([
+      ['time', false],
+      ['gap', true],
+      ['price', false],
+    ]);
+  });
+
+  it('keeps them through an Arrow IPC file too', () => {
+    const bytes = tableToIPC(build(series.toArrow() as never), 'file');
+    const back = TimeSeries.fromArrow(tableFromIPC(bytes));
+    expect(back.schema).toEqual(series.schema);
   });
 });

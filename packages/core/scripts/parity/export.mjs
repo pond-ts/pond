@@ -69,13 +69,11 @@ export function buildArrowExport(pond) {
 // Dictionary<Int32, Utf8> (pond-ts's choice per column), true/false as Bool.
 // A time-range or interval key is `<key>` + `<key>End` (+ `<key>Label`).
 // pond-rs must read back the input exactly. Arrow fields are nullable by
-// default; key fields and required pond columns are written non-nullable so
-// the reader can keep them required.
+// default; each field takes `toArrow`'s own `nullable` flag (false for the
+// key and required columns), so the reader keeps required columns required.
 export function buildTypedArrowExport(series) {
   const { fields } = series.toArrow();
-  const optional = new Set(
-    series.schema.filter((c) => c.required === false).map((c) => c.name),
-  );
+  const nullable = new Map(fields.map((f) => [f.name, f.nullable]));
   const columns = {};
   for (const f of fields) {
     const base = {
@@ -114,7 +112,7 @@ export function buildTypedArrowExport(series) {
   }
   const table = new Table(columns);
   const schema = new Schema(
-    table.schema.fields.map((f) => f.clone({ nullable: optional.has(f.name) })),
+    table.schema.fields.map((f) => f.clone({ nullable: nullable.get(f.name) })),
   );
   return tableToIPC(
     new Table(
