@@ -634,6 +634,13 @@ pond-ts bugs found while porting.
   checked by compiling them, and the "no Rust version" note replaced. The
   crate (`crates/pond-process`) is not on crates.io yet, so the pages say
   how to depend on it from git. Same breakout section as above.
+- **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
+  about 47 code blocks) are TypeScript only, and Mental model leans on
+  TypeScript ideas (`as const`, type narrowing), though the sidebar calls
+  them the ideas every language shares. Add Rust and Python tabs (checked
+  by the snippet scripts) and say the shared idea first. Same for
+  `series/arrays`, `series/columns`, `series/other-chart-libraries`.
+  Found in the #964 review.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/rust/`) and the Rust / Python tabs on the core pages
   (what is covered so far is in the breakout plan). The Python tabs already

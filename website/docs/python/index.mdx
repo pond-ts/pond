@@ -76,13 +76,13 @@ Every operation returns a new series; nothing changes in place.
 
 ## What the Python package has
 
-| Area                                  | In Python                                                                               |
-| ------------------------------------- | --------------------------------------------------------------------------------------- |
-| Series and operations                 | Yes: every batch operation, frames in and out ([Working with series](./operations.mdx)) |
-| Live series                           | Yes ([Live series](./live.mdx))                                                         |
-| Finance studies and trading calendars | Yes, all 109 studies ([Finance studies](./finance.mdx))                                 |
-| Processing graphs                     | Not in Python. TypeScript and Rust have them                                            |
-| Charts, React hooks, fitness files    | Not in Python. Hand a frame to your own plotting tool (`to_polars()`, `to_pandas()`)    |
+| Area                                  | In Python                                                                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Series and operations                 | Yes, frames in and out ([Operations](./operations.mdx); a few gaps under [Not in Python yet](./errors-and-speed.mdx#not-in-python-yet)) |
+| Live series                           | Yes ([Live series](./live.mdx))                                                                                                         |
+| Finance studies and trading calendars | Yes, all 109 studies ([Finance studies](./finance.mdx))                                                                                 |
+| Processing graphs                     | Not in Python. TypeScript and Rust have them                                                                                            |
+| Charts, React hooks, fitness files    | Not in Python. Hand a frame to your own plotting tool (`to_polars()`, `to_pandas()`)                                                    |
 
 A few smaller things the TypeScript library has are missing too; they are
 listed on [Errors, threads and speed](./errors-and-speed.mdx#not-in-python-yet).
@@ -91,12 +91,13 @@ listed on [Errors, threads and speed](./errors-and-speed.mdx#not-in-python-yet).
 
 - [Frames in and out](./frames.mdx): the rules for the time column, order,
   gaps and time zones.
-- [Working with series](./operations.mdx): reducers, rolling windows,
+- [Operations in Python](./operations.mdx): reducers, rolling windows,
   `partition_by`, calendar buckets and the rest.
 - [Concepts](/docs/concepts/): the ideas every language shares (time keys,
   windows, partitions, late data).
 - The shared [Working with series](/docs/series/creating?language=python)
-  pages explain each operation in depth, with a Python tab on every
-  example.
+  pages explain each operation in depth, with a Python tab on nearly
+  every example (Arrays, Columns and Other chart libraries are
+  TypeScript only for now).
 - [Finance studies](./finance.mdx) and [Live series](./live.mdx).
 - [Errors, threads and speed](./errors-and-speed.mdx).

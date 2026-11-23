@@ -312,7 +312,7 @@ of React and pond-ts.</sub>
 - **Live:** about 350,000 events a second pushed one at a time into a series
   that keeps a rolling average and one-minute buckets, and about a million a
   second in batches of 1,000
-  ([one thread, 4-core Xeon, 31 October 2026](website/docs/pond-rs/performance.mdx#from-javascript)).
+  ([one thread, 4-core Xeon, 31 October 2026](website/docs/rust/performance.mdx#from-javascript)).
 
 ### pond-rs
 
@@ -333,7 +333,7 @@ of React and pond-ts.</sub>
   one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
   on live series. Write filters as expressions (`col('v').gt(0)`); a filter
   written as a JavaScript function is about 18× slower than in pond-ts
-  ([table](website/docs/pond-rs/performance.mdx#from-javascript)).
+  ([table](website/docs/rust/performance.mdx#from-javascript)).
 
 The figures are drawn by
 [`docs/readme/perf/make-charts.mjs`](docs/readme/perf/make-charts.mjs) from

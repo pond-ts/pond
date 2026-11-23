@@ -25,15 +25,15 @@ next door is the point.
   export, update the matching row here in that PR — CI enforces it (the
   `API map` workflow).
 
-| Package              | npm name             | Entry points                                                                                                   | Docs hub                  |
-| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract)                                                               | `website/docs/pond-ts/`   |
-| `packages/react`     | `@pond-ts/react`     | `.`                                                                                                            | `website/docs/react/`     |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                                                                                            | `website/docs/charts/`    |
-| `packages/financial` | `@pond-ts/financial` | `.`, `./fluent` (prototype augmentation), `./catalog`, `./process` (study catalog as `@pond-ts/process` steps) | `website/docs/financial/` |
-| `packages/fit`       | `@pond-ts/fit`       | `.`, `./files`, `./views`                                                                                      | `website/docs/fit/`       |
-| `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental**                                                         | `website/docs/process/`   |
-| `packages/rs`        | `@pond-ts/wasm`      | `.` (pond-rs as WebAssembly; Node and browsers)                                                                | `website/docs/pond-rs/`   |
+| Package              | npm name             | Entry points                                                                                                   | Docs hub                   |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract)                                                               | `website/docs/typescript/` |
+| `packages/react`     | `@pond-ts/react`     | `.`                                                                                                            | `website/docs/react/`      |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                                                                                            | `website/docs/charts/`     |
+| `packages/financial` | `@pond-ts/financial` | `.`, `./fluent` (prototype augmentation), `./catalog`, `./process` (study catalog as `@pond-ts/process` steps) | `website/docs/finance/`    |
+| `packages/fit`       | `@pond-ts/fit`       | `.`, `./files`, `./views`                                                                                      | `website/docs/fit/`        |
+| `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental**                                                         | `website/docs/process/`    |
+| `packages/rs`        | `@pond-ts/wasm`      | `.` (pond-rs as WebAssembly; Node and browsers)                                                                | `website/docs/javascript/` |
 
 ---
 
@@ -788,7 +788,7 @@ and bundlers with a top-level `await` (`wasm.browser.js`), chosen by the
 `packages/rs/index.d.ts` (hand-written, with a generated study-options block;
 checked by `packages/rs/test/types/check.mjs`). Differences from
 pond-ts: `packages/rs/README.md`. Docs:
-[website/docs/pond-rs/javascript.mdx](website/docs/pond-rs/javascript.mdx).
+[website/docs/javascript/index.mdx](website/docs/javascript/index.mdx).
 
 | Group           | Exports                                                                                                                                                                                                                                                                                                         | Source                 |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
