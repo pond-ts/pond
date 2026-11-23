@@ -309,7 +309,7 @@ impl Key {
     }
 
     /// The rows where `keep` is set, in order, copied.
-    pub(crate) fn filter(&self, keep: &crate::column::RowFilter) -> Key {
+    pub(crate) fn filter(&self, keep: &crate::row_filter::RowFilter) -> Key {
         match self {
             Key::Time(t) => Key::Time(keep.vec(t)),
             Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {

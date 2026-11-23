@@ -26,7 +26,15 @@ use std::ops::{Bound, RangeBounds};
 
 use crate::column::{ArrayColumn, BooleanColumn, ColumnData, Decimal, Scalar, StringColumn};
 use crate::error::{PondError, Result};
+use crate::row_filter::RowFilter;
 use crate::series::{Column, TimeSeries};
+
+/// From this many kept rows on, `filter` copies the key and each column on
+/// a core of its own. Handing the copies out costs about 0.1 ms, whatever
+/// there is to copy. Measured with four cores on a key, a number column
+/// and a text column: no faster than one core at 74,000 kept rows, 13%
+/// faster at 148,000.
+const FILTER_SPLIT_ROWS: usize = 1 << 17;
 
 /// One row of a series, handed to [`TimeSeries::filter`]'s closure and
 /// yielded by [`TimeSeries::rows`]. Values are read by column name; a name
@@ -168,16 +176,17 @@ impl TimeSeries {
     where
         F: FnMut(&Row<'_>) -> Result<bool>,
     {
-        let mut kept = Vec::new();
+        let mut words = vec![0u64; self.len().div_ceil(64)];
         for row in self.rows() {
             if keep(&row)? {
-                kept.push(row.index);
+                words[row.index / 64] |= 1 << (row.index % 64);
             }
         }
-        if kept.len() == self.len() {
+        let keep = RowFilter::from_words(words, self.len());
+        if keep.count() == self.len() {
             return Ok(self.clone());
         }
-        Ok(self.take_rows(&kept))
+        Ok(self.filter_rows(&keep))
     }
 
     /// Every row, in order. See [`Row`].
@@ -419,26 +428,36 @@ impl TimeSeries {
         Ok(self.with_value_columns(columns))
     }
 
-    /// The rows where `mask` is set, in order: `take_rows` for the rows of a
-    /// mask, without building their row numbers. Each column is copied
-    /// straight from the mask by Arrow's filter kernel.
-    pub(crate) fn filter_rows(&self, mask: arrow_buffer::BooleanBuffer) -> TimeSeries {
-        let keep = crate::column::RowFilter::new(mask);
-        let columns = self
-            .columns()
-            .iter()
-            .map(|c| {
-                Column::from_data(
-                    c.name().to_string(),
-                    c.data().filter(&keep),
-                    c.is_required(),
-                )
-            })
-            .collect();
+    /// The rows `keep` keeps, in order: `take_rows` for the rows of a mask,
+    /// without building their row numbers (see [`RowFilter`]). When many
+    /// rows are kept, the key and each column are copied on a core of
+    /// their own, if there is more than one core to use.
+    pub(crate) fn filter_rows(&self, keep: &RowFilter) -> TimeSeries {
+        let split = keep.count() >= FILTER_SPLIT_ROWS && crate::par::threads() > 1;
+        self.filter_rows_split(keep, split)
+    }
+
+    /// [`TimeSeries::filter_rows`], with the choice made: `split` copies
+    /// the key and each column on a core of its own.
+    pub(crate) fn filter_rows_split(&self, keep: &RowFilter, split: bool) -> TimeSeries {
+        let column = |c: &Column| {
+            Column::from_data(c.name().to_string(), c.data().filter(keep), c.is_required())
+        };
+        let (key, columns) = if split {
+            crate::par::join(
+                || self.key().filter(keep),
+                || crate::par::map(self.columns(), column),
+            )
+        } else {
+            (
+                self.key().filter(keep),
+                self.columns().iter().map(column).collect(),
+            )
+        };
         TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
-            self.key().filter(&keep),
+            key,
             columns,
         )
     }

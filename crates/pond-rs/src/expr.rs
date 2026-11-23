@@ -49,8 +49,8 @@ use serde_json::{Value as Json, json};
 use crate::column::Value;
 use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
+use crate::row_filter::RowFilter;
 use crate::series::{ColumnDef, ColumnKind};
-use arrow_buffer::BooleanBuffer;
 
 /// A fixed value an expression can hold.
 #[derive(Debug, Clone, PartialEq)]
@@ -1164,19 +1164,19 @@ pub(crate) fn column_of(values: Vals<'_>, keep_gaps_of: Option<&Vals<'_>>) -> Co
 /// as a mask; a gap does not hold. A number column against a constant
 /// (`col("v").gt(500)`, either way round) is tested straight into the mask,
 /// in one pass; anything else is evaluated, then packed.
-pub(crate) fn mask(test: &Expr, src: &dyn Source) -> BooleanBuffer {
+pub(crate) fn mask(test: &Expr, src: &dyn Source) -> RowFilter {
     if let Some(m) = column_vs_constant(test, src) {
         return m;
     }
     let Vals::Boolean(v) = evaluate(test, src) else {
         unreachable!("checked: a true/false expression")
     };
-    BooleanBuffer::collect_bool(v.len(), |i| v[i] == 1)
+    RowFilter::of_flags(&v)
 }
 
 /// [`mask`]'s one-pass case, or `None` when `test` is not a comparison of a
 /// number column with a number. Gives what [`compare_to`] gives, as bits.
-fn column_vs_constant(test: &Expr, src: &dyn Source) -> Option<BooleanBuffer> {
+fn column_vs_constant(test: &Expr, src: &dyn Source) -> Option<RowFilter> {
     let Node::Op { op, args, .. } = &*test.0 else {
         return None;
     };
@@ -1192,20 +1192,27 @@ fn column_vs_constant(test: &Expr, src: &dyn Source) -> Option<BooleanBuffer> {
         return None;
     };
     let v = c.values();
-    fn each(v: &[f64], gap: bool, holds: impl Fn(f64) -> bool) -> BooleanBuffer {
-        BooleanBuffer::collect_bool(v.len(), |i| {
-            let x = v[i];
+    if !k.is_finite() {
+        // Not a constant an expression can hold today; kept right anyway,
+        // by `compare_to`'s own rule.
+        let gap = op == Op::Ne;
+        return Some(RowFilter::of_numbers(v, |x| {
             let finite = x.is_finite();
-            (finite & holds(x)) | (!finite & gap)
-        })
+            (finite & num_holds(op, x, k)) | (!finite & gap)
+        }));
     }
+    // A gap (`NaN`, or an infinity standing for one) fails every comparison
+    // but `ne`. Against a finite `k`, `NaN` already answers that way, and
+    // so does an infinity on the far side of `k`; the infinity on the near
+    // side is the one value left to rule out, with one more comparison.
+    // `eq` and `ne` need none: no gap equals a finite `k`.
     Some(match op {
-        Op::Gt => each(v, false, |x| x > k),
-        Op::Ge => each(v, false, |x| x >= k),
-        Op::Lt => each(v, false, |x| x < k),
-        Op::Le => each(v, false, |x| x <= k),
-        Op::Eq => each(v, false, |x| x == k),
-        _ => each(v, true, |x| x != k),
+        Op::Gt => RowFilter::of_numbers(v, |x| (x > k) & (x <= f64::MAX)),
+        Op::Ge => RowFilter::of_numbers(v, |x| (x >= k) & (x <= f64::MAX)),
+        Op::Lt => RowFilter::of_numbers(v, |x| (x < k) & (x >= f64::MIN)),
+        Op::Le => RowFilter::of_numbers(v, |x| (x <= k) & (x >= f64::MIN)),
+        Op::Eq => RowFilter::of_numbers(v, |x| x == k),
+        _ => RowFilter::of_numbers(v, |x| x != k),
     })
 }
 

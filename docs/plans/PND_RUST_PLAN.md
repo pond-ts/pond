@@ -1182,6 +1182,257 @@ Outcome, measured on Peter's M1 (Linux VM, 4 cores), 1M rows, 100 hosts:
 - Not done: Python's `partition_by` measured ~60 ms on the cloud VM where
   the same call from Rust took 20–30 ms; not investigated.
 
+## [PND-RSFILTER] — a faster filter (2026-11-23)
+
+Asked for by pjm17971 after the six-engine suite (#961) ran on his M1:
+"keep rows where v > 500" was the one case of sixteen where polars was
+clearly ahead (pond-rs 7.1 ms, polars 2.2 ms; one core, 1M rows, with #960
+already in).
+
+**Where the time went**, measured piece by piece on that M1, inside a
+Linux VM (timings there repeat to a few percent; the cloud machine's moved
+by a factor of two between runs). The series is a time key, a number column
+with a gap every 17 rows, and a text column of 6-byte host names. 564,875
+of 1,000,000 rows are kept, in stretches of about three.
+
+| part                                           | before (ms) | after (ms)                     | polars 2.0.0 (ms) |
+| ---------------------------------------------- | ----------- | ------------------------------ | ----------------- |
+| the test `v > 500`, into a mask                | 0.84        | 0.21                           | 0.16              |
+| list of kept row numbers (Arrow's filter plan) | 0.44        | none                           |                   |
+| key                                            | 0.54        | 0.40                           | 0.34              |
+| number column, and its scan for gaps           | 0.42        | 0.46                           | 0.37              |
+| text column                                    | 1.90        | 0.93, and 0.64 (Arrow's check) | 0.58              |
+| whole call                                     | 4.3         | 2.8                            | 1.9               |
+
+The polars column is the same machine and data, each part timed on its own
+from Python (`df["v"] > 500`, then `filter(mask)` on each column; median of
+41, the middle of three runs). The text column is the difference: 1.57 ms
+against 0.58. Without it the two are level: key and number only take 1.11
+ms in pond-rs and 1.17 to 1.37 in polars; with no row kept 0.31 against 0.33
+to 0.41; with 1% kept 0.54 against 0.81 to 0.98. (The parts were timed on
+the first version of the rewrite, 6b5fa0c. The whole call is the same on
+what merged.)
+
+**What changed** (`src/row_filter.rs`, used by `filter` and `filter_expr`):
+
+- The mask is plain 64-bit words and every copy reads it directly. No list
+  of row numbers is built (array columns aside, which share their cells).
+- The test: each row's answer is made into the row's own bit and the 64
+  bits of a word are or-ed together, a loop the compiler runs on several
+  values at a time. A gap (NaN, or an infinity standing for one) is ruled
+  out by a second comparison (`x > k` and `x <= f64::MAX`) rather than a
+  separate test for a finite value.
+- Fixed-width values (times, numbers, decimals, dictionary keys) go eight
+  rows at a time. A 256-row table gives, for each byte of the mask, the
+  places of its kept rows; all eight values are written, kept rows first,
+  and the output moves on by the number kept, so no branch depends on the
+  mask. The table holds an eight-value enum, not numbers, so reading a
+  group of eight at a place needs no bounds check. A word with 12 kept rows
+  or fewer is walked bit by bit, a full word is one copy, an empty word is
+  skipped.
+- Text: a stretch of kept rows is one stretch of the source's bytes, so it
+  is one copy. A short stretch is copied as a fixed 8 offsets and 64 bytes
+  (the next stretch overwrites what overshoots), so no branch depends on
+  its length. The byte total is counted first, eight rows at a time, or
+  stretch by stretch when under one row in 16 is kept.
+- True/false values, and the bitmaps that mark gaps: stretch by stretch.
+- `filter` with a closure builds the same mask and copies the same way. It
+  used to build row numbers and gather.
+- A filter that keeps 131,072 rows or more copies the key and each column
+  on a core of its own, when the pool has more than one thread. Handing the
+  copies out costs about 0.1 ms whatever there is to copy: at 74,000 kept
+  rows several cores were no faster, at 148,000 they were 13% faster. With
+  `RAYON_NUM_THREADS=1` the pool is not used at all: `rayon::join` called
+  from outside the pool hands the work to the pool's one thread and waits,
+  which cost 0.1 to 0.4 ms.
+- The scan that notes whether a new number column has a gap looks at 64
+  values at a time, with no branch inside the 64. It used to go value by
+  value. Every number column pond-rs builds gets this scan, so it shows
+  outside `filter` too (see "The rest of the suite").
+- The three lookup tables are each held at the start of a 64-byte cache
+  line (see "Two builds of the same code").
+
+**Same answers.** Each copy is held to Arrow's `filter` kernel, value for
+value: over masks of every shape the copies branch on, lengths around the
+64-row words, sliced inputs, and text with empty, long and multi-byte
+strings. The series-level test compares with the row-number path for every
+column kind and key kind, on one core and on several, and pins each number
+column's "no gaps" note. Of 19 mistakes planted, 18 fail a test; the 19th
+is not a mistake (the two ways of counting text bytes must agree).
+
+One corner differs from before, in how an empty result is held, not in
+what it holds. When no row is kept, a dictionary text column comes back
+with an empty dictionary, which is what Arrow's `filter` gives and what
+`filter_expr` gave before. `filter` with a closure used to gather by row
+number, which kept the source's whole list of strings behind its zero
+keys; it now gives the same as `filter_expr`. Either way the result has no
+rows, is still a dictionary column, and stacks with the series it came
+from (`nothing_kept_gives_an_empty_series_that_still_stacks`).
+
+**Measured** on the M1 (Linux VM, 1M rows, `v > 500` unless said, ms;
+`examples/perf_filter.rs`, the median of five runs of it). Before is the
+same on one core or four. Built with Rust 1.97; built with 1.100, which CI
+uses, every case is within 0.06 ms of these (arrays within 0.14).
+
+| case                                           | before | one core | four cores |
+| ---------------------------------------------- | ------ | -------- | ---------- |
+| key, number, text; 56% kept (the suite's case) | 4.35   | 2.84     | 2.29       |
+| the same, no row kept (the test alone)         | 1.42   | 0.27     | 0.28       |
+| the same, 1% kept                              | 1.62   | 0.54     | 0.54       |
+| the same, 93% kept                             | 3.86   | 3.23     | 2.72       |
+| the same, 50% kept in stretches of 1,000       | 3.86   | 1.66     | 1.72       |
+| key and number only                            | 2.34   | 1.12     | 0.92       |
+| with a number column that has no gaps          | 2.62   | 1.52     | 1.07       |
+| with text held as a dictionary                 | 2.58   | 1.74     | 1.10       |
+| with true/false values and gaps                | 4.78   | 2.06     | 1.39       |
+| with decimals and gaps                         | 4.07   | 2.17     | 1.86       |
+| with an array column (copied by row number)    | 9.93   | 9.29     | 8.76       |
+| `filter` with a closure (key, number, text)    | 5.06   | 3.89     | 3.39       |
+
+**The rest of the suite** (`examples/suite.rs`, all sixteen cases, one
+core, median of 7 rounds, before and after built with the same Rust). The
+filter case went from 4.26 to 2.78 ms (4.25 to 2.26 on four cores). Six
+other cases gained 0.22 to 0.26 ms each: `fill` (1.58 to 1.32),
+`cumulative` sum (3.75 to 3.51) and four of the rolling cases (13.46 to
+13.24, 13.47 to 13.25, 16.49 to 16.26, 59.74 to 59.52). They are the six
+whose result is a 1M-row number column with no gaps (checked by printing
+each result's "no gaps" note), so the scan for gaps reads the whole
+column; timed on its own, that scan went from 0.34 to 0.14 ms per 1M
+values. The per-host rolling case also gained (27.20 to 26.64), which was
+not looked into. Of the other eight, seven moved by under 2%; the left
+join read 8.58 to 8.25, but its "before" runs ranged from 8.09 to 18.70.
+
+**Two builds of the same code, 0.6 ms apart: a table across the end of a
+memory page.** During review a second build of the same source ran two
+cases 0.6 ms slower (93% kept 3.8 ms against 3.2; stretches of 1,000 2.3
+against 1.7), and an earlier pair of builds differed by 0.2 ms on the test
+alone (no row kept 0.49 ms against 0.30). The source was the same. What
+differed was where the linker had put the lookup tables.
+
+- Ruled out first, each by a measurement: the allocator (the same number
+  of page faults, and still slow when freed memory was held on to); the
+  filter's machine code (the same instructions ran fast inside three other
+  test programs); where the code sat (three builds padded to move it
+  stayed slow); where the stack sat; the number of rows.
+- A sampling profile put all of the extra time in one function, the text
+  copy: 1.75 ms against 1.11 at 93% kept, 1.08 against 0.47 at stretches
+  of 1,000, and within it the loop that adds up the lengths of the kept
+  strings. Every other function took the same time in both builds. (The VM
+  refuses `perf`, so a small library loaded ahead of the program sampled
+  where it was 10,000 times a second.)
+- That loop reads, for each byte of the mask, a 32-byte row of a 256-row
+  table. The table had no alignment of its own, and in the slow build it
+  began 28 bytes into a 4 KB page, so the rows for the mask bytes `0x7f`
+  and `0xff` lay across the end of a page. Those are the bytes for "seven
+  or eight of eight kept": 68,334 of the 125,000 mask bytes at 93% kept,
+  62,500 at stretches of 1,000, none at 56%, which was not slower. In the
+  fast builds the rows across a page end were ones these cases seldom
+  read. One more build had the rows for `0x00` and `0x80` there: it was
+  slow on stretches of 1,000 (half of its bytes are `0x00`) and fast at
+  93%, as that predicts.
+- The 0.2 ms on the test loop was the same thing in the 64-entry table of
+  single bits. The loop reads it 16 bytes at a time; in the slow build the
+  table sat 8 bytes off a 16-byte boundary and across a page end, so one
+  read in 32 lay across two pages: 15,625 such reads per 1M rows.
+- The cost works out the same each way it was measured: 9 to 10 ns for
+  each read that lies across two pages (0.68 ms over 68,334 reads, 0.58 ms
+  over 62,500, 0.15 ms over 15,625, from the table below). A read that
+  lies across two 64-byte cache lines but stays inside a page cost nothing
+  that could be measured.
+- Proof, by placing the tables on purpose (same source, Rust 1.97, three
+  runs each, ms):
+
+| build                                           | 93% kept     | 50% in stretches of 1,000 | no row kept  |
+| ----------------------------------------------- | ------------ | ------------------------- | ------------ |
+| tables on cache lines (what merged)             | 3.18 to 3.23 | 1.64 to 1.67              | 0.28 to 0.29 |
+| text-length table put 4 bytes past a page start | 3.85 to 3.88 | 2.21 to 2.26              | 0.28         |
+| bit table put across a page end                 | 3.38 to 3.39 | 1.78 to 1.85              | 0.43 to 0.44 |
+| the slow build that started this                | 3.79 to 3.84 | 2.25 to 2.29              | 0.28         |
+
+The fix is `#[repr(align(64))]` on the three tables: their rows are 8 or
+32 bytes, so from the start of a cache line no row lies across a line, and
+so none across a page. The addresses above are from a script that finds
+the three tables in a built program by their contents, run over 18
+builds. The first version's suite program had the bit table across a page
+end as well, which accounts for about 0.16 of the 0.22 ms between it (3.03
+ms) and what merged (2.81 ms in the same run). Not measured: the same
+hazard on macOS itself (16 KB pages) or on x86.
+
+**The bridges**, same machine and case, through the suite's own runners,
+timed on the first version (6b5fa0c) and not again since: Python 7.0 → 3.0
+ms on one core and 6.9 → 2.3 on four; `@pond-ts/wasm` 7.1 → 6.0. Polars
+2.0.0 there takes 1.88 ms on one core and 1.5 on four.
+
+**The allocator matters, and differently on each system.** The Python
+bridge gained the most, and the reason was checked: its allocator is
+mimalloc, and the suite's Rust runner built with mimalloc gives the Python
+numbers.
+
+| suite's Rust runner, one core (ms) | Linux VM, glibc | Linux VM, mimalloc | macOS, system | macOS, mimalloc |
+| ---------------------------------- | --------------- | ------------------ | ------------- | --------------- |
+| before                             | 4.3             | 7.0                | 7.0           | 5.5             |
+| after                              | 2.8             | 3.0                | 3.8           | 2.8             |
+
+In the Linux VM the old path was much slower under mimalloc and the new
+one is about level. On macOS itself both are faster under mimalloc, the
+new one by 1 ms. So the new path does not escape the allocator: it only
+does in the VM. Which part of either path an allocator slows was not
+pinned down on either system. (The VM's "after, mimalloc" is the first
+version; its tables happened to sit clear of page ends.)
+
+**On macOS itself** (M1 Pro, macOS 15.7.7, Rust 1.97, the first version,
+the suite's filter case, median of 7, ms). The machine was busy: Spotlight
+was indexing the fresh checkouts and the load average fell from 84 to 19
+during the run, so these are rough, and a quiet run is on PLAN.md.
+
+| runner                                                  | one core | all ten cores |
+| ------------------------------------------------------- | -------- | ------------- |
+| pond-rs before                                          | 6.45     | 6.39          |
+| pond-rs after                                           | 3.90     | 2.69          |
+| pond-rs after, without Arrow's check of text (unmerged) | 2.77     | 1.99          |
+| Python bridge before (median of 5)                      | 5.57     | 5.55          |
+| Python bridge after (median of 5)                       | 2.79     | 2.17          |
+| polars 1.36.1                                           | 2.11     | 1.76          |
+
+Polars there is 1.36.1 because the Mac's own Python is 3.9; the suite's
+earlier run had 2.1.0 (2.23 ms on one core, 1.06 on ten).
+
+**Considered, not done.** The first two are owner decisions and are on
+PLAN.md as [PND-RSFILTER].
+
+- **Skip Arrow's check of the copied text.** Arrow's safe constructor
+  re-checks what pond-rs hands it: offsets rise, the bytes are UTF-8, every
+  offset is on a character boundary. That is 0.64 ms of the 2.8. Arrow's
+  own filter skips the check with `unsafe`, and no safe way around it was
+  found (builders, `MutableArrayData`, `take`, `concat`, `interleave`,
+  `ArrayData` and a Binary-to-Utf8 cast were each tried or read). pond-rs's
+  `src` has no `unsafe` block today. Measured with the one block, on the
+  first version: 2.75 → 2.07 ms on one core and 2.19 → 1.47 on four in the
+  VM; 3.90 → 2.77 and 2.69 → 1.99 on macOS. A dictionary column has a check
+  of the same kind (every kept key is inside the dictionary): 0.27 ms for
+  the 565,000 keys, of the 1.74.
+- **Text as 16-byte views** (Arrow's `Utf8View`, what polars holds; the
+  branch `perf/pond-rs-text-views`, parked over its export cost). Filtering
+  this column as views through Arrow's own kernel takes 0.43 to 0.55 ms,
+  against 1.57 for plain text (0.93 without the check). That difference is
+  what is left between pond-rs and polars on this case. Building a view
+  array from pond-rs's own copy is no way round Arrow's kernel: its check
+  of 565,000 views takes 2.7 ms. The cost that parked the branch is as it
+  was: writing text pond-rs built out to Arrow copies it back (0.7 → about
+  7 ms per 1M rows), and a view takes 16 bytes a row against about 10.
+- **One column's rows split across cores.** With four cores the three
+  copies run side by side, so the text column (about 1.6 ms) sets the time.
+  Polars splits the rows (1.06 ms on ten cores on the Mac). Not built yet.
+- **WebAssembly.** The gain there is smaller (7.1 → 6.0 ms). The text
+  column is 3.3 of the 6.0 ms, against 1.6 of 2.8 natively; why was not
+  looked into. The build has WebAssembly SIMD turned off, and turning it on
+  is untried.
+- **Text copied into a buffer that is not cleared first** (append, then cut
+  back, as the fixed-width copy does). About 0.2 ms slower on the text
+  column in the one pair of builds compared. That pair predates the table
+  fix, so the comparison was not a clean one, and it was not repeated.
+- **Hand-written SIMD** stays unscheduled, as before: it needs `unsafe`.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

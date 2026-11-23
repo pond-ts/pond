@@ -10,6 +10,22 @@
 //! `period` rows ([`fill_chunks`]), so a stretch of rows computed on its
 //! own gives the same bits as the whole column.
 
+/// How many threads [`map`] and [`join`] spread work over: 1 without the
+/// `parallel` feature, on wasm32, or when the pool was given one thread
+/// (`RAYON_NUM_THREADS=1`). With 1 there is nothing to gain from handing
+/// work out, and the hand-over itself costs something: the caller waits
+/// while the pool's one thread does the work.
+pub(crate) fn threads() -> usize {
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    {
+        rayon::current_num_threads()
+    }
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    {
+        1
+    }
+}
+
 /// `items.iter().map(f).collect()`, on several cores when the `parallel`
 /// feature is on (and not on wasm32). Output order is input order.
 pub(crate) fn map<T, R, F>(items: &[T], f: F) -> Vec<R>

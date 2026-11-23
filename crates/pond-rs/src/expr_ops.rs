@@ -47,11 +47,11 @@ impl TimeSeries {
     pub fn filter_expr(&self, test: &Expr) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::filter_expr";
         expr::check_test(test, &self.value_defs(), CALL)?;
-        let mask = expr::mask(test, self);
-        if mask.count_set_bits() == self.len() {
+        let keep = expr::mask(test, self);
+        if keep.count() == self.len() {
             return Ok(self.clone());
         }
-        Ok(self.filter_rows(mask))
+        Ok(self.filter_rows(&keep))
     }
 
     /// First row where `test` evaluates to `want`, looking at growing
@@ -231,25 +231,28 @@ mod tests {
     }
 }
 
-/// The mask path of `filter_expr` (one-pass test, Arrow's filter kernel)
-/// against what it replaced: the row-number path and a row-by-row reading
-/// of the comparison.
+/// The mask path of `filter_expr` (one-pass test, each column copied
+/// straight from the mask) against what it replaced: the row-number path
+/// and a row-by-row reading of the comparison.
 #[cfg(test)]
 mod filter_tests {
     use super::*;
     use crate::column::{ArrayColumn, BooleanColumn, DecimalColumn, Scalar, StringColumn};
     use crate::expr::{col, lit};
+    use crate::row_filter::RowFilter;
     use crate::series::{IntervalKeys, Key, Labels, TimeRangeKeys};
     use arrow_array::DictionaryArray;
     use arrow_array::types::Int32Type;
-    use arrow_buffer::BooleanBuffer;
 
-    /// Numbers with gaps stored every way a gap can be: NaN, +inf, -inf.
+    /// Numbers with gaps stored every way a gap can be (NaN, +inf, -inf),
+    /// and the largest and smallest values that are not gaps.
     fn v(i: usize) -> f64 {
         match i % 11 {
             3 => f64::NAN,
             7 => f64::INFINITY,
             9 => f64::NEG_INFINITY,
+            5 if i.is_multiple_of(4) => f64::MAX,
+            5 if i % 4 == 1 => f64::MIN,
             _ => ((i * 37) % 23) as f64 - 5.0,
         }
     }
@@ -327,9 +330,45 @@ mod filter_tests {
                 let s = TimeSeries::from_parts("s".into(), "time".into(), key, columns(n));
                 for m in &masks {
                     let rows: Vec<usize> = (0..n).filter(|&i| m[i]).collect();
-                    let got = s.filter_rows(BooleanBuffer::from_iter(m.iter().copied()));
+                    let keep: RowFilter = m.iter().copied().collect();
+                    let got = s.filter_rows(&keep);
                     assert_eq!(got, s.take_rows(&rows), "n {n}, {} kept", rows.len());
                     assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
+                    // A number column's note that it has no gap is what
+                    // later steps go by: it must say what the values say.
+                    for name in ["v", "w"] {
+                        let c = got.column(name).unwrap().numbers().unwrap();
+                        let finite = c.values().iter().all(|x| x.is_finite());
+                        assert_eq!(c.all_finite(), finite, "n {n}, column {name}");
+                    }
+                    // A long series copies its key and columns on several
+                    // cores: the same series, columns in the same order.
+                    let split = s.filter_rows_split(&keep, true);
+                    assert_eq!(split, got, "n {n}, {} kept, split", rows.len());
+                    // `filter` with a closure goes the same way.
+                    let by_closure = s.filter(|r| Ok(m[r.index()])).unwrap();
+                    assert_eq!(by_closure, got, "n {n}, {} kept, closure", rows.len());
+                }
+            }
+        }
+    }
+
+    /// A filter that keeps nothing, written either way: no rows, a
+    /// dictionary column that is still a dictionary, and a series that
+    /// still stacks with the one it came from.
+    #[test]
+    fn nothing_kept_gives_an_empty_series_that_still_stacks() {
+        for n in [1, 64, 130] {
+            for key in keys(n) {
+                let s = TimeSeries::from_parts("s".into(), "time".into(), key, columns(n));
+                let by_test = s.filter_expr(&col("w").lt(-1.0)).unwrap();
+                let by_closure = s.filter(|_| Ok(false)).unwrap();
+                for got in [&by_test, &by_closure] {
+                    assert_eq!(got.len(), 0);
+                    assert_eq!(got, &s.take_rows(&[]));
+                    assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
+                    assert_eq!(TimeSeries::concat(&[got, &s]).unwrap(), s);
+                    assert_eq!(TimeSeries::concat(&[&s, got]).unwrap(), s);
                 }
             }
         }
@@ -351,7 +390,7 @@ mod filter_tests {
         ];
         for name in ["v", "w"] {
             let c = s.column(name).unwrap().numbers().unwrap();
-            for k in [-1.0, 0.0, 5.0, 17.0] {
+            for k in [-1.0, 0.0, 5.0, 17.0, f64::MAX, f64::MIN] {
                 for (op, build, holds) in ops {
                     // A gap fails every comparison but `ne`.
                     let want: Vec<bool> = (0..n)
@@ -382,6 +421,21 @@ mod filter_tests {
                     // And through the public call.
                     let kept = s.filter_expr(&right).unwrap();
                     assert_eq!(kept.len(), want.iter().filter(|&&b| b).count(), "{at}");
+                }
+            }
+            // A constant that is not finite cannot be applied through the
+            // public calls (`check` refuses it), but the mask still answers
+            // as the evaluated path does.
+            for k in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                for (op, build, _) in ops {
+                    for e in [build(col(name), lit(k)), build(lit(k), col(name))] {
+                        let expr::Vals::Boolean(want) = expr::evaluate(&e, &s) else {
+                            unreachable!()
+                        };
+                        let want: Vec<bool> = want.iter().map(|&x| x == 1).collect();
+                        let got: Vec<bool> = expr::mask(&e, &s).iter().collect();
+                        assert_eq!(got, want, "{name} {op} {k}");
+                    }
                 }
             }
         }

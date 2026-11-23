@@ -199,6 +199,7 @@ mod query;
 mod reducer;
 mod reshape;
 mod rolling;
+mod row_filter;
 mod rows;
 mod rowwise;
 mod sequence;
