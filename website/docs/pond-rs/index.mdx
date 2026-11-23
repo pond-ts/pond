@@ -141,18 +141,26 @@ and live series; see [From JavaScript](./javascript).
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
   different, and why.
 
-## Roadmap
+## What is built
 
-pond-rs follows a written plan in the repository
+pond-rs followed a written plan
 ([`docs/rfcs/pond-rs.md`](https://github.com/pond-ts/pond/blob/main/docs/rfcs/pond-rs.md)
-for the reasoning, `PLAN.md` for the current steps). In order:
+for the reasoning, `PLAN.md` for what is still open). All of it is built:
 
-1. **Batch core** (done). The first slice, R1a, met every target it set
-   itself; R1b added the rest of pond-ts's batch operations, step by step.
-2. **Financial studies** (done), checked against the same pandas / TA-Lib test
-   cases pond-ts uses.
-3. **Live layer** (done): series that update as data arrives.
-4. **JavaScript bridge** (done): `@pond-ts/wasm`, the same Rust code as
-   WebAssembly, with pond-ts's method names.
+- **Batch core**: every batch operation pond-ts has. A few small options
+  are not built yet (custom reducer functions, for example); they are listed
+  in [Coming from pond-ts](./coming-from-pond-ts).
+- **Financial studies**: all 109, checked against the same pandas / TA-Lib
+  test cases pond-ts uses.
+- **Live layer**: series that update as data arrives, with partitions.
+- **JavaScript**: `@pond-ts/wasm`, the same Rust code as WebAssembly, with
+  pond-ts's method names.
+- **Python**: `pond-timeseries` (`import pond`), taking and giving polars,
+  pandas and pyarrow frames.
+- **Processing graphs**: a Rust port of `@pond-ts/process` (the
+  `pond-process` crate in the repository) that gives the same answers. It
+  covers requests, the registry, the host, the basic steps, folds and
+  studies. Not yet: joins, the live graph and the authoring helpers, and it
+  is not on crates.io yet.
 
-Charts, React and `@pond-ts/process` stay TypeScript only.
+Charts and React stay TypeScript only.

@@ -4989,6 +4989,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     those: the first `@pond-ts/wasm` publish by hand, and PyPI's pending
     trusted publisher for `pond-rs`.
 
+  - Status 2026-11-23: both are published, so R4 is done and its PLAN.md
+    entry is removed. npm has `@pond-ts/wasm` 0.79.0; PyPI has
+    `pond-timeseries` 0.78.0 and 0.79.0 (the PyPI name became
+    `pond-timeseries` and the import `import pond`, #956).
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

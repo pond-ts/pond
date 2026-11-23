@@ -587,19 +587,11 @@ of pond's core and financial studies, for agents writing Rust, with a WASM
 bridge back into pond-ts later where it measurably pays. Building started
 2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
 shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
-(batch core, financial studies, live layer) are complete, and the R4 bridges
-and column expressions ([PND-EXPR]) are built. Most entries below are
+(batch core, financial studies, live layer) are complete; the R4 bridges
+(`@pond-ts/wasm` on npm, `pond-timeseries` on PyPI), column expressions
+([PND-EXPR]) and the R5 port of `@pond-ts/process` (crate `pond-process`, not
+yet on crates.io) are built. Most entries below are
 pond-ts bugs found while porting.
-
-- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (npm `@pond-ts/wasm`)
-  and Python (PyPI `pond-timeseries`, `import pond`): every step (J1–J3, P1–P3) is built and merged
-  (outcomes in the breakout plan). Left, both owner actions: the first
-  `@pond-ts/wasm` publish by hand on npmjs.com (npm trusted publishing needs
-  the package to exist), and PyPI's pending trusted publisher for `pond-rs`
-  (owner `pond-ts`, repo `pond`, workflow `python-wheels.yml`, environment
-  `pypi`) before the first upload. As of 2026-11-13 neither package is on
-  its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
-  on 2026-11-21, before any publish.
 
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
