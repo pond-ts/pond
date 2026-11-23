@@ -1540,9 +1540,7 @@ fn label_kind(labels: &Labels) -> &'static str {
 /// required only when it is required in every input.
 fn stack(name: &str, series: &[&TimeSeries]) -> TimeSeries {
     let head = series[0];
-    let picks = merge_order(series);
-    let keys: Vec<&Key> = series.iter().map(|s| s.key()).collect();
-    let key = Key::gather(&keys, &picks);
+    let (picks, key) = merge_order(series);
     let columns: Vec<usize> = (0..head.columns().len()).collect();
     let columns = par::map(&columns, |&c| {
         let sources: Vec<&ColumnData> = series.iter().map(|s| s.columns()[c].data()).collect();
@@ -1599,10 +1597,114 @@ impl TimeSeries {
 
 /// The order to take rows in: by key (begin, then end), rows with the same
 /// key in partition order, then row order. That is a stable sort of the
-/// partitions laid one after another, done as a radix sort on the key
-/// numbers (each pass is a stable counting sort), which costs a few passes
-/// over the rows instead of a comparison sort's log N.
-fn merge_order(series: &[&TimeSeries]) -> Vec<(u32, u32)> {
+/// partitions laid one after another.
+///
+/// Every series is already in key order (a series' key is checked when it
+/// is made), so this merges them: a tournament between the series' next
+/// rows, about log2(series) comparisons per row reading each key once and
+/// in order. [PND-RSPARTMERGE]: the radix sort it replaced scattered every
+/// row into 65,536 buckets on each of three or four passes (`concat` of 100
+/// partitions of 1M rows 27 -> 20 ms; `examples/perf_merge.rs`). A series
+/// not in order (none is expected) still gets the sort, so the result
+/// never depends on it.
+///
+/// Also gives the merged key, which the merge reads anyway.
+fn merge_order(series: &[&TimeSeries]) -> (Vec<(u32, u32)>, Key) {
+    let keys: Vec<&Key> = series.iter().map(|s| s.key()).collect();
+    if keys.iter().all(|k| in_key_order(k)) {
+        let (picks, begin, end) = merge_sorted(series);
+        let key = Key::assemble(&keys, &picks, begin, end);
+        (picks, key)
+    } else {
+        let picks = sort_order(series);
+        let key = Key::gather(&keys, &picks);
+        (picks, key)
+    }
+}
+
+/// Whether `key` is ordered by begin, then end, with every begin below
+/// `i64::MAX` ([`merge_sorted`] marks a finished series with it).
+fn in_key_order(key: &Key) -> bool {
+    let begin = key.begin();
+    if begin.last().is_some_and(|&b| b == i64::MAX) {
+        return false;
+    }
+    match key.end() {
+        None => begin.windows(2).all(|w| w[0] <= w[1]),
+        Some(end) => (1..begin.len()).all(|i| (begin[i - 1], end[i - 1]) <= (begin[i], end[i])),
+    }
+}
+
+/// Picks, then the merged keys' begins and (for ranges and intervals) ends.
+type Merged = (Vec<(u32, u32)>, Vec<i64>, Option<Vec<i64>>);
+
+/// [`merge_order`] for series that are each in key order: a loser tree
+/// (tournament) over the series. Each leaf holds a series' next row; each
+/// inner node holds the series that lost the match there, so after taking
+/// the winner's row only its path to the root is replayed. Ties go to the
+/// lower series number, which with each series read front to back gives
+/// partition order, then row order.
+fn merge_sorted(series: &[&TimeSeries]) -> Merged {
+    let total: usize = series.iter().map(|s| s.len()).sum();
+    let k = series.len();
+    let begins: Vec<&[i64]> = series.iter().map(|s| s.key().begin()).collect();
+    let ends: Option<Vec<&[i64]>> = series.iter().map(|s| s.key().end()).collect();
+    // An entry: a series' next key, then the series number (the tie
+    // break). Past its last row a series' key is after every real key.
+    type Entry = (i64, i64, u32);
+    const DONE: (i64, i64) = (i64::MAX, i64::MAX);
+    let entry = |p: usize, r: usize| -> Entry {
+        let (b, e) = match begins.get(p).and_then(|b| b.get(r)) {
+            None => DONE,
+            Some(&b) => (b, ends.as_ref().map_or(0, |e| e[p][r])),
+        };
+        (b, e, p as u32)
+    };
+    // Leaves are m..2m (m a power of two; leaves past k are done series);
+    // `loser[node]` for inner nodes 1..m holds the entry that lost there.
+    let m = k.next_power_of_two();
+    let mut winner: Vec<Entry> = vec![(0, 0, 0); 2 * m];
+    for (leaf, w) in winner[m..].iter_mut().enumerate() {
+        *w = entry(leaf, 0);
+    }
+    let mut loser: Vec<Entry> = vec![(0, 0, 0); m];
+    for node in (1..m).rev() {
+        let (a, b) = (winner[2 * node], winner[2 * node + 1]);
+        let (w, l) = if b < a { (b, a) } else { (a, b) };
+        winner[node] = w;
+        loser[node] = l;
+    }
+    let mut top = winner[1];
+    let mut row = vec![0usize; k];
+    let mut picks: Vec<(u32, u32)> = Vec::with_capacity(total);
+    let mut begin: Vec<i64> = Vec::with_capacity(total);
+    let mut end: Vec<i64> = Vec::with_capacity(if ends.is_some() { total } else { 0 });
+    for _ in 0..total {
+        let p = top.2 as usize;
+        picks.push((top.2, row[p] as u32));
+        begin.push(top.0);
+        if ends.is_some() {
+            end.push(top.1);
+        }
+        row[p] += 1;
+        top = entry(p, row[p]);
+        let mut node = (p + m) / 2;
+        while node > 0 {
+            let l = &mut loser[node];
+            if *l < top {
+                std::mem::swap(l, &mut top);
+            }
+            node /= 2;
+        }
+    }
+    let end = ends.is_some().then_some(end);
+    (picks, begin, end)
+}
+
+/// [`merge_order`] for any rows: a radix sort on the key numbers (each
+/// pass a stable counting sort), a few passes over the rows instead of a
+/// comparison sort's log N.
+fn sort_order(series: &[&TimeSeries]) -> Vec<(u32, u32)> {
     let total: usize = series.iter().map(|s| s.len()).sum();
     let mut picks: Vec<(u32, u32)> = Vec::with_capacity(total);
     for (p, s) in series.iter().enumerate() {
@@ -1756,8 +1858,11 @@ mod tests {
             1 << 40,
             MAX_TIME_MS - 2,
         ];
-        for ranges in [false, true] {
-            let parts: Vec<TimeSeries> = (0..6)
+        for (ranges, count) in [false, true]
+            .into_iter()
+            .flat_map(|r| [1, 2, 3, 6, 17].map(|c| (r, c)))
+        {
+            let parts: Vec<TimeSeries> = (0..count)
                 .map(|_| {
                     let n = (next() % 40) as usize;
                     let mut keys: Vec<(i64, i64)> = (0..n)
@@ -1787,8 +1892,27 @@ mod tests {
                 let k = parts[p as usize].key();
                 (k.begin()[r as usize], k.end().map_or(0, |e| e[r as usize]))
             });
-            assert_eq!(merge_order(&refs), want);
+            // The merge, and the sort it falls back to, both give it, with
+            // the key gathered in that order.
+            let keys: Vec<&Key> = refs.iter().map(|s| s.key()).collect();
+            let (picks, key) = merge_order(&refs);
+            assert_eq!(picks, want);
+            assert_eq!(key, Key::gather(&keys, &want));
+            assert_eq!(sort_order(&refs), want);
         }
+    }
+
+    #[test]
+    fn merge_order_sorts_a_series_out_of_key_order() {
+        // Not expected (every series' key is checked when it is made), but
+        // the order must not depend on it: such a series takes the sort.
+        let cols = |n: usize| vec![Column::required("v", vec![0.0; n])];
+        let a =
+            TimeSeries::from_parts("a".into(), "time".into(), Key::Time(vec![5, 1, 3]), cols(3));
+        let b = TimeSeries::new("b", vec![1, 2, 5], cols(3)).unwrap();
+        let (picks, key) = merge_order(&[&a, &b]);
+        assert_eq!(picks, vec![(0, 1), (1, 0), (1, 1), (0, 2), (0, 0), (1, 2)]);
+        assert_eq!(key.begin(), &[1, 1, 2, 3, 5, 5]);
     }
 
     #[test]

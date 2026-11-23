@@ -1116,6 +1116,41 @@ PLAN.md. Left for later, as scoped: joins, ranged recompute, the worker
 pool, the authoring builders, the live graph, `toJsonSchema`, and a
 crates.io name for the crate.
 
+## [PND-RSPARTMERGE] — putting partitions back together (2026-11-23)
+
+Logged from the Python bridge benchmark (100-host rolling 428 ms vs polars
+127): `collect` / `concat` of 100 partitions holding 1M rows took ~300 ms.
+
+Outcome, measured on Peter's M1 (Linux VM, 4 cores), 1M rows, 100 hosts:
+
+- **The rolling case was already fixed** by 1c4b3b8 (2026-11-22,
+  per-entity number operations run in place): `collect` after a per-host
+  rolling average is ~1 ms, the whole partition → rolling → collect 35 ms
+  on one thread. Its remaining cost is the rolling itself (21 ms) and
+  `partition_by` (12 ms).
+- **The general merge was still a radix sort** (`merge_order`: three or
+  four passes, each scattering every row into 65,536 buckets). It runs
+  for `concat`, `apply`, and any partitioned step that makes new keys
+  (`aggregate`, `align`, `rolling_over`, `materialize`, `dedupe`, …),
+  where the result is merged once more and split again when a partition
+  value changed. Now: every series is already in key order (checked when
+  made), so the series are merged with a loser tree (tournament), about
+  log2(series) comparisons per row, and the merged key's begins and ends
+  are written during the merge instead of gathered afterwards. A series
+  not in key order (none is expected) still takes the radix sort, so the
+  result never depends on that.
+- Timings, median of 9, old → new: `concat` of the 100 partitions 27.2 →
+  19.8 ms (1 thread), 24.2 → 17.6 (4); per-host 1-minute `aggregate`
+  (1.67M rows out) 124 → 92 ms (1 thread), 102 → 75 (4). Within the new
+  `concat`: merge + key ~10 ms, column copies ~10 ms; within `aggregate`'s
+  merge: ~31 ms + ~14 ms.
+- Same bits: all pond-rs tests and parity pass, and hashes of every output
+  bit (key + columns) match old vs new on 17 cases (concat both partition
+  orders, per-host aggregate / align / rolling / apply; 50k–1M rows, 7 to
+  1,000 partitions, times repeated across partitions).
+- Not done: Python's `partition_by` measured ~60 ms on the cloud VM where
+  the same call from Rust took 20–30 ms; not investigated.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

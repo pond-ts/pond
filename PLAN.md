@@ -601,16 +601,6 @@ pond-ts bugs found while porting.
   its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
   on 2026-11-21, before any publish.
 
-- **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
-  scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
-  300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
-  about 70 ms. Found by the Python bridge benchmark (per-host rolling 428 ms
-  against polars' 127 ms) and reproduced from plain Rust. The instruction
-  count grows in step with the rows (callgrind), so it is memory access, most
-  likely the 16-bit radix sort's 65,536-bucket scatter in `merge_order`;
-  partitions are already sorted, so a k-way merge is the obvious candidate.
-  No API change.
-
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
   per-host aggregate's closed bucket carries only its interval and reducer

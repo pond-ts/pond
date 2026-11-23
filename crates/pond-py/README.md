@@ -182,9 +182,9 @@ usual hand-written versions. pond's rolling, bucket and Bollinger results
 match polars's to within 1e-13. Getting data in costs about 7 ms per million
 rows: the time column is copied and checked (in order, in range), and each
 number column is scanned once for gaps. So the cheapest operations (`diff`)
-are slower than polars. The per-host case is slow in pond-rs itself, not in
-the bridge: putting 100 partitions back together in time order takes most of
-that time in plain Rust too. That is logged to be fixed in pond-rs.
+are slower than polars. The per-host case was slow in pond-rs itself, not in
+the bridge; putting the 100 partitions back together now takes about 1 ms,
+and most of what is left is splitting them by host.
 
 Live series, `python bench/bench_live.py 1000000`: one million events 10 ms
 apart into a 1-minute rolling average and 1-minute buckets (avg, max). The
