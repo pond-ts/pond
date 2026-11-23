@@ -19,13 +19,13 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Decimal128Type, Float64Type, Int32Type};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Float64Array, ListArray,
-    StringArray, UInt32Array,
+    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Float64Array, Int32Array,
+    ListArray, StringArray, UInt32Array,
 };
-use arrow_buffer::{BooleanBuffer, NullBuffer, OffsetBuffer, ScalarBuffer};
+use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field};
-use arrow_select::filter::{FilterBuilder, FilterPredicate};
 
+use crate::row_filter::RowFilter;
 use crate::series::ColumnKind;
 
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
@@ -47,7 +47,7 @@ impl Float64Column {
     /// Wrap an Arrow buffer as it is, without copying: non-finite values are
     /// gaps.
     pub(crate) fn from_buffer(values: ScalarBuffer<f64>) -> Self {
-        let all_finite = values.iter().all(|v| v.is_finite());
+        let all_finite = crate::row_filter::all_finite(&values);
         Self { values, all_finite }
     }
 
@@ -215,72 +215,17 @@ impl StringColumn {
     /// The rows where `keep` is set, in order. A dictionary column filters
     /// its keys and keeps its values, as [`StringColumn::take_indices`].
     pub(crate) fn filter(&self, keep: &RowFilter) -> Self {
-        let array: &dyn Array = match &self.repr {
-            StringRepr::Plain(a) => a,
-            StringRepr::Dictionary(a) => a,
-        };
-        let out = keep.apply(array);
         match &self.repr {
-            StringRepr::Plain(_) => Self::plain(out.as_string::<i32>().clone()),
-            StringRepr::Dictionary(_) => Self {
-                repr: StringRepr::Dictionary(out.as_dictionary::<Int32Type>().clone()),
-            },
-        }
-    }
-}
-
-/// A mask of the rows to keep, prepared once for Arrow's filter kernel and
-/// applied to every column of a series.
-pub(crate) struct RowFilter {
-    mask: BooleanBuffer,
-    prepared: FilterPredicate,
-}
-
-impl RowFilter {
-    pub(crate) fn new(mask: BooleanBuffer) -> Self {
-        let prepared = FilterBuilder::new(&BooleanArray::new(mask.clone(), None))
-            .optimize()
-            .build();
-        Self { mask, prepared }
-    }
-
-    /// Number of rows kept.
-    pub(crate) fn count(&self) -> usize {
-        self.prepared.count()
-    }
-
-    fn apply(&self, a: &dyn Array) -> ArrayRef {
-        self.prepared
-            .filter(a)
-            .expect("the mask has the column's length")
-    }
-
-    /// The rows kept, as row numbers.
-    pub(crate) fn rows(&self) -> impl Iterator<Item = usize> + '_ {
-        self.mask.set_indices()
-    }
-
-    /// The values of `v` where the mask is set, in order (for the key's
-    /// plain vectors, which are not Arrow buffers).
-    pub(crate) fn vec<T: Copy>(&self, v: &[T]) -> Vec<T> {
-        // Every value is written to the next free place, and the place moves
-        // on only when the row is kept: no branch that depends on the mask,
-        // which matters when kept and dropped rows are mixed. The last write
-        // lands in one spare slot, dropped at the end.
-        let Some(&first) = v.first() else {
-            return Vec::new();
-        };
-        let mut out = vec![first; self.count() + 1];
-        let mut at = 0;
-        for (w, bits) in self.mask.bit_chunks().iter_padded().enumerate() {
-            let base = w * 64;
-            for (j, &x) in v[base..v.len().min(base + 64)].iter().enumerate() {
-                out[at] = x;
-                at += ((bits >> j) & 1) as usize;
+            StringRepr::Plain(a) => Self::plain(keep.text(a)),
+            StringRepr::Dictionary(a) => {
+                let keys = a.keys();
+                let kept =
+                    Int32Array::new(keep.vec(keys.values()).into(), keep.nulls(keys.nulls()));
+                Self {
+                    repr: StringRepr::Dictionary(DictionaryArray::new(kept, a.values().clone())),
+                }
             }
         }
-        out.truncate(at);
-        out
     }
 }
 
@@ -1360,32 +1305,35 @@ impl ColumnData {
         }
     }
 
-    /// The rows where `keep` is set, in order: what `filter` keeps. Arrow's
-    /// filter kernel copies straight from the mask (runs of kept rows as
-    /// one copy), with no list of row numbers in between.
+    /// The rows where `keep` is set, in order: what `filter` keeps. Every
+    /// kind but arrays is copied straight from the mask (see
+    /// [`RowFilter`]), with no list of row numbers in between.
     pub(crate) fn filter(&self, keep: &RowFilter) -> ColumnData {
-        let kept = |a: &dyn Array| keep.apply(a);
         match self {
             ColumnData::Number(c) => {
-                let out = kept(&Float64Array::new(c.values.clone(), None));
-                let values = out.as_primitive::<Float64Type>().values().clone();
+                let values = keep.vec(&c.values);
                 // A subset of values with no gap has no gap.
-                if c.all_finite {
-                    ColumnData::Number(Float64Column {
-                        values,
-                        all_finite: true,
-                    })
-                } else {
-                    ColumnData::Number(Float64Column::from_buffer(values))
-                }
+                let all_finite = c.all_finite || crate::row_filter::all_finite(&values);
+                ColumnData::Number(Float64Column {
+                    values: values.into(),
+                    all_finite,
+                })
             }
-            ColumnData::Decimal(c) => ColumnData::Decimal(DecimalColumn {
-                values: kept(&c.values).as_primitive::<Decimal128Type>().clone(),
-            }),
+            ColumnData::Decimal(c) => {
+                let a = &c.values;
+                let kept = Decimal128Array::new(keep.vec(a.values()).into(), keep.nulls(a.nulls()));
+                ColumnData::Decimal(DecimalColumn {
+                    values: kept.with_data_type(a.data_type().clone()),
+                })
+            }
             ColumnData::String(c) => ColumnData::String(c.filter(keep)),
-            ColumnData::Boolean(c) => ColumnData::Boolean(BooleanColumn::from_arrow(
-                kept(&c.values).as_boolean().clone(),
-            )),
+            ColumnData::Boolean(c) => {
+                let a = &c.values;
+                ColumnData::Boolean(BooleanColumn::from_arrow(BooleanArray::new(
+                    keep.bits(a.values()),
+                    keep.nulls(a.nulls()),
+                )))
+            }
             // Array cells are shared, not copied: keep the row-number path.
             ColumnData::Array(c) => {
                 let rows: Vec<Option<usize>> = keep.rows().map(Some).collect();

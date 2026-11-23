@@ -103,6 +103,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   Every old address redirects to its new one. The home page and top bar
   now offer npm, crates.io and PyPI installs.
 
+- **pond-rs: `filter` and `filter_expr` are faster**, with the same rows in
+  the same order. Each column is copied straight from the mask of kept rows
+  by pond-rs's own loops: numbers, times and decimals eight rows at a time,
+  text and true/false values one stretch of kept rows at a time. The test
+  `column > number` runs on several values at once, and a filter that keeps
+  131,072 rows or more copies the key and each column on a core of its own.
+  On 1M rows of a time key, a number column and a text column (an M1, in a
+  Linux VM), `v > 500` keeping 56% went from 4.3 ms to 2.8 ms on one core
+  and 2.3 ms on four; keeping 1% went from 1.6 ms to 0.5 ms; and `filter`
+  with a closure, which copies its rows the same way, from 5.0 ms to 3.9 ms.
+  The bridges pick it up: Python from 7.0 ms to 3.0 ms, `@pond-ts/wasm` from
+  7.1 ms to 6.0 ms.
+
 ## [0.79.0] — 2026-11-23
 
 ### Added

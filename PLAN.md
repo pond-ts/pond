@@ -601,6 +601,20 @@ pond-ts bugs found while porting.
   its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
   on 2026-11-21, before any publish.
 
+- **[PND-RSFILTER]** — What is left of the pond-rs filter speed-up. The
+  rewrite (2026-11-23, in the breakout plan) took "keep rows where v > 500"
+  on 1M rows from 4.3 to 2.8 ms on one core of an M1 (in a Linux VM); polars
+  takes 1.9 ms there. The gap is all in the text column, and closing it is
+  two owner decisions: (1) skip Arrow's re-check of the text pond-rs has
+  just copied, which needs the crate's first `unsafe` block (2.8 → 2.1 ms;
+  a dictionary column's keys are re-checked the same way, 0.27 ms); (2)
+  hold text as 16-byte views, the parked `perf/pond-rs-text-views` branch
+  (the text copy 1.6 → about 0.5 ms, at the export cost that parked it).
+  Also left, no decision needed: split one column's rows across cores (four
+  cores give 2.3 ms today, polars 1.06 ms on ten), a look at the
+  WebAssembly build (6.0 ms, no SIMD), and the same case timed on macOS
+  itself.
+
 - **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
   scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
   300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
