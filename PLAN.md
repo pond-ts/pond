@@ -603,19 +603,13 @@ pond-ts bugs found while porting.
   hold text as 16-byte views, the parked `perf/pond-rs-text-views` branch
   (the text copy 1.6 → about 0.5 ms, at the export cost that parked it).
   Also left, no decision needed: split one column's rows across cores (four
-  cores give 2.3 ms today, polars 1.06 ms on ten), a look at the
-  WebAssembly build (6.0 ms, no SIMD), and the same case timed on macOS
-  itself.
-
-- **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
-  scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
-  300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
-  about 70 ms. Found by the Python bridge benchmark (per-host rolling 428 ms
-  against polars' 127 ms) and reproduced from plain Rust. The instruction
-  count grows in step with the rows (callgrind), so it is memory access, most
-  likely the 16-bit radix sort's 65,536-bucket scatter in `merge_order`;
-  partitions are already sorted, so a k-way merge is the obvious candidate.
-  No API change.
+  cores give 2.3 ms today, polars 1.06 ms on ten); a look at the
+  WebAssembly build (6.0 ms, no SIMD); the bridges timed again on what
+  merged; and a quiet run on macOS itself. The first run there, on a busy
+  machine, gave 6.4 → 3.9 ms against polars 1.36.1 at 2.1, and showed that
+  on macOS the allocator matters to the new path too (3.8 ms with the
+  system allocator, 2.8 with mimalloc, which the Python bridge uses), so
+  the quiet run should time both.
 
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
@@ -629,13 +623,12 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
-  about 47 code blocks) are TypeScript only, and Mental model leans on
-  TypeScript ideas (`as const`, type narrowing), though the sidebar calls
-  them the ideas every language shares. Add Rust and Python tabs (checked
-  by the snippet scripts) and say the shared idea first. Same for
-  `series/arrays`, `series/columns`, `series/other-chart-libraries`.
-  Found in the #964 review.
+- **[PND-SERIESTABS]** — Three "Working with series" pages are still
+  TypeScript only: `series/arrays` (list columns, 22 examples),
+  `series/columns` (9) and `series/other-chart-libraries` (5). Add Rust and
+  Python tabs as the Concepts pages got them (each a whole program, run by
+  the snippet scripts). For other chart libraries the Python tab is the
+  frame hand-off (`to_pandas` / `to_polars`) to matplotlib or plotly.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/rust/`) and the Rust / Python tabs on the core pages
   (what is covered so far is in the breakout plan). The Python tabs already

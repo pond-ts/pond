@@ -96,8 +96,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   registry, requests, host and plans pages, each compiled and run in the
   docs' Rust snippet check. The overview is retitled "Processing graphs"
   and the performance page compares the two.
+- **Docs: the Concepts pages in every language.** Every example on the
+  ten Concepts pages (mental model, temporal keys, sequences, series, temporal relations,
+  windowing, triggers, partitioning, late data, the value axis) now has a
+  Rust and a Python tab beside TypeScript, each checked by the docs'
+  snippet scripts, and the prose no longer assumes TypeScript.
 
 ### Changed
+
+- **pond-rs: partitions are put back together faster.** `concat`,
+  `apply`, and partitioned steps that make new keys (`aggregate`, `align`,
+  `rolling_over`, …) now merge the already-sorted partitions instead of
+  sorting every row: `concat` of 100 partitions holding 1M rows 27 → 20
+  ms, a per-host 1-minute `aggregate` over 100 hosts 124 → 92 ms. Same
+  results, bit for bit. Also faster from Python and WebAssembly.
 
 - **Docs: one site for every language.** pond-ts.org is now organised by
   task rather than by npm package, with a front door each for TypeScript,
@@ -118,9 +130,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   On 1M rows of a time key, a number column and a text column (an M1, in a
   Linux VM), `v > 500` keeping 56% went from 4.3 ms to 2.8 ms on one core
   and 2.3 ms on four; keeping 1% went from 1.6 ms to 0.5 ms; and `filter`
-  with a closure, which copies its rows the same way, from 5.0 ms to 3.9 ms.
+  with a closure, which copies its rows the same way, from 5.1 ms to 3.9 ms.
   The bridges pick it up: Python from 7.0 ms to 3.0 ms, `@pond-ts/wasm` from
-  7.1 ms to 6.0 ms.
+  7.1 ms to 6.0 ms. Two side effects. Any step whose result is a number
+  column with no gaps (`fill`, `cumulative`, `rolling`, …) is about 0.2 ms
+  per 1M rows faster, because the check for gaps that every new number
+  column gets now looks at 64 values at a time. And when a `filter` with a
+  closure keeps no row, a dictionary text column comes back with an empty
+  dictionary, as it already did from `filter_expr`; it used to keep the
+  source's list of strings behind its zero rows.
 
 ## [0.79.0] — 2026-11-23
 

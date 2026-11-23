@@ -253,11 +253,25 @@ impl Key {
                 .collect()
         };
         let begin = pick(&|k| k.begin());
+        let end = sources[0]
+            .end()
+            .map(|_| pick(&|k| k.end().expect("same kind")));
+        Key::assemble(sources, picks, begin, end)
+    }
+
+    /// The key of `picks` (as in [`Key::gather`]) when its begins and ends
+    /// are already worked out: only interval labels are gathered.
+    pub(crate) fn assemble(
+        sources: &[&Key],
+        picks: &[(u32, u32)],
+        begin: Vec<i64>,
+        end: Option<Vec<i64>>,
+    ) -> Key {
         match sources[0] {
             Key::Time(_) => Key::Time(begin),
             Key::TimeRange(_) => Key::TimeRange(TimeRangeKeys {
                 begin,
-                end: pick(&|k| k.end().expect("same kind")),
+                end: end.expect("same kind"),
             }),
             Key::Interval(first) => {
                 let labels: Vec<&Labels> = sources
@@ -288,7 +302,7 @@ impl Key {
                 Key::Interval(IntervalKeys {
                     label,
                     begin,
-                    end: pick(&|k| k.end().expect("same kind")),
+                    end: end.expect("same kind"),
                 })
             }
         }

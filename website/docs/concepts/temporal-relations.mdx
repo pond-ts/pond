@@ -2,6 +2,9 @@
 sidebar_position: 4
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 import { SelectionRelations } from '@site/src/components/ConceptFigures';
 
 # Temporal relations
@@ -26,6 +29,9 @@ Given a query `range = [start, end)` and an event with key extent
 
 <SelectionRelations />
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { TimeRange } from 'pond-ts';
 
@@ -38,6 +44,61 @@ cpu.within(range); // keep events fully contained
 cpu.overlapping(range); // keep events that intersect
 cpu.trim(range); // intersect and clip key extents
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, EventKey, TimeRangeKeys, TimeSeries, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let m = |t: &str| parse_time(&format!("2025-01-01T00:{t}:00Z"));
+    // Three jobs, each running for a span of time.
+    let jobs = TimeSeries::from_time_ranges(
+        "jobs",
+        TimeRangeKeys { begin: vec![m("00")?, m("03")?, m("04")?], end: vec![m("03")?, m("04")?, m("07")?] },
+        vec![Column::required("cpu", vec![0.4, 0.7, 0.5])],
+    )?;
+    let (start, end) = (m("02")?, m("05")?);
+
+    let inside = jobs.within(start, end)?; // keep jobs fully contained
+    let touching = jobs.overlapping(EventKey::time_range(start, end)?); // keep jobs that intersect
+    let clipped = jobs.trim(EventKey::time_range(start, end)?); // intersect and clip the spans
+    assert_eq!((inside.len(), touching.len(), clipped.len()), (1, 3, 3));
+    assert_eq!(clipped.key().begin()[0], start); // the first job now starts at 00:02
+    Ok(())
+}
+```
+
+`within` takes the two ends; `overlapping` and `trim` take any key (`EventKey::time_range`, an interval, or a moment).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+m = lambda t: pond.parse_time(f"2025-01-01T00:{t}:00Z")
+# Three jobs, each running for a span of time.
+jobs = pond.TimeSeries(
+    {"timeRange": [(m("00"), m("03")), (m("03"), m("04")), (m("04"), m("07"))],
+     "cpu": [0.4, 0.7, 0.5]},
+    key="timeRange",
+    key_kind="time_range",
+)
+start, end = m("02"), m("05")
+
+inside = jobs.within(start, end)  # keep jobs fully contained
+touching = jobs.overlapping((start, end))  # keep jobs that intersect
+clipped = jobs.trim((start, end))  # intersect and clip the spans
+assert (len(inside), len(touching), len(clipped)) == (1, 3, 3)
+assert clipped.first().begin == start  # the first job now starts at 00:02
+```
+
+`within` takes the two ends; `overlapping` and `trim` take a key: a `(begin, end)` pair here.
+
+</TabItem>
+</Tabs>
 
 ### When to use which
 
@@ -80,6 +141,9 @@ Operations that return a single event or a fixed-count slice — they
 preserve the event grid (no clipping, no aggregation), just narrow it
 positionally:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 cpu.first(); // first event by key order
 cpu.last(); // last event by key order
@@ -89,6 +153,54 @@ cpu.head(10); // first 10 events
 cpu.tail(10); // last 10 events
 cpu.tail('1m'); // events whose begin > lastEvent.begin - 60s
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..120).map(|i| i * 1_000).collect(),
+        vec![Column::required("cpu", (0..120).map(|i| i as f64).collect::<Vec<f64>>())],
+    )?;
+
+    assert_eq!(cpu.first().unwrap().begin(), 0); // first row by key order
+    assert_eq!(cpu.last().unwrap().begin(), 119_000); // last row
+    assert_eq!(cpu.at(0).unwrap().begin(), 0); // row at index 0
+    assert_eq!(cpu.at(-1).unwrap().begin(), 119_000); // negative counts from the end
+    assert_eq!(cpu.tail("1m")?.len(), 60); // rows whose begin > last begin - 60 s
+    assert_eq!(cpu.slice(..10).len(), 10); // first ten rows
+    assert_eq!(cpu.slice(-10..).first().unwrap().begin(), 110_000); // last ten rows
+    Ok(())
+}
+```
+
+Rust has no `head(n)` or `tail(n)` by count; `slice` does that job (`slice(..10)` for the first ten rows, `slice(-10..)` for the last ten), and `tail` takes a duration.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [i * 1_000 for i in range(120)], "cpu": [float(i) for i in range(120)]})
+
+assert cpu.first().begin == 0  # first row by key order
+assert cpu.last().begin == 119_000  # last row
+assert cpu.at(0).begin == 0  # row at index 0
+assert cpu.at(-1).begin == 119_000  # negative counts from the end
+assert len(cpu.tail("1m")) == 60  # rows whose begin > last begin - 60 s
+assert len(cpu[:10]) == 10  # first ten rows
+assert cpu[-10:].first().begin == 110_000  # last ten rows
+```
+
+Python has no `head(n)` or `tail(n)` by count; slicing does that job (`cpu[:10]` for the first ten rows, `cpu[-10:]` for the last ten), and `tail` takes a duration. A row comes back as a `Row`, or `None` past the end.
+
+</TabItem>
+</Tabs>
 
 `tail` is the temporal counterpart to `Array.slice(-n)`: it accepts
 either a count or a duration. The duration form is what you reach for

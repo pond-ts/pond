@@ -2,6 +2,9 @@
 sidebar_position: 3
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 import {
   EventAnatomy,
   TimeSeriesTable,
@@ -19,10 +22,12 @@ Two flavours, same shape:
   type as `TimeSeries`, same operator surface (filter, rolling,
   aggregate, ...), with subscriber semantics for streaming use.
 
-Both carry the same `S` schema type. A transform that works on
-`TimeSeries<S>` works on `LiveSeries<S>`, and the type system
-threads the schema through both paths identically. Choose by data
-shape, not by which operators you need.
+Both have the same columns and the same operators. A transform that
+works on a `TimeSeries` works on a `LiveSeries`; in TypeScript the type
+system threads the schema `S` through both paths identically, and in
+Rust and Python the columns are checked when the code runs. Choose by
+data shape, not by which operators you need. Both exist in every
+language under these names.
 
 ## Events
 
@@ -30,6 +35,9 @@ The building block. An `Event<K, D>` is a temporal key plus a typed
 data payload.
 
 <EventAnatomy />
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { Event, Time } from 'pond-ts';
@@ -46,12 +54,61 @@ e.get('cpu'); // 0.42 — typed via the schema
 e.data(); // { cpu, host } — full payload
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![1735689600000],
+        vec![
+            Column::required("cpu", vec![0.42]),
+            Column::required("host", vec!["api-1"]),
+        ],
+    )?;
+
+    // There is no event object to build: a row is read from a series.
+    let e = cpu.row(0).unwrap();
+    assert_eq!(e.begin(), 1735689600000); // earliest instant of the key
+    assert_eq!(e.end(), 1735689600000); // latest (the same for a moment)
+    assert_eq!(e.number("cpu")?, Some(0.42)); // checked when it runs
+    assert_eq!(e.string("host")?, Some("api-1"));
+    assert!(e.string("cpu").is_err()); // `cpu` holds numbers, not text
+    Ok(())
+}
+```
+
+Rust has no event type you build: `series.row(i)` (or `first`, `last`, `rows()`) hands back a `Row` that reads its key and its cells.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [1735689600000], "cpu": [0.42], "host": ["api-1"]})
+
+# There is no event object to build: a row is read from a series.
+e = cpu.at(0)
+assert e.begin == e.end == 1735689600000  # a moment: begin and end match
+assert e["cpu"] == 0.42
+assert e.to_dict() == {"cpu": 0.42, "host": "api-1"}
+```
+
+Python has no event type you build: `series.at(i)` (or `first()`, `last()`) hands back a `Row`.
+
+</TabItem>
+</Tabs>
+
 Events are immutable. `event.set('cpu', 0.5)` returns a new event;
 the original is unchanged.
 
-You rarely construct events directly — `new TimeSeries({ rows })`
-and `live.push([...row])` build them from row tuples that match the
-schema. Direct construction is mostly for tests and advanced
+You rarely construct events directly — in TypeScript
+`new TimeSeries({ rows })` and `live.push([...row])` build them from row
+tuples that match the schema. Direct construction is mostly for tests and advanced
 embedding.
 
 See [Temporal keys](./temporal-keys) for the three key shapes.
@@ -63,6 +120,9 @@ a row array or via JSON; queried, transformed, and reduced through
 method chains.
 
 <TimeSeriesTable />
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -83,6 +143,53 @@ cpu.tail('1m'); // new TimeSeries with the trailing 1m of events
 cpu.aggregate(seq, m); // new TimeSeries, bucketed
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("cpu", vec![0.42, 0.51, 0.38]),
+            Column::required("host", vec!["api-1", "api-1", "api-2"]),
+        ],
+    )?;
+
+    assert_eq!(cpu.len(), 3);
+    assert_eq!(cpu.first().unwrap().number("cpu")?, Some(0.42));
+    let recent = cpu.tail("1m")?; // a new series: the trailing minute
+    let per_second = cpu.aggregate(&Sequence::every("1s")?, &[Agg::of("cpu", Reducer::Avg)])?;
+    assert_eq!((recent.len(), per_second.len()), (3, 3));
+    assert_eq!(cpu.len(), 3); // the source is unchanged
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries(
+    {"time": [0, 1_000, 2_000], "cpu": [0.42, 0.51, 0.38], "host": ["api-1", "api-1", "api-2"]}
+)
+
+assert len(cpu) == 3
+assert cpu.first()["cpu"] == 0.42
+recent = cpu.tail("1m")  # a new series: the trailing minute
+per_second = cpu.aggregate("1s", {"cpu": "avg"})
+assert (len(recent), len(per_second)) == (3, 3)
+assert len(cpu) == 3  # the source is unchanged
+```
+
+</TabItem>
+</Tabs>
+
 Every transform returns a new `TimeSeries` — no in-place mutation.
 This is what makes pond's compositional method chains safe and
 predictable: the operator's input is unchanged, and intermediate
@@ -97,6 +204,9 @@ the buffer holds a configurable retention window, subscribers react
 to new events.
 
 <LiveSeriesBuffer />
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { LiveSeries } from 'pond-ts';
@@ -114,6 +224,64 @@ live.last()?.get('cpu'); // 0.42
 live.on('event', (e) => console.log('arrived:', e.get('cpu')));
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OutputKind};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+            ColumnDef::optional("host", ColumnKind::String),
+        ],
+        LiveOptions::new().max_events(10_000),
+    )?;
+
+    // Instead of a listener, watch a node; each push returns its outputs.
+    live.watch(live.root(), OutputKind::Event)?;
+    let outputs = live.push(1_000, [Some(0.42.into()), Some("api-1".into())])?;
+    assert_eq!(outputs.len(), 1); // the event that arrived
+
+    assert_eq!(live.len(), 1);
+    assert_eq!(live.last().unwrap().number("cpu")?, Some(0.42));
+    let snapshot = live.to_time_series()?; // independent of later pushes
+    assert_eq!(snapshot.len(), 1);
+    Ok(())
+}
+```
+
+Rust has no listeners: `watch` a node, and each `push` returns what the watched nodes produced. See [Live series in Rust](/docs/rust/live).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number", "host": "string"},
+                       name="cpu", max_events=10_000)
+
+# Instead of a listener, watch a node; each push returns its outputs.
+live.root.watch("event")
+outputs = live.push(1_000, cpu=0.42, host="api-1")
+assert len(outputs) == 1  # the event that arrived
+
+assert len(live) == 1
+assert live.last()["cpu"] == 0.42
+snapshot = live.to_series()  # independent of later pushes
+assert len(snapshot) == 1
+```
+
+Python works the same way as Rust: `watch` a node, and each `push` returns its outputs. See [Python: live series](/docs/python/live).
+
+</TabItem>
+</Tabs>
+
 The same operator surface is available — `live.rolling('1m', ...)`,
 `live.aggregate(seq, ...)`, `live.partitionBy('host').rolling(...)`,
 `live.filter(...)`, etc. — but operators on a live source return
@@ -121,7 +289,8 @@ The same operator surface is available — `live.rolling('1m', ...)`,
 `LiveView`) that maintain incremental state and emit events as the
 source advances.
 
-`live.toTimeSeries()` snapshots to an immutable batch series at any
+`live.toTimeSeries()` (`to_time_series()` in Rust, `to_series()` in
+Python) snapshots to an immutable batch series at any
 time — the snapshot is independent of future pushes.
 
 ## Batch and streaming as peers
