@@ -47,11 +47,11 @@ impl TimeSeries {
     pub fn filter_expr(&self, test: &Expr) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::filter_expr";
         expr::check_test(test, &self.value_defs(), CALL)?;
-        let kept = expr::kept_rows(&expr::evaluate(test, self));
-        if kept.len() == self.len() {
+        let mask = expr::mask(test, self);
+        if mask.count_set_bits() == self.len() {
             return Ok(self.clone());
         }
-        Ok(self.take_rows(&kept))
+        Ok(self.filter_rows(mask))
     }
 
     /// First row where `test` evaluates to `want`, looking at growing
@@ -228,5 +228,162 @@ mod tests {
     fn map_exprs_needs_a_column() {
         let s = TimeSeries::new("s", vec![0], vec![Column::required("v", vec![1.0])]).unwrap();
         assert!(s.map_exprs(&[]).is_err());
+    }
+}
+
+/// The mask path of `filter_expr` (one-pass test, Arrow's filter kernel)
+/// against what it replaced: the row-number path and a row-by-row reading
+/// of the comparison.
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use crate::column::{ArrayColumn, BooleanColumn, DecimalColumn, Scalar, StringColumn};
+    use crate::expr::{col, lit};
+    use crate::series::{IntervalKeys, Key, Labels, TimeRangeKeys};
+    use arrow_array::DictionaryArray;
+    use arrow_array::types::Int32Type;
+    use arrow_buffer::BooleanBuffer;
+
+    /// Numbers with gaps stored every way a gap can be: NaN, +inf, -inf.
+    fn v(i: usize) -> f64 {
+        match i % 11 {
+            3 => f64::NAN,
+            7 => f64::INFINITY,
+            9 => f64::NEG_INFINITY,
+            _ => ((i * 37) % 23) as f64 - 5.0,
+        }
+    }
+
+    fn columns(n: usize) -> Vec<Column> {
+        let words = ["a", "bb", "a string longer than twelve bytes", ""];
+        let dict: DictionaryArray<Int32Type> =
+            (0..n).map(|i| (i % 5 != 2).then(|| words[i % 4])).collect();
+        vec![
+            Column::optional_raw("v", (0..n).map(v).collect()),
+            Column::required("w", (0..n).map(|i| i as f64).collect::<Vec<f64>>()),
+            Column::optional(
+                "s",
+                StringColumn::from_options((0..n).map(|i| (i % 6 != 1).then(|| words[i % 4]))),
+            ),
+            Column::from_data("d".into(), StringColumn::dictionary(dict).unwrap(), false),
+            Column::optional(
+                "b",
+                BooleanColumn::from_options((0..n).map(|i| (i % 4 != 0).then_some(i % 3 == 0))),
+            ),
+            Column::optional(
+                "m",
+                DecimalColumn::from_options(
+                    (0..n).map(|i| (i % 8 != 0).then_some(i as i128 * 125)),
+                    2,
+                )
+                .unwrap(),
+            ),
+            Column::optional(
+                "a",
+                ArrayColumn::from_options(
+                    (0..n).map(|i| (i % 3 != 0).then(|| vec![Scalar::Number(i as f64)])),
+                ),
+            ),
+        ]
+    }
+
+    fn keys(n: usize) -> Vec<Key> {
+        let t: Vec<i64> = (0..n as i64).map(|i| i * 10).collect();
+        let shifted = |d: i64| t.iter().map(|x| x + d).collect::<Vec<_>>();
+        vec![
+            Key::Time(t.clone()),
+            Key::TimeRange(TimeRangeKeys {
+                begin: t.clone(),
+                end: shifted(5),
+            }),
+            Key::Interval(IntervalKeys {
+                label: Labels::Number(t.iter().map(|&x| x as f64).collect()),
+                begin: t.clone(),
+                end: shifted(10),
+            }),
+            Key::Interval(IntervalKeys {
+                label: Labels::String(StringColumn::from_options(
+                    t.iter().map(|x| Some(format!("k{x}"))),
+                )),
+                begin: t.clone(),
+                end: shifted(10),
+            }),
+        ]
+    }
+
+    #[test]
+    fn filter_rows_matches_take_rows() {
+        // Lengths around the 64-row words of a mask, and masks with no rows,
+        // every row, scattered rows and long runs.
+        for n in [0, 1, 63, 64, 65, 130, 1000] {
+            let masks: Vec<Vec<bool>> = vec![
+                vec![false; n],
+                vec![true; n],
+                (0..n).map(|i| i % 3 == 1).collect(),
+                (0..n).map(|i| (i * 7) % 5 < 2).collect(),
+                (0..n).map(|i| (i / 50) % 2 == 0).collect(),
+            ];
+            for key in keys(n) {
+                let s = TimeSeries::from_parts("s".into(), "time".into(), key, columns(n));
+                for m in &masks {
+                    let rows: Vec<usize> = (0..n).filter(|&i| m[i]).collect();
+                    let got = s.filter_rows(BooleanBuffer::from_iter(m.iter().copied()));
+                    assert_eq!(got, s.take_rows(&rows), "n {n}, {} kept", rows.len());
+                    assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mask_matches_each_comparison_row_by_row() {
+        let n = 200;
+        let s = TimeSeries::new("s", (0..n as i64).collect(), columns(n)).unwrap();
+        type Build = fn(Expr, Expr) -> Expr;
+        type Holds = fn(f64, f64) -> bool;
+        let ops: [(&str, Build, Holds); 6] = [
+            ("gt", |a, b| a.gt(b), |x, k| x > k),
+            ("ge", |a, b| a.ge(b), |x, k| x >= k),
+            ("lt", |a, b| a.lt(b), |x, k| x < k),
+            ("le", |a, b| a.le(b), |x, k| x <= k),
+            ("eq", |a, b| a.eq(b), |x, k| x == k),
+            ("ne", |a, b| a.ne(b), |x, k| x != k),
+        ];
+        for name in ["v", "w"] {
+            let c = s.column(name).unwrap().numbers().unwrap();
+            for k in [-1.0, 0.0, 5.0, 17.0] {
+                for (op, build, holds) in ops {
+                    // A gap fails every comparison but `ne`.
+                    let want: Vec<bool> = (0..n)
+                        .map(|i| c.get(i).map_or(op == "ne", |x| holds(x, k)))
+                        .collect();
+                    // `k op v` is `v op' k`, so its row-by-row answer is
+                    // `holds(k, x)`.
+                    let want_left: Vec<bool> = (0..n)
+                        .map(|i| c.get(i).map_or(op == "ne", |x| holds(k, x)))
+                        .collect();
+                    let bits = |e: &Expr| -> Vec<bool> { expr::mask(e, &s).iter().collect() };
+                    let generic = |e: &Expr| -> Vec<bool> {
+                        let expr::Vals::Boolean(v) = expr::evaluate(e, &s) else {
+                            unreachable!()
+                        };
+                        v.iter().map(|&x| x == 1).collect()
+                    };
+                    let right = build(col(name), lit(k));
+                    let left = build(lit(k), col(name));
+                    // Arithmetic first takes the evaluated path, with gaps as NaN.
+                    let computed = build(col(name).add(0), lit(k));
+                    let at = format!("{name} {op} {k}");
+                    assert_eq!(bits(&right), want, "{at}");
+                    assert_eq!(generic(&right), want, "{at}, evaluated");
+                    assert_eq!(bits(&left), want_left, "{k} {op} {name}");
+                    assert_eq!(generic(&left), want_left, "{k} {op} {name}, evaluated");
+                    assert_eq!(bits(&computed), want, "{at}, after arithmetic");
+                    // And through the public call.
+                    let kept = s.filter_expr(&right).unwrap();
+                    assert_eq!(kept.len(), want.iter().filter(|&&b| b).count(), "{at}");
+                }
+            }
+        }
     }
 }

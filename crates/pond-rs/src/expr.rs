@@ -50,6 +50,7 @@ use crate::column::Value;
 use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{ColumnDef, ColumnKind};
+use arrow_buffer::BooleanBuffer;
 
 /// A fixed value an expression can hold.
 #[derive(Debug, Clone, PartialEq)]
@@ -889,6 +890,30 @@ fn num_holds(op: Op, x: f64, y: f64) -> bool {
     }
 }
 
+/// `op` between each value and `k`, as 1 or 0. A gap (any value that is not
+/// finite: `NaN`, or an infinity standing for one) fails every comparison
+/// but `ne`, as [`num_holds`] gives for `NaN`. The operator is chosen once,
+/// outside the loop, and the gap test is a select, so the loop runs on
+/// several values at a time.
+fn compare_to(op: Op, v: &[f64], k: f64) -> Vec<i8> {
+    fn each(v: &[f64], gap: i8, holds: impl Fn(f64) -> bool) -> Vec<i8> {
+        v.iter()
+            .map(|&x| {
+                let finite = x.is_finite();
+                ((finite & holds(x)) as i8) | ((!finite) as i8 & gap)
+            })
+            .collect()
+    }
+    match op {
+        Op::Gt => each(v, 0, |x| x > k),
+        Op::Ge => each(v, 0, |x| x >= k),
+        Op::Lt => each(v, 0, |x| x < k),
+        Op::Le => each(v, 0, |x| x <= k),
+        Op::Eq => each(v, 0, |x| x == k),
+        _ => each(v, 1, |x| x != k),
+    }
+}
+
 fn compare(op: Op, a: &Vals<'_>, b: &Vals<'_>, n: usize) -> Vec<i8> {
     match (a, b) {
         (Vals::Number(p), Vals::Number(q)) => p
@@ -1060,6 +1085,16 @@ fn scalar_case<'a>(
         }
         Literal::Number(k) => {
             let k = *k;
+            let flipped = if lit_left { flip(op) } else { op };
+            // A number column against a constant reads the column as it is
+            // stored: `compare_to` treats an infinity as the gap it stands
+            // for, so no pass to find one is needed first.
+            if compare
+                && let Node::Col(name) = &*other.0
+                && let ColumnData::Number(c) = src.data(name)
+            {
+                return Some(Vals::Boolean(compare_to(flipped, c.values(), k)));
+            }
             let Vals::Number(p) = evaluate(other, src) else {
                 return None;
             };
@@ -1074,21 +1109,7 @@ fn scalar_case<'a>(
                 };
                 return Some(Vals::Number(Cow::Owned(out)));
             }
-            // `5 < v` is `v > 5`.
-            let op = if lit_left {
-                match op {
-                    Op::Gt => Op::Lt,
-                    Op::Ge => Op::Le,
-                    Op::Lt => Op::Gt,
-                    Op::Le => Op::Ge,
-                    o => o,
-                }
-            } else {
-                op
-            };
-            Some(Vals::Boolean(
-                p.iter().map(|&x| num_holds(op, x, k) as i8).collect(),
-            ))
+            Some(Vals::Boolean(compare_to(flipped, &p, k)))
         }
         Literal::Boolean(_) => None,
     }
@@ -1139,15 +1160,64 @@ pub(crate) fn column_of(values: Vals<'_>, keep_gaps_of: Option<&Vals<'_>>) -> Co
     }
 }
 
-/// The true/false values as row numbers kept (a gap fails).
-pub(crate) fn kept_rows(values: &Vals<'_>) -> Vec<usize> {
-    let Vals::Boolean(v) = values else {
+/// The rows of `src` where `test` (already [`check`]ed, true/false) holds,
+/// as a mask; a gap does not hold. A number column against a constant
+/// (`col("v").gt(500)`, either way round) is tested straight into the mask,
+/// in one pass; anything else is evaluated, then packed.
+pub(crate) fn mask(test: &Expr, src: &dyn Source) -> BooleanBuffer {
+    if let Some(m) = column_vs_constant(test, src) {
+        return m;
+    }
+    let Vals::Boolean(v) = evaluate(test, src) else {
         unreachable!("checked: a true/false expression")
     };
-    v.iter()
-        .enumerate()
-        .filter_map(|(i, &x)| (x == 1).then_some(i))
-        .collect()
+    BooleanBuffer::collect_bool(v.len(), |i| v[i] == 1)
+}
+
+/// [`mask`]'s one-pass case, or `None` when `test` is not a comparison of a
+/// number column with a number. Gives what [`compare_to`] gives, as bits.
+fn column_vs_constant(test: &Expr, src: &dyn Source) -> Option<BooleanBuffer> {
+    let Node::Op { op, args, .. } = &*test.0 else {
+        return None;
+    };
+    if !matches!(op, Op::Eq | Op::Ne | Op::Gt | Op::Ge | Op::Lt | Op::Le) {
+        return None;
+    }
+    let (name, k, op) = match (&*args[0].0, &*args[1].0) {
+        (Node::Col(name), Node::Lit(Literal::Number(k))) => (name, *k, *op),
+        (Node::Lit(Literal::Number(k)), Node::Col(name)) => (name, *k, flip(*op)),
+        _ => return None,
+    };
+    let ColumnData::Number(c) = src.data(name) else {
+        return None;
+    };
+    let v = c.values();
+    fn each(v: &[f64], gap: bool, holds: impl Fn(f64) -> bool) -> BooleanBuffer {
+        BooleanBuffer::collect_bool(v.len(), |i| {
+            let x = v[i];
+            let finite = x.is_finite();
+            (finite & holds(x)) | (!finite & gap)
+        })
+    }
+    Some(match op {
+        Op::Gt => each(v, false, |x| x > k),
+        Op::Ge => each(v, false, |x| x >= k),
+        Op::Lt => each(v, false, |x| x < k),
+        Op::Le => each(v, false, |x| x <= k),
+        Op::Eq => each(v, false, |x| x == k),
+        _ => each(v, true, |x| x != k),
+    })
+}
+
+/// The comparison with its two sides swapped: `5 < v` is `v > 5`.
+fn flip(op: Op) -> Op {
+    match op {
+        Op::Gt => Op::Lt,
+        Op::Ge => Op::Le,
+        Op::Lt => Op::Gt,
+        Op::Le => Op::Ge,
+        o => o,
+    }
 }
 
 // ─── Per-row evaluation (live layer) ────────────────────────────────

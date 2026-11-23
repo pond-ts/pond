@@ -294,6 +294,25 @@ impl Key {
         }
     }
 
+    /// The rows where `keep` is set, in order, copied.
+    pub(crate) fn filter(&self, keep: &crate::column::RowFilter) -> Key {
+        match self {
+            Key::Time(t) => Key::Time(keep.vec(t)),
+            Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {
+                begin: keep.vec(&k.begin),
+                end: keep.vec(&k.end),
+            }),
+            Key::Interval(k) => Key::Interval(IntervalKeys {
+                label: match &k.label {
+                    Labels::Number(v) => Labels::Number(keep.vec(v)),
+                    Labels::String(s) => Labels::String(s.filter(keep)),
+                },
+                begin: keep.vec(&k.begin),
+                end: keep.vec(&k.end),
+            }),
+        }
+    }
+
     /// The rows at `rows`, in that order, copied.
     pub(crate) fn take(&self, rows: &[usize]) -> Key {
         let pick = |v: &[i64]| rows.iter().map(|&i| v[i]).collect::<Vec<i64>>();
