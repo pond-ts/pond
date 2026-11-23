@@ -1,0 +1,204 @@
+---
+sidebar_position: 8
+---
+
+# Late data
+
+Real streams misbehave: events arrive out of order, network delays
+push timestamps backwards, sensors retransmit, clock drift
+accumulates. Pond's design takes a deliberate, narrow position on
+late data — narrower than Apache Beam, Flink, or other "general
+streaming" engines, and the trade-offs are worth understanding
+before reaching for `LiveSeries`.
+
+## "Data is the clock"
+
+The single load-bearing principle: **time advances on event
+arrival**.
+
+- `LiveSeries.maxAge` retention is relative to the latest event's
+  timestamp, not wall-clock time. If no events arrive, nothing is
+  evicted.
+- Live aggregation buckets close when the watermark advances past
+  their boundary — and the watermark is `latestEvent.begin()`, not
+  `Date.now()`.
+- Clock and count triggers fire on event arrivals that cross a
+  threshold, not on a `setInterval`.
+
+This is what "data-driven, no setInterval inside the library"
+means concretely. A `LiveSeries` with no incoming traffic looks
+frozen — and that's correct, because nothing has happened.
+
+The benefit: **deterministic from the data alone**. Replay the
+same event sequence and you get the same outputs, regardless of
+how fast or slow real time was passing. Useful for testing,
+debugging, and reasoning about correctness.
+
+The cost: **no progress without data**. If your dashboard needs to
+know "the last value is now 5 minutes stale even though we haven't
+seen new events," that's outside pond's model. You'd compute that
+in the consumer (compare `lastEvent.begin()` to `Date.now()`).
+
+## Compared to Beam / Flink
+
+| Concept                            | Beam / Flink                                                                                                                                                          | pond-ts                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Time progression                   | Watermarks advance event time; processing-time timers can also fire                                                                                                   | `latestEvent.begin()` (data-only)                                           |
+| Late event handling                | Configurable allowed lateness; late elements may be dropped or emitted as later panes / updates                                                                       | `strict`, `drop`, or `reorder`; optional bounded grace; no retraction       |
+| Trigger types                      | Event-time / watermark, processing-time, count / data-driven, and custom triggers                                                                                     | Event, fixed-cadence clock / sequence, count                                |
+| Delivery / recovery guarantees     | Engine- and runner-level concern; Flink uses checkpointed state, and end-to-end exactly-once also depends on replayable sources and transactional or idempotent sinks | No checkpointing, replay, or exactly-once guarantee                         |
+| Output changes after late arrivals | Additional panes or updated results depending on trigger, accumulation, runner, and sink behavior                                                                     | No — emitted outputs are final                                              |
+| Cross-host event time              | Coordinated through watermarks across parallel inputs                                                                                                                 | Per-source; no global watermark or cross-source clock                       |
+| Best at                            | Distributed, fault-tolerant, large-scale pipelines                                                                                                                    | In-process live time-series buffers and transforms with a simple cost model |
+
+Pond is **not** trying to compete with Beam or Flink at scale.
+It's trying to give a TypeScript-native time-series buffer with
+the same operator surface as its batch counterpart and a
+predictable cost model. The trade-offs above are what makes that
+fit in-process and stay reasonable to debug.
+
+If you need watermark-based correctness, exactly-once delivery, or
+retraction on late events, snapshot to `TimeSeries` periodically
+and let the upstream pipeline (or Beam/Flink themselves) handle
+those concerns. Tyler Akidau's
+[Streaming 101](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/)
+and
+[Streaming 102](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-102/)
+articles are the standard reference for the wider streaming-engine
+design space pond deliberately steps away from.
+
+## Ordering modes
+
+A `LiveSeries` accepts events one of three ways:
+
+```ts
+new LiveSeries({ name, schema, ordering: 'strict' }); // default
+new LiveSeries({ name, schema, ordering: 'drop' });
+new LiveSeries({ name, schema, ordering: 'reorder', graceWindow: '5s' });
+```
+
+| Mode      | Late event behaviour                               | Use when                                |
+| --------- | -------------------------------------------------- | --------------------------------------- |
+| `strict`  | Throw on out-of-order ingest                       | Source guarantees ordering; fail loud   |
+| `drop`    | Silently drop late events                          | Source may stutter; prefer continuity   |
+| `reorder` | Insert late events in sorted position within grace | Source has bounded reordering tolerance |
+
+`strict` is the default because silent data loss is worse than a
+loud error in most applications. Switch deliberately.
+
+## Grace window
+
+In `reorder` mode, a `graceWindow` bounds **how late** an event
+can be and still be accepted:
+
+```ts
+new LiveSeries({
+  name,
+  schema,
+  ordering: 'reorder',
+  graceWindow: '5s',
+});
+```
+
+An event is "late" if `event.begin() < latestEvent.begin()`. Late
+events are accepted if `(latestEvent.begin() - event.begin()) ≤ graceWindow`,
+rejected (with a `ValidationError`) otherwise.
+
+The grace window does two things:
+
+1. **Caps memory of disorder.** Without a bound, accepting late
+   events forever means you can never confidently say a window is
+   closed. With a bound of `5s`, anything older than 5 seconds
+   from the latest event is by definition not coming.
+2. **Honestly names the trade-off.** A wider grace window accepts
+   more reordering at the cost of later bucket closure (because
+   the aggregator can't close a bucket until the grace window
+   has passed) and longer late-arrival risk windows.
+
+## Late-event scope (what propagates, what doesn't)
+
+`graceWindow` operates at exactly two boundaries in the live
+pipeline:
+
+1. **Source ingest** — `LiveSeries.push` accepts the event into the
+   buffer if it's within grace. This is the only place "this event
+   is late" is decided.
+2. **Aggregation bucket closure** — `LiveAggregation` defers
+   closing a bucket until the watermark has advanced past
+   `bucketEnd + graceWindow`. A late event arriving within grace
+   for a still-open bucket is included in the bucket's final
+   close-event value.
+
+`graceWindow` does **not** propagate further:
+
+- **`LiveRollingAggregation`** computes a sliding window
+  incrementally on each event. A late event arriving at its
+  insertion point produces a new output event at that point but
+  does not retroactively recompute earlier rolling outputs. There
+  is no "second pass."
+- **`LiveView.window(duration)`** evicts events from the trailing
+  view based on the latest event's timestamp. Under `reorder`
+  ingest, eviction is not re-applied retroactively when a late
+  event lands in the past.
+- **Subscribers** (`'event'` listeners on rolling, view, or
+  aggregation) see late events at their insertion point. A
+  consumer rendering a chart will see the new event added; the
+  _historical_ output up to that point is unchanged.
+- **Snapshots** (`live.toTimeSeries()`) reflect the buffer as-of
+  the snapshot moment. Future late events will not perturb past
+  snapshots.
+
+Practically: pond does **not retract**. An emitted output is
+final. If your application needs corrections after late
+arrivals — show "p95 was actually X, not Y" — pond is not the
+right layer for that. Snapshot to batch, run the corrected
+analysis, emit the correction yourself.
+
+## Choosing a strategy
+
+| If your source is...                                          | Reach for...                                |
+| ------------------------------------------------------------- | ------------------------------------------- |
+| Strictly ordered (e.g. single producer, FIFO queue)           | `ordering: 'strict'` (default)              |
+| Loosely ordered (e.g. UDP sensor, network jitter)             | `ordering: 'reorder', graceWindow: '5s'`    |
+| Lossy but ordered (e.g. webhook with retries that may double) | `ordering: 'drop'` + dedupe upstream        |
+| Multi-source with no global clock                             | `partitionBy(source)` + per-partition modes |
+
+`graceWindow` choice is a memory-vs-precision tradeoff: wider grace
+means more late events accepted but later bucket closure (and more
+buffered events held). Typical values for telemetry: 1–10 seconds.
+Anything beyond a minute usually indicates the source needs work
+upstream.
+
+## What pond doesn't try to handle
+
+- **Watermarks across sources.** Pond has no global watermark; each
+  `LiveSeries` is its own clock. Cross-source coordination is the
+  consumer's job.
+- **Exactly-once delivery.** Pond accepts the events you push;
+  duplicate pushes produce duplicate events. Dedupe upstream.
+- **Retraction on late arrivals.** Once emitted, an output is final.
+- **Recovery from process restart.** No checkpointing, no replay.
+  Snapshots to a `TimeSeries` are the persistence story.
+
+These are the trade-offs that keep pond's cost model predictable
+and its semantics simple to reason about. The library is honest
+about where it stops; consumers needing more reach for a different
+tool, or layer additional logic on top.
+
+## Where this shows up
+
+- **Operator-level reference** —
+  [Live transforms → Late-event scope](/docs/live/live-transforms#late-event-scope)
+  has the table of which operators see late events propagate.
+- **Live ingest construction** — see
+  [LiveSeries → Ordering modes](/docs/live/live-series#ordering-modes)
+  for the constructor options.
+- **Aggregation closure** — `LiveAggregation` inherits source
+  `graceWindow` for bucket close. See
+  [Live transforms → Grace period](/docs/live/live-transforms#grace-period-for-out-of-order-events).
+- **Triggers** — clock and count triggers are unaffected by late
+  events; they fire on events that _advance_ the watermark, not on
+  late ones. See [Triggers](./triggers).
+- **Partitioning** — per-partition grace windows are independent;
+  a late event for one host doesn't perturb another host's
+  emission. See [Partitioning](./partitioning).

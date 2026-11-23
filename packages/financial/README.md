@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@pond-ts/financial?label=%40pond-ts%2Ffinancial)](https://www.npmjs.com/package/@pond-ts/financial)
 [![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
-[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/financial/)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/finance/)
 
 **Technical studies and a trading calendar on [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
@@ -102,7 +102,7 @@ it.
 ## Documentation
 
 Guides, live examples and the full API live at **<https://pond-ts.org>** — the
-[package page](https://pond-ts.org/docs/financial/) and the
+[package page](https://pond-ts.org/docs/finance/) and the
 [financial charts hub](https://pond-ts.org/docs/charts/financial).
 Source and issues: [github.com/pond-ts/pond](https://github.com/pond-ts/pond).
 

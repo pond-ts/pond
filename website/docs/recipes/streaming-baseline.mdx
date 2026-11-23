@@ -144,8 +144,8 @@ function useBaselineBands(baseline) {
 ```
 
 Feed `xs` / `cpu` / `upper` / `lower` straight into a canvas draw loop —
-see [Charting](../pond-ts/advanced/charting) for the
-`moveTo`/`lineTo` over typed arrays, and [Columns](../pond-ts/advanced/columns)
+see [Charting](/docs/series/other-chart-libraries) for the
+`moveTo`/`lineTo` over typed arrays, and [Columns](/docs/series/columns)
 for the full column surface (`toFloat64Array`, `keyColumn().begin`,
 `bin('minMax')` for per-pixel downsampling).
 
@@ -187,16 +187,16 @@ already in pond:
   decouples the baseline's effective window length from the event rate.
   `sd / √N` standard error usually stays well under per-event noise even
   at stride 10. (Sample _after_ `partitionBy`, so each host thins
-  independently — see [Sampling](../pond-ts/live/live-transforms#sampling).)
+  independently — see [Sampling](/docs/live/live-transforms#sampling).)
 - **Aggregate server-side** — push the rolling baseline to a streaming
   aggregator and ship the dashboard a low-rate tick of pre-rolled rows.
   The same `partitionBy(…).rolling(…)` primitive runs there too.
 
 ## See also
 
-- [Live Transforms → Multi-window rolling](../pond-ts/live/live-transforms#multi-window)
+- [Live Transforms → Multi-window rolling](/docs/live/live-transforms#multi-window)
   — several windows over one ingest pass.
 - [Dashboard how-to guide](../how-to-guides/dashboard-guide) — the
   snapshot-baseline form and the wider dashboard pattern.
-- [`useWindow`](../react/hooks) · [Columns](../pond-ts/advanced/columns)
-  · [Charting](../pond-ts/advanced/charting).
+- [`useWindow`](../react/hooks) · [Columns](/docs/series/columns)
+  · [Charting](/docs/series/other-chart-libraries).

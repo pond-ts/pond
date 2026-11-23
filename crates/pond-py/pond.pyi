@@ -1672,7 +1672,8 @@ class ValueSeries:
     @staticmethod
     def from_arrow(data: Any, axis: str, *, name: str = "series") -> ValueSeries: ...
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """The series' name."""
     @property
     def axis_name(self) -> str: ...
     @property
@@ -1692,6 +1693,8 @@ class ValueSeries:
     def to_pandas(self) -> Any: ...
 
 class SessionBreak(TypedDict):
+    """A break inside a session (a lunch break); times are epoch milliseconds."""
+
     start: int
     end: int
 
@@ -1807,9 +1810,12 @@ class LiveOutput:
     root for "columns" alone builds no LiveEvent per row)."""
 
     @property
-    def node(self) -> LiveNode: ...
+    def node(self) -> LiveNode:
+        """The watched node that emitted this output."""
     @property
-    def kind(self) -> OutputKind: ...
+    def kind(self) -> OutputKind:
+        """What happened: "event", "batch", "evict", "bucket", "update" or
+        "columns" (see the class description)."""
     @property
     def event(self) -> Optional[LiveEvent]:
         """For "event" and "bucket"."""

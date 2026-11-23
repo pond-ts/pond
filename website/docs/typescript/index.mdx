@@ -1,0 +1,99 @@
+---
+id: typescript-index
+title: TypeScript
+sidebar_position: 1
+description: 'pond for TypeScript. npm install pond-ts for typed time series in the browser and on Node, batch and live, plus the React hooks, canvas charts, finance studies, fitness files and processing graphs built on it.'
+---
+
+# pond for TypeScript
+
+`pond-ts` gives you time series whose columns are checked by the
+TypeScript compiler: declare the schema once, and every operation after it
+knows which columns exist and what kind each holds, with no `as` casts.
+It runs in the browser and on Node, batch and live, and it is the base
+for pond's React hooks, canvas charts and fitness library, which are
+TypeScript only.
+
+```sh
+npm install pond-ts                 # the core
+npm install @pond-ts/financial      # finance studies and trading calendars
+npm install @pond-ts/charts         # canvas charts that take a series directly
+npm install @pond-ts/react          # React hooks for live series
+```
+
+The pond packages are released together under one version number, so keep
+their ranges in step. pond is before 1.0, so a minor release may break
+something; see [Versioning](/docs/reference/versioning).
+
+## A first example
+
+```ts
+import { Sequence, TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'cpu', kind: 'number' },
+  { name: 'host', kind: 'string' },
+] as const;
+
+const cpu = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema,
+  rows: [
+    ['2025-01-01T00:00:00Z', 0.31, 'a'],
+    ['2025-01-01T00:01:00Z', 0.44, 'b'],
+    ['2025-01-01T00:02:00Z', 0.52, 'a'],
+  ],
+});
+
+// One row per minute. The result's schema says `cpu` is a number and
+// `host` a string, so `.get('cpu')` is typed without a cast.
+const perMinute = cpu.aggregate(Sequence.every('1m'), {
+  cpu: 'avg',
+  host: 'last',
+});
+perMinute.first()?.get('cpu'); // number | undefined
+```
+
+The [Getting started](/docs/getting-started) tutorial builds a real chart
+from a bike ride, step by step.
+
+## What the TypeScript packages have
+
+| Area                                  | Package                                |
+| ------------------------------------- | -------------------------------------- |
+| Series and operations, live series    | `pond-ts`                              |
+| Finance studies and trading calendars | [`@pond-ts/financial`](/docs/finance/) |
+| Processing graphs                     | [`@pond-ts/process`](/docs/process/)   |
+| Canvas charts                         | [`@pond-ts/charts`](/docs/charts/)     |
+| React hooks                           | [`@pond-ts/react`](/docs/react/)       |
+| Fitness files (FIT, TCX)              | [`@pond-ts/fit`](/docs/fit/)           |
+| The Rust core, from JavaScript        | [`@pond-ts/wasm`](/docs/javascript/)   |
+
+The core knows nothing about the packages built on it; each of them takes
+an ordinary `TimeSeries`.
+
+## What the core is not
+
+- **Not a database.** Nothing is stored for you. Series round-trip through
+  JSON and Arrow; the storage is yours.
+- **Not a query engine.** There is no SQL; the operations are the query
+  language, typed end to end.
+- **Not a full streaming engine.** `LiveSeries` keeps a bounded buffer in
+  memory and accepts events that arrive a little late, but has no
+  watermarks or retractions. See [Late data](/docs/concepts/late-data).
+- **Not a chart library.** Drawing lives in
+  [`@pond-ts/charts`](/docs/charts/); the core hands data to any chart
+  library with `toPoints()` ([Using other chart libraries](/docs/series/other-chart-libraries)).
+
+## Where next
+
+- [Mental model](/docs/concepts/mental-model) and the other
+  [Concepts](/docs/concepts/): the ideas every language shares.
+- [Creating series](/docs/series/creating), then one page per operation
+  under Working with series.
+- [Live data](/docs/live/live-series): pushing events, live buckets and
+  rolling windows.
+- The [API reference](/docs/api/) lists every method and type.
+- Want more speed? [`@pond-ts/wasm`](/docs/javascript/) is the Rust core
+  compiled to WebAssembly, with pond-ts's method names.

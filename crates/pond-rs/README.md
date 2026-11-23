@@ -75,7 +75,7 @@ one thread. The crate also builds for `wasm32-unknown-unknown` (one thread).
 ## Documentation
 
 - API reference: [docs.rs/pond-rs](https://docs.rs/pond-rs)
-- Guide: [pond-ts.org/docs/pond-rs](https://pond-ts.org/docs/pond-rs/getting-started)
+- Guide: [pond-ts.org/docs/rust/](https://pond-ts.org/docs/rust/getting-started)
 - Coming from pond-ts, pandas or polars: the guide's comparison pages.
 
 ## Versions

@@ -31,7 +31,7 @@ const REPO = 'https://github.com/pond-ts/pond/blob/main';
 
 /**
  * Docs areas, in the order they appear in llms.txt. `match` is tested
- * against the doc's site-relative source path (`docs/pond-ts/…`). Order
+ * against the doc's site-relative source path (`docs/series/…`). Order
  * matters: first match wins, so the on-ramp pages are claimed before the
  * catch-all.
  */
@@ -41,14 +41,15 @@ const AREAS = [
     title: 'Start here',
     blurb: 'The platform walkthrough and the getting-started build.',
     match: (/** @type {string} */ p) =>
-      /^docs\/(introduction|getting-started)\.mdx?$/.test(p),
+      /^docs\/(introduction|languages|getting-started)\.mdx?$/.test(p),
   },
   {
-    key: 'pond-ts',
-    title: 'pond-ts (core)',
+    key: 'pond-ts', // the key names the llms-<key>.txt dump; kept so links to it last
+    title: 'Core: concepts, series, live data',
     blurb:
-      'TimeSeries / LiveSeries / ValueSeries: concepts, construction, every batch and live transform.',
-    match: (/** @type {string} */ p) => p.startsWith('docs/pond-ts/'),
+      'TimeSeries / LiveSeries / ValueSeries: concepts, construction, every batch and live transform, with TypeScript, Rust and Python examples.',
+    match: (/** @type {string} */ p) =>
+      /^docs\/(concepts|series|live|typescript)\//.test(p),
   },
   {
     key: 'react',
@@ -72,9 +73,10 @@ const AREAS = [
   },
   {
     key: 'financial',
-    title: '@pond-ts/financial',
-    blurb: 'Technical studies, OHLCV bars, trading calendars.',
-    match: (/** @type {string} */ p) => p.startsWith('docs/financial/'),
+    title: 'Finance studies',
+    blurb:
+      'Technical studies, OHLCV bars, trading calendars (`@pond-ts/financial`, and the same in Rust and Python).',
+    match: (/** @type {string} */ p) => p.startsWith('docs/finance/'),
   },
   {
     key: 'fit',
@@ -91,10 +93,18 @@ const AREAS = [
   },
   {
     key: 'pond-rs',
-    title: 'pond-rs (Rust)',
+    title: 'Rust (pond-rs) and JavaScript with WebAssembly',
     blurb:
       "The Rust crate (`pond-rs` on crates.io, API at docs.rs/pond-rs): the core and the financial studies, same answers as pond-ts, with threads and Arrow I/O; also as `@pond-ts/wasm`, compiled to WebAssembly for Node and browsers with pond-ts's method names.",
-    match: (/** @type {string} */ p) => p.startsWith('docs/pond-rs/'),
+    match: (/** @type {string} */ p) =>
+      p.startsWith('docs/rust/') || p.startsWith('docs/javascript/'),
+  },
+  {
+    key: 'python',
+    title: 'Python (pond-timeseries)',
+    blurb:
+      'The Python package (`pip install pond-timeseries`, `import pond`): the Rust core with polars, pandas and pyarrow frames in and out, the 109 studies and live series.',
+    match: (/** @type {string} */ p) => p.startsWith('docs/python/'),
   },
   {
     key: 'guides',
@@ -121,7 +131,7 @@ const AREAS = [
 
 /**
  * @typedef {{ title: string, description: string, permalink: string, source: string }} DocEntry
- *   `source` is site-relative (`docs/pond-ts/creating.mdx`).
+ *   `source` is site-relative (`docs/series/creating.mdx`).
  */
 
 /** @param {string} source */
@@ -213,7 +223,7 @@ function renderIndex(site, docs, areaFiles) {
   const out = [
     `# ${site.title}`,
     '',
-    `> Typed time series in TypeScript or Rust, batch and streaming. On npm: seven packages that release together, \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`, \`@pond-ts/wasm\` (pond-rs as WebAssembly). Rust: the \`pond-rs\` crate, which covers the core (batch and live) and the financial studies with the same answers as pond-ts.`,
+    `> Time series in TypeScript, Rust or Python, batch and streaming, with the same answers in each. On npm: seven packages that release together, \`pond-ts\` (core batch + streaming series), \`@pond-ts/react\`, \`@pond-ts/charts\`, \`@pond-ts/financial\`, \`@pond-ts/fit\`, \`@pond-ts/process\`, \`@pond-ts/wasm\` (pond-rs as WebAssembly). Rust: the \`pond-rs\` crate, which covers the core (batch and live) and the financial studies with the same answers as pond-ts. Python: \`pond-timeseries\` on PyPI (\`import pond\`), the Rust core with frames in and out.`,
     '',
     'For a coding agent: the shortest route to working code is the agent guide',
     `(\`AGENTS.md\`, also shipped inside every npm tarball) and the export map (\`API.md\`,`,
@@ -222,8 +232,9 @@ function renderIndex(site, docs, areaFiles) {
     'declared `as const`; every operator returns a new series; `aggregate` downsamples,',
     '`align` regrids, `rolling` slides. Simple per-row rules can be written as',
     "expressions (`col('cpu').gt(0.5)`) instead of functions. Most core pages show",
-    'TypeScript and Rust side by side; for Rust, start at the pond-rs section and',
-    '"Coming from pond-ts", and use docs.rs/pond-rs for the full API.',
+    'TypeScript, Rust and Python side by side; for Rust, start at docs/rust and',
+    '"Coming from pond-ts" and use docs.rs/pond-rs for the full API; for Python,',
+    'start at docs/python.',
     '',
   ];
 

@@ -15,7 +15,10 @@ py="${2:-python3}"
 mkdir -p "$run"
 run="$(cd "$run" && pwd)"
 "$py" "$here/gen_data.py" "$run"
-cp "$here/../../../website/docs/pond-rs/python.mdx" "$run/docs.md"
+# The Python pages, in reading order, as one file (as the trial was run
+# when they were one page).
+docs="$here/../../../website/docs/python"
+cat "$docs"/{index,frames,operations,finance,live,errors-and-speed}.mdx > "$run/docs.md"
 cat > "$run/attempt.sh" <<EOF
 #!/usr/bin/env bash
 cd "$run"

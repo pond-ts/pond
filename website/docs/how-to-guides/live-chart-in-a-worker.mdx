@@ -282,9 +282,9 @@ function ingest(batch: Batch) {
 }
 ```
 
-[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries)
+[`pushSeries`](/docs/live/live-series#pushing-columns-pushseries)
 takes a batch built by
-[`TimeSeries.fromColumns`](../pond-ts/creating#float64array-columnar) and
+[`TimeSeries.fromColumns`](/docs/series/creating#float64array-columnar) and
 stores its columns as they are: no row objects, no check per cell. Things
 to know:
 
@@ -667,8 +667,8 @@ tries a heavier feed. `npm run bench` runs the Node benchmarks behind
 sections 7, 8 and 11. CI doesn't build the example, so the check is how
 it's verified.
 
-For the pieces on their own: [live series](../pond-ts/live/live-series),
-[`pushSeries`](../pond-ts/live/live-series#pushing-columns-pushseries),
+For the pieces on their own: [live series](/docs/live/live-series),
+[`pushSeries`](/docs/live/live-series#pushing-columns-pushseries),
 [live charts with `@pond-ts/charts`](../learn-charts/live-charts) and
 [rendering large time series](./rendering-large-series). The spike's
 [full report](https://github.com/pond-ts/pond/blob/main/spikes/offscreen-stream/REPORT.md)

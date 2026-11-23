@@ -1,0 +1,181 @@
+---
+sidebar_position: 6
+---
+
+# Triggers
+
+A **trigger** describes _when_ a live aggregation emits a snapshot.
+Pond's live operators (`live.rolling`, `live.aggregate`) maintain
+window state continuously; the trigger controls when downstream
+subscribers see a new event.
+
+Three trigger flavours, each with a clear use case:
+
+| Trigger              | Fires                                     | Use case                                     |
+| -------------------- | ----------------------------------------- | -------------------------------------------- |
+| `Trigger.event()`    | Once per source event                     | Default; per-tick UI, debugging streams      |
+| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing  | Backend reporting, dashboards                |
+| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence` | Anchored boundaries, shared across operators |
+| `Trigger.count(n)`   | Once per `n` source events                | Hot streams where time-boundaries lag        |
+
+All three are **data-driven** — the library does not run a
+`setInterval` or any wall-clock timer. A trigger advances only when
+events arrive. Quiet periods produce no output.
+
+## `Trigger.event()` — per source event
+
+The default. Every `live.push` produces one output snapshot per
+attached rolling/aggregation.
+
+```ts
+import { Trigger } from 'pond-ts';
+
+const rolling = live.rolling('1m', { cpu: 'avg' });
+// equivalent to: { trigger: Trigger.event() }
+
+rolling.on('event', (e) => {
+  // fires once per live.push call
+});
+```
+
+Right choice when the consumer wants to react to every datum —
+anomaly detectors, debug streams, low-volume tick processors.
+
+## `Trigger.every(duration)` — per fixed cadence
+
+Sugar for the common case "fire at fixed-step boundaries." Equivalent
+to `Trigger.clock(Sequence.every(duration))`.
+
+```ts
+const rolling = live.rolling(
+  '1m',
+  { cpu: 'p95' },
+  { trigger: Trigger.every('30s') },
+);
+
+rolling.on('event', (e) => {
+  // fires when a source event crosses an epoch-aligned 30s boundary
+  // e.begin() === <boundary timestamp> (0, 30000, 60000, ...)
+});
+```
+
+Right choice for **backend reporting at a regular cadence** — push
+p95 to telemetry every 30s of event time; emit a dashboard snapshot
+each minute. The output timestamp is always the boundary, not the
+triggering event's timestamp.
+
+### Anchoring
+
+`every` accepts the same `{ anchor }` option as
+[`Sequence.every`](./sequences#anchoring):
+
+```ts
+Trigger.every('30s', { anchor: 5_000 });
+// boundaries at 5_000, 35_000, 65_000, ...
+```
+
+Use the explicit `Trigger.clock(seq)` form when the same
+[`Sequence`](./sequences) needs to drive multiple operators or be
+shared with batch `series.aggregate(seq, ...)`.
+
+## `Trigger.count(n)` — per N events
+
+Fire one snapshot every `n` source events. Counter resets on each
+fire (so it measures "events since the last emission," not "every
+Nth event modulo the input").
+
+```ts
+const rolling = live.rolling(
+  '5m',
+  { latency: 'p95' },
+  { trigger: Trigger.count(1000) },
+);
+
+rolling.on('event', (e) => {
+  // fires every 1000 source events
+  // e.begin() === <triggering event's timestamp>
+});
+```
+
+Right choice for **hot streams where event-time boundaries lag** —
+say, a 200ms boundary cadence is sparse during burst load and
+catches up only when the burst eases. Count triggers fire on events
+themselves, not on the time they cover.
+
+`Trigger.count(1)` is behaviourally identical to `Trigger.event()`.
+
+## `rolling.value()` is independent of the trigger
+
+The trigger controls when subscribers see a new event. The window
+itself is always current.
+
+```ts
+rolling.value(); // current { ...mapping } — reads now, regardless of trigger
+```
+
+This is what powers the **single-rolling, two-consumer pattern**:
+
+```ts
+const rolling = live.rolling(
+  '1m',
+  { latency: 'p95' },
+  { trigger: Trigger.every('30s') },
+);
+
+// Backend reporting fires at the 30s cadence
+rolling.on('event', e => fetch('/api/telemetry', { ... }));
+
+// In-app display reads continuously, gets the up-to-date value
+function PerformancePanel() {
+  const stats = useLiveQuery(rolling, () => rolling.value(), {
+    throttleMs: 1_000,
+  });
+  return <Display value={stats.latency} />;
+}
+```
+
+One rolling, two consumers, one deque. No duplicated state, no
+second subscription, no manual coordination.
+
+## Trigger × partitioning
+
+Both clock and count triggers compose with `partitionBy`, but with
+different semantics:
+
+| Trigger × partition mode                                      | Behaviour                                                                                      |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `partitionBy(c).rolling(...)` (no trigger)                    | Per-partition rolling, each fires per source event independently                               |
+| `partitionBy(c).rolling(...,  { trigger: Trigger.every(d) })` | **Synchronised** — every known partition emits one row per boundary, all sharing the same `ts` |
+| `partitionBy(c).rolling(...,  { trigger: Trigger.count(n) })` | Per-partition count — each partition fires after its own Nth event                             |
+
+The synchronised form is what dashboards reach for: at each
+boundary tick, every host emits its current rolling-window snapshot
+in lockstep. See [Partitioning](./partitioning) and
+[Triggering → Synchronised partitioned rolling](/docs/live/triggering#synchronised-partitioned-rolling).
+
+## What triggers don't do
+
+- **No wall-clock emission.** Triggers fire on data, not time. If a
+  `LiveSeries` goes quiet for an hour, no events emit during that
+  hour. This matches pond's [Late data](./late-data) semantics
+  ("data is the clock") and means triggers are deterministic from
+  the data alone.
+- **No retraction.** An emitted snapshot is final; pond does not
+  re-emit corrections if late events arrive. See [Late data](./late-data)
+  for what does and doesn't propagate.
+- **No combining.** A trigger is a single rule. "Every 30s OR every
+  1000 events" — composite triggers — is queued as a future
+  expansion in PLAN.md.
+
+## Where this shows up
+
+- **Live rolling and aggregation operators** —
+  [Triggering](/docs/live/triggering)
+  has the operator-level reference and full edge-case treatment.
+- **Telemetry recipe** — end-to-end
+  [Telemetry reporting](/docs/recipes/telemetry-reporting) shows
+  the single-rolling, two-consumer pattern.
+- **Sequences** — clock triggers consume a fixed-step
+  [`Sequence`](./sequences); calendar sequences are rejected.
+- **Partitioning** — synchronised partitioned rolling builds on
+  clock triggers. See [Partitioning](./partitioning).

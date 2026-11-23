@@ -1,0 +1,487 @@
+---
+sidebar_position: 18
+---
+
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreAnomalyLive from '@site/src/examples/core-anomaly-live';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Anomaly Detection
+
+Two methods, one pattern: rolling baseline + threshold. For each
+event, compute a rolling average and standard deviation; if the
+event's value is more than `sigma * sd` away from the mean, flag it.
+
+<ConceptViz
+  height={240}
+  caption={
+    <>
+      A live stream with a real rolling{' '}
+      <code>baseline('value', &#123; window, sigma &#125;)</code>: the shaded
+      band is <code>avg ± sigma·sd</code>, and the{' '}
+      <span style={{ color: 'var(--pond-viz-mark)' }}>
+        <strong>orange dots</strong>
+      </span>{' '}
+      are the events that fall outside it (<code>bands.filter(…)</code>). Drag{' '}
+      <strong>sigma</strong> — tighten the band and more points flag as
+      anomalies; widen it and they fall back inside.
+    </>
+  }
+>
+  <CoreAnomalyLive />
+</ConceptViz>
+
+- [**`baseline(col, opts)`**](#baseline) — appends `avg` / `sd` /
+  `upper` / `lower` columns to the source schema. Drives band charts
+  and outlier filters.
+- [**`outliers(col, opts)`**](#outliers) — sugar over the same
+  rolling pass, returns just the anomalous events.
+
+Both are built on top of [`rolling()`](./rolling). Reach for them
+directly when the rolling-baseline pattern is what you want; reach
+for `rolling()` itself for arbitrary windowed reductions.
+
+## `baseline(col, opts)` \{#baseline\}
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const bands = cpu.baseline('cpu', { window: '1m', sigma: 2 });
+// bands.schema: [time, cpu, host, avg, sd, upper, lower]
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A reading every 5 seconds from two hosts in turn, with one spike.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..14).map(|i| i * 5_000).collect(),
+        vec![
+            Column::required(
+                "cpu",
+                vec![
+                    0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41,
+                    0.42,
+                ],
+            ),
+            Column::required(
+                "host",
+                (0..14).map(|i| ["a", "b"][i % 2]).collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    let bands = cpu.baseline("cpu", "1m", 2.0, Rolling::default())?;
+    let names: Vec<&str> = bands.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "host", "avg", "sd", "upper", "lower"]);
+    assert_eq!(
+        bands.column("avg")?.numbers()?.get(6),
+        Some(0.48999999999999994)
+    );
+    assert_eq!(
+        bands.column("upper")?.numbers()?.get(6),
+        Some(0.8661458683618819)
+    );
+    // The first window holds one value: flat, so no band.
+    assert_eq!(bands.column("upper")?.numbers()?.get(0), None);
+
+    // The rows outside the band.
+    let anomalies = bands.filter(|e| {
+        Ok(
+            match (e.number("cpu")?, e.number("lower")?, e.number("upper")?) {
+                (Some(v), Some(lo), Some(hi)) => v > hi || v < lo,
+                _ => false,
+            },
+        )
+    })?;
+    assert_eq!(anomalies.key().begin(), &[30_000]); // the 0.95 spike
+    Ok(())
+}
+```
+
+In Rust the window and sigma are plain arguments, and the last one, a `Rolling`, sets the window's alignment and `min_samples` as for [`rolling_with`](/docs/rust/operations#where-the-window-sits-rolling_with).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline("cpu", "1m", 2.0)
+assert bands.columns == ["cpu", "host", "avg", "sd", "upper", "lower"]
+assert bands.column("avg")[6] == 0.48999999999999994
+assert bands.column("upper")[6] == 0.8661458683618819
+# The first window holds one value: flat, so no band.
+assert bands.column("upper")[0] is None
+
+# The rows outside the band.
+anomalies = bands.filter(
+    lambda e: e["upper"] is not None and not e["lower"] <= e["cpu"] <= e["upper"]
+)
+assert [row.key for row in anomalies] == [30_000]  # the 0.95 spike
+```
+
+The window and sigma are plain arguments; `alignment=` and `min_samples=` set where the window sits and how full it must be, as for `rolling`.
+
+</TabItem>
+</Tabs>
+
+Four optional number columns appended:
+
+- `avg` — rolling average of `col`
+- `sd` — rolling standard deviation of `col`
+- `upper` — `avg + sigma * sd`
+- `lower` — `avg - sigma * sd`
+
+Then a band chart is two `toPoints` calls; an outlier filter is one:
+
+```ts
+const data = bands.toPoints();
+// [{ ts, cpu, ..., avg, sd, upper, lower }, ...] — chart-ready
+
+const anomalies = bands.filter((e) => {
+  const v = e.get('cpu');
+  const lo = e.get('lower');
+  const hi = e.get('upper');
+  return v != null && lo != null && hi != null && (v > hi || v < lo);
+});
+```
+
+### Warm-up and flat windows
+
+- Before the rolling window has enough samples for a meaningful
+  baseline, `avg` and `sd` are `undefined`; `upper` and `lower`
+  follow.
+- When the rolling window is **flat** (every sample identical),
+  `sd === 0`. `avg` and `sd` still report their real values, but
+  `upper` and `lower` collapse to `undefined` — a zero-width band
+  would flag every non-equal point as anomalous, which is usually
+  the opposite of what you want.
+
+Filters that null-check `upper` / `lower` will do the right thing
+through warm-up and flat-window regions.
+
+The default warm-up only suppresses output until there's at least
+one sample. On noisy sub-second telemetry that's usually too eager
+— a 2- or 3-sample window has a near-zero rolling stdev, so the
+band collapses tight around the first few values and false-flags
+the next normal-looking event. Pass `minSamples` to widen the
+warm-up:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+cpu.baseline('cpu', { window: '1m', sigma: 2, minSamples: 20 });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A reading every 5 seconds from two hosts in turn, with one spike.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..14).map(|i| i * 5_000).collect(),
+        vec![
+            Column::required(
+                "cpu",
+                vec![
+                    0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41,
+                    0.42,
+                ],
+            ),
+            Column::required(
+                "host",
+                (0..14).map(|i| ["a", "b"][i % 2]).collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    let bands = cpu.baseline(
+        "cpu",
+        "1m",
+        2.0,
+        Rolling {
+            min_samples: 5,
+            ..Rolling::default()
+        },
+    )?;
+    let avg = bands.column("avg")?.numbers()?;
+    let upper = bands.column("upper")?.numbers()?;
+    // Rows 0 to 3 hold fewer than 5 readings: every band column is a gap.
+    assert_eq!((avg.get(3), upper.get(3)), (None, None));
+    assert_eq!(avg.get(4), Some(0.41200000000000003));
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline("cpu", "1m", 2.0, min_samples=5)
+avg, upper = bands.column("avg"), bands.column("upper")
+# Rows 0 to 3 hold fewer than 5 readings: every band column is a gap.
+assert (avg[3], upper[3]) == (None, None)
+assert avg[4] == 0.41200000000000003
+```
+
+</TabItem>
+</Tabs>
+
+While the window holds fewer than `minSamples` source events,
+`avg`, `sd`, `upper`, and `lower` are all `undefined`. The option
+threads through to the internal [`rolling`](./rolling#warm-up-gate-minsamples)
+pass and is also available on `outliers()`.
+
+### Custom column names
+
+If the defaults (`avg` / `sd` / `upper` / `lower`) collide with
+source columns:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+cpu.baseline('cpu', {
+  window: '1m',
+  sigma: 2,
+  names: { avg: 'cpuAvg', sd: 'cpuSd', upper: 'cpuHi', lower: 'cpuLo' },
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A reading every 5 seconds from two hosts in turn, with one spike.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..14).map(|i| i * 5_000).collect(),
+        vec![
+            Column::required(
+                "cpu",
+                vec![
+                    0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41,
+                    0.42,
+                ],
+            ),
+            Column::required(
+                "host",
+                (0..14).map(|i| ["a", "b"][i % 2]).collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    let bands = cpu.baseline_named(
+        "cpu",
+        "1m",
+        2.0,
+        Rolling::default(),
+        ["cpuAvg", "cpuSd", "cpuHi", "cpuLo"], // avg, sd, upper, lower
+    )?;
+    let names: Vec<&str> = bands.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "host", "cpuAvg", "cpuSd", "cpuHi", "cpuLo"]);
+
+    // A series that already has an avg column: the default names collide.
+    let with_avg = cpu.with_column(Column::required("avg", vec![0.0; 14]))?;
+    assert!(
+        with_avg
+            .baseline("cpu", "1m", 2.0, Rolling::default())
+            .is_err()
+    );
+    Ok(())
+}
+```
+
+pond-rs also refuses a name that is the key's, or the same name twice.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+bands = cpu.baseline(
+    "cpu", "1m", 2.0,
+    names={"avg": "cpuAvg", "sd": "cpuSd", "upper": "cpuHi", "lower": "cpuLo"},
+)
+assert bands.columns == ["cpu", "host", "cpuAvg", "cpuSd", "cpuHi", "cpuLo"]
+
+# A series that already has an avg column: the default names collide.
+with_avg = cpu.with_column("avg", [0.0] * 14)
+try:
+    with_avg.baseline("cpu", "1m", 2.0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+`names=` also takes a list of four, in the order avg, sd, upper, lower.
+
+</TabItem>
+</Tabs>
+
+Collisions throw at construction, so the rename is mandatory, not
+optional.
+
+## `outliers(col, opts)` \{#outliers\}
+
+Just the anomalies — same schema as the source, filtered to events
+outside the band:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const anomalies = cpu.outliers('cpu', { window: '1m', sigma: 2 });
+// anomalies.length ≤ cpu.length, schema unchanged.
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Rolling, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A reading every 5 seconds from two hosts in turn, with one spike.
+    let cpu = TimeSeries::new(
+        "cpu",
+        (0..14).map(|i| i * 5_000).collect(),
+        vec![
+            Column::required(
+                "cpu",
+                vec![
+                    0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41,
+                    0.42,
+                ],
+            ),
+            Column::required(
+                "host",
+                (0..14).map(|i| ["a", "b"][i % 2]).collect::<Vec<_>>(),
+            ),
+        ],
+    )?;
+
+    let anomalies = cpu.outliers("cpu", "1m", 2.0, Rolling::default())?;
+    // Fewer rows, same columns.
+    let names: Vec<&str> = anomalies.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "host"]);
+    assert_eq!(anomalies.key().begin(), &[30_000]);
+
+    // Anomalies per 15 s, for a bar chart.
+    let per_bucket =
+        anomalies.aggregate(&Sequence::every("15s")?, &[Agg::of("cpu", Reducer::Count)])?;
+    assert_eq!(per_bucket.column("cpu")?.numbers()?.get(0), Some(1.0));
+
+    // Per host.
+    let per_host = anomalies.group_by(&["host"])?;
+    assert_eq!(per_host.len(), 1); // only host a had one
+    Ok(())
+}
+```
+
+`group_by` gives a list of `(key, series)` pairs rather than a `Map`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# A reading every 5 seconds from two hosts in turn, with one spike.
+cpu = pond.TimeSeries({
+    "time": [i * 5_000 for i in range(14)],
+    "cpu": [0.40, 0.42, 0.41, 0.43, 0.40, 0.42, 0.95, 0.41, 0.43, 0.42, 0.40, 0.10, 0.41, 0.42],
+    "host": [["a", "b"][i % 2] for i in range(14)],
+})
+
+anomalies = cpu.outliers("cpu", "1m", 2.0)
+# Fewer rows, same columns.
+assert anomalies.columns == ["cpu", "host"]
+assert [row.key for row in anomalies] == [30_000]
+
+# Anomalies per 15 s, for a bar chart.
+per_bucket = anomalies.aggregate("15s", {"cpu": "count"})
+assert per_bucket.column("cpu")[0] == 1.0
+
+# Per host.
+per_host = anomalies.group_by("host")
+assert list(per_host) == ["a"]  # only host a had one
+```
+
+</TabItem>
+</Tabs>
+
+Composes with the rest of the API for dashboards:
+
+```ts
+// Bucketed anomaly count per 15s for a bar chart.
+const perBucket = anomalies.aggregate(Sequence.every('15s'), {
+  cpu: 'count',
+});
+
+// Per-host breakdown.
+const perHost = anomalies.groupBy('host');
+```
+
+Conceptually equivalent to `baseline(col, opts).filter(...)`;
+implemented independently (one rolling pass either way). Reach for
+`baseline()` directly when you want the band columns for charting.
+The two share flat-window semantics — both skip events where
+`sd === 0`.
+
+## Picking one
+
+- Drawing a band chart: **`baseline`** — you'll use the `upper` /
+  `lower` columns directly.
+- Just want the spike list (alerting, counting, per-host): **`outliers`**.
+- Both at once: **`baseline`** — one rolling pass for everything.
+
+## Beyond rolling-baseline
+
+`baseline` and `outliers` are deliberately the only first-party
+anomaly-detection helpers. Other patterns — STL decomposition,
+seasonal-adjusted thresholds, classifier-based detection — fit
+`map`, `rolling`, and reducer combinations cleanly enough that
+folding them into the library would just add a vocabulary tax. If
+you need one and the composition feels heavy, file an issue with the
+shape and we'll see if it's worth lifting.

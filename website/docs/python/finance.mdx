@@ -1,0 +1,54 @@
+---
+id: finance
+title: Finance studies
+sidebar_position: 4
+description: 'The 109 finance studies (RSI, Bollinger bands, MACD, ATR, VWAP, ...) as methods on a pond TimeSeries in Python, their options and output columns, and trading calendars for session studies.'
+---
+
+# Finance studies in Python
+
+All 109 studies of `@pond-ts/financial` run on a series of bars, with
+pond-ts's numbers to the last bit. Each study is a method; it adds its
+columns and keeps every row (gaps until its window fills).
+
+```python
+bars = pond.TimeSeries(df)      # time, open, high, low, close, volume
+out = bars.rsi(period=14).bollinger(period=20, std_dev=2)
+out.columns                        # [..., "rsi", "bbMiddle", "bbUpper", "bbLower"]
+bars.macd()                        # adds macdLine, macdSignal, macdHist
+bars.study("macd", fast_period=12) # the same, by name
+bars.partition_by("symbol").atr(period=14).collect()   # per symbol
+```
+
+- **Columns read** default to `open`, `high`, `low`, `close` and `volume`.
+  Pass `column="price"` (one-column studies) or `high=`, `low=`,
+  `close=`, `volume=` to use others.
+- **Options** are keywords in Python's spelling (`std_dev`, `fast_period`;
+  pond-ts's `stdDev` also works). Some have no default and must be given
+  (`bollinger` needs `period`). An option the study does not have is a
+  `TypeError`, so a typo such as `peroid=14` cannot pass silently.
+- **Output names** are pond-ts's (`rsi`, `bbUpper`, `macdHist`). Pass
+  `output="rsi14"` to rename a one-column study's output.
+- **Definitions** are the usual ones, checked against TA-Lib and pandas:
+  RSI uses Wilder's smoothing as TA-Lib does, and Bollinger bands use the
+  population standard deviation (dividing by the period). On a
+  partitioned series each symbol's study sees only its own bars.
+- `pond.studies()` lists every study, and `pond.study_info("bollinger")`
+  describes one: the columns it reads, its options with defaults and
+  ranges, and `output_names`.
+
+Session studies (session VWAP, pivot points) need trading sessions. A
+`TradingCalendar` builds them from rules:
+
+```python
+nyse = pond.TradingCalendar.from_rules(
+    "America/New_York", "09:30", "16:00", "2024-01-02", "2024-12-31",
+    holidays=["2024-07-04"], early_closes={"2024-12-24": "13:00"},
+)
+bars.session_vwap(sessions=nyse)   # adds svwap, restarting each session
+nyse.is_open("2024-07-04T15:00:00Z")          # False: a holiday
+nyse.session_on("2024-12-24")                 # {"date", "open", "close", "breaks"}, ms
+```
+
+`sessions=` also takes a list of sessions, and `session="column"` uses a
+column of session ids you already have.

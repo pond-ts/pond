@@ -1,0 +1,792 @@
+---
+sidebar_label: ValueSeries deep dive
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# ValueSeries deep dive
+
+`ValueSeries` is the **value-keyed** counterpart of `TimeSeries` — the third of
+the core's three series types. Its key is a monotonic **non-time** axis
+(cumulative distance, cumulative work, lap number, sample index, strike price,
+frequency) rather than the wall clock. It carries the **ordering-based** slice
+of the series algebra — read the axis, read value columns, find the nearest row,
+slice a range — and, by type, _none_ of the calendar/clock operators, because a
+value axis has no wall-clock meaning.
+
+:::tip[Concept vs. deep dive]
+This page is the **API tour** of the `ValueSeries` type. For _when and why_ you
+reach for a value axis — the bike-ride "splits line up on distance, not time"
+intuition, and the closed-vs-projected-out story — read the
+[Value axis concept](/docs/concepts/value-axis) first. Exhaustive signatures live in
+the [API reference](/docs/api/core/value-series).
+:::
+
+## Doors in
+
+You never call the constructor directly (it's trusted-construction only). One
+door **projects** an existing `TimeSeries`; the other three **construct
+directly**, one per shape the data arrives in.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+// 1. PROJECT a TimeSeries onto one of its monotonic columns.
+//    For data that starts life time-keyed — a ride sampled every second,
+//    re-keyed by the cumulative-distance column it already carries.
+const byDistance = ride.byValue('cumDist'); // TimeSeries → ValueSeries
+
+// 2. CONSTRUCT directly. For data that is NATIVELY value-keyed and never had a
+//    per-row time key — an options chain keyed by strike, a spectrum keyed by
+//    frequency. Pick the door that matches what you're holding:
+const schema = [
+  { name: 'strike', kind: 'value' }, // schema[0] is the axis
+  { name: 'iv', kind: 'number' },
+  { name: 'oi', kind: 'number' },
+] as const;
+
+ValueSeries.fromJSON({ name: 'chain', schema, rows }); // row tuples / objects
+ValueSeries.fromColumns({ name: 'chain', schema, columns }); // struct-of-arrays
+ValueSeries.fromArrow(table, { axis: 'strike' }); // an Arrow Table
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, TimeSeries, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 1. PROJECT a TimeSeries onto one of its non-decreasing columns.
+    let ride = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("cumDist", vec![0.0, 20_000.0, 38_000.0]),
+            Column::required("hr", vec![120.0, 130.0, 140.0]),
+        ],
+    )?;
+    let by_distance = ride.by_value("cumDist")?; // TimeSeries → ValueSeries
+    assert_eq!(by_distance.axis(), &[0.0, 20_000.0, 38_000.0]);
+
+    // 2. CONSTRUCT directly, from whatever you are holding.
+    // Rust values, one Vec per column:
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::required("iv", vec![0.31, 0.28, 0.26]),
+            Column::required("oi", vec![1200.0, 3400.0, 8800.0]),
+        ],
+    )?;
+
+    // Row JSON:
+    let rows = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"#;
+    assert_eq!(ValueSeries::from_json(rows, KeyOrder::Strict)?, chain);
+
+    // Columns JSON:
+    let columns = r#"{"name": "chain",
+      "schema": [
+        {"name": "strike", "kind": "value"},
+        {"name": "iv", "kind": "number"},
+        {"name": "oi", "kind": "number"}
+      ],
+      "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"#;
+    assert_eq!(
+        ValueSeries::from_columns_json(columns, KeyOrder::Strict)?,
+        chain
+    );
+
+    // Arrow, naming the field to use as the axis:
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    assert_eq!(ValueSeries::from_ipc_bytes("chain", file, "strike")?, chain);
+    Ok(())
+}
+```
+
+`ValueSeries::new(name, axis_name, axis, columns)` is the Rust door for values you already hold, as `TimeSeries::new` is for a time series.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import polars as pl
+import pond
+
+# 1. PROJECT a TimeSeries onto one of its non-decreasing columns.
+ride = pond.TimeSeries({
+    "time": [0, 1_000, 2_000],
+    "cumDist": [0.0, 20_000.0, 38_000.0],
+    "hr": [120.0, 130.0, 140.0],
+})
+by_distance = ride.by_value("cumDist")  # TimeSeries → ValueSeries
+assert by_distance.axis() == [0.0, 20_000.0, 38_000.0]
+
+# 2. CONSTRUCT directly, from whatever you are holding.
+# A frame (polars, pandas or pyarrow), naming the axis column:
+frame = pl.DataFrame({"strike": [90.0, 95.0, 100.0], "iv": [0.31, 0.28, 0.26], "oi": [1200.0, 3400.0, 8800.0]})
+chain = pond.ValueSeries.from_arrow(frame, "strike", name="chain")
+
+def same(a, b):
+    return a.axis() == b.axis() and all(a.column(c) == b.column(c) for c in ["iv", "oi"])
+
+# Row JSON:
+rows = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "rows": [[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]}"""
+assert same(pond.ValueSeries.from_json(rows), chain)
+
+# Columns JSON:
+columns = """{"name": "chain",
+  "schema": [
+    {"name": "strike", "kind": "value"},
+    {"name": "iv", "kind": "number"},
+    {"name": "oi", "kind": "number"}
+  ],
+  "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}"""
+assert same(pond.ValueSeries.from_columns_json(columns), chain)
+```
+
+`ValueSeries.from_arrow(frame, axis)` is the Python door for values you already hold in a frame. A frame's columns may have gaps (its fields are nullable), so they come in optional, where JSON's follow its schema.
+
+</TabItem>
+</Tabs>
+
+All four share **one ingest engine** and the same monotonicity contract; they
+differ only in where the axis comes from and how the payload is laid out.
+Before the direct doors existed, cross-sectional callers had to launder their
+axis through a fake `time` column just to reach `TimeSeries.fromColumns` and
+project — the detour is gone.
+
+| You have                                      | Door                      |
+| --------------------------------------------- | ------------------------- |
+| A `TimeSeries` with a monotonic column        | `series.byValue(axis)`    |
+| One record per row (a JSON API, a CSV parse)  | `ValueSeries.fromJSON`    |
+| One array per column (a columnar wire format) | `ValueSeries.fromColumns` |
+| A decoded Apache Arrow `Table`                | `ValueSeries.fromArrow`   |
+
+### `byValue(axis)` — projection
+
+`series.byValue(axis)` re-keys a `TimeSeries` onto one of its numeric columns.
+The named column becomes the index and is **dropped from the value columns** — it
+_is_ the key now. The axis column must be **defined, finite, and non-decreasing
+at every row**; `byValue` validates this and throws otherwise. The usual way to
+build such a column is [`scan`](/docs/series/transformations#scan), a running fold
+that turns per-sample deltas into a cumulative, monotonic column. See
+[`byValue` in the aggregation reference](/docs/series/aggregation#byvalue).
+
+### `ValueSeries.fromJSON({ … })` — row ingest
+
+The shape data arrives in from an ordinary JSON API or a CSV parse: one record
+per row, as **tuples** aligned with the schema or as **objects** keyed by
+column name.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+ValueSeries.fromJSON({
+  name: 'chain',
+  schema,
+  rows: [
+    [90, 0.31, 1200],
+    [95, 0.28, 3400],
+    [100, 0.26, 8800],
+  ],
+  // or: [{ strike: 90, iv: 0.31, oi: 1200 }, …]
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{KeyOrder, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let schema = r#"[
+      {"name": "strike", "kind": "value"},
+      {"name": "iv", "kind": "number"},
+      {"name": "oi", "kind": "number"}
+    ]"#;
+    let with_rows =
+        |rows: &str| format!(r#"{{"name": "chain", "schema": {schema}, "rows": {rows}}}"#);
+
+    let tuples = ValueSeries::from_json(
+        &with_rows("[[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]"),
+        KeyOrder::Strict,
+    )?;
+    let objects = ValueSeries::from_json(
+        &with_rows(
+            r#"[{"strike": 90, "iv": 0.31, "oi": 1200},
+                {"strike": 95, "iv": 0.28, "oi": 3400},
+                {"strike": 100, "iv": 0.26, "oi": 8800}]"#,
+        ),
+        KeyOrder::Strict,
+    )?;
+    assert_eq!(objects, tuples);
+
+    // The axis must be a number: there is no time zone to read text in.
+    assert!(
+        ValueSeries::from_json(&with_rows(r#"[["90", 0.31, 1200]]"#), KeyOrder::Strict).is_err()
+    );
+    // A required column refuses a gap.
+    assert!(ValueSeries::from_json(&with_rows("[[90, null, 1200]]"), KeyOrder::Strict).is_err());
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+schema = """[
+  {"name": "strike", "kind": "value"},
+  {"name": "iv", "kind": "number"},
+  {"name": "oi", "kind": "number"}
+]"""
+
+def with_rows(rows):
+    return f'{{"name": "chain", "schema": {schema}, "rows": {rows}}}'
+
+tuples = pond.ValueSeries.from_json(with_rows("[[90, 0.31, 1200], [95, 0.28, 3400], [100, 0.26, 8800]]"))
+objects = pond.ValueSeries.from_json(with_rows("""[
+    {"strike": 90, "iv": 0.31, "oi": 1200},
+    {"strike": 95, "iv": 0.28, "oi": 3400},
+    {"strike": 100, "iv": 0.26, "oi": 8800}]"""))
+assert objects.to_json() == tuples.to_json()
+
+# The axis must be a number: there is no time zone to read text in.
+# A required column refuses a gap.
+for bad in ['[["90", 0.31, 1200]]', "[[90, null, 1200]]"]:
+    try:
+        pond.ValueSeries.from_json(with_rows(bad))
+        raise AssertionError("expected an error")
+    except pond.PondError:
+        pass
+```
+
+</TabItem>
+</Tabs>
+
+The `TimeSeries.fromJSON` contract minus the one thing a value axis has no use
+for: **there is no timestamp parsing and no `parse.timeZone`.** The axis cell
+must be a finite `number` — a value axis has no calendar to interpret
+`'2026-01-01'` against — so a string axis is an error naming the row, not a
+silent `NaN`.
+
+This is the **strict** door. Every defined cell is checked against its declared
+kind, so a `NaN`/`Infinity` in a `number` column or a number in a `string`
+column is **rejected**, and a column declared `required` (the default) rejects a
+missing cell. `null` and `undefined` both mean _missing_ and are fine on a
+`required: false` column. The columnar doors below are deliberately looser —
+they read a non-finite number as a gap and don't check `required`, because a
+decoded buffer can't tell "absent" from "not a number".
+
+### `ValueSeries.fromColumns({ … })` — direct columnar ingest
+
+The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
+
+- **`schema[0]` is the `'value'`-kind axis column**; the rest are value columns.
+  Each `columns` entry is one column's values, keyed by schema column name and
+  **aligned by index**.
+- Values may be a plain **`number[]`** _or_ a **`Float64Array`** (or a
+  **`string[]`** for a `string` column). A cell is a **gap** (missing) iff it is
+  `null`/`undefined` or non-finite — identical for every input type.
+- **`Float64Array` inputs are adopted, not copied** (zero-copy): the resulting
+  columns alias your buffers — pass a fresh buffer if that matters. Passing
+  **`ordering: 'reorder'`** disables the adoption (a reorder needs its own
+  buffers).
+- **Ordering.** The axis must be defined, finite, and non-decreasing — it becomes
+  the index. An out-of-order axis **throws** by default; pass
+  **`ordering: 'reorder'`** to stably sort rows by axis value first (the right
+  move for an unordered snapshot, e.g. a keyed live feed that arrives in update
+  order, not axis order), or `'clamp'` to carry a backwards axis value forward in
+  place (see [Out-of-order keys](creating#out-of-order-keys)).
+- **Value columns:** `number` and `string`, matching `TimeSeries.fromColumns`.
+
+It throws `ValidationError` on a non-`'value'` axis kind, a missing column, a
+length mismatch, an unsupported value-column kind, or an out-of-order axis
+under the default `ordering: 'strict'`; and `RangeError` on a non-finite axis cell (sorting can't rescue
+it) or a duplicate column name. See
+[Creating series → Columnar ingest](creating#columnar).
+
+### `ValueSeries.fromArrow(table, { axis })` — Arrow ingest
+
+A decoded Apache Arrow `Table` — often how a cross-sectional payload arrives in
+the first place, since an options chain or a spectrum reaching you over Arrow
+has no time column to key on.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { tableFromIPC } from 'apache-arrow';
+
+const chain = ValueSeries.fromArrow(tableFromIPC(bytes), { axis: 'strike' });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![Column::required("iv", vec![0.31, 0.28, 0.26])],
+    )?;
+    let mut bytes = Vec::new();
+    chain.write_ipc(&mut bytes)?;
+
+    // The axis is required: name the field to key on.
+    let back = ValueSeries::read_ipc("chain", bytes.as_slice(), "strike")?;
+    assert_eq!(back, chain);
+
+    // Naming a field that is not there is an error.
+    assert!(ValueSeries::read_ipc("chain", bytes.as_slice(), "price").is_err());
+    Ok(())
+}
+```
+
+pond-rs reads Arrow itself: `read_ipc` takes any reader, `from_ipc_bytes` bytes already in memory, and `from_arrow` `RecordBatch`es you already hold. Unlike pond-ts it refuses a time-typed axis field and reads true/false, decimal and list value fields; see [Arrow and JSON](/docs/rust/arrow#value-series).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pyarrow as pa
+import pyarrow.ipc
+import pond
+
+table = pa.table({"strike": [90.0, 95.0, 100.0], "iv": [0.31, 0.28, 0.26]})
+sink = pa.BufferOutputStream()
+with pa.ipc.new_file(sink, table.schema) as writer:
+    writer.write_table(table)
+data = sink.getvalue()
+
+# Read the file with pyarrow, then name the field to key on.
+chain = pond.ValueSeries.from_arrow(pa.ipc.open_file(data).read_all(), "strike", name="chain")
+assert chain.axis() == [90.0, 95.0, 100.0]
+
+# Naming a field that is not there is an error.
+try:
+    pond.ValueSeries.from_arrow(table, "price")
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+A `ValueSeries` has no `read_ipc` of its own in Python: read the `.arrow` file with pyarrow (or polars) and pass the table to `from_arrow`.
+
+</TabItem>
+</Tabs>
+
+pond takes **no dependency** on `apache-arrow` — bring your own and hand the
+`Table` over; the input is duck-typed against the small slice pond reads.
+Ingest is the zero-copy path: a single-chunk `Float64` column's backing
+`Float64Array` is adopted as-is, nulls and all (Arrow's validity bitmap is
+bit-identical to pond's).
+
+- **`axis` is required.** Unlike the time door there is no conventional field
+  name to fall back on — `strike`, `frequency`, `depth` and `cumDist` are all
+  equally plausible, and keying on the wrong one silently is worse than an
+  error. The axis is read **unscaled** (an axis carries no `TimeUnit`); a null
+  in it throws.
+- **Value columns:** every non-axis field by default, or the subset named by
+  `columns` (in order). Numeric and `Utf8` string columns are supported; any
+  other Arrow type (list/struct/…) throws, naming it.
+- **`ordering: 'reorder'`** for an unordered table, which disables the
+  adoption.
+
+## Reading a ValueSeries
+
+The operator surface is small and deliberately ordering-based — the part of the
+algebra that was never about time:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+byDistance.length; // number of rows
+byDistance.axisName; // 'cumDist' — the key column's name
+byDistance.axisValues(); // Float64Array of the axis, in order (zero-copy, read-only)
+byDistance.axisAt(3); // the axis value at row 3
+
+byDistance.column('hr'); // a value column → read with .read(i) / .values()
+
+byDistance.nearestIndex(40_000); // row nearest the 40 km mark (binary search)
+byDistance.sliceByValue(40_000, 60_000); // the [40 km, 60 km) sub-series (zero-copy)
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        vec![0, 1_000, 2_000, 3_000, 4_000, 5_000],
+        vec![
+            Column::required(
+                "cumDist",
+                vec![0.0, 20_000.0, 38_000.0, 41_000.0, 55_000.0, 70_000.0],
+            ),
+            Column::required("hr", vec![120.0, 130.0, 140.0, 150.0, 155.0, 160.0]),
+        ],
+    )?;
+    let by_distance = ride.by_value("cumDist")?;
+
+    assert_eq!(by_distance.len(), 6); // number of rows
+    assert_eq!(by_distance.axis_name(), "cumDist"); // the key column's name
+    assert_eq!(by_distance.axis()[3], 41_000.0); // the axis, as a slice
+
+    assert_eq!(by_distance.column("hr")?.numbers()?.get(2), Some(140.0));
+
+    // Row nearest the 40 km mark; clamps outside the axis.
+    assert_eq!(by_distance.nearest_index(40_000.0), Some(3));
+    assert_eq!(by_distance.nearest_index(1e9), Some(5));
+
+    // The [40 km, 60 km) sub-series.
+    let leg = by_distance.slice_by_value(40_000.0, 60_000.0);
+    assert_eq!(leg.axis(), &[41_000.0, 55_000.0]);
+    assert!(by_distance.slice_by_value(60_000.0, 40_000.0).is_empty());
+    Ok(())
+}
+```
+
+`axis()` is a plain `&[f64]`, so pond-ts's `axisAt(i)` is `axis()[i]`. `nearest_index` gives `None` for an empty series, where pond-ts gives `-1`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [0, 1_000, 2_000, 3_000, 4_000, 5_000],
+    "cumDist": [0.0, 20_000.0, 38_000.0, 41_000.0, 55_000.0, 70_000.0],
+    "hr": [120.0, 130.0, 140.0, 150.0, 155.0, 160.0],
+})
+by_distance = ride.by_value("cumDist")
+
+assert len(by_distance) == 6  # number of rows
+assert by_distance.axis_name == "cumDist"  # the key column's name
+assert by_distance.axis()[3] == 41_000.0  # the axis, as a list
+
+assert by_distance.column("hr")[2] == 140.0
+
+# Row nearest the 40 km mark; clamps outside the axis.
+assert by_distance.nearest_index(40_000.0) == 3
+assert by_distance.nearest_index(1e9) == 5
+
+# The [40 km, 60 km) sub-series.
+leg = by_distance.slice_by_value(40_000.0, 60_000.0)
+assert leg.axis() == [41_000.0, 55_000.0]
+assert len(by_distance.slice_by_value(60_000.0, 40_000.0)) == 0
+```
+
+`axis()` is a plain list, so pond-ts's `axisAt(i)` is `axis()[i]`. `nearest_index` gives `None` for an empty series, where pond-ts gives `-1`.
+
+</TabItem>
+</Tabs>
+
+- **`axisValues()`** returns the **live** key buffer — zero-copy, so treat it as
+  read-only.
+- **`column(name)`** returns the columnar `Column` (or `undefined`), for direct
+  `.read(i)` / `.values()` reads.
+- **`nearestIndex(value)`** is the value-axis cursor primitive: a binary search
+  over the non-decreasing axis. It returns `-1` for an empty series and **clamps**
+  to the first / last row when `value` falls outside the axis extent.
+- **`sliceByValue(lo, hi)`** is the value-axis cull (pan / zoom on a value x):
+  the contiguous sub-series with axis in `[lo, hi)`, zero-copy sliced. `lo >= hi`
+  (or a range outside the extent) yields an empty series.
+
+## Doors out
+
+Every ingest door has a matching export door, so a `ValueSeries` is never a
+dead end — `fromX(series.toX())` reconstructs the series.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+chain.toRows(); // [[90, 0.31, 1200], …] — tuples, gaps as undefined
+chain.toObjects(); // [{ strike: 90, iv: 0.31, oi: 1200 }, …]
+chain.toJSON(); // { name, schema, rows } — the wire envelope, gaps as null
+chain.toJSON({ rowFormat: 'object' }); // …with object rows
+chain.toColumns(); // { name, schema, columns } — one array per column
+chain.toArrow(); // { length, fields } — Arrow's layout, zero copy
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, KeyOrder, RowFormat, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::required("iv", vec![0.31, 0.28, 0.26]),
+            Column::required("oi", vec![1200.0, 3400.0, 8800.0]),
+        ],
+    )?;
+
+    let rows = chain.to_json(RowFormat::Array)?;
+    assert!(rows.ends_with(r#""rows":[[90,0.31,1200],[95,0.28,3400],[100,0.26,8800]]}"#));
+
+    let objects = chain.to_json(RowFormat::Object)?;
+    assert!(objects.ends_with(r#"{"strike":100,"iv":0.26,"oi":8800}]}"#));
+
+    let columns = chain.to_columns_json()?;
+    assert!(columns.ends_with(
+        r#""columns":{"strike":[90,95,100],"iv":[0.31,0.28,0.26],"oi":[1200,3400,8800]}}"#
+    ));
+
+    // Every door out reads back in.
+    assert_eq!(ValueSeries::from_json(&rows, KeyOrder::Strict)?, chain);
+    assert_eq!(ValueSeries::from_json(&objects, KeyOrder::Strict)?, chain);
+    assert_eq!(
+        ValueSeries::from_columns_json(&columns, KeyOrder::Strict)?,
+        chain
+    );
+
+    let batch = chain.to_arrow()?; // an Arrow RecordBatch
+    assert_eq!(batch.num_rows(), 3);
+    Ok(())
+}
+```
+
+pond-rs has no `toRows` / `toObjects` for a value series: read the axis with `axis()` and each column with `column(name)`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+chain = pond.ValueSeries.from_columns_json("""{"name": "chain",
+  "schema": [{"name": "strike", "kind": "value"}, {"name": "iv", "kind": "number"}, {"name": "oi", "kind": "number"}],
+  "columns": {"strike": [90, 95, 100], "iv": [0.31, 0.28, 0.26], "oi": [1200, 3400, 8800]}}""")
+
+rows = chain.to_json()
+assert rows.endswith('"rows":[[90,0.31,1200],[95,0.28,3400],[100,0.26,8800]]}')
+
+objects = chain.to_json("object")
+assert objects.endswith('{"strike":100,"iv":0.26,"oi":8800}]}')
+
+columns = chain.to_columns_json()
+assert columns.endswith('"columns":{"strike":[90,95,100],"iv":[0.31,0.28,0.26],"oi":[1200,3400,8800]}}')
+
+# Every door out reads back in.
+assert pond.ValueSeries.from_json(rows).to_json() == rows
+assert pond.ValueSeries.from_json(objects).to_json() == rows
+assert pond.ValueSeries.from_columns_json(columns).to_json() == rows
+
+table = chain.to_pyarrow()  # also to_polars(), to_pandas()
+assert table.num_rows == 3
+```
+
+For rows in Python, take a frame (`to_polars()`, `to_pandas()`), or read the axis with `axis()` and each column with `column(name)`.
+
+</TabItem>
+</Tabs>
+
+| You want                                    | Door                       | Cost                                        |
+| ------------------------------------------- | -------------------------- | ------------------------------------------- |
+| To read rows in JS                          | `toRows()` / `toObjects()` | One object per row                          |
+| To send rows over the wire                  | `toJSON()`                 | One object per row; `JSON.stringify`-safe   |
+| To send a columnar payload over the wire    | `toColumns()`              | One array per **column** — no per-row alloc |
+| To hand the data to another columnar engine | `toArrow()`                | A buffer handoff — no per-row work at all   |
+
+**Rows vs columns on the wire.** `toJSON` and `toColumns` carry the same data
+in the same envelope shape (`{ name, schema, … }`); they differ only in the
+transpose. Prefer `toColumns` when the consumer is itself column-oriented, or
+when the payload is dense enough that C arrays beat N×C-element rows on size
+and parse time — measured at 100k rows × 7 columns, the columnar export
+allocates 7 arrays where the row exports mint 100 000 objects.
+
+**Gaps.** `toRows` / `toObjects` spell a gap `undefined` (the JS reading
+shape); `toJSON` and `toColumns` spell it `null` (the wire shape — `NaN` isn't
+JSON, and a `Float64Array` doesn't stringify as an array).
+
+**Round trips are typed, not just documented.**
+`ValueSeries.fromColumns(chain.toColumns())` and
+`ValueSeries.fromJSON(chain.toJSON())` compile with no cast — that
+assignability _is_ the contract, for the `number` / `string` columns the ingest
+engine carries (which is every series built through a direct door).
+
+:::note[The one column kind that doesn't come back]
+A `boolean` or array-kind column can only reach a `ValueSeries` by `byValue`
+projection — the direct doors take `number` and `string`. It **exports** on
+every door, but no door takes it back, and the two legs report that
+differently: `fromColumns` refuses the payload **at compile time** (the
+columnar return type isn't assignable to the ingest type), while `toJSON`
+types its `boolean` cells honestly, so `fromJSON` accepts the shape and
+**throws at ingest**, naming the column and its kind. Drop the column before
+projecting (`series.select(…).byValue(axis)`) if you need the round trip.
+:::
+
+### `toArrow()` — the zero-copy handoff
+
+`toArrow` hands back the buffers pond is already holding, in Arrow's memory
+layout, with no copy — the same `{ length, fields }` shape `TimeSeries.toArrow`
+returns (the exporter is shared; a `'value'` axis simply exports as a plain
+`float64` field where a time key would come out `timestamp`). pond takes no
+dependency on `apache-arrow`, so the caller assembles the `Table`. Pass each
+field's `nullable` to Arrow's `Field` so required columns stay required on the
+way back in (a plain `new Table({ iv: vec })` marks every field nullable):
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import {
+  Float64,
+  makeData,
+  makeVector,
+  RecordBatch,
+  Schema,
+  Table,
+} from 'apache-arrow';
+
+const { fields } = chain.toArrow();
+const vectors = Object.fromEntries(
+  fields.map((f) => {
+    if (f.type !== 'float64') throw new Error(f.type); // number columns only here
+    const data = makeData({
+      type: new Float64(),
+      length: f.length,
+      nullCount: f.nullCount,
+      nullBitmap: f.nullBitmap,
+      data: f.values, // narrowed to Float64Array by the guard above
+    });
+    return [f.name, makeVector(data)];
+  }),
+);
+
+// `new Table({ ...vectors })` marks every field nullable, so fromArrow would
+// read every column back optional. Rebuild its schema with toArrow's own
+// `nullable` flags (false for the key and required columns, true for optional
+// ones), so fromArrow (or pond-rs) reads back the same `required` flags.
+const loose = new Table(vectors);
+const schema = new Schema(
+  loose.schema.fields.map((x, i) => x.clone({ nullable: fields[i]!.nullable })),
+);
+const table = new Table(
+  schema,
+  loose.batches.map((b) => new RecordBatch(schema, b.data)),
+);
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::arrow_array::{Array, Float64Array};
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "chain",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![Column::optional("iv", vec![Some(0.31), None, Some(0.26)])],
+    )?;
+
+    let batch = chain.to_arrow()?;
+    // The axis is the first field, a plain Float64.
+    assert_eq!(batch.schema().field(0).name(), "strike");
+
+    let iv = batch
+        .column_by_name("iv")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert_eq!(iv.value(0), 0.31);
+    assert!(iv.is_null(1)); // a gap is an Arrow null
+    Ok(())
+}
+```
+
+`to_arrow` returns an Arrow `RecordBatch`, so there is nothing to assemble.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import polars as pl
+import pond
+
+chain = pond.ValueSeries.from_arrow(
+    pl.DataFrame({"strike": [90.0, 95.0, 100.0], "iv": [0.31, None, 0.26]}), "strike", name="chain"
+)
+
+table = chain.to_pyarrow()
+# The axis is the first field, a plain float64.
+assert table.schema.field(0).name == "strike"
+
+iv = table["iv"]
+assert iv[0].as_py() == 0.31
+assert iv[1].as_py() is None  # a gap is an Arrow null
+```
+
+`to_pyarrow()` returns a pyarrow `Table`, so there is nothing to assemble.
+
+</TabItem>
+</Tabs>
+
+From there another engine — polars, DuckDB, arrow-js — is reachable without a
+re-ingest. **The returned buffers are pond's live storage, not copies**: the
+same read-only contract `column(name)` and `axisValues()` already carry. Copy
+first if the consumer mutates in place.
+
+## When _not_ to reach for it
+
+A `ValueSeries` keeps the full-resolution channel and lets you read/plot it
+against a value. When you instead want to **collapse** the axis into per-bin
+rollups — per-kilometre splits, a histogram, time-in-zone — use
+[`byColumn` / `rollingByColumn`](/docs/series/aggregation#bycolumn), which project
+_out_ of the algebra to plain bin records rather than returning a series. The
+[Value axis concept](/docs/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+walks the split in full.
+
+## Where it fits
+
+- **Under the hood** — `ValueSeries` wraps the columnar store directly. A value
+  row is an `(axis, …values)` tuple, not a `Time`-keyed `Event`, so it skips the
+  time-only event layer entirely.
+- **Plotting** — `@pond-ts/charts` accepts a `ValueSeries` on a linear x scale
+  with a synced value cursor. See the
+  [value axis chart reference](../charts/axes/value-axis).
+- **Minimal by design** — the type carries only the operators a value axis
+  actually needs; the algebra grows as a second value-axis consumer earns it.
+  The **ingest / export surface is the exception**: it is deliberately at full
+  parity with `TimeSeries`, because a door you can't come back through isn't a
+  smaller API, it's a trap.

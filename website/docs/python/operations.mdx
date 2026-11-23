@@ -1,0 +1,151 @@
+---
+id: operations
+title: Operations in Python
+sidebar_position: 3
+description: 'Reducers, rolling windows, per-host work with partition_by, calendar buckets in a time zone, and the other operations on a pond TimeSeries in Python, with row rules as expressions or functions.'
+---
+
+# Operations in Python
+
+The operations Python users reach for most, with Python's spelling. Each one returns a new series; nothing changes in place. The shared pages under [Working with series](/docs/series/creating) explain every operation in depth, with a Python tab beside TypeScript and Rust.
+
+## Reducers
+
+Wherever values are summed up (`rolling`, `aggregate`, `reduce`, the live
+nodes), you name each output column and say where it comes from:
+
+```python
+{"cpu_avg": ("cpu", "avg"), "cpu_p95": ("cpu", "p95"), "n": ("cpu", "count")}
+{"cpu": "avg"}             # reduce a column into a column of the same name
+```
+
+One entry gives one output column, so for two reducers of one column
+write two entries (`{"cpu_max": ("cpu", "max"), "n": ("cpu", "count")}`);
+a list of reducers is refused.
+
+Reducers: `count`, `sum`, `avg` (or `mean`), `min`, `max`, `first`, `last`,
+`median`, `stdev`, `difference` (max minus min), `keep` (the value when
+every row has the same one, else a gap: handy for a `host` column),
+percentiles `p50`, `p95`, `p99` (any number), and three that give a list
+per row: `unique`, `samples` (every value) and `top3` (the three most
+frequent values; any number). A bucket with no values has `count` and
+`sum` 0 and a gap for the others. The
+[reducer reference](../series/reducer-reference.mdx) has the
+details.
+
+## Rolling windows
+
+```python
+s.rolling("5m", {"avg": ("cpu", "avg")})            # trailing 5 minutes
+s.rolling(10, {"avg": ("cpu", "avg")})              # the last 10 rows
+s.rolling("5m", {"avg": ("cpu", "avg")}, append=True)  # keep the source columns
+s.rolling("5m", {"avg": ("cpu", "avg")}, alignment="centered", min_samples=3)
+```
+
+- The window is a duration (`"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"1d"`, or
+  a `timedelta` / `pd.Timedelta`) or an int, which counts rows. pandas
+  spellings such as `"15min"` or `"1D"` are refused; write `"15m"`, `"1d"`.
+- A trailing window of 15 minutes at time t holds the rows with a time
+  after t − 15m, up to and including t: a row exactly 15 minutes earlier
+  is not in it (pandas' `rolling("15min")` draws the same line).
+- One output row per input row. **The output has only the reducer columns
+  unless `append=True`**, which keeps the source columns beside them.
+- `alignment` is `"trailing"` (default: the window ends at the row),
+  `"leading"` or `"centered"`. `min_samples=n` gives a gap until the window
+  holds n values.
+- `over=` a grid (`"1m"` or a `Sequence`) gives one row per grid point
+  instead of one per input row.
+
+## Per host, per symbol: `partition_by`
+
+`partition_by(column)` (or a list of columns) splits the series by value.
+Every operation then runs per group, on several cores, and `collect()`
+puts the groups back into one series in time order. **The partition column
+stays in the output**, so you can tell the groups apart.
+
+```python
+per_host = s.partition_by("host")
+per_host.rolling("5m", {"avg": ("cpu", "avg")}).collect().to_polars()
+per_host.fill("hold").diff("cpu").collect()       # steps chain per group
+per_host.aggregate("1h", {"peak": ("cpu", "max")}).collect()
+
+per_host.keys()                     # ["a", "b"]
+groups = per_host.to_dict()         # {"a": TimeSeries, "b": TimeSeries}
+s.group_by("host")                  # the same dict, in one call
+```
+
+Without `partition_by`, a rolling window or a `diff` on a series that mixes
+hosts mixes their rows, which is rarely what you want.
+
+## Calendar buckets
+
+`aggregate(grid, reducers)` gives one row per bucket of a grid. A grid is a
+fixed step (`"5m"`, `"1h"`, `pond.Sequence.every("15m")`) or calendar
+units in a time zone:
+
+```python
+days = pond.Sequence.calendar("day", "America/New_York")
+weeks = pond.Sequence.calendar("week", "Europe/London", week_starts_on=1)  # Monday
+months = pond.Sequence.calendar("month", "Asia/Tokyo")
+
+daily = s.aggregate(days, {"avg": ("cpu", "avg"), "n": ("cpu", "count")})
+out = daily.as_time().to_polars().with_columns(
+    pl.col("time").dt.convert_time_zone("America/New_York"),  # local midnight
+    pl.col("n").cast(pl.Int64),
+)
+```
+
+- Units: `day`, `week`, `month`, `quarter`, `year`; the zone is any IANA
+  name (`"UTC"` if left out). For minutes and hours use a fixed step
+  (`"15m"`, `"1h"`): they are the same in every zone with whole-hour
+  offsets.
+- A calendar day is midnight to midnight in that zone, so around a clock
+  change a day is 23 or 25 hours long. Fixed steps (`"1d"`) are always
+  24 hours of UTC; use `calendar("day", zone)` for days.
+- Buckets run from the one holding the first row to the one holding the
+  last; a bucket with no rows in between still gets a row (`count` and
+  `sum` 0, other reducers a gap).
+- A time zone only changes where buckets start; output times are still
+  UTC (see [Frames out](./frames.mdx#frames-out)).
+
+## Other operations
+
+The full list is in the type hints that ship with the package. Each
+operation has its own page under [Working with series](/docs/series/creating),
+with a Python tab on the examples. The most used:
+
+```python
+s.diff("cpu")                       # change from the previous row; also rate, pct_change
+s.shift("cpu", 1)
+s.fill("hold")                      # or "linear", "zero", a value, {"cpu": "hold"}
+s.fill("hold", max_gap="5m")        # only across short gaps
+s.align("1m", method="linear")      # a value on every minute
+s.cumulative({"cpu": "sum"})
+s.smooth("cpu", "ema", alpha=0.2)
+s.baseline("cpu", "10m", 2.0)       # adds avg, sd, upper, lower
+s.outliers("cpu", "10m", 3.0)       # only the outlying rows
+s.within("2026-03-08T00:00:00Z", "2026-03-09T00:00:00Z")
+s.tail("1h")                        # the last hour
+s.select("cpu"), s.rename({"cpu": "load"}), s.slice(0, 100)
+a.join(b)                           # columns side by side, matched on time
+pond.TimeSeries.concat([a, b])   # rows stacked
+```
+
+### Row rules: expressions or Python functions
+
+Write a per-row rule with `col`, `lit` and `when`, so it runs inside
+pond-rs with no Python call per row:
+
+```python
+from pond import col, lit, when
+
+s.filter((col("cpu") > 80) & (col("host") == "a"))
+s.with_column("pct", col("used") / col("total") * 100)
+s.with_column("level", when(col("cpu") > 80, lit("high"), lit("ok")))
+```
+
+Combine with `&`, `|` and `~`, not `and`, `or`, `not`. A Python function
+also works (`s.filter(lambda row: row["cpu"] > 80)`, `s.map("cpu", f)`,
+`s.scan(...)`), and an exception in it comes out as itself, but it is
+called once per row: on a million rows a filter takes about 10 ms as an
+expression and about 360 ms as a function.

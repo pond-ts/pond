@@ -123,7 +123,7 @@ pip install pond-timeseries                           # Python
   rest: it has no TypeScript types yet, you release each series yourself with
   `free()`, it needs Node 20.19 or newer, and the charts do not take its
   series directly. Pass results to pond-ts as JSON or Arrow
-  ([details](https://pond-ts.org/docs/pond-rs/javascript)).
+  ([details](https://pond-ts.org/docs/javascript/)).
 
 ## Quick start
 
@@ -312,7 +312,7 @@ of React and pond-ts.</sub>
 - **Live:** about 350,000 events a second pushed one at a time into a series
   that keeps a rolling average and one-minute buckets, and about a million a
   second in batches of 1,000
-  ([one thread, 4-core Xeon, 31 October 2026](website/docs/pond-rs/performance.mdx#from-javascript)).
+  ([one thread, 4-core Xeon, 31 October 2026](website/docs/rust/performance.mdx#from-javascript)).
 
 ### pond-rs
 
@@ -333,7 +333,7 @@ of React and pond-ts.</sub>
   one thread: 3–11× faster than pond-ts on the financial studies and 1.4–5.5×
   on live series. Write filters as expressions (`col('v').gt(0)`); a filter
   written as a JavaScript function is about 18× slower than in pond-ts
-  ([table](website/docs/pond-rs/performance.mdx#from-javascript)).
+  ([table](website/docs/rust/performance.mdx#from-javascript)).
 
 The figures are drawn by
 [`docs/readme/perf/make-charts.mjs`](docs/readme/perf/make-charts.mjs) from
@@ -349,15 +349,15 @@ The full guide is at **<https://pond-ts.org/>**.
 
 - **[Start here](https://pond-ts.org/docs/)**: a walkthrough of batch, live
   and React examples.
-- **[Concepts](https://pond-ts.org/docs/pond-ts/concepts)**: time keys,
+- **[Concepts](https://pond-ts.org/docs/concepts/)**: time keys,
   sequences, windows, partitions, triggers and late data.
-- **[Coming from pondjs](https://pond-ts.org/docs/pond-ts/mental-model#coming-from-pondjs)**:
+- **[Coming from pondjs](https://pond-ts.org/docs/concepts/mental-model#coming-from-pondjs)**:
   what each pondjs idea became.
-- **[Batch operations](https://pond-ts.org/docs/pond-ts/transforms/queries)**
-  and **[live series](https://pond-ts.org/docs/pond-ts/live/live-series)**.
+- **[Batch operations](https://pond-ts.org/docs/series/queries)**
+  and **[live series](https://pond-ts.org/docs/live/live-series)**.
 - **[Charts](https://pond-ts.org/docs/charts)** and the
   **[chart gallery](https://pond-ts.org/docs/charts/gallery)**.
-- **[pond-rs](https://pond-ts.org/docs/pond-rs)**: Rust, WebAssembly and
+- **[pond-rs](https://pond-ts.org/docs/rust/)**: Rust, WebAssembly and
   Python.
 - **[How-to guides](https://pond-ts.org/docs/how-to-guides)**: building a
   dashboard, cleaning messy data, drawing very large series.

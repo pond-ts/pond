@@ -1,0 +1,78 @@
+---
+id: languages
+title: Choose your language
+sidebar_position: 2
+description: 'pond in TypeScript, Rust, Python, or JavaScript through WebAssembly. What each one installs, what each one has, and where each one starts.'
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Choose your language
+
+pond is one library in three languages. The core (series, windows,
+buckets, live series) and the 109 finance studies exist in every one of
+them and **give the same answers, to the bit**: each language runs the
+same shared test cases and compares every value.
+
+| Language                                               | Install                       | Start here                                            |
+| ------------------------------------------------------ | ----------------------------- | ----------------------------------------------------- |
+| **TypeScript**, in the browser and on Node             | `npm install pond-ts`         | [pond for TypeScript](./typescript/index.mdx)         |
+| **Rust**, native, on several cores                     | `cargo add pond-rs`           | [pond for Rust](./rust/index.mdx)                     |
+| **Python**, with polars, pandas and pyarrow frames     | `pip install pond-timeseries` | [pond for Python](./python/index.mdx)                 |
+| **JavaScript** with the Rust core, through WebAssembly | `npm install @pond-ts/wasm`   | [JavaScript with WebAssembly](./javascript/index.mdx) |
+
+Pick a language on any tabbed example and every other tabbed example on the
+site follows it.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```sh
+npm install pond-ts
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```toml
+# Cargo.toml
+[dependencies]
+pond-rs = "0.1"
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```sh
+pip install pond-timeseries          # then: import pond
+```
+
+</TabItem>
+</Tabs>
+
+## What each language has
+
+| Area                                                      | TypeScript                      | Rust                                    | Python                                 | JavaScript (WebAssembly) |
+| --------------------------------------------------------- | ------------------------------- | --------------------------------------- | -------------------------------------- | ------------------------ |
+| [Series and operations](./series/creating.mdx)            | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Live series](./live/live-series.mdx)                     | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Finance studies, trading calendars](./finance/index.mdx) | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Processing graphs](./process/index.mdx)                  | Yes                             | In the repository, not yet on crates.io | No                                     | No                       |
+| [Charts](./charts/index.mdx)                              | Yes                             | No                                      | No                                     | Through `toColumns()`    |
+| [React hooks](./react/index.mdx)                          | Yes                             | No                                      | No                                     | No                       |
+| [Fitness files](./fit/index.mdx) (FIT, TCX)               | Yes                             | No                                      | No                                     | No                       |
+| API reference                                             | [In this site](./api/index.mdx) | [docs.rs](https://docs.rs/pond-rs)      | [In this site](./python/api/index.mdx) | Same as TypeScript       |
+
+Where a language has no charts, its series hand their data to the tools
+people already use there: `to_polars()` or `to_pandas()` in Python, Arrow
+files or `to_points_json()` in Rust.
+
+## Why the answers match
+
+The TypeScript library and the Rust core each run pond's shared test
+cases, thousands of them, and compare every number bit for bit, including
+the cases that should be errors. The Python package and the WebAssembly
+build are the Rust core, so they inherit the same checks and run the test
+cases again through their own interfaces. A result does not depend on
+which language computed it, or on how many cores it used.

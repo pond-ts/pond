@@ -1,0 +1,469 @@
+---
+sidebar_position: 13
+---
+
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreAlign from '@site/src/examples/core-align';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Alignment
+
+`align(seq, opts)` resamples a `TimeSeries` onto a
+[`Sequence`](/docs/concepts/sequences) grid, producing
+one `Interval`-keyed event per grid point. The value at each grid
+point is computed by sampling the source — either holding the most
+recent source value or interpolating between the two nearest.
+
+This is the right operator when the question is **"what was the
+value at this grid point?"** — chart sampling, fixed-cadence
+exports, regularising irregular telemetry. For "what's the rollup
+of every event inside this bucket?", reach for
+[Aggregation](./aggregation) instead.
+
+## Mental model
+
+<ConceptViz
+  height={230}
+  caption={
+    <>
+      The grid splits time into <strong>steps</strong> — the regions between the
+      orange lines. <code>sample</code> picks{' '}
+      <strong>where in each step</strong> to read: its <code>begin</code>,{' '}
+      <code>center</code>, or <code>end</code>. At that read-line,{' '}
+      <code>hold</code> takes the previous sample (to its <strong>left</strong>
+      ); <code>linear</code> interpolates the two samples{' '}
+      <strong>around</strong> it. The teal dots are the real <code>align</code>{' '}
+      output there; the faint lines are the construction. (See{' '}
+      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+    </>
+  }
+>
+  <CoreAlign />
+</ConceptViz>
+
+For each grid point, `align` picks a single source value through
+two settings: **`sample`** (where inside the grid step to read) and
+**`method`** (how to derive the value at that point).
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { Sequence, TimeSeries } from 'pond-ts';
+
+const cpu = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ] as const,
+  rows: [
+    ['2025-01-01T00:00:00Z', 0.31],
+    ['2025-01-01T00:00:30Z', 0.44],
+    ['2025-01-01T00:01:30Z', 0.48],
+  ],
+});
+
+const aligned = cpu.align(Sequence.every('1m'), {
+  method: 'hold',
+  sample: 'begin',
+});
+// one row per minute on the source's range, value held from
+// the most recent source ≤ the grid point.
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Align, AlignMethod, At, Column, Sequence, TimeSeries, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let times = [
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:00:30Z",
+        "2025-01-01T00:01:30Z",
+    ]
+    .iter()
+    .map(|t| parse_time(t))
+    .collect::<Result<Vec<_>, _>>()?;
+    let cpu = TimeSeries::new(
+        "cpu",
+        times,
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48])],
+    )?;
+
+    let aligned = cpu.align(
+        &Sequence::every("1m")?,
+        Align {
+            method: AlignMethod::Hold,
+            sample: At::Begin,
+            range: None, // the series' own range
+        },
+    )?;
+    // One row per minute, holding the latest reading at or before it.
+    let got: Vec<_> = aligned.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.31), Some(0.44)]);
+
+    // Linear: a straight line between the readings either side.
+    let linear = Align {
+        method: AlignMethod::Linear,
+        ..Align::default()
+    };
+    let lined = cpu.align(&Sequence::every("1m")?, linear)?;
+    let got: Vec<_> = lined.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.31), Some(0.45999999999999996)]);
+    Ok(())
+}
+```
+
+`Align`'s `Default` is pond-ts's default (hold, sampled at the start, over the series' own range), so set only what you change: `Align { method: AlignMethod::Linear, ..Align::default() }`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({
+    "time": ["2025-01-01T00:00:00Z", "2025-01-01T00:00:30Z", "2025-01-01T00:01:30Z"],
+    "cpu": [0.31, 0.44, 0.48],
+})
+
+# One row per minute, holding the latest reading at or before it.
+aligned = cpu.align("1m", method="hold", sample="begin")  # range: the series' own
+assert aligned.column("cpu") == [0.31, 0.44]
+
+# Linear: a straight line between the readings either side.
+lined = cpu.align("1m", method="linear")
+assert lined.column("cpu") == [0.31, 0.45999999999999996]
+```
+
+The keywords default to pond-ts's defaults (hold, sampled at the start, over the series' own range), so pass only what you change.
+
+</TabItem>
+</Tabs>
+
+## Parameters
+
+| Option   | Type                           | Default       | Effect                                      |
+| -------- | ------------------------------ | ------------- | ------------------------------------------- |
+| `method` | `'hold' \| 'linear'`           | `'hold'`      | How to derive the value at the sample point |
+| `sample` | `'begin' \| 'center' \| 'end'` | `'begin'`     | Where inside each grid step to read         |
+| `range`  | `TimeRange`                    | source extent | Pin the output range explicitly             |
+
+### `method`
+
+- **`'hold'`** — carry the most recent source value at or before the
+  sample point. Output is `undefined` for grid points before the
+  first source event. Works on any column kind.
+- **`'linear'`** — interpolate between the two source values
+  surrounding the sample point. Numeric columns only; throws on
+  `TimeRange`- or `Interval`-keyed sources, falls back to `'hold'`
+  for non-numeric columns.
+
+### `sample`
+
+- **`'begin'`** — read at the grid step's start (the interval's
+  inclusive begin boundary).
+- **`'center'`** — read at the grid step's midpoint.
+- **`'end'`** — read at the grid step's exclusive end (= the start
+  of the next step).
+
+The sample point determines which source events are "before" or
+"after" the grid point — `hold` reads the most recent source ≤ the
+sample point; `linear` interpolates across it.
+
+### `range`
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+cpu.align(Sequence.every('5s'), {
+  method: 'hold',
+  sample: 'begin',
+  range: new TimeRange({ start: 0, end: 60_000 }),
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Align, Column, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![10_000, 22_000],
+        vec![Column::required("cpu", vec![1.0, 2.0])],
+    )?;
+
+    // Every 5 s from 0 to 60 s, both ends included.
+    let padded = cpu.align(
+        &Sequence::every("5s")?,
+        Align {
+            range: Some((0, 60_000)),
+            ..Align::default()
+        },
+    )?;
+    assert_eq!(padded.len(), 13);
+    let cpu = padded.column("cpu")?.numbers()?;
+    assert_eq!(cpu.get(0), None); // before the first reading
+    assert_eq!(cpu.get(2), Some(1.0)); // 10 s
+    assert_eq!(cpu.get(12), Some(2.0)); // 60 s, held from 22 s
+    Ok(())
+}
+```
+
+`range` is a pair of epoch milliseconds, `Some((begin, end))`, rather than a `TimeRange`. A grid point counts when its sample point falls in it, both ends included.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [10_000, 22_000], "cpu": [1.0, 2.0]})
+
+# Every 5 s from 0 to 60 s, both ends included.
+padded = cpu.align("5s", range=(0, 60_000))
+assert len(padded) == 13
+values = padded.column("cpu")
+assert values[0] is None  # before the first reading
+assert values[2] == 1.0  # 10 s
+assert values[12] == 2.0  # 60 s, held from 22 s
+```
+
+`range` is a `(begin, end)` pair of times (epoch milliseconds, datetimes or text). A grid point counts when its sample point falls in it, both ends included.
+
+</TabItem>
+</Tabs>
+
+Pins the output range explicitly. Default is the source's own
+extent. Use `range` when you want a uniform grid over a specific
+window even if the source doesn't fill it — the output schema is
+the same, just padded with `undefined`s outside the source range
+(or the most recent value, depending on `method`).
+
+## Output schema
+
+The output is an `Interval`-keyed `TimeSeries<S>` — same column
+names and types as the source. Each row is one grid point.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+aligned.schema[0].kind; // 'interval'
+aligned.at(0)?.key(); // Interval — start = grid begin, end = grid end
+aligned.at(0)?.get('cpu'); // number | undefined
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Align, Column, Label, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 30_000, 90_000],
+        vec![Column::required("cpu", vec![0.31, 0.44, 0.48])],
+    )?;
+    let aligned = cpu.align(&Sequence::every("1m")?, Align::default())?;
+
+    assert_eq!(aligned.key_name(), "interval");
+    let key = aligned.at(0).unwrap().key(); // start = grid begin, end = grid end
+    assert_eq!((key.begin(), key.end()), (0, 60_000));
+    assert_eq!(key.label(), Some(&Label::from(0.0))); // labelled by its start
+    assert_eq!(aligned.at(0).unwrap().number("cpu")?, Some(0.31));
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 30_000, 90_000], "cpu": [0.31, 0.44, 0.48]})
+aligned = cpu.align("1m")
+
+assert aligned.key_name == "interval"
+row = aligned[0]
+assert row.key == (0.0, 0, 60_000)  # (label, start, end): labelled by its start
+assert (row.begin, row.end) == (0, 60_000)
+assert row["cpu"] == 0.31
+```
+
+</TabItem>
+</Tabs>
+
+The grid is half-open `[begin, end)` — events at exactly the
+boundary belong to the _later_ grid step.
+
+## Time-keyed output for chart libraries
+
+`align` returns interval-keyed events (consistent with
+`aggregate`). Most chart libraries want point-keyed output —
+chain `.asTime({ at })` to convert:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const points = cpu
+  .align(Sequence.every('5m'), { method: 'hold', sample: 'end' })
+  .asTime({ at: 'end' });
+// points.at(0)?.key() is now a Time at the interval's end.
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Align, At, Column, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 4 * min, 7 * min, 12 * min, 16 * min],
+        vec![Column::required("cpu", vec![0.1, 0.2, 0.3, 0.4, 0.5])],
+    )?;
+
+    let points = cpu
+        .align(
+            &Sequence::every("5m")?,
+            Align {
+                sample: At::End,
+                ..Align::default()
+            },
+        )?
+        .as_time(At::End)?;
+    assert_eq!(points.key_name(), "time");
+    assert_eq!(points.key().begin(), &[5 * min, 10 * min, 15 * min]);
+    let got: Vec<_> = points.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.2), Some(0.3), Some(0.4)]);
+    Ok(())
+}
+```
+
+`as_time` takes `At::Begin`, `At::Center` or `At::End`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+minute = 60_000
+cpu = pond.TimeSeries({
+    "time": [0, 4 * minute, 7 * minute, 12 * minute, 16 * minute],
+    "cpu": [0.1, 0.2, 0.3, 0.4, 0.5],
+})
+
+points = cpu.align("5m", sample="end").as_time("end")
+assert points.key_name == "time"
+assert [row.key for row in points] == [5 * minute, 10 * minute, 15 * minute]
+assert points.column("cpu") == [0.2, 0.3, 0.4]
+```
+
+`as_time` takes `"begin"`, `"center"` or `"end"`.
+
+</TabItem>
+</Tabs>
+
+`asTime`'s `at` option (`'begin' | 'center' | 'end'`) picks where
+on each interval the resulting `Time` lands.
+
+## Compared to `aggregate`
+
+Same inputs (a sequence and an optional range; `range` goes in `align`'s
+options object but is `aggregate`'s third argument), same output key shape
+(`Interval`-keyed grid), different reduction.
+
+| Question                                           | Operator                         |
+| -------------------------------------------------- | -------------------------------- |
+| "What was the value at this grid point?"           | `align(seq, { method, sample })` |
+| "What's the rollup of every event in this bucket?" | `aggregate(seq, mapping)`        |
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+// align — one row per minute, value sampled from the source.
+cpu.align(Sequence.every('1m'), { method: 'hold' });
+
+// aggregate — one row per minute, value reduced from sources inside.
+cpu.aggregate(Sequence.every('1m'), { cpu: 'avg' });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Align, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 30_000, 90_000],
+        vec![Column::required("cpu", vec![0.2, 0.4, 0.6])],
+    )?;
+    let minute = Sequence::every("1m")?;
+
+    // align: one row per minute, value sampled at each minute's start.
+    let held = cpu.align(&minute, Align::default())?;
+    let got: Vec<_> = held.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.2), Some(0.4)]);
+
+    // aggregate: one row per minute, value reduced from the rows inside.
+    let avg = cpu.aggregate(&minute, &[Agg::of("cpu", Reducer::Avg)])?;
+    let got: Vec<_> = avg.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.30000000000000004), Some(0.6)]);
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+cpu = pond.TimeSeries({"time": [0, 30_000, 90_000], "cpu": [0.2, 0.4, 0.6]})
+
+# align: one row per minute, value sampled at each minute's start.
+held = cpu.align("1m")
+assert held.column("cpu") == [0.2, 0.4]
+
+# aggregate: one row per minute, value reduced from the rows inside.
+avg = cpu.aggregate("1m", {"cpu": "avg"})
+assert avg.column("cpu") == [0.30000000000000004, 0.6]
+```
+
+</TabItem>
+</Tabs>
+
+For a chart at one-minute resolution where every grid point should
+have a value, `align` is right. For "average CPU per minute,"
+`aggregate` is right. The two are complementary.
+
+See [Aggregation](./aggregation) for the bucketing operator.
+
+## See also
+
+- [Aggregation](./aggregation) — bucket-rollup counterpart
+- [Sequences](/docs/concepts/sequences) — grid
+  definitions
+- [Cleaning data](./cleaning) — handle gaps left by `hold` or
+  `linear` (e.g. early `undefined`s before the first source)
+- [Reducer reference](./reducer-reference) — empty-bucket and
+  rolling-window behaviour for every reducer (relevant for the
+  `aggregate` counterpart)

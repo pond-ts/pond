@@ -249,7 +249,7 @@ timeZone })` and `<ChartContainer timeZone={timeZone}>` — and a bucket
 - <https://pond-ts.org/llms.txt> — every docs page with a one-line
   description; `https://pond-ts.org/llms-<area>.txt` for a single-fetch dump
   of one area (`pond-ts`, `charts`, `financial`, …).
-- <https://pond-ts.org/docs/pond-ts/mental-model> — one picture, and the
+- <https://pond-ts.org/docs/concepts/mental-model> — one picture, and the
   pandas / pondjs translation tables.
 - <https://pond-ts.org/docs/how-to-guides> — end-to-end builds with the
   friction already ironed out (dashboard, messy CSV ingest, histograms,

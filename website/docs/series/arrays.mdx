@@ -1,0 +1,460 @@
+---
+sidebar_position: 17
+---
+
+# Array Columns
+
+Most time-series columns hold a scalar per event: one temperature reading,
+one latency number. **Array columns** hold a short list per event — a tag
+list, a set of hosts that reported, a small sample buffer. pond-ts treats
+them as a first-class kind (`kind: 'array'`) with dedicated operators, but
+keeps them _inert_ with respect to numerical math — `diff`, `rate`,
+`cumulative`, and `rolling`-over-numbers all skip array columns.
+
+The [Creating series page](/docs/series/creating) introduces
+`kind: 'array'`. This page is the reference for the operators that
+actually work with them. For a full worked scenario composing every
+array operator, see
+[Error-Rate Dashboard](/docs/recipes/error-rate-dashboard).
+
+Coming from pandas: pandas has `object` columns that happen to hold
+lists, but no type-enforced "array of scalars" kind and no dedicated
+set-membership operators (`arrayContains` / `arrayContainsAll` /
+`arrayContainsAny` / `arrayExplode` / `arrayAggregate`).
+
+## When you'd want one
+
+- **Tag lists.** Each request carries a list of tags (`['slow', '5xx']`)
+  and you want to filter / group by tag membership.
+- **Reducer outputs.** `unique` collapses "every host we saw this minute"
+  into a list; `top(3)` gives "three most common paths."
+- **Sample buffers.** A per-event `samples: [10, 20, 30]` array you want
+  to average or expose the p95 of.
+
+You do _not_ want an array column for a high-cardinality set or a big
+blob of data — each array is validated and frozen at ingest, and every
+element pays per-element validation cost.
+
+## Declaring an array column
+
+Same shape as any other column, with `kind: 'array'`. Elements must be
+scalars (finite numbers, strings, or booleans).
+
+```ts
+import { TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'tags', kind: 'array' },
+] as const;
+
+const series = new TimeSeries({
+  name: 'requests',
+  schema,
+  rows: [
+    [0, ['web', 'east']],
+    [1000, ['web', 'west']],
+    [2000, []], // empty arrays are fine
+    [3000, ['web', 'db', 'east']],
+  ],
+});
+
+series.first()!.get('tags'); // => ['web', 'east'] (readonly, frozen)
+```
+
+Mixed element kinds (`['a', 1, true]`) are permitted — validation only
+rejects nested arrays, objects, `NaN`, and `Infinity`.
+
+## Getting array data
+
+Three paths:
+
+1. **Direct** — put arrays in the `rows` you construct with.
+2. **`unique` reducer** — turns distinct values across a bucket into
+   one array.
+3. **`top(n)` reducer** — turns top-N-by-frequency into one array.
+
+```ts
+// From a scalar "host" column to an array "host" column via unique:
+const perMinute = events.aggregate(Sequence.every('1m'), {
+  host: 'unique', // outputs kind: 'array'
+});
+```
+
+Both reducers work in `reduce()`, `aggregate()`, and `rolling()`; see
+[Reducer Reference](/docs/series/reducer-reference) for the full treatment.
+
+## Filter operators
+
+All three return a series with the **same** schema; they only drop rows.
+Events whose array cell is `undefined` are dropped in every case.
+
+### `arrayContains(col, value)` — has this one
+
+```ts
+series.arrayContains('tags', 'web');
+// keeps rows whose tags array includes 'web'
+```
+
+Read as: `tags.includes(value)`.
+
+### `arrayContainsAll(col, values)` — has every one (AND)
+
+```ts
+series.arrayContainsAll('tags', ['web', 'east']);
+// keeps rows whose tags include BOTH 'web' AND 'east'
+```
+
+Read as: `values.every(v => tags.includes(v))`. An empty `values` list
+keeps every row with a defined array.
+
+### `arrayContainsAny(col, values)` — has at least one (OR)
+
+```ts
+series.arrayContainsAny('tags', ['5xx', 'timeout', 'retry']);
+// keeps rows tagged with any of those error types
+```
+
+Read as: `values.some(v => tags.includes(v))`. An empty `values` list
+drops every row.
+
+These are why the prefix matters: `TimeSeries` already has a temporal
+`contains(range)` for "does the overall series contain this time
+range?" The `array*` prefix keeps the two groups unambiguous.
+
+## Per-event reduction: `arrayAggregate`
+
+`arrayAggregate(col, reducer, options?)` feeds each event's array to a
+reducer as if it were a bucket. Every built-in reducer from the registry
+is accepted — the signature is identical to `aggregate()`, just
+pointed at a single cell instead of a time bucket.
+
+### Length
+
+```ts
+series.arrayAggregate('tags', 'count');
+// tags: ['web','east']  -> 2
+// tags: ['db']          -> 1
+// tags: []              -> 0
+```
+
+`count` produces a `number` column, replacing the array column in place.
+
+### Numeric reductions over a sample buffer
+
+```ts
+const samples = new TimeSeries({
+  name: 's',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'latency_samples', kind: 'array' },
+  ] as const,
+  rows: [
+    [0, [10, 20, 30]],
+    [1000, [15, 25, 35, 45]],
+  ],
+});
+
+samples.arrayAggregate('latency_samples', 'avg');
+// row 0: 20
+// row 1: 30
+
+samples.arrayAggregate('latency_samples', 'p95');
+// row 0: linear interp between 20 and 30 at rank 0.95*(3-1)=1.9 -> 29
+// row 1: 43.something
+
+samples.arrayAggregate('latency_samples', 'max');
+// row 0: 30, row 1: 45
+```
+
+All numeric reducers (`sum`, `avg`, `min`, `max`, `median`, `stdev`,
+`difference`, any `p${number}`) filter to numeric elements before
+running, so arrays with mixed types just ignore the non-numbers.
+
+### Dedupe within one array: `unique`
+
+```ts
+series.arrayAggregate('tags', 'unique');
+// tags: ['a','b','a','c'] -> ['a','b','c']
+// tags: ['a','a']         -> ['a']
+```
+
+Output is sorted by scalar order (numbers &lt; strings &lt; booleans).
+
+### Top elements within one array: `top(n)`
+
+```ts
+import { top } from 'pond-ts';
+
+series.arrayAggregate('tags', top(2));
+// tags: ['a','b','a','c'] -> ['a','b']  (a x2 wins; b and c tied, 'b' first)
+// tags: ['b','b','a','d'] -> ['b','a']
+```
+
+See [Reducer Reference](/docs/series/reducer-reference#topn--topnumber) for tie-break rules.
+
+### First / last element
+
+```ts
+series.arrayAggregate('samples', 'first', { kind: 'number' });
+// tags: [10, 20, 30] -> 10
+```
+
+`first`, `last`, and `keep` produce a scalar whose kind can't be
+inferred from the array alone (array columns don't carry an element
+kind). The output kind defaults to `'string'`; pass `{ kind }` to
+override when the elements aren't strings.
+
+### Custom reducer
+
+Any `(values) => result` function works. The input is the single array
+(typed as `ReadonlyArray<ScalarValue | undefined>`).
+
+```ts
+series.arrayAggregate('tags', (values) =>
+  (values as readonly (string | undefined)[])
+    .filter((v): v is string => typeof v === 'string')
+    .join(','),
+);
+// tags: ['web','east'] -> 'web,east'
+```
+
+Output kind defaults to `'string'` for custom reducers; override with
+`{ kind }` if your function returns a number or boolean.
+
+### In-place vs. append: the `as` option
+
+Without `as`, the source array column is **replaced** in place — its
+name is preserved but its kind changes.
+
+```ts
+const counted = series.arrayAggregate('tags', 'count');
+// schema: time, tags (number)  <- was array
+```
+
+With `{ as: 'name' }`, a **new column** is appended and the source array
+is kept intact.
+
+```ts
+const counted = series.arrayAggregate('tags', 'count', { as: 'tagCount' });
+// schema: time, tags (array), tagCount (number)
+```
+
+This is the right choice when you want a derived scalar for alerting
+while still displaying the raw tag list in tooltips.
+
+## Flattening: `arrayExplode`
+
+`arrayExplode(col, options?)` fans each event out into one event per
+array element. Events with empty or `undefined` arrays are dropped.
+Emitted events share the source event's key, so the result can contain
+events with duplicate timestamps — `groupBy` handles that fine, but
+`bisect` / `includesKey` only find one of them.
+
+### Replace in place
+
+```ts
+series.arrayExplode('tags');
+// (0, ['web','east'])       -> (0, 'web'), (0, 'east')
+// (1000, ['web','west'])    -> (1000, 'web'), (1000, 'west')
+// (2000, [])                -> dropped
+```
+
+The `tags` column is replaced with a scalar column of the chosen kind
+(default `'string'`).
+
+### Non-string elements
+
+```ts
+const xs = new TimeSeries({
+  name: 'xs',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'xs', kind: 'array' },
+  ] as const,
+  rows: [
+    [0, [1, 2, 3]],
+    [1000, [4]],
+  ],
+});
+
+xs.arrayExplode('xs', { kind: 'number' });
+// (0, 1), (0, 2), (0, 3), (1000, 4)
+```
+
+### Keep the array, add a sibling: `as`
+
+Useful when you want "one row per host" for a small-multiples chart
+_but also_ want the full host list available on every row (for
+tooltips, badges, stacked-chart context).
+
+```ts
+series.arrayExplode('tags', { as: 'tag' });
+// schema: time, tags (array), tag (string)
+// each fanned-out row carries the full original tags array
+//   plus the single tag value
+```
+
+## Flatten behavior on array-kind sources
+
+This is the subtle one. When you apply `unique` or `top(n)` via
+`aggregate()` or `rolling()` to a source column whose kind is already
+`'array'`, both reducers flatten one level — they count / dedupe
+**elements across all arrays in the window**, not the arrays themselves.
+
+```ts
+// source: per-event tag list
+const tags = TimeSeries.fromJSON({
+  name: 't',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'tags', kind: 'array' },
+  ] as const,
+  rows: [
+    [0, ['5xx', 'timeout']],
+    [500, ['5xx']],
+    [700, ['retry', '5xx']],
+    [1500, ['timeout']],
+  ],
+});
+
+const agg = tags.aggregate(Sequence.every('1s'), { tags: top(2) });
+// bucket [0, 1s): elements are 5xx,timeout,5xx,retry,5xx
+//   counts: 5xx=3, timeout=1, retry=1
+//   top 2: ['5xx', 'retry']   (retry and timeout tie; scalar order picks retry)
+// bucket [1s, 2s): ['timeout']
+```
+
+Without this, `top(n)` on an array column would count arrays by reference
+(every array is its own key) and return junk. The flatten is what lets
+"most common failure modes this minute" read naturally.
+
+The same applies to `unique`:
+
+```ts
+tags.aggregate(Sequence.every('1s'), { tags: 'unique' });
+// bucket [0, 1s): set union over the three arrays -> ['5xx','retry','timeout']
+// bucket [1s, 2s): ['timeout']
+```
+
+This does **not** apply to `arrayAggregate(col, 'unique' | top(n))` —
+that's already per-event, and the array cell _is_ the values list.
+
+## Inert behavior
+
+Array columns deliberately don't participate in numerical operators.
+The column-name parameters on `diff`, `rate`, `pctChange`, `cumulative`,
+and `rolling` are gated by `NumericColumnNameForSchema`, so TypeScript
+simply won't let you reference an array column there. At runtime the
+array column passes through unchanged.
+
+```ts
+// type error: 'tags' is not assignable to NumericColumnNameForSchema<S>
+series.diff('tags');
+
+// fine: diff only touches 'latency', tags is preserved in the output
+series.diff('latency');
+```
+
+`fill`, `align`, and `groupBy` all work at the event level, so array
+columns pass through those too.
+
+## JSON round-trip
+
+Arrays serialize as JSON arrays and round-trip without special handling.
+
+```ts
+const series = new TimeSeries({
+  name: 's',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'tags', kind: 'array' },
+  ] as const,
+  rows: [[0, ['a', 'b']]],
+});
+
+const json = series.toJSON();
+// { name: 's', schema: [...], rows: [[0, ['a','b']]] }
+
+const restored = TimeSeries.fromJSON(json);
+restored.first()!.get('tags'); // ['a', 'b']
+```
+
+`toJSON({ rowFormat: 'object' })` works identically — arrays become the
+value on a keyed object row.
+
+## Live series
+
+`LiveSeries` accepts `kind: 'array'` on its schema and handles `push`
+normally — array cells are frozen on insert just like batch validation.
+You can apply `aggregate()` / `rolling()` with `unique` or `top(n)` to a
+live stream exactly as in batch.
+
+The filter-style operators (`arrayContains` / `arrayContainsAll` /
+`arrayContainsAny`) are currently batch-only. In a live context, use a
+plain `.filter()`:
+
+```ts
+const errorStream = live.filter((event) => {
+  const tags = event.get('tags') as ReadonlyArray<string> | undefined;
+  return !!tags && ['5xx', 'timeout', 'retry'].some((t) => tags.includes(t));
+});
+```
+
+Live variants of the array-\* predicates are on the plan but deferred
+until there's a concrete use case.
+
+## Common pitfalls
+
+### Empty-bucket output
+
+When `aggregate` with explicit `{ range }` produces a bucket that had
+no source events, `unique` and `top(n)` return `[]`. Numeric reducers
+on empty buckets return `undefined`. Handle both in downstream code:
+
+```ts
+const hosts = bucket.get('host') as ReadonlyArray<string>;
+if (hosts.length === 0) return 'no hosts reported';
+```
+
+### Duplicate keys after `arrayExplode`
+
+`arrayExplode` emits multiple events at the same timestamp. Most batch
+operators are fine (`groupBy`, `filter`, `map`). Watch out for
+`bisect` / `includesKey` — they use the ordered-key invariant but only
+find one matching event.
+
+### `keep` on array columns is degenerate
+
+`keep` uses reference equality (`!==`) internally, and every array is a
+distinct reference even if the contents match. It's allowed at the type
+level for consistency but returns `undefined` in practice. Use `unique`
+then check length if you actually want "all events agreed on this tag
+list."
+
+### Empty minutes don't materialize in the live layer
+
+A `LiveAggregation` only creates a bucket when an event lands in it.
+The batch path with explicit `{ range }` gives you a uniform grid
+(empty buckets included); the live path does not. If you need a
+uniform grid from a live feed, snapshot periodically via
+`toTimeSeries()` and aggregate on the snapshot.
+
+### The open bucket isn't reachable via `.at()` / `.length`
+
+`LiveAggregation` implements `LiveSource`, so `.length` and `.at(i)`
+exist — but they expose only **closed** buckets. A freshly pushed event
+that hasn't yet crossed a bucket boundary is in an open bucket that's
+not indexable. For the current partial value use `agg.snapshot().last()`
+or subscribe to the `'bucket'` event.
+See [Live Transforms → Reading the current value](../live/live-transforms#reading-the-current-value)
+for the full breakdown.
+
+## See also
+
+- [Reducer Reference](/docs/series/reducer-reference) — full details on `unique`,
+  `top(n)`, and every other built-in.
+- [Error-Rate Dashboard](/docs/recipes/error-rate-dashboard) — a full
+  scenario composing every array operator.
+- [Live Transforms](../live/live-transforms) — when to reach for live
+  aggregates vs batch-on-snapshot.

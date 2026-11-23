@@ -3,7 +3,7 @@ title: pond
 slug: /
 sidebar_position: 1
 sidebar_label: Introduction
-description: The platform walkthrough — typed time series in TypeScript (pond-ts) or Rust (pond-rs), batch and streaming, then React hooks, canvas charts and the domain packages, in one page of runnable examples.
+description: The platform walkthrough — time series in TypeScript, Rust or Python, batch and streaming, then React hooks, canvas charts and the domain packages, in one page of runnable examples.
 ---
 
 import Tabs from '@theme/Tabs';
@@ -17,28 +17,31 @@ Typed time-series primitives, in **TypeScript, Rust or Python**. Schema-driven
 events, composable transforms, a live-ingest mode, financial studies, and
 an optional React integration — all immutable.
 
-pond comes in two languages that give the same answers:
+pond is one library in three languages, and they give the same answers, to
+the bit:
 
-- **pond-ts** is the TypeScript library: strict types end to end, runs in
-  the browser and on Node, and carries the React hooks and charts.
-- **pond-rs** is the same core written in Rust: the same operations and the
-  same results, bit for bit, at native speed and on several cores. See
-  [pond-rs (Rust)](./pond-rs/index.mdx).
-- **Python**: pond-rs for Python (`pip install pond-timeseries`, then
-  `import pond`): polars, pandas and pyarrow frames in and out, with the
-  same answers. See
-  [Python (pond)](./pond-rs/python.mdx).
+- **TypeScript** (`pond-ts`): column names and kinds checked by the
+  compiler, in the browser and on Node, with React hooks and canvas charts
+  on top. See [pond for TypeScript](./typescript/index.mdx).
+- **Rust** (`pond-rs`): the same core at native speed, on several cores,
+  with Arrow in and out. See [pond for Rust](./rust/index.mdx).
+- **Python** (`pip install pond-timeseries`, then `import pond`): the Rust
+  core with polars, pandas and pyarrow frames in and out. See
+  [pond for Python](./python/index.mdx).
 
-| Package                      | TypeScript                          | Rust                             |
-| ---------------------------- | ----------------------------------- | -------------------------------- |
-| Core: batch series           | `pond-ts`                           | `pond-rs`                        |
-| Core: live series            | `pond-ts`                           | `pond-rs` (`pond_rs::live`)      |
-| Financial studies            | `@pond-ts/financial`                | `pond-rs` (`pond_rs::financial`) |
-| Process (computation graphs) | `@pond-ts/process`                  | TypeScript only                  |
-| React hooks, charts, fitness | `@pond-ts/react`, `/charts`, `/fit` | TypeScript only                  |
+| Area                         | TypeScript                          | Rust                                  | Python                       |
+| ---------------------------- | ----------------------------------- | ------------------------------------- | ---------------------------- |
+| Series and operations        | `pond-ts`                           | `pond-rs`                             | `pond`                       |
+| Live series                  | `pond-ts`                           | `pond-rs` (`pond_rs::live`)           | `pond.LiveSeries`            |
+| Finance studies              | `@pond-ts/financial`                | `pond-rs` (`pond_rs::financial`)      | methods on `pond.TimeSeries` |
+| Processing graphs            | `@pond-ts/process`                  | `pond-process` (not yet on crates.io) | not in Python                |
+| React hooks, charts, fitness | `@pond-ts/react`, `/charts`, `/fit` | TypeScript only                       | TypeScript only              |
 
-Examples on these pages show TypeScript and, where pond-rs has the same
-thing, **Rust** and **Python** tabs beside it. Pick one and every tabbed example on the site follows.
+[Choose your language](./languages.mdx) has the full list, including the
+Rust core in JavaScript through WebAssembly.
+
+Examples on these pages have **TypeScript**, **Rust** and **Python** tabs
+wherever the feature exists in more than one language. Pick one and every tabbed example on the site follows.
 
 <Tabs groupId="language" queryString>
 <TabItem value="ts" label="TypeScript" default>
@@ -358,9 +361,9 @@ for with `watch`.
 
 The live side also has its own `aggregate` / `rolling` / `filter`
 views that stay incremental — good for continuously-updated dashboard
-numbers without snapshot overhead. See [Live](./pond-ts/live/live-series)
-(TypeScript), [Live series](./pond-rs/live) (Rust) or
-[Python](./pond-rs/python.mdx#live-series).
+numbers without snapshot overhead. See [Live series](/docs/live/live-series),
+which has a tab for each language, and the language pages for
+[Rust](/docs/rust/live) and [Python](./python/live.mdx).
 
 ## Third example: React (optional)
 
@@ -424,7 +427,7 @@ dashboard patterns.
   buffer with moderate reordering tolerance at ingest. Same schema
   type, same operator surface, different cost models. Not a full
   streaming engine like Beam or Flink (see
-  [Live Transforms → Late-event scope](./pond-ts/live/live-transforms#late-event-scope)
+  [Live Transforms → Late-event scope](/docs/live/live-transforms#late-event-scope)
   for what that does and doesn't cover).
 - **Framework-agnostic** — the core has no React dependency;
   `@pond-ts/react` is strictly optional.
@@ -436,18 +439,17 @@ every other charting option.
 
 ## In this docs site
 
-- **Start here** — install, first workflow, the mental model.
-- **pond-ts (core)** — `TimeSeries`, `LiveSeries`, advanced
-  (array columns, bridging to other chart libraries).
-- **pond-rs (Rust)** — the core and the financial studies in Rust:
-  getting started, what differs from pond-ts, and the benchmarks.
-- **@pond-ts/react** — React hooks for subscribing to live sources.
-- **@pond-ts/fit** — activity/fitness analytics on top of core.
-- **@pond-ts/charts** — first-party canvas charts consuming a
-  `TimeSeries` directly.
-- **How-to guides** — long-form, end-to-end scenario walkthroughs.
-- **Recipes** — single-technique, code-forward pages.
-- **Reference** — benchmarks and cross-package reference material.
+- **Start here**: this page, choosing a language, and the Getting started
+  tutorial.
+- **Your language**: a front door each for TypeScript, Rust, Python and
+  JavaScript with WebAssembly, with what only that language needs.
+- **Concepts**: the ideas every language shares.
+- **Working with series** and **Live data**: one page per operation, with
+  a tab per language.
+- **Finance studies** and **Processing graphs**.
+- **Charts**, **React hooks** and **Fitness files** (TypeScript).
+- **How-to guides**, **Recipes** and **Reference** (benchmarks, versioning).
 
 The full TypeScript API reference lives in-site at [**/docs/api**](/docs/api/);
-the Rust one is on [**docs.rs**](https://docs.rs/pond-rs).
+the Rust one is on [**docs.rs**](https://docs.rs/pond-rs), and the Python one
+is at [**/docs/python/api**](./python/api/index.mdx).

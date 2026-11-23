@@ -82,6 +82,27 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Docs: a Python API reference** at `/docs/python/api/`: every class,
+  method and function of `pond` (`pip install pond-timeseries`) with its
+  signature and description, ten pages in all, including the 109 study
+  methods with their options. It is generated from the package's own type
+  file and docstrings (`website/scripts/gen-python-api.py`), and CI fails
+  when the package changes without the pages being regenerated.
+
+### Changed
+
+- **Docs: one site for every language.** pond-ts.org is now organised by
+  task rather than by npm package, with a front door each for TypeScript,
+  Rust, Python and JavaScript with WebAssembly, a "Choose your language"
+  page, and Python on six pages of its own instead of one inside the Rust
+  section. The shared pages moved out of `/docs/pond-ts/` to
+  `/docs/concepts/`, `/docs/series/` and `/docs/live/`; Rust is at
+  `/docs/rust/`, Python at `/docs/python/`, finance at `/docs/finance/`.
+  Every old address redirects to its new one. The home page and top bar
+  now offer npm, crates.io and PyPI installs.
+
 ## [0.79.0] — 2026-11-23
 
 ### Added

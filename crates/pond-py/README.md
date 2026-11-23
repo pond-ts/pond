@@ -17,7 +17,7 @@ pip install "pond-timeseries[polars]" # plus polars; or [pandas], [pyarrow]
 ```
 
 The guide is on the docs site:
-[Python (pond)](https://pond-ts.org/docs/pond-rs/python).
+[Python (pond)](https://pond-ts.org/docs/python/).
 
 ```python
 import datetime as dt

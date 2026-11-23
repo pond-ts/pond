@@ -717,7 +717,7 @@ Peter asked for the pond-rs counterpart of pond-ts `live.on('columns')`
 Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
 (run the snippet check in CI, and keep the pages in step).
 
-- **Pages.** `website/docs/pond-rs/`, added 2026-10-19, covering R1a, R1b
+- **Pages.** `website/docs/pond-rs/` (since 2026-11-23 `website/docs/rust/`), added 2026-10-19, covering R1a, R1b
   steps 1–6, 7a, 7b and 8a–8j (8d2, 8e2, 8f2, 8i2–8i4 included), R2 steps 1,
   2a–2g, 3 and 4 (the finance studies page) and R3 steps 2–7 (the live
   series page).
@@ -748,6 +748,49 @@ Moved here from PLAN.md on 2026-11-13; PLAN.md keeps only what is open
   `ValueSeries.read_ipc` (read with pyarrow, then `from_arrow`), no batch
   custom-fold `cumulative` (use `scan`), no live `at_or_before` (use
   `to_series()`).
+
+## Docs for every language (2026-11-23)
+
+Peter (2026-11-23): "The docs now need a new top level structure, where
+someone coming from rust or python feels like the library isn't an after
+thought for them." Proposal reviewed in a Claude Doc; Peter's answers:
+**move the addresses** (not only the sidebar), **processing graphs are first
+class in TypeScript and Rust**, and **Python needs its own API reference**.
+
+- **Structure (PR 1).** The sidebar is by task, not by package: Start here
+  (introduction, a new "Choose your language" page, getting started), Your
+  language (a front door each for TypeScript, Rust, Python and JavaScript
+  with WebAssembly), Concepts, Working with series, Live data, Finance
+  studies, Processing graphs, then Charts / React hooks / Fitness files
+  marked "(TypeScript)". Pages moved: `pond-ts/concepts` and `mental-model`
+  to `concepts/`; `pond-ts/transforms/*`, `creating`, `value-series`,
+  `advanced/*` to `series/`; `pond-ts/live/*` to `live/`; `pond-rs/*` to
+  `rust/`; `pond-rs/python` split into six pages under `python/`;
+  `pond-rs/javascript` to `javascript/`; `financial/` to `finance/`. The
+  shared pages left `pond-ts/` because a Rust or Python reader seeing
+  `/docs/pond-ts/...` in the address bar is still a guest. Every old address
+  redirects (`docusaurus.config.ts`), checked against the full route list of
+  the build before the move. The llms.txt area keys (`pond-ts`, `pond-rs`,
+  `financial`) are kept, so the `llms-<key>.txt` dump URLs agents use don't
+  change; only their titles and matched folders did.
+- **Not done in PR 1, on purpose.** The Rust-only "Operations" and "Live
+  series" tours overlap the shared tabbed pages; merging them is content
+  work, not structure. The pond-rs Roadmap section was left alone (another
+  thread rewrites it).
+- **[PND-PYAPIDOCS] Python API reference (PR 2, done).** Ten pages under
+  `website/docs/python/api/`, written by `website/scripts/gen-python-api.py`.
+  Signatures come from `crates/pond-py/pond.pyi` (what an editor shows);
+  descriptions from its docstrings, or, where it has none, from the
+  docstrings the compiled package carries (the `///` comments in the PyO3
+  source). Considered and not done: Sphinx / pdoc (another toolchain and a
+  second site look), or copying the runtime docstrings into `pond.pyi`
+  (would make the stub hand-maintained text twice over). The check runs in
+  CI's `python` job against the wheel it builds (`--check`), so a changed
+  method fails CI until the pages are regenerated; the output is identical
+  on Python 3.9 and 3.13. The pages are in `.prettierignore` because the
+  check compares bytes.
+- **Next:** [PND-PROCRUSTDOCS] (Rust tabs on the processing-graph pages),
+  in PLAN.md.
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 

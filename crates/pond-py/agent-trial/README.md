@@ -1,7 +1,7 @@
 # pond docs trial (R4 step P3)
 
 Can an agent solve typical tasks with `pond` from the docs page alone
-([`website/docs/pond-rs/python.mdx`](../../../website/docs/pond-rs/python.mdx))?
+([`website/docs/python/`](../../../website/docs/python/), joined into one file)?
 This folder holds the trial, so it can be run again with fresh agents.
 
 - [`prompt.txt`](prompt.txt): four tasks. (1) a per-host trailing

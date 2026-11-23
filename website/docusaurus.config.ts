@@ -4,7 +4,8 @@ import { pondCodeTheme } from './src/prism-pond-theme';
 
 const config: Config = {
   title: 'Pond',
-  tagline: 'Typed time series primitives for modern TypeScript projects',
+  tagline:
+    'Time series analysis with the same answers in TypeScript, Rust and Python',
   favicon: 'img/pond-favicon.svg',
   future: {
     v4: true,
@@ -67,43 +68,187 @@ const config: Config = {
             from: '/docs/start-here/getting-started',
             to: '/docs/getting-started',
           },
-          { from: '/docs/start-here/creating', to: '/docs/pond-ts/creating' },
-          { from: '/docs/start-here/concepts', to: '/docs/pond-ts/concepts' },
+          { from: '/docs/start-here/creating', to: '/docs/series/creating' },
+          { from: '/docs/start-here/concepts', to: '/docs/concepts/' },
           {
             from: '/docs/start-here/concepts/temporal-keys',
-            to: '/docs/pond-ts/concepts/temporal-keys',
+            to: '/docs/concepts/temporal-keys',
           },
           {
             from: '/docs/start-here/concepts/sequences',
-            to: '/docs/pond-ts/concepts/sequences',
+            to: '/docs/concepts/sequences',
           },
           {
             from: '/docs/start-here/concepts/series',
-            to: '/docs/pond-ts/concepts/series',
+            to: '/docs/concepts/series',
           },
           {
             from: '/docs/start-here/concepts/temporal-relations',
-            to: '/docs/pond-ts/concepts/temporal-relations',
+            to: '/docs/concepts/temporal-relations',
           },
           {
             from: '/docs/start-here/concepts/windowing',
-            to: '/docs/pond-ts/concepts/windowing',
+            to: '/docs/concepts/windowing',
           },
           {
             from: '/docs/start-here/concepts/triggers',
-            to: '/docs/pond-ts/concepts/triggers',
+            to: '/docs/concepts/triggers',
           },
           {
             from: '/docs/start-here/concepts/partitioning',
-            to: '/docs/pond-ts/concepts/partitioning',
+            to: '/docs/concepts/partitioning',
           },
           {
             from: '/docs/start-here/concepts/late-data',
-            to: '/docs/pond-ts/concepts/late-data',
+            to: '/docs/concepts/late-data',
           },
           {
             from: '/docs/start-here/concepts/value-axis',
-            to: '/docs/pond-ts/concepts/value-axis',
+            to: '/docs/concepts/value-axis',
+          },
+          // Docs for every language (2026-11): the shared pages left the
+          // TypeScript package's folder, and each language got its own.
+          { from: '/docs/financial', to: '/docs/finance/' },
+          { from: '/docs/pond-rs', to: '/docs/rust/' },
+          { from: '/docs/pond-rs/arrow', to: '/docs/rust/arrow' },
+          {
+            from: '/docs/pond-rs/coming-from-pond-ts',
+            to: '/docs/rust/coming-from-pond-ts',
+          },
+          {
+            from: '/docs/pond-rs/finance-studies',
+            to: '/docs/rust/finance-studies',
+          },
+          {
+            from: '/docs/pond-rs/getting-started',
+            to: '/docs/rust/getting-started',
+          },
+          { from: '/docs/pond-rs/javascript', to: '/docs/javascript/' },
+          { from: '/docs/pond-rs/live', to: '/docs/rust/live' },
+          { from: '/docs/pond-rs/operations', to: '/docs/rust/operations' },
+          { from: '/docs/pond-rs/partitions', to: '/docs/rust/partitions' },
+          { from: '/docs/pond-rs/performance', to: '/docs/rust/performance' },
+          { from: '/docs/pond-rs/python', to: '/docs/python/' },
+          {
+            from: '/docs/pond-rs/series-and-columns',
+            to: '/docs/rust/series-and-columns',
+          },
+          { from: '/docs/pond-ts', to: '/docs/typescript/' },
+          { from: '/docs/pond-ts/advanced/arrays', to: '/docs/series/arrays' },
+          {
+            from: '/docs/pond-ts/advanced/charting',
+            to: '/docs/series/other-chart-libraries',
+          },
+          {
+            from: '/docs/pond-ts/advanced/columns',
+            to: '/docs/series/columns',
+          },
+          { from: '/docs/pond-ts/concepts', to: '/docs/concepts/' },
+          {
+            from: '/docs/pond-ts/concepts/late-data',
+            to: '/docs/concepts/late-data',
+          },
+          {
+            from: '/docs/pond-ts/concepts/partitioning',
+            to: '/docs/concepts/partitioning',
+          },
+          {
+            from: '/docs/pond-ts/concepts/sequences',
+            to: '/docs/concepts/sequences',
+          },
+          {
+            from: '/docs/pond-ts/concepts/series',
+            to: '/docs/concepts/series',
+          },
+          {
+            from: '/docs/pond-ts/concepts/temporal-keys',
+            to: '/docs/concepts/temporal-keys',
+          },
+          {
+            from: '/docs/pond-ts/concepts/temporal-relations',
+            to: '/docs/concepts/temporal-relations',
+          },
+          {
+            from: '/docs/pond-ts/concepts/triggers',
+            to: '/docs/concepts/triggers',
+          },
+          {
+            from: '/docs/pond-ts/concepts/value-axis',
+            to: '/docs/concepts/value-axis',
+          },
+          {
+            from: '/docs/pond-ts/concepts/windowing',
+            to: '/docs/concepts/windowing',
+          },
+          { from: '/docs/pond-ts/creating', to: '/docs/series/creating' },
+          { from: '/docs/pond-ts/introduction', to: '/docs/typescript/' },
+          {
+            from: '/docs/pond-ts/live/live-series',
+            to: '/docs/live/live-series',
+          },
+          {
+            from: '/docs/pond-ts/live/live-transforms',
+            to: '/docs/live/live-transforms',
+          },
+          {
+            from: '/docs/pond-ts/live/triggering',
+            to: '/docs/live/triggering',
+          },
+          {
+            from: '/docs/pond-ts/mental-model',
+            to: '/docs/concepts/mental-model',
+          },
+          {
+            from: '/docs/pond-ts/transforms/aggregation',
+            to: '/docs/series/aggregation',
+          },
+          {
+            from: '/docs/pond-ts/transforms/alignment',
+            to: '/docs/series/alignment',
+          },
+          {
+            from: '/docs/pond-ts/transforms/anomaly-detection',
+            to: '/docs/series/anomaly-detection',
+          },
+          {
+            from: '/docs/pond-ts/transforms/cleaning',
+            to: '/docs/series/cleaning',
+          },
+          {
+            from: '/docs/pond-ts/transforms/expressions',
+            to: '/docs/series/expressions',
+          },
+          {
+            from: '/docs/pond-ts/transforms/queries',
+            to: '/docs/series/queries',
+          },
+          {
+            from: '/docs/pond-ts/transforms/reducer-reference',
+            to: '/docs/series/reducer-reference',
+          },
+          {
+            from: '/docs/pond-ts/transforms/reshape',
+            to: '/docs/series/reshape',
+          },
+          {
+            from: '/docs/pond-ts/transforms/rolling',
+            to: '/docs/series/rolling',
+          },
+          {
+            from: '/docs/pond-ts/transforms/sampling',
+            to: '/docs/series/sampling',
+          },
+          {
+            from: '/docs/pond-ts/transforms/smoothing',
+            to: '/docs/series/smoothing',
+          },
+          {
+            from: '/docs/pond-ts/transforms/transformations',
+            to: '/docs/series/transformations',
+          },
+          {
+            from: '/docs/pond-ts/value-series',
+            to: '/docs/series/value-series',
           },
         ],
       },
@@ -133,14 +278,33 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/docs/api/',
+          type: 'dropdown',
           label: 'API',
           position: 'left',
+          items: [
+            { label: 'TypeScript', to: '/docs/api/' },
+            { label: 'Rust (docs.rs)', href: 'https://docs.rs/pond-rs' },
+            { label: 'Python', to: '/docs/python/api/' },
+          ],
         },
         {
-          href: 'https://www.npmjs.com/package/pond-ts',
-          label: 'npm',
+          type: 'dropdown',
+          label: 'Install',
           position: 'right',
+          items: [
+            {
+              label: 'npm: pond-ts',
+              href: 'https://www.npmjs.com/package/pond-ts',
+            },
+            {
+              label: 'crates.io: pond-rs',
+              href: 'https://crates.io/crates/pond-rs',
+            },
+            {
+              label: 'PyPI: pond-timeseries',
+              href: 'https://pypi.org/project/pond-timeseries/',
+            },
+          ],
         },
         {
           href: 'https://github.com/pond-ts/pond',
@@ -160,12 +324,20 @@ const config: Config = {
               to: '/docs/getting-started',
             },
             {
-              label: 'pond-ts (core)',
-              to: '/docs/pond-ts',
+              label: 'Choose your language',
+              to: '/docs/languages',
             },
             {
-              label: 'API Reference',
-              to: '/docs/api/',
+              label: 'TypeScript',
+              to: '/docs/typescript/',
+            },
+            {
+              label: 'Rust',
+              to: '/docs/rust/',
+            },
+            {
+              label: 'Python',
+              to: '/docs/python/',
             },
           ],
         },
@@ -175,6 +347,14 @@ const config: Config = {
             {
               label: 'npm',
               href: 'https://www.npmjs.com/package/pond-ts',
+            },
+            {
+              label: 'crates.io',
+              href: 'https://crates.io/crates/pond-rs',
+            },
+            {
+              label: 'PyPI',
+              href: 'https://pypi.org/project/pond-timeseries/',
             },
             {
               label: 'GitHub',
