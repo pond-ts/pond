@@ -1903,6 +1903,38 @@ mod tests {
     }
 
     #[test]
+    fn merge_order_gathers_interval_labels() {
+        // Interval keys (from `aggregate`) carry labels, the one part of
+        // the key the merge does not write itself.
+        let s = TimeSeries::new(
+            "s",
+            {
+                let mut t: Vec<i64> = (0..60).map(|i| (i % 7) * 400 + (i / 7) * 3000).collect();
+                t.sort();
+                t
+            },
+            vec![Column::required(
+                "v",
+                (0..60).map(f64::from).collect::<Vec<_>>(),
+            )],
+        )
+        .unwrap();
+        let every = Sequence::every("1s").unwrap();
+        let avg = [Agg::of("v", Reducer::Avg)];
+        let parts: Vec<TimeSeries> = [0..20, 15..45, 30..60]
+            .into_iter()
+            .map(|r| s.row_range(r).aggregate(&every, &avg).unwrap())
+            .collect();
+        assert!(matches!(parts[0].key(), Key::Interval(_)));
+        let refs: Vec<&TimeSeries> = parts.iter().collect();
+        let keys: Vec<&Key> = refs.iter().map(|s| s.key()).collect();
+        let want = sort_order(&refs);
+        let (picks, key) = merge_order(&refs);
+        assert_eq!(picks, want);
+        assert_eq!(key, Key::gather(&keys, &want));
+    }
+
+    #[test]
     fn merge_order_sorts_a_series_out_of_key_order() {
         // Not expected (every series' key is checked when it is made), but
         // the order must not depend on it: such a series takes the sort.
