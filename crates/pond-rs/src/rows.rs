@@ -36,6 +36,24 @@ use crate::series::{Column, TimeSeries};
 /// faster at 148,000.
 const FILTER_SPLIT_ROWS: usize = 1 << 17;
 
+/// From this many number and dictionary columns on, a filter that copies
+/// its columns one after another copies those by a list of the kept rows
+/// made once, not each straight from the mask.
+const FILTER_LIST_COLUMNS: usize = 8;
+
+/// How [`TimeSeries::filter_rows`] copies the kept rows. The series that
+/// comes out is the same each way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FilterCopy {
+    /// The key, then each column, each straight from the mask.
+    Direct,
+    /// The same copies, the key and each column on a core of its own.
+    Split,
+    /// One after another, with number and dictionary columns copied by a
+    /// list of the kept rows made once.
+    Listed,
+}
+
 /// One row of a series, handed to [`TimeSeries::filter`]'s closure and
 /// yielded by [`TimeSeries::rows`]. Values are read by column name; a name
 /// the series does not have, or a column of another kind, is an error.
@@ -428,22 +446,50 @@ impl TimeSeries {
         Ok(self.with_value_columns(columns))
     }
 
-    /// The rows `keep` keeps, in order: `take_rows` for the rows of a mask,
-    /// without building their row numbers (see [`RowFilter`]). When many
-    /// rows are kept, the key and each column are copied on a core of
-    /// their own, if there is more than one core to use.
+    /// The rows `keep` keeps, in order: `take_rows` for the rows of a mask
+    /// (see [`RowFilter`] for the copies, and [`FilterCopy`] for the ways
+    /// to go about them).
     pub(crate) fn filter_rows(&self, keep: &RowFilter) -> TimeSeries {
-        let split = keep.count() >= FILTER_SPLIT_ROWS && crate::par::threads() > 1;
-        self.filter_rows_split(keep, split)
+        self.filter_rows_by(keep, self.filter_copy(keep, crate::par::threads()))
     }
 
-    /// [`TimeSeries::filter_rows`], with the choice made: `split` copies
-    /// the key and each column on a core of its own.
-    pub(crate) fn filter_rows_split(&self, keep: &RowFilter, split: bool) -> TimeSeries {
+    /// The way [`TimeSeries::filter_rows`] goes with `threads` cores to
+    /// use.
+    ///
+    /// When many rows are kept and there is more than one core, the key
+    /// and each column get a core of their own: a list of the kept rows
+    /// would be a step every core waits for. Otherwise the copies run one
+    /// after another, and the list pays once enough columns share it:
+    /// [`FILTER_LIST_COLUMNS`] number or dictionary columns. Not when most
+    /// words of the mask are all kept or all dropped: the copy from the
+    /// mask is then mostly whole words copied or skipped.
+    pub(crate) fn filter_copy(&self, keep: &RowFilter, threads: usize) -> FilterCopy {
+        if keep.count() >= FILTER_SPLIT_ROWS && threads > 1 {
+            return FilterCopy::Split;
+        }
+        let listable = self.columns().iter().filter(|c| match c.data() {
+            ColumnData::Number(_) => true,
+            ColumnData::String(s) => s.is_dictionary(),
+            _ => false,
+        });
+        if listable.count() >= FILTER_LIST_COLUMNS && keep.is_scattered() {
+            FilterCopy::Listed
+        } else {
+            FilterCopy::Direct
+        }
+    }
+
+    /// [`TimeSeries::filter_rows`], with the way chosen.
+    pub(crate) fn filter_rows_by(&self, keep: &RowFilter, how: FilterCopy) -> TimeSeries {
+        let listed = how == FilterCopy::Listed;
         let column = |c: &Column| {
-            Column::from_data(c.name().to_string(), c.data().filter(keep), c.is_required())
+            Column::from_data(
+                c.name().to_string(),
+                c.data().filter(keep, listed),
+                c.is_required(),
+            )
         };
-        let (key, columns) = if split {
+        let (key, columns) = if how == FilterCopy::Split {
             crate::par::join(
                 || self.key().filter(keep),
                 || crate::par::map(self.columns(), column),
@@ -561,6 +607,55 @@ mod tests {
 
         let all = s.filter(|_| Ok(true)).unwrap();
         assert_eq!(all, s);
+    }
+
+    #[test]
+    fn filter_copy_goes_by_rows_kept_cores_and_columns() {
+        let series = |rows: usize, numbers: usize, text: bool| {
+            let mut columns: Vec<Column> = (0..numbers)
+                .map(|c| Column::required(format!("w{c}"), vec![1.0; rows]))
+                .collect();
+            if text {
+                columns.push(Column::required("t", vec!["a"; rows]));
+            }
+            TimeSeries::new("s", (0..rows as i64).collect(), columns).unwrap()
+        };
+        let every_other = |rows: usize| -> RowFilter { (0..rows).map(|i| i % 2 == 0).collect() };
+        let scattered = every_other(640);
+        // One after another: by the list from eight number columns on,
+        // whatever else the series holds.
+        for cores in [1, 8] {
+            let how = |numbers, text| series(640, numbers, text).filter_copy(&scattered, cores);
+            assert_eq!(how(0, true), FilterCopy::Direct);
+            assert_eq!(how(7, false), FilterCopy::Direct);
+            assert_eq!(how(7, true), FilterCopy::Direct);
+            assert_eq!(how(8, false), FilterCopy::Listed);
+            assert_eq!(how(8, true), FilterCopy::Listed);
+        }
+        // A dictionary column's keys go by the list as numbers do.
+        let words: arrow_array::DictionaryArray<arrow_array::types::Int32Type> =
+            (0..640).map(|i| Some(["a", "b"][i % 2])).collect();
+        let words = Column::from_data("d".into(), StringColumn::dictionary(words).unwrap(), false);
+        let with_words = series(640, 7, true).with_column(words).unwrap();
+        let d = with_words.column("d").unwrap();
+        assert!(d.strings().unwrap().is_dictionary());
+        assert_eq!(with_words.filter_copy(&scattered, 1), FilterCopy::Listed);
+        // Not when most words are all kept or all dropped.
+        let first_half: RowFilter = (0..640).map(|i| i < 320).collect();
+        assert!(!first_half.is_scattered());
+        assert_eq!(
+            series(640, 8, true).filter_copy(&first_half, 1),
+            FilterCopy::Direct
+        );
+        // Many rows kept: a core each, when there is more than one.
+        let rows = 2 * FILTER_SPLIT_ROWS;
+        let (wide, many) = (series(rows, 8, false), every_other(rows));
+        assert_eq!(many.count(), FILTER_SPLIT_ROWS);
+        assert_eq!(wide.filter_copy(&many, 2), FilterCopy::Split);
+        assert_eq!(wide.filter_copy(&many, 1), FilterCopy::Listed);
+        let one_fewer: RowFilter = (0..rows).map(|i| i % 2 == 0 && i > 0).collect();
+        assert_eq!(one_fewer.count(), FILTER_SPLIT_ROWS - 1);
+        assert_eq!(wide.filter_copy(&one_fewer, 2), FilterCopy::Listed);
     }
 
     #[test]

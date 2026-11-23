@@ -28,6 +28,14 @@ use arrow_schema::{DataType, Field};
 use crate::row_filter::RowFilter;
 use crate::series::ColumnKind;
 
+/// True when every value is finite. Looks at 64 values at a time, with no
+/// branch inside the 64 (so they are tested several at a time), and stops
+/// at the first 64 that hold a value that is not.
+fn all_finite(v: &[f64]) -> bool {
+    v.chunks(64)
+        .all(|c| c.iter().fold(true, |ok, x| ok & x.is_finite()))
+}
+
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
 /// gap. Reading a gap gives `None`.
 #[derive(Debug, Clone)]
@@ -47,7 +55,7 @@ impl Float64Column {
     /// Wrap an Arrow buffer as it is, without copying: non-finite values are
     /// gaps.
     pub(crate) fn from_buffer(values: ScalarBuffer<f64>) -> Self {
-        let all_finite = crate::row_filter::all_finite(&values);
+        let all_finite = all_finite(&values);
         Self { values, all_finite }
     }
 
@@ -213,12 +221,18 @@ impl StringColumn {
 
 impl StringColumn {
     /// The rows where `keep` is set, in order. A dictionary column filters
-    /// its keys and keeps its values, as [`StringColumn::take_indices`].
-    pub(crate) fn filter(&self, keep: &RowFilter) -> Self {
+    /// its keys and keeps its values, as [`StringColumn::take_indices`];
+    /// `listed` copies the keys by the list of kept rows
+    /// ([`RowFilter::by_list`]) rather than straight from the mask.
+    pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> Self {
         match &self.repr {
             StringRepr::Plain(a) => Self::plain(keep.text(a)),
             StringRepr::Dictionary(a) => Self {
-                repr: StringRepr::Dictionary(keep.dictionary(a)),
+                repr: StringRepr::Dictionary(if listed {
+                    keep.by_list(a).as_dictionary::<Int32Type>().clone()
+                } else {
+                    keep.dictionary(a)
+                }),
             },
         }
     }
@@ -1300,19 +1314,25 @@ impl ColumnData {
         }
     }
 
-    /// The rows where `keep` is set, in order: what `filter` keeps. Every
-    /// kind but arrays is copied straight from the mask (see
-    /// [`RowFilter`]), with no list of row numbers in between.
-    pub(crate) fn filter(&self, keep: &RowFilter) -> ColumnData {
+    /// The rows where `keep` is set, in order: what `filter` keeps. Text
+    /// goes by Arrow's kernel or stretch by stretch ([`RowFilter::text`])
+    /// and arrays by row number; the other kinds are copied straight from
+    /// the mask, except that `listed` sends numbers and dictionary keys by
+    /// the kernel's list of kept rows (see [`RowFilter`] for the two ways,
+    /// and `TimeSeries::filter_rows` for the choice).
+    pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
-                let values = keep.vec(&c.values);
+                let values: ScalarBuffer<f64> = if listed {
+                    let all = Float64Array::new(c.values.clone(), None);
+                    let kept = keep.by_list(&all);
+                    kept.as_primitive::<Float64Type>().values().clone()
+                } else {
+                    keep.vec(&c.values).into()
+                };
                 // A subset of values with no gap has no gap.
-                let all_finite = c.all_finite || crate::row_filter::all_finite(&values);
-                ColumnData::Number(Float64Column {
-                    values: values.into(),
-                    all_finite,
-                })
+                let all_finite = c.all_finite || all_finite(&values);
+                ColumnData::Number(Float64Column { values, all_finite })
             }
             ColumnData::Decimal(c) => {
                 let a = &c.values;
@@ -1321,7 +1341,7 @@ impl ColumnData {
                     values: kept.with_data_type(a.data_type().clone()),
                 })
             }
-            ColumnData::String(c) => ColumnData::String(c.filter(keep)),
+            ColumnData::String(c) => ColumnData::String(c.filter(keep, listed)),
             ColumnData::Boolean(c) => {
                 let a = &c.values;
                 ColumnData::Boolean(BooleanColumn::from_arrow(BooleanArray::new(
@@ -1475,4 +1495,24 @@ column_data_from! {
     Option<bool> => |v| ColumnData::Boolean(BooleanColumn::from_options(v));
     Vec<Scalar> => |v| ColumnData::Array(ArrayColumn::from_options(v.into_iter().map(Some)));
     Option<Vec<Scalar>> => |v| ColumnData::Array(ArrayColumn::from_options(v));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all_finite;
+
+    #[test]
+    fn all_finite_finds_a_gap_anywhere() {
+        for n in [0, 1, 63, 64, 65, 200] {
+            let v = vec![1.5; n];
+            assert!(all_finite(&v));
+            for at in 0..n {
+                for gap in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    let mut v = v.clone();
+                    v[at] = gap;
+                    assert!(!all_finite(&v), "n {n}, gap at {at}");
+                }
+            }
+        }
+    }
 }
