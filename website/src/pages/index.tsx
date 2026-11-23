@@ -7,6 +7,9 @@ import Layout from '@theme/Layout';
 import ThemedImage from '@theme/ThemedImage';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import Heading from '@theme/Heading';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeBlock from '@theme/CodeBlock';
 import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
@@ -28,7 +31,9 @@ function HomepageHeader(): ReactNode {
             />
           </div>
         </div>
-        <span className={styles.heroEyebrow}>[ TypeScript · time series ]</span>
+        <span className={styles.heroEyebrow}>
+          [ TypeScript · Rust · Python · time series ]
+        </span>
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
         </Heading>
@@ -36,21 +41,40 @@ function HomepageHeader(): ReactNode {
         <div className={styles.buttons}>
           <Link
             className="button button--primary button--lg"
-            to="/docs/getting-started"
+            to="/docs/languages"
           >
             Get started
           </Link>
           <Link
             className="button button--outline button--primary button--lg"
-            to="/docs/recipes/"
+            to="/docs/getting-started"
           >
-            Explore an example
+            Walk through an example
           </Link>
         </div>
         <div className={styles.heroMeta}>
-          <span className={styles.heroPill}>Typed events and schemas</span>
-          <span className={styles.heroPill}>Alignment, aggregation, joins</span>
-          <span className={styles.heroPill}>Rolling windows and smoothing</span>
+          <span className={styles.heroPill}>
+            Same answers in every language
+          </span>
+          <span className={styles.heroPill}>Batch and live</span>
+          <span className={styles.heroPill}>
+            Calendar days in any time zone
+          </span>
+        </div>
+        <div className={styles.install}>
+          {/* Same groupId as the docs' tabs: the language picked here is
+              the one every tabbed example on the site opens with. */}
+          <Tabs groupId="language">
+            <TabItem value="ts" label="TypeScript" default>
+              <CodeBlock language="sh">npm install pond-ts</CodeBlock>
+            </TabItem>
+            <TabItem value="rust" label="Rust">
+              <CodeBlock language="sh">cargo add pond-rs</CodeBlock>
+            </TabItem>
+            <TabItem value="python" label="Python">
+              <CodeBlock language="sh">pip install pond-timeseries</CodeBlock>
+            </TabItem>
+          </Tabs>
         </div>
       </div>
     </header>
@@ -63,7 +87,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title={siteConfig.title}
-      description="Typed time series primitives for modern TypeScript projects"
+      description="Time series analysis in TypeScript, Rust and Python, with the same answers in each"
     >
       <HomepageHeader />
       <main>

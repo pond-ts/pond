@@ -1,0 +1,829 @@
+---
+sidebar_position: 3
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Triggering
+
+Operator-level reference for the `trigger` option on `live.rolling`.
+For the conceptual model (when to use which trigger, how triggers
+relate to windows), see
+[Concepts → Triggers](/docs/concepts/triggers).
+
+A **trigger** controls when a live rolling emits a snapshot. The
+window itself is always current; the trigger is purely about
+output cadence. Three flavours, all data-driven (no wall-clock,
+no `setInterval` inside the library):
+
+| Trigger              | Fires                                     |
+| -------------------- | ----------------------------------------- |
+| `Trigger.event()`    | Once per source event (the default)       |
+| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing  |
+| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence` |
+| `Trigger.count(n)`   | Once per `n` source events                |
+
+## `Trigger.event()` — per source event
+
+Default. Each `live.push` produces one output snapshot per attached
+rolling.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { Trigger } from 'pond-ts';
+
+const rolling = live.rolling('1m', { cpu: 'avg' });
+// Equivalent to: { trigger: Trigger.event() }
+
+rolling.on('event', (e) => {
+  // Fires once per live.push call
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, Output, OutputKind};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    // The same as rolling_with(…, &RollingOptions::new().trigger(Trigger::event())).
+    let rolling = live.rolling(live.root(), "1m", &[Agg::of("cpu", Reducer::Avg)])?;
+    live.watch(rolling, OutputKind::Event)?;
+
+    // One output per push, keyed at the pushed event.
+    let out = live.push(0, [Some(1.0.into())])?;
+    assert_eq!(out.len(), 1);
+    let out = live.push(10_000, [Some(2.0.into())])?;
+    let Output::Event { event, .. } = &out[0] else {
+        panic!()
+    };
+    assert_eq!((event.begin(), event.number("cpu")?), (10_000, Some(1.5)));
+    Ok(())
+}
+```
+
+`rolling` uses the event trigger. `rolling_with` takes `RollingOptions`, which can set any trigger.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+# The same as rolling("1m", ..., trigger="event").
+rolling = live.rolling("1m", {"cpu": "avg"})
+rolling.watch("event")
+
+# One output per push, keyed at the pushed event.
+assert len(live.push(0, cpu=1.0)) == 1
+out = live.push(10_000, cpu=2.0)
+assert (out[0].event.begin, out[0].event["cpu"]) == (10_000, 1.5)
+```
+
+`rolling` uses the event trigger unless you pass `trigger=`.
+
+</TabItem>
+</Tabs>
+
+`Trigger.event()` is a frozen sentinel — calling it multiple times
+returns the same object reference.
+
+## `Trigger.every(duration, { anchor? })` — per fixed cadence
+
+Sugar for `Trigger.clock(Sequence.every(duration, { anchor }))`. Use
+this when you want a fixed-step emission cadence and don't already
+have a `Sequence` object.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const rolling = live.rolling(
+  '1m',
+  { cpu: 'p95' },
+  { trigger: Trigger.every('30s') },
+);
+
+rolling.on('event', (e) => {
+  // e.begin() === <boundary timestamp> (0, 30000, 60000, ...)
+});
+
+// Anchored at 5_000ms instead of epoch:
+Trigger.every('30s', { anchor: 5_000 });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveRolling, LiveSeries, Node, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let avg = [Agg::of("cpu", Reducer::Avg)];
+    let every_30s = live.rolling_with(
+        live.root(),
+        "1m",
+        &avg,
+        &RollingOptions::new().trigger(Trigger::every("30s")?),
+    )?;
+    // Anchored at 5 s instead of the epoch.
+    let anchored = live.rolling_with(
+        live.root(),
+        "1m",
+        &avg,
+        &RollingOptions::new()
+            .trigger(Trigger::clock(&Sequence::every("30s")?.with_anchor(5_000))?),
+    )?;
+
+    for (t, cpu) in [
+        (0, 1.0),
+        (10_000, 2.0),
+        (25_000, 3.0),
+        (31_000, 4.0),
+        (59_000, 5.0),
+        (61_000, 6.0),
+        (95_000, 7.0),
+    ] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+
+    // Keyed at the boundary, not at the event that crossed it.
+    let rows = |node: Node<LiveRolling>| -> Vec<(i64, Option<f64>)> {
+        live.get(node)
+            .unwrap()
+            .events()
+            .map(|e| (e.begin(), e.number("cpu").unwrap()))
+            .collect()
+    };
+    assert_eq!(
+        rows(every_30s),
+        [
+            (30_000, Some(2.5)),
+            (60_000, Some(4.0)),
+            (90_000, Some(6.0))
+        ]
+    );
+    assert_eq!(
+        rows(anchored),
+        [(5_000, Some(1.5)), (35_000, Some(3.0)), (95_000, Some(6.0))]
+    );
+
+    // Calendar sequences have no fixed step and are refused.
+    assert!(Trigger::clock(&Sequence::calendar("day", "UTC")?).is_err());
+    Ok(())
+}
+```
+
+`Trigger::every` takes no anchor. For one, build the sequence with `Sequence::every(…)?.with_anchor(ms)` and pass it to `Trigger::clock`.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+avg = {"cpu": "avg"}
+every_30s = live.rolling("1m", avg, trigger="30s")
+# Anchored at 5 s instead of the epoch.
+anchored = live.rolling("1m", avg, trigger=pond.Sequence.every("30s", anchor=5_000))
+
+for t, cpu in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, cpu=cpu)
+
+# Keyed at the boundary, not at the event that crossed it.
+def rows(node):
+    return [(e.begin, e["cpu"]) for e in node.events()]
+
+assert rows(every_30s) == [(30_000, 2.5), (60_000, 4.0), (90_000, 6.0)]
+assert rows(anchored) == [(5_000, 1.5), (35_000, 3.0), (95_000, 6.0)]
+
+# Calendar sequences have no fixed step and are refused.
+try:
+    live.rolling("1m", avg, trigger=pond.Sequence.calendar("day", "UTC"))
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+A duration takes no anchor. For one, pass `pond.Sequence.every(step, anchor=ms)` as the trigger.
+
+</TabItem>
+</Tabs>
+
+`duration` accepts the standard duration string format
+(`ms` / `s` / `m` / `h` / `d`) or a millisecond number. Calendar
+sequences (`Sequence.daily()`, `Sequence.weekly()`) are rejected
+because boundary indexing requires a constant step.
+
+## `Trigger.clock(sequence)` — explicit Sequence form
+
+Use when you already hold a `Sequence` object (e.g. one shared
+across batch `series.aggregate(seq, ...)` and live triggers).
+`Trigger.every` always builds a fresh `Sequence`; `Trigger.clock`
+takes one as an argument.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+import { Sequence, Trigger } from 'pond-ts';
+
+const tickSeq = Sequence.every('30s', { anchor: 5_000 });
+const trigger = Trigger.clock(tickSeq);
+
+// Same sequence drives both batch + live for guaranteed alignment
+const live = liveSource.rolling('1m', mapping, { trigger });
+const batch = batchSource.aggregate(tickSeq, mapping);
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Sequence};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let tick_seq = Sequence::every("30s")?.with_anchor(5_000);
+    let mapping = [Agg::of("cpu", Reducer::Avg)];
+    let rolling = live.rolling_with(
+        live.root(),
+        "1m",
+        &mapping,
+        &RollingOptions::new().trigger(Trigger::clock(&tick_seq)?),
+    )?;
+    for (t, cpu) in [
+        (0, 1.0),
+        (10_000, 2.0),
+        (25_000, 3.0),
+        (31_000, 4.0),
+        (59_000, 5.0),
+        (61_000, 6.0),
+        (95_000, 7.0),
+    ] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+    let batch = live.to_time_series()?.aggregate(&tick_seq, &mapping)?;
+
+    // The same sequence puts both on one grid: 5 s, 35 s, 65 s, 95 s, …
+    let live_ticks: Vec<i64> = live[rolling].events().map(|e| e.begin()).collect();
+    let batch_ticks: Vec<i64> = batch.rows().map(|r| r.begin()).collect();
+    assert_eq!(live_ticks, [5_000, 35_000, 95_000]);
+    assert_eq!(batch_ticks, [-25_000, 5_000, 35_000, 65_000, 95_000]);
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+tick_seq = pond.Sequence.every("30s", anchor=5_000)
+mapping = {"cpu": "avg"}
+rolling = live.rolling("1m", mapping, trigger=tick_seq)
+for t, cpu in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, cpu=cpu)
+batch = live.to_series().aggregate(tick_seq, mapping)
+
+# The same sequence puts both on one grid: 5 s, 35 s, 65 s, 95 s, …
+assert [e.begin for e in rolling.events()] == [5_000, 35_000, 95_000]
+assert [r.begin for r in batch] == [-25_000, 5_000, 35_000, 65_000, 95_000]
+```
+
+</TabItem>
+</Tabs>
+
+Same fixed-step constraint as `every`. `Trigger.clock` rejects
+calendar sequences with a `TypeError` at construction.
+
+## `Trigger.count(n)` — per N events
+
+Fires every `n` source events. Counter resets on each fire (so it
+measures "events since the last emission"). The first emission
+fires on the `n`th event, not the first.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const rolling = live.rolling(
+  '5m',
+  { latency: 'p95' },
+  { trigger: Trigger.count(1000) },
+);
+
+rolling.on('event', (e) => {
+  // e.begin() === <triggering event's timestamp>
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "timings",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("latency", ColumnKind::Number),
+        ],
+    )?;
+    let rolling = live.rolling_with(
+        live.root(),
+        "5m",
+        &[Agg::of("latency", Reducer::Avg)],
+        &RollingOptions::new().trigger(Trigger::count(3)?),
+    )?;
+    for (t, latency) in [
+        (0, 1.0),
+        (10_000, 2.0),
+        (25_000, 3.0),
+        (31_000, 4.0),
+        (59_000, 5.0),
+        (61_000, 6.0),
+        (95_000, 7.0),
+    ] {
+        live.push(t, [Some(latency.into())])?;
+    }
+
+    // The 3rd and 6th events, keyed at those events.
+    let rows: Vec<_> = live[rolling]
+        .events()
+        .map(|e| (e.begin(), e.number("latency").unwrap()))
+        .collect();
+    assert_eq!(rows, [(25_000, Some(2.0)), (61_000, Some(3.5))]);
+
+    assert!(Trigger::count(0).is_err());
+    Ok(())
+}
+```
+
+`n` is a `usize`, so a negative or fractional count cannot be written; 0 is an error.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "latency": "number"}, name="timings")
+rolling = live.rolling("5m", {"latency": "avg"}, trigger=3)
+for t, latency in [(0, 1.0), (10_000, 2.0), (25_000, 3.0), (31_000, 4.0), (59_000, 5.0), (61_000, 6.0), (95_000, 7.0)]:
+    live.push(t, latency=latency)
+
+# The 3rd and 6th events, keyed at those events.
+assert [(e.begin, e["latency"]) for e in rolling.events()] == [(25_000, 2.0), (61_000, 3.5)]
+
+try:
+    live.rolling("5m", {"latency": "avg"}, trigger=0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+An int trigger counts events; 0 is an error.
+
+</TabItem>
+</Tabs>
+
+Right choice for hot streams where event-time boundaries lag during
+burst load — the count trigger fires on events themselves, not on
+the time they cover. `Trigger.count(1)` is behaviourally identical
+to `Trigger.event()`.
+
+Validation: `Trigger.count(n)` requires a positive integer.
+`Trigger.count(0)`, `Trigger.count(-1)`, `Trigger.count(1.5)`, and
+`Trigger.count(NaN)` all throw at construction.
+
+## `rolling.value()` — independent of trigger
+
+The trigger controls when subscribers see a new event. The window
+itself is always current.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+rolling.value();
+// → current { ...mapping } record, regardless of when the trigger
+// last fired
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let rolling = live.rolling_with(
+        live.root(),
+        "1m",
+        &[Agg::of("cpu", Reducer::Avg)],
+        &RollingOptions::new().trigger(Trigger::every("30s")?),
+    )?;
+    for (t, cpu) in [(0, 1.0), (10_000, 2.0), (20_000, 3.0)] {
+        live.push(t, [Some(cpu.into())])?;
+    }
+
+    // No 30-second boundary crossed yet, so nothing emitted...
+    assert_eq!(live[rolling].len(), 0);
+    // ...but the window is current.
+    assert_eq!(live[rolling].value(), [Some(2.0.into())]);
+    Ok(())
+}
+```
+
+In Rust the two consumers below are the outputs each push returns (after `live.watch(rolling, OutputKind::Event)`) and `value()`, read whenever you like. React hooks are TypeScript only.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, name="cpu")
+rolling = live.rolling("1m", {"cpu": "avg"}, trigger="30s")
+for t, cpu in [(0, 1.0), (10_000, 2.0), (20_000, 3.0)]:
+    live.push(t, cpu=cpu)
+
+# No 30-second boundary crossed yet, so nothing emitted...
+assert len(rolling) == 0
+# ...but the window is current.
+assert rolling.value() == {"cpu": 2.0}
+```
+
+In Python the two consumers below are the outputs each push returns (after `rolling.watch("event")`) and `value()`, read whenever you like. React hooks are TypeScript only.
+
+</TabItem>
+</Tabs>
+
+This powers the **single-rolling, two-consumer pattern**:
+
+```ts
+const rolling = live.rolling(
+  '1m',
+  { latency: 'p95' },
+  { trigger: Trigger.every('30s') },
+);
+
+// Backend reporting fires at the 30s cadence
+rolling.on('event', e => fetch('/api/telemetry', { ... }));
+
+// In-app display reads continuously, gets the up-to-date value
+function PerformancePanel() {
+  const stats = useLiveQuery(rolling, () => rolling.value(), {
+    throttleMs: 1_000,
+  });
+  return <Display value={stats.latency} />;
+}
+```
+
+One rolling, two consumers, one deque. No duplicated state.
+
+## Emission semantics (clock triggers)
+
+Each of these applies to `Trigger.every` / `Trigger.clock`:
+
+- **Data-driven, not timer-driven.** No `setInterval` inside the
+  library. If the source goes quiet for a minute, no snapshots are
+  emitted during that minute.
+- **One emission per crossing.** A source event that jumps multiple
+  boundaries at once (e.g. after a quiet period) fires exactly one
+  event at the start of the new bucket — not one per skipped
+  boundary.
+- **Snapshot timing.** The rolling-window snapshot is read after the
+  boundary-crossing event has been ingested by the rolling, so the
+  emitted value includes that event's contribution.
+- **Out-of-order events.** Late arrivals (under `ordering: 'reorder'`
+  on the source) do not trigger emission — only events that advance
+  the bucket index do. Late events are absorbed silently by the
+  rolling window's normal recompute.
+
+Count-trigger semantics are simpler — every Nth event fires; quiet
+periods produce no output by definition.
+
+## Synchronised partitioned rolling
+
+When you partition first and pass a clock trigger, **all partitions
+emit synchronously on every boundary crossing** — when any
+partition's event crosses the boundary, every known partition's
+rolling snapshot fires at the same instant.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+const ticks = live
+  .partitionBy('host')
+  .rolling('1m', { cpu: 'avg' }, { trigger: Trigger.every('200ms') });
+
+ticks.on('event', (e) => {
+  console.log(
+    e.begin(), // boundary timestamp, same for every host this tick
+    e.get('host'), // partition tag, auto-injected from routing key
+    e.get('cpu'), // rolling value at this boundary
+  );
+});
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, PartitionOptions, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    let ticks = live.partition_rolling(
+        hosts,
+        "1m",
+        &[Agg::of("cpu", Reducer::Avg)],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    for (t, host, cpu) in [
+        (0, "a", Some(1.0)),
+        (50, "b", Some(3.0)),
+        (150, "a", Some(2.0)),
+        (210, "b", Some(5.0)), // crosses 200 ms
+        (230, "c", Some(7.0)), // c is new: it joins from the next tick
+        (420, "a", None),      // crosses 400 ms
+    ] {
+        live.push(t, [Some(host.into()), cpu.map(Value::from)])?;
+    }
+
+    // Columns: time, host, then the reducers. Every host on each tick.
+    assert_eq!(live[ticks].schema()[1].name, "host");
+    let rows: Vec<_> = live[ticks]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (e.begin(), host, e.number("cpu").unwrap())
+        })
+        .collect();
+    let row = |t, h: &str, v| (t, h.to_string(), Some(v));
+    assert_eq!(
+        rows,
+        [
+            row(200, "a", 1.5),
+            row(200, "b", 4.0),
+            row(400, "a", 1.5),
+            row(400, "b", 4.0),
+            row(400, "c", 7.0),
+        ]
+    );
+    Ok(())
+}
+```
+
+`partition_rolling` needs a clock trigger. Its host column is text.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"}, name="metrics")
+ticks = live.partition_by("host").rolling("1m", {"cpu": "avg"}, trigger="200ms")
+
+for t, host, cpu in [
+    (0, "a", 1.0),
+    (50, "b", 3.0),
+    (150, "a", 2.0),
+    (210, "b", 5.0),  # crosses 200 ms
+    (230, "c", 7.0),  # c is new: it joins from the next tick
+    (420, "a", None),  # crosses 400 ms
+]:
+    live.push(t, host=host, cpu=cpu)
+
+# Columns: time, host, then the reducers. Every host on each tick.
+assert ticks.columns[0] == "host"
+assert [(e.begin, e["host"], e["cpu"]) for e in ticks.events()] == [
+    (200, "a", 1.5),
+    (200, "b", 4.0),
+    (400, "a", 1.5),
+    (400, "b", 4.0),
+    (400, "c", 7.0),
+]
+```
+
+On a partitioned node a clock trigger makes one node with a row per host at each tick. It needs a clock trigger; its host column is text.
+
+</TabItem>
+</Tabs>
+
+The output is a `LiveSource` whose schema is
+`[time, <partitionColumn>, ...mappingColumns]` — one event per known
+partition per tick, all carrying the same boundary timestamp.
+Partitions declared via `{ groups }` emit in declared order;
+auto-spawned partitions emit in observation order.
+
+### With chained partition operators
+
+A clock trigger also works after chained methods on the partitioned
+surface (`fill`, `diff`, `rate`, `pctChange`, `cumulative`). The
+chain factory runs per partition; the sync rolling subscribes to
+each chain output:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```ts
+// Per-host gap-filling before synchronised tick aggregation
+const ticks = live
+  .partitionBy('host')
+  .fill({ cpu: 'hold' })
+  .rolling('1m', { cpu: 'avg' }, { trigger: Trigger.every('200ms') });
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveSeries, PartitionOptions, RollingOptions, Trigger};
+use pond_rs::{Agg, ColumnDef, ColumnKind, Fill, Reducer, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::new(
+        "metrics",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("host", ColumnKind::String),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+    )?;
+    let hosts = live.partition_by(live.root(), "host", &PartitionOptions::new())?;
+    // Per-host gap filling, then every host on one 200 ms clock.
+    let filled = live.per_partition(hosts, |live, host| {
+        Ok(live.fill(host, &[("cpu", Fill::Hold)])?.id())
+    })?;
+    let ticks = live.partition_rolling(
+        filled,
+        "1m",
+        &[Agg::of("cpu", Reducer::Avg)],
+        &RollingOptions::new().trigger(Trigger::every("200ms")?),
+    )?;
+
+    for (t, host, cpu) in [
+        (0, "a", Some(1.0)),
+        (50, "b", Some(3.0)),
+        (150, "a", None),
+        (210, "b", None),
+        (420, "a", Some(4.0)),
+    ] {
+        live.push(t, [Some(host.into()), cpu.map(Value::from)])?;
+    }
+
+    let rows: Vec<_> = live[ticks]
+        .events()
+        .map(|e| {
+            let host = e.string("host").unwrap().unwrap().to_string();
+            (e.begin(), host, e.number("cpu").unwrap())
+        })
+        .collect();
+    let row = |t, h: &str, v| (t, h.to_string(), Some(v));
+    // a at 400 ms: 1, 1 (held) and 4.
+    assert_eq!(
+        rows,
+        [
+            row(200, "a", 1.0),
+            row(200, "b", 3.0),
+            row(400, "a", 2.0),
+            row(400, "b", 3.0)
+        ]
+    );
+    Ok(())
+}
+```
+
+The chain is built with `per_partition`, which runs the closure on every host, including hosts that appear later.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "host": "string", "cpu": "number"}, name="metrics")
+# Per-host gap filling, then every host on one 200 ms clock.
+ticks = live.partition_by("host").fill({"cpu": "hold"}).rolling("1m", {"cpu": "avg"}, trigger="200ms")
+
+for t, host, cpu in [(0, "a", 1.0), (50, "b", 3.0), (150, "a", None), (210, "b", None), (420, "a", 4.0)]:
+    live.push(t, host=host, cpu=cpu)
+
+# a at 400 ms: 1, 1 (held) and 4.
+assert [(e.begin, e["host"], e["cpu"]) for e in ticks.events()] == [
+    (200, "a", 1.0),
+    (200, "b", 3.0),
+    (400, "a", 2.0),
+    (400, "b", 3.0),
+]
+```
+
+The fill step is built on every host, including hosts that appear later.
+
+</TabItem>
+</Tabs>
+
+Output schema stays `[time, <partitionColumn>, ...mappingColumns]`
+regardless of how many chain steps preceded the rolling. Partition
+tags are set from the routing key, so chains that drop the
+partition column (e.g. `.select(...)` without explicitly retaining
+it) still emit correctly.
+
+### Restrictions
+
+- **Partition column name must not collide** with a reducer-output
+  column. `partitionBy('cpu').rolling('1m', { cpu: 'avg' }, { trigger })`
+  is rejected at construction; rename the reducer output via an
+  `{ from, using }` alias (e.g.
+  `{ cpu_avg: { from: 'cpu', using: 'avg' } }`) or partition by a
+  different column.
+- **Late-spawn partitions** only appear in ticks **after** their
+  first event arrives. A partition not yet known to the sync source
+  contributes no row to the current tick — it joins the rotation
+  when its first event lands. To eagerly include a partition before
+  any events, declare it via `partitionBy(col, { groups: [...] })`.
+- **Return type is loose** (`LiveSource<SeriesSchema>` rather than
+  a schema-narrowed shape). The schema is correct at runtime; only
+  the static types are widened. Tighter typing is queued for a
+  follow-up release once the surface settles.
+
+## Trigger × partition matrix
+
+| Setup                                                        | Behaviour                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `live.rolling(...)` (no partition, no trigger)               | Per source event                                                    |
+| `live.rolling(..., { trigger: Trigger.every(d) })`           | One snapshot per epoch-aligned boundary                             |
+| `live.rolling(..., { trigger: Trigger.count(n) })`           | One snapshot every `n` events                                       |
+| `partitionBy(c).rolling(...)` (no trigger)                   | Per-partition rolling, each fires per source event independently    |
+| `partitionBy(c).rolling(..., { trigger: Trigger.every(d) })` | **Synchronised** — every known partition emits one row per boundary |
+| `partitionBy(c).rolling(..., { trigger: Trigger.count(n) })` | Per-partition count — each partition fires after its own Nth event  |
+
+## See also
+
+- [Concepts → Triggers](/docs/concepts/triggers) — the
+  mental model
+- [Concepts → Sequences](/docs/concepts/sequences) —
+  what clock triggers consume
+- [Concepts → Partitioning](/docs/concepts/partitioning)
+  — how synchronised partitioned rolling fits in
+- [Live transforms](./live-transforms) — the rolling and aggregation
+  operators that triggers attach to
+- [Telemetry recipe](/docs/recipes/telemetry-reporting) — end-to-end
+  worked example using `Trigger.every`

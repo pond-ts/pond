@@ -140,7 +140,7 @@ between `partitionBy` and a long `rolling`. React: `@pond-ts/react`
 
 ## Read next
 
-- Mental model + pandas / pondjs translation tables: <https://pond-ts.org/docs/pond-ts/mental-model>
+- Mental model + pandas / pondjs translation tables: <https://pond-ts.org/docs/concepts/mental-model>
 - Every operator page: <https://pond-ts.org/llms.txt> (index) · <https://pond-ts.org/llms-pond-ts.txt> (core docs, one file)
-- Reducer reference: <https://pond-ts.org/docs/pond-ts/transforms/reducer-reference>
+- Reducer reference: <https://pond-ts.org/docs/series/reducer-reference>
 - `node_modules/pond-ts/API.md`

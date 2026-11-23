@@ -623,8 +623,26 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
+- **[PND-PYAPIDOCS]** — A Python API reference on the docs site, built
+  from the package's own type file (`crates/pond-py/pond.pyi`) and checked
+  in CI so it can't fall behind, as the TypeScript reference is built from
+  source. Peter (2026-11-23): without it Python is not treated as an equal.
+  Context in `docs/plans/PND_RUST_PLAN.md` ("Docs for every language").
+- **[PND-PROCRUSTDOCS]** — Processing graphs as a first-class feature in
+  both TypeScript and Rust on the docs site (Peter, 2026-11-23): Rust tabs
+  on the `process/` pages (registry, JSON requests, the host, your own ops),
+  checked by compiling them, and the "no Rust version" note replaced. The
+  crate (`crates/pond-process`) is not on crates.io yet, so the pages say
+  how to depend on it from git. Same breakout section as above.
+- **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
+  about 47 code blocks) are TypeScript only, and Mental model leans on
+  TypeScript ideas (`as const`, type narrowing), though the sidebar calls
+  them the ideas every language shares. Add Rust and Python tabs (checked
+  by the snippet scripts) and say the shared idea first. Same for
+  `series/arrays`, `series/columns`, `series/other-chart-libraries`.
+  Found in the #964 review.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
-  (`website/docs/pond-rs/`) and the Rust / Python tabs on the core pages
+  (`website/docs/rust/`) and the Rust / Python tabs on the core pages
   (what is covered so far is in the breakout plan). The Python tabs already
   run in CI (`check-python-snippets.py`). Left: run
   `website/scripts/check-rust-snippets.sh`, which checks every Rust example

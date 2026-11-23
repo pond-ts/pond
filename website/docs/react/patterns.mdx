@@ -106,7 +106,7 @@ to per-field reference stability on `useCurrent`).
 
 Snapshot the live source, then run `baseline` on the snapshot — you get
 `avg`, `sd`, `upper`, `lower` columns on one pass, with the
-[`sd === 0` flat-window handling](../pond-ts/transforms/anomaly-detection#baseline)
+[`sd === 0` flat-window handling](/docs/series/anomaly-detection#baseline)
 for free.
 
 ```tsx
@@ -271,7 +271,7 @@ Three things the library doesn't bake in yet; if you hit one, roll it
 yourself and tell us what you needed:
 
 - **Error boundaries.** `live.push(...)` throws on schema violations
-  (see [LiveSeries → ordering modes](../pond-ts/live/live-series#ordering-modes)).
+  (see [LiveSeries → ordering modes](/docs/live/live-series#ordering-modes)).
   Hooks don't catch those — wrap your dashboard in a React error
   boundary if you want a fallback UI rather than a crashed tree.
 - **Context-shared sources.** The patterns above pass `live` via props.

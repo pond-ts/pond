@@ -3,7 +3,7 @@ import { Sequence, TimeSeries, ValueSeries } from '../src/index.js';
 
 /**
  * Executable mirror of the code examples on the ingest page,
- * `website/docs/pond-ts/creating.mdx`.
+ * `website/docs/series/creating.mdx`.
  *
  * **Why this file exists.** A Layer 2 review of PR #564 found three defects in
  * that page — one example that didn't compile, one that threw at runtime, and

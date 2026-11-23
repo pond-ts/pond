@@ -92,3 +92,15 @@ html[data-theme='dark'] .heroPill {
     padding: 4rem 1rem 3rem;
   }
 }
+
+/* The install picker under the hero: one command per language. */
+.install {
+  margin: 2rem auto 0;
+  width: 100%;
+  max-width: 28rem;
+  text-align: left;
+}
+
+.install :global(.tabs) {
+  justify-content: center;
+}

@@ -48,7 +48,7 @@ const buckets = series.aggregate(Sequence.every('10m'), { cpu: 'avg' });
 `{ cpu: 'avg' }` is shorthand for `{ cpu: { from: 'cpu', using: 'avg' } }` —
 `.aggregate` takes a wide vocabulary of reducers (`sum`, `min`, `max`,
 `count`, `median`, `p95`, and more). Full list:
-[Aggregation](../pond-ts/transforms/aggregation).
+[Aggregation](/docs/series/aggregation).
 
 ## `rolling` + `baseline` → a smoothed line and its envelope
 
@@ -74,9 +74,9 @@ const banded = series.baseline('cpu', { window: '10m', sigma: 1.5 });
 
 `.baseline` is sugar over a `.rolling` call with `avg`/`stdev` reducers —
 reach for `.rolling` directly when you want the window without the
-band-shaped output. Both: [Rolling windows](../pond-ts/transforms/rolling);
+band-shaped output. Both: [Rolling windows](/docs/series/rolling);
 `.baseline`/`.outliers`:
-[Anomaly detection](../pond-ts/transforms/anomaly-detection).
+[Anomaly detection](/docs/series/anomaly-detection).
 
 ## `partitionBy` → one line per host
 
@@ -108,7 +108,7 @@ terminal call that gives you one `series` per partition key, ready to map
 over into one draw layer each. (If you instead want to run a transform
 **per partition and rejoin into one series** — a per-host rolling average,
 say — `.collect()` is the terminal call for that shape instead.) Full
-model: [Reshape](../pond-ts/transforms/reshape).
+model: [Reshape](/docs/series/reshape).
 
 ## `byColumn` → a distribution
 

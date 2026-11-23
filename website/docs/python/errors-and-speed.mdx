@@ -1,0 +1,44 @@
+---
+id: errors-and-speed
+title: Errors, threads and speed
+sidebar_position: 6
+description: 'What errors pond raises in Python, how it uses several threads and cores, how fast it is against polars and pandas, and what the TypeScript library has that the Python package does not yet.'
+---
+
+# Errors, threads and speed
+
+## Errors
+
+- `pond.PondError` (a `ValueError`) for bad data or arguments: an
+  unknown column, rows out of order, a bad duration or reducer name. The
+  message names the call and the column, for example
+  `rolling: no column named 'cpux' (columns: cpu)`.
+- `TypeError` for a value of the wrong type (text where a number is
+  needed) and for an unknown keyword or study option.
+
+## Threads and speed
+
+Every call lets go of Python's lock while it works, so calls from several
+Python threads run at the same time, and operations on a partitioned
+series use several cores by themselves. On a million rows, frame in to
+frame out, a rolling average or RSI is about as fast as polars or faster,
+and the cheapest operations (`diff`) are slower, because getting a frame in
+costs about 7 ms (the time column is copied and checked). The
+[package README](https://github.com/pond-ts/pond/tree/main/crates/pond-py#speed)
+has the table against polars and pandas.
+
+## Not in Python yet
+
+The Python package is built from the same Rust core as everything else, so
+the answers match. A few pieces of the TypeScript library are not there yet:
+
+- `apply` on a partitioned series (run your own function per partition).
+  Chain the steps on the partitioned series and then `collect()`, or loop
+  over `to_dict()`.
+- `ValueSeries.read_ipc`: read the file with pyarrow, then use
+  `ValueSeries.from_arrow`.
+- `cumulative` on a batch series takes reducer names only, not your own
+  function. Use `scan` for a running value of your own.
+- `at_or_before` on a live series. Copy it with `to_series()` first.
+- Processing graphs, charts, React hooks and the fitness library are
+  TypeScript (and, for processing graphs, Rust) only.

@@ -4,7 +4,7 @@ pond-rs, the Rust port of pond-ts, compiled to WebAssembly and called with
 pond-ts's method names and argument shapes, in Node and in browsers. It has
 pond-ts's version number and is released with it on every pond-ts release
 ([PND-RUST-R4] in `docs/plans/PND_RUST_PLAN.md`). Docs:
-<https://pond-ts.org/docs/pond-rs/javascript>.
+<https://pond-ts.org/docs/javascript/>.
 
 ```sh
 npm install @pond-ts/wasm

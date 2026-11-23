@@ -155,7 +155,7 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 pond-rs reads the same JSON, schema and all. `TimeSeries::new(name, times,
 columns)` builds a series straight from Rust vectors instead; see
-[pond-rs getting started](./pond-rs/getting-started).
+[pond-rs getting started](/docs/rust/getting-started).
 
 </TabItem>
 <TabItem value="python" label="Python">
@@ -183,7 +183,7 @@ assert len(ride) == 5
 
 Python reads the same JSON, schema and all. `pond.TimeSeries(data)` builds a
 series from a polars, pandas or pyarrow frame or a dict of columns instead;
-see [Python](./pond-rs/python).
+see [Python](/docs/python/).
 
 </TabItem>
 </Tabs>
@@ -292,7 +292,7 @@ original stays intact.
 Row tuples are the right default. If your data instead shows up
 struct-of-arrays — a bulk JSON payload, protobuf packed doubles, a decoder
 handing you typed arrays — `TimeSeries.fromColumns` skips the row round-trip
-entirely. See [Creating series → Columnar ingest](pond-ts/creating#columnar).
+entirely. See [Creating series → Columnar ingest](/docs/series/creating#columnar).
 :::
 
 ## Smoothing it
@@ -493,8 +493,8 @@ different things on a bike.
 Note what came back: **plain records, not a series** (in Rust, a table). A power bucket isn't keyed
 by anything you'd keep chaining, so pond hands the bins straight back. (When you
 _do_ want to keep the full-resolution channel but read it against a value —
-distance, say — that's [`byValue`](pond-ts/concepts/value-axis), which returns a
-[`ValueSeries`](pond-ts/value-series).)
+distance, say — that's [`byValue`](/docs/concepts/value-axis), which returns a
+[`ValueSeries`](/docs/series/value-series).)
 
 ## Bringing in the domain library
 
@@ -724,8 +724,8 @@ arriving.
 
 ## Where to go next
 
-- **[pond-ts core](pond-ts/introduction)** — the foundation in depth. Start with
-  the [Mental model](pond-ts/mental-model).
+- **[pond-ts core](/docs/typescript/)** — the foundation in depth. Start with
+  the [Mental model](/docs/concepts/mental-model).
 - **[Learn charts](learn-charts/your-first-chart)** — the charts track, from
   first chart to live data.
 - **[How-to guides](how-to-guides/)** — longer worked builds, including

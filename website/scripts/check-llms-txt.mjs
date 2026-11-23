@@ -16,7 +16,7 @@ const {
 // Area routing — first match wins, on-ramp pages before the catch-all.
 assert.equal(areaOf('docs/introduction.mdx').key, 'start');
 assert.equal(areaOf('docs/getting-started.mdx').key, 'start');
-assert.equal(areaOf('docs/pond-ts/transforms/rolling.mdx').key, 'pond-ts');
+assert.equal(areaOf('docs/series/rolling.mdx').key, 'pond-ts');
 assert.equal(
   areaOf('docs/learn-charts/01-your-first-chart.mdx').key,
   'learn-charts',
@@ -24,7 +24,7 @@ assert.equal(
 assert.equal(areaOf('docs/charts/cheat-sheet.mdx').key, 'charts');
 assert.equal(areaOf('docs/recipes/cpu-metrics.mdx').key, 'guides');
 assert.equal(areaOf('docs/api/core/index.mdx').key, 'reference');
-assert.equal(areaOf('docs/pond-rs/operations.mdx').key, 'pond-rs');
+assert.equal(areaOf('docs/rust/operations.mdx').key, 'pond-rs');
 assert.equal(areaOf('docs/somewhere-new.mdx').key, 'other');
 
 // Metadata path — the docs plugin's loaded content is the source of truth.
@@ -36,12 +36,12 @@ const plugins = [
         {
           docs: [
             {
-              id: 'pond-ts/transforms/rolling',
+              id: 'series/rolling',
               title: 'Rolling Windows',
               description:
                 'Sliding-window computations over ordered events. For each event in\nthe source, look at a window of nearby events and compute a **reducer**.',
-              permalink: '/docs/pond-ts/transforms/rolling',
-              source: '@site/docs/pond-ts/transforms/rolling.mdx',
+              permalink: '/docs/series/rolling',
+              source: '@site/docs/series/rolling.mdx',
             },
             {
               id: 'introduction',
@@ -58,7 +58,7 @@ const plugins = [
 ];
 const docs = collectDocs(plugins, ['/docs/', '/docs/x'], '/');
 assert.equal(docs.length, 2);
-assert.equal(docs[0].source, 'docs/pond-ts/transforms/rolling.mdx');
+assert.equal(docs[0].source, 'docs/series/rolling.mdx');
 
 const index = renderIndex(
   {
@@ -71,10 +71,10 @@ const index = renderIndex(
 );
 assert.match(index, /^# Pond\n/);
 assert.match(index, /^## Start here$/m);
-assert.match(index, /^## pond-ts \(core\)$/m);
+assert.match(index, /^## Core: concepts, series, live data$/m);
 assert.match(
   index,
-  /- \[Rolling Windows\]\(https:\/\/pond-ts\.org\/docs\/pond-ts\/transforms\/rolling\): Sliding-window computations over ordered events\. For each event in the source, look at a window of nearby events and compute a reducer\./,
+  /- \[Rolling Windows\]\(https:\/\/pond-ts\.org\/docs\/series\/rolling\): Sliding-window computations over ordered events\. For each event in the source, look at a window of nearby events and compute a reducer\./,
   'description is collapsed to one line with markdown emphasis stripped',
 );
 assert.match(index, /\(https:\/\/pond-ts\.org\/llms-pond-ts\.txt\)/);
@@ -86,7 +86,7 @@ assert.doesNotMatch(
 assert.match(index, /^## Optional$/m);
 assert.match(index, /docs\/agents\/USING_POND\.md/);
 assert.match(index, /API\.md/);
-assert.match(index, /TypeScript or Rust/);
+assert.match(index, /TypeScript, Rust or Python/);
 assert.match(index, /docs\.rs\/pond-rs/);
 
 // Fallback path — no docs plugin content → bare route list, build still succeeds.
