@@ -29,7 +29,7 @@ checks every operation against output written by pond-ts.
 
 ```toml
 [dependencies]
-pond-rs = "0.1"
+pond-rs = "0.2"
 ```
 
 The library is imported as `pond_rs`. It needs Rust 1.88 or newer.

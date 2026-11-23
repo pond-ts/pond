@@ -645,6 +645,12 @@ crates.io trusted publishing (OIDC) once it is gone. Left on PLAN.md: set up
 trusted publishing for the crate on crates.io and delete the secret. Neither
 can be seen from the repo, so check crates.io before closing it.
 
+**0.2.0 (2026-11-23, Peter's go).** crates.io still had only 0.1.0 while
+main had gained column expressions, `push_series`, `OutputKind::Columns`,
+cumulative thresholds and the November speedups. A minor bump because
+`cumulative`'s signature changed (pre-1.0, a minor may change the API).
+Install lines in the docs moved to `"0.2"`.
+
 ## Codex review of the whole crate (2026-10-29)
 
 pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
