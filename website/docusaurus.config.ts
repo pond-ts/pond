@@ -284,7 +284,7 @@ const config: Config = {
           items: [
             { label: 'TypeScript', to: '/docs/api/' },
             { label: 'Rust (docs.rs)', href: 'https://docs.rs/pond-rs' },
-            { label: 'Python', to: '/docs/python/' },
+            { label: 'Python', to: '/docs/python/api/' },
           ],
         },
         {
