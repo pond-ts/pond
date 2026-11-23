@@ -104,6 +104,13 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **pond-rs: partitions are put back together faster.** `concat`,
+  `apply`, and partitioned steps that make new keys (`aggregate`, `align`,
+  `rolling_over`, …) now merge the already-sorted partitions instead of
+  sorting every row: `concat` of 100 partitions holding 1M rows 27 → 20
+  ms, a per-host 1-minute `aggregate` over 100 hosts 124 → 92 ms. Same
+  results, bit for bit. Also faster from Python and WebAssembly.
+
 - **Docs: one site for every language.** pond-ts.org is now organised by
   task rather than by npm package, with a front door each for TypeScript,
   Rust, Python and JavaScript with WebAssembly, a "Choose your language"

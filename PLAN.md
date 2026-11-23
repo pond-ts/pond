@@ -593,16 +593,6 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
 yet on crates.io) are built. Most entries below are
 pond-ts bugs found while porting.
 
-- **[PND-RSPARTMERGE]** — pond-rs puts partitions back together slowly at
-  scale: `collect` / `concat` of 100 partitions holding 1M rows takes about
-  300 ms (28 ms at 500k rows, so it jumps, not grows), and `partition_by`
-  about 70 ms. Found by the Python bridge benchmark (per-host rolling 428 ms
-  against polars' 127 ms) and reproduced from plain Rust. The instruction
-  count grows in step with the rows (callgrind), so it is memory access, most
-  likely the 16-bit radix sort's 65,536-bucket scatter in `merge_order`;
-  partitions are already sorted, so a k-way merge is the obvious candidate.
-  No API change.
-
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
   per-host aggregate's closed bucket carries only its interval and reducer
