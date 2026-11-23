@@ -39,14 +39,14 @@ pub(crate) struct RowFilter {
 
 /// A lookup table held at the start of a 64-byte cache line.
 ///
-/// The rows of the tables here are a power of two of bytes, 64 at most, so
-/// from the start of a line no row, and no read of several values of one
-/// at once, lies across two lines or two memory pages. Where a table lands
-/// otherwise is the linker's choice, and a read that lies across two pages
-/// is slow: about 10 ns on an M1 (Linux, 4 KB pages), where a read costs a
-/// fraction of one. Two builds of the same code once differed by 0.6 ms
-/// per million rows on a filter that keeps most rows, because in one the
-/// row of [`LANES`] for "all eight kept" lay across the end of a page.
+/// The tables' rows are 8 or 32 bytes, so from the start of a line no row
+/// lies across two lines, and so none across two memory pages. The same
+/// goes for a read of two or four of [`BIT`]'s values at once. Left alone,
+/// a table lands wherever the linker puts it, and a read that lies across
+/// two pages is slow: about 10 ns on an M1 (Linux, 4 KB pages), where a
+/// read costs a fraction of one. Two builds of the same code once differed
+/// by 0.6 ms per million rows on a filter that keeps most rows, because in
+/// one the row of [`LANES`] for "all eight kept" lay across a page's end.
 #[repr(align(64))]
 struct Aligned<T>(T);
 
@@ -90,6 +90,9 @@ impl RowFilter {
         let mut words = Vec::with_capacity(v.len().div_ceil(64));
         words.extend(chunks.iter().map(|c| {
             let mut w = 0u64;
+            // `j` indexes the values and the table. Clippy 1.97 sees only
+            // the first; 1.100 sees both.
+            #[allow(clippy::needless_range_loop)]
             for j in 0..64 {
                 w |= 0u64.wrapping_sub(u64::from(test(c[j]))) & BIT.0[j];
             }
