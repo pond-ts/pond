@@ -777,8 +777,20 @@ class in TypeScript and Rust**, and **Python needs its own API reference**.
   series" tours overlap the shared tabbed pages; merging them is content
   work, not structure. The pond-rs Roadmap section was left alone (another
   thread rewrites it).
-- **Next:** [PND-PYAPIDOCS] (Python API reference) and [PND-PROCRUSTDOCS]
-  (Rust tabs on the processing-graph pages), in PLAN.md.
+- **[PND-PYAPIDOCS] Python API reference (PR 2, done).** Ten pages under
+  `website/docs/python/api/`, written by `website/scripts/gen-python-api.py`.
+  Signatures come from `crates/pond-py/pond.pyi` (what an editor shows);
+  descriptions from its docstrings, or, where it has none, from the
+  docstrings the compiled package carries (the `///` comments in the PyO3
+  source). Considered and not done: Sphinx / pdoc (another toolchain and a
+  second site look), or copying the runtime docstrings into `pond.pyi`
+  (would make the stub hand-maintained text twice over). The check runs in
+  CI's `python` job against the wheel it builds (`--check`), so a changed
+  method fails CI until the pages are regenerated; the output is identical
+  on Python 3.9 and 3.13. The pages are in `.prettierignore` because the
+  check compares bytes.
+- **Next:** [PND-PROCRUSTDOCS] (Rust tabs on the processing-graph pages),
+  in PLAN.md.
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 

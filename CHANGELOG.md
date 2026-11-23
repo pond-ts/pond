@@ -82,6 +82,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Docs: a Python API reference** at `/docs/python/api/`: every class,
+  method and function of `pond` (`pip install pond-timeseries`) with its
+  signature and description, ten pages in all, including the 109 study
+  methods with their options. It is generated from the package's own type
+  file and docstrings (`website/scripts/gen-python-api.py`), and CI fails
+  when the package changes without the pages being regenerated.
+
 ### Changed
 
 - **Docs: one site for every language.** pond-ts.org is now organised by

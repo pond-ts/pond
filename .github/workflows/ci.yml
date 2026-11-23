@@ -251,6 +251,12 @@ jobs:
       - name: Docs examples
         run: python website/scripts/check-python-snippets.py
 
+      # The Python API reference (website/docs/python/api/) is generated from
+      # pond.pyi and the built package's docstrings; this fails when a method
+      # changed and the pages were not regenerated.
+      - name: Python API reference is up to date
+        run: python website/scripts/gen-python-api.py --check
+
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
   # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used

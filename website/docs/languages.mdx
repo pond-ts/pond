@@ -53,15 +53,16 @@ pip install pond-timeseries          # then: import pond
 
 ## What each language has
 
-| Area                                                      | TypeScript | Rust                                    | Python | JavaScript (WebAssembly) |
-| --------------------------------------------------------- | ---------- | --------------------------------------- | ------ | ------------------------ |
-| [Series and operations](./series/creating.mdx)            | Yes        | Yes                                     | Yes    | Yes                      |
-| [Live series](./live/live-series.mdx)                     | Yes        | Yes                                     | Yes    | Yes                      |
-| [Finance studies, trading calendars](./finance/index.mdx) | Yes        | Yes                                     | Yes    | Yes                      |
-| [Processing graphs](./process/index.mdx)                  | Yes        | In the repository, not yet on crates.io | No     | No                       |
-| [Charts](./charts/index.mdx)                              | Yes        | No                                      | No     | Through `toColumns()`    |
-| [React hooks](./react/index.mdx)                          | Yes        | No                                      | No     | No                       |
-| [Fitness files](./fit/index.mdx) (FIT, TCX)               | Yes        | No                                      | No     | No                       |
+| Area                                                      | TypeScript                      | Rust                                    | Python                                 | JavaScript (WebAssembly) |
+| --------------------------------------------------------- | ------------------------------- | --------------------------------------- | -------------------------------------- | ------------------------ |
+| [Series and operations](./series/creating.mdx)            | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Live series](./live/live-series.mdx)                     | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Finance studies, trading calendars](./finance/index.mdx) | Yes                             | Yes                                     | Yes                                    | Yes                      |
+| [Processing graphs](./process/index.mdx)                  | Yes                             | In the repository, not yet on crates.io | No                                     | No                       |
+| [Charts](./charts/index.mdx)                              | Yes                             | No                                      | No                                     | Through `toColumns()`    |
+| [React hooks](./react/index.mdx)                          | Yes                             | No                                      | No                                     | No                       |
+| [Fitness files](./fit/index.mdx) (FIT, TCX)               | Yes                             | No                                      | No                                     | No                       |
+| API reference                                             | [In this site](./api/index.mdx) | [docs.rs](https://docs.rs/pond-rs)      | [In this site](./python/api/index.mdx) | Same as TypeScript       |
 
 Where a language has no charts, its series hand their data to the tools
 people already use there: `to_polars()` or `to_pandas()` in Python, Arrow

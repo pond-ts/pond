@@ -623,11 +623,6 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-PYAPIDOCS]** — A Python API reference on the docs site, built
-  from the package's own type file (`crates/pond-py/pond.pyi`) and checked
-  in CI so it can't fall behind, as the TypeScript reference is built from
-  source. Peter (2026-11-23): without it Python is not treated as an equal.
-  Context in `docs/plans/PND_RUST_PLAN.md` ("Docs for every language").
 - **[PND-PROCRUSTDOCS]** — Processing graphs as a first-class feature in
   both TypeScript and Rust on the docs site (Peter, 2026-11-23): Rust tabs
   on the `process/` pages (registry, JSON requests, the host, your own ops),
