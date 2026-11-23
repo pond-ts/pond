@@ -645,6 +645,12 @@ crates.io trusted publishing (OIDC) once it is gone. Left on PLAN.md: set up
 trusted publishing for the crate on crates.io and delete the secret. Neither
 can be seen from the repo, so check crates.io before closing it.
 
+**0.2.0 (2026-11-23, Peter's go).** crates.io still had only 0.1.0 while
+main had gained column expressions, `push_series`, `OutputKind::Columns`,
+cumulative thresholds and the November speedups. A minor bump because
+`cumulative`'s signature changed (pre-1.0, a minor may change the API).
+Install lines in the docs moved to `"0.2"`.
+
 ## Codex review of the whole crate (2026-10-29)
 
 pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
@@ -5031,6 +5037,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     owner actions are left, and PLAN.md's [PND-RUST-R4] entry now holds only
     those: the first `@pond-ts/wasm` publish by hand, and PyPI's pending
     trusted publisher for `pond-rs`.
+
+  - Status 2026-11-23: both are published, so R4 is done and its PLAN.md
+    entry is removed. npm has `@pond-ts/wasm` 0.79.0; PyPI has
+    `pond-timeseries` 0.78.0 and 0.79.0 (the PyPI name became
+    `pond-timeseries` and the import `import pond`, #956).
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
