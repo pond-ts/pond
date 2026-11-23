@@ -593,7 +593,6 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
 yet on crates.io) are built. Most entries below are
 pond-ts bugs found while porting.
 
-
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
   per-host aggregate's closed bucket carries only its interval and reducer
