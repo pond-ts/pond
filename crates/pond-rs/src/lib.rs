@@ -13,7 +13,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! pond-rs = "0.1"
+//! pond-rs = "0.2"
 //! ```
 //!
 //! ## Where to start
