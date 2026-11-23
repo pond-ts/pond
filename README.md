@@ -7,33 +7,44 @@
 [![license: MIT](https://img.shields.io/npm/l/pond-ts)](https://github.com/pond-ts/pond/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org)
 
-**Time series you can trust, from a batch of history to a live stream to the chart on screen.**
+**Fast, trustworthy time series libraries for batch processing, live streams, and visualization.**
 
-pond is for data that is a list of readings over time: server metrics, prices,
-sensor and meter readings, heart rate on a run. You describe your columns once,
-then ask the questions you actually have: the average per minute, a rolling
-five-minute window, the same thing per host, one row per calendar day in New
-York (including the 23-hour day when the clocks change), which readings are
-out of the ordinary. The same operations work on a fixed batch of history and
-on a live stream that keeps itself up to date as events arrive, and the chart
-package draws the results directly, with no conversion step.
-
-It is written in TypeScript, fully typed, and has a Rust twin, **pond-rs**,
-that gives the same answers bit for bit and can be used from Rust, from
-JavaScript (as WebAssembly) and from Python. pond-ts is the from-scratch
-successor to [pondjs](https://github.com/esnet/pond).
+Pond is a family of high-performance time series libraries for TypeScript, Rust, Python, and WebAssembly. From ingestion and analytics to interactive visualization, Pond is designed to work efficiently with your data, using columnar storage and zero-copy operations wherever possible.
 
 <p align="center">
   <img src="docs/readme/tour.gif" alt="44 years of daily Pacific sea temperature in three parts: zooming from the whole record down to individual days and back, a one-year rolling window sweeping across the record and back, and bars of temperature against normal re-bucketed from one month to two years and back, with El Niño years in red and La Niña years in blue" width="880">
 </p>
 
-<sub>The real library on real data: 16,275 days of sea-surface temperature in
-the Niño 3.4 region of the Pacific (NOAA OISST v2.1), the record that defines
-El Niño. Every frame is recomputed by pond, using the call shown at the top of
-the card: `within` plus `aggregate` to keep the zoom at about one bucket per
-few pixels, `rolling` for the moving window, and `aggregate(Sequence.every(…))`
-for the bars, drawn by `@pond-ts/charts`. Source and recorder:
-[`docs/readme/demo/`](docs/readme/demo/).</sub>
+<sub>16,275 days of sea-surface temperature in the Niño 3.4 region of the Pacific (NOAA OISST v2.1).</sub>
+
+Pond is built for data that changes over time: server metrics, financial prices, sensor readings, energy usage, fitness data, and more.
+
+## Describe your data once, then ask questions of it
+
+What's the average per minute? How about a rolling five-minute window? Break that down by host. Give me one row per calendar day. Now do it in New York time. Which readings look unusual?
+
+Pond provides a rich set of time series operations for answering these questions, including aggregation, windowing, grouping, resampling, calendar-aware calculations, and analytics.
+
+The same operations work on historical data and live streams. Run a calculation over millions of existing rows, or keep it continuously updated as new events arrive. There's no need to build separate batch and streaming pipelines.
+
+From data to visualization, without the overhead. Pond's charting library works directly with the underlying data, avoiding unnecessary conversions and keeping visualizations responsive as the data changes.
+
+Pond is designed to handle millions of rows and hundreds of thousands of events per second, with a visualization layer built to keep up.
+
+## One model, multiple languages
+
+Pond has two native implementations of its core, maintained in lockstep:
+
+- [pond-ts](https://www.npmjs.com/package/pond-ts) — Native TypeScript implementation
+- [pond-rs](https://docs.rs/pond-rs/latest/pond_rs/) — Native Rust implementation
+- [@pond-ts/wasm](https://www.npmjs.com/package/@pond-ts/wasm) — Rust core compiled to WebAssembly for JavaScript
+- [pond-timeseries](https://pypi.org/project/pond-timeseries/) — Python bindings to the Rust core
+
+The TypeScript and Rust implementations are kept behaviorally identical, so the same data and operations produce the same results across environments.
+
+From backend processing to browser visualization, Pond lets you work with time series data using the same concepts, operations, and semantics.
+
+pond-ts is the from-scratch successor to [pondjs](https://github.com/esnet/pond).
 
 ## Why pond
 
