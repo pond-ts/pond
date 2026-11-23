@@ -19,8 +19,8 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Decimal128Type, Float64Type, Int32Type};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Float64Array, Int32Array,
-    ListArray, StringArray, UInt32Array,
+    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Float64Array, ListArray,
+    StringArray, UInt32Array,
 };
 use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field};
@@ -217,14 +217,9 @@ impl StringColumn {
     pub(crate) fn filter(&self, keep: &RowFilter) -> Self {
         match &self.repr {
             StringRepr::Plain(a) => Self::plain(keep.text(a)),
-            StringRepr::Dictionary(a) => {
-                let keys = a.keys();
-                let kept =
-                    Int32Array::new(keep.vec(keys.values()).into(), keep.nulls(keys.nulls()));
-                Self {
-                    repr: StringRepr::Dictionary(DictionaryArray::new(kept, a.values().clone())),
-                }
-            }
+            StringRepr::Dictionary(a) => Self {
+                repr: StringRepr::Dictionary(keep.dictionary(a)),
+            },
         }
     }
 }

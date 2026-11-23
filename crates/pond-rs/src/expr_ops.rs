@@ -353,6 +353,27 @@ mod filter_tests {
         }
     }
 
+    /// A filter that keeps nothing, written either way: no rows, a
+    /// dictionary column that is still a dictionary, and a series that
+    /// still stacks with the one it came from.
+    #[test]
+    fn nothing_kept_gives_an_empty_series_that_still_stacks() {
+        for n in [1, 64, 130] {
+            for key in keys(n) {
+                let s = TimeSeries::from_parts("s".into(), "time".into(), key, columns(n));
+                let by_test = s.filter_expr(&col("w").lt(-1.0)).unwrap();
+                let by_closure = s.filter(|_| Ok(false)).unwrap();
+                for got in [&by_test, &by_closure] {
+                    assert_eq!(got.len(), 0);
+                    assert_eq!(got, &s.take_rows(&[]));
+                    assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
+                    assert_eq!(TimeSeries::concat(&[got, &s]).unwrap(), s);
+                    assert_eq!(TimeSeries::concat(&[&s, got]).unwrap(), s);
+                }
+            }
+        }
+    }
+
     #[test]
     fn mask_matches_each_comparison_row_by_row() {
         let n = 200;

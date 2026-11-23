@@ -21,7 +21,9 @@
 //! The results are what Arrow's `filter` kernel gives, value for value;
 //! the tests below hold each copy to that.
 
-use arrow_array::{Array, StringArray};
+use arrow_array::cast::AsArray;
+use arrow_array::types::Int32Type;
+use arrow_array::{Array, DictionaryArray, Int32Array, StringArray, new_empty_array};
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer};
 
 /// The rows to keep: one bit per row of the source.
@@ -35,8 +37,21 @@ pub(crate) struct RowFilter {
     count: usize,
 }
 
+/// A lookup table held at the start of a 64-byte cache line.
+///
+/// The rows of the tables here are a power of two of bytes, 64 at most, so
+/// from the start of a line no row, and no read of several values of one
+/// at once, lies across two lines or two memory pages. Where a table lands
+/// otherwise is the linker's choice, and a read that lies across two pages
+/// is slow: about 10 ns on an M1 (Linux, 4 KB pages), where a read costs a
+/// fraction of one. Two builds of the same code once differed by 0.6 ms
+/// per million rows on a filter that keeps most rows, because in one the
+/// row of [`LANES`] for "all eight kept" lay across the end of a page.
+#[repr(align(64))]
+struct Aligned<T>(T);
+
 /// Bit `j` alone, for each `j`.
-const BIT: [u64; 64] = {
+static BIT: Aligned<[u64; 64]> = Aligned({
     let mut b = [0u64; 64];
     let mut j = 0;
     while j < 64 {
@@ -44,7 +59,7 @@ const BIT: [u64; 64] = {
         j += 1;
     }
     b
-};
+});
 
 /// Times eight bytes of 0 or 1, this gives their eight bits in the top
 /// byte.
@@ -71,17 +86,15 @@ impl RowFilter {
     /// so each caller gets a loop of its own.
     #[inline(always)]
     pub(crate) fn of_numbers(v: &[f64], test: impl Fn(f64) -> bool) -> Self {
+        let (chunks, rest) = v.as_chunks::<64>();
         let mut words = Vec::with_capacity(v.len().div_ceil(64));
-        let mut chunks = v.chunks_exact(64);
-        for c in &mut chunks {
-            let c: &[f64; 64] = c.try_into().expect("64 values");
+        words.extend(chunks.iter().map(|c| {
             let mut w = 0u64;
             for j in 0..64 {
-                w |= 0u64.wrapping_sub(u64::from(test(c[j]))) & BIT[j];
+                w |= 0u64.wrapping_sub(u64::from(test(c[j]))) & BIT.0[j];
             }
-            words.push(w);
-        }
-        let rest = chunks.remainder();
+            w
+        }));
         if !rest.is_empty() {
             let mut w = 0u64;
             for (j, &x) in rest.iter().enumerate() {
@@ -95,18 +108,16 @@ impl RowFilter {
     /// The rows where `flags` is 1: an evaluated true/false expression,
     /// where 0 is false and a negative value a gap.
     pub(crate) fn of_flags(flags: &[i8]) -> Self {
+        let (chunks, rest) = flags.as_chunks::<64>();
         let mut words = Vec::with_capacity(flags.len().div_ceil(64));
-        let mut chunks = flags.chunks_exact(64);
-        for c in &mut chunks {
+        words.extend(chunks.iter().map(|c| {
             let mut w = 0u64;
-            for (g, c8) in c.chunks_exact(8).enumerate() {
-                let c8: &[i8; 8] = c8.try_into().expect("8 flags");
+            for (g, c8) in c.as_chunks::<8>().0.iter().enumerate() {
                 let ones = u64::from_le_bytes(c8.map(|x| u8::from(x == 1)));
                 w |= (ones.wrapping_mul(PACK) >> 56) << (g * 8);
             }
-            words.push(w);
-        }
-        let rest = chunks.remainder();
+            w
+        }));
         if !rest.is_empty() {
             let mut w = 0u64;
             for (j, &x) in rest.iter().enumerate() {
@@ -155,9 +166,10 @@ impl RowFilter {
         // group is appended whole, then the length cut back to its kept
         // rows, so nothing is zeroed first and nothing ever grows.
         let mut out: Vec<T> = Vec::with_capacity(self.count + 8);
-        let mut chunks = v.chunks_exact(64);
-        let mut words = self.words.iter();
-        for (c, &m) in (&mut chunks).zip(&mut words) {
+        // The last word's rows, when they are not a whole 64, come after.
+        let (chunks, rest) = v.as_chunks::<64>();
+        let (words, last) = self.words.split_at(chunks.len());
+        for (c, &m) in chunks.iter().zip(words) {
             if m == 0 {
                 continue;
             }
@@ -165,7 +177,6 @@ impl RowFilter {
                 out.extend_from_slice(c);
                 continue;
             }
-            let c: &[T; 64] = c.try_into().expect("64 values");
             if m.count_ones() <= SPARSE {
                 let mut m = m;
                 while m != 0 {
@@ -174,10 +185,9 @@ impl RowFilter {
                 }
                 continue;
             }
-            for (g, c8) in c.chunks_exact(8).enumerate() {
-                let c8: &[T; 8] = c8.try_into().expect("8 values");
+            for (g, c8) in c.as_chunks::<8>().0.iter().enumerate() {
                 let byte = (m >> (g * 8)) as u8;
-                let at = &PLACES[usize::from(byte)];
+                let at = &PLACES.0[usize::from(byte)];
                 let len = out.len();
                 out.extend_from_slice(&[
                     c8[at[0] as usize],
@@ -192,8 +202,8 @@ impl RowFilter {
                 out.truncate(len + byte.count_ones() as usize);
             }
         }
-        if let Some(&m) = words.next() {
-            for (j, &x) in chunks.remainder().iter().enumerate() {
+        if let Some(&m) = last.first() {
+            for (j, &x) in rest.iter().enumerate() {
                 if (m >> j) & 1 == 1 {
                     out.push(x);
                 }
@@ -290,6 +300,21 @@ impl RowFilter {
         )
     }
 
+    /// The kept rows of a dictionary array, in order: its keys at the kept
+    /// rows, over the same values. When no row is kept the values go too,
+    /// as Arrow's `filter` gives.
+    pub(crate) fn dictionary(&self, a: &DictionaryArray<Int32Type>) -> DictionaryArray<Int32Type> {
+        assert_eq!(a.len(), self.rows, "one key per row");
+        if self.count == 0 {
+            return new_empty_array(a.data_type())
+                .as_dictionary::<Int32Type>()
+                .clone();
+        }
+        let keys = a.keys();
+        let kept = Int32Array::new(self.vec(keys.values()).into(), self.nulls(keys.nulls()));
+        DictionaryArray::new(kept, a.values().clone())
+    }
+
     /// Bytes of the kept rows of a text column with these `offsets`. Every
     /// row's length is cut to nothing where the row is dropped, and the
     /// lengths are added eight lanes at a time. The lanes wrap; their total
@@ -307,24 +332,22 @@ impl RowFilter {
             }
             return total;
         }
-        let (from, to) = (&offsets[..self.rows], &offsets[1..]);
+        let (from, from_rest) = offsets[..self.rows].as_chunks::<64>();
+        let (to, to_rest) = offsets[1..].as_chunks::<64>();
+        let (words, last) = self.words.split_at(from.len());
         let mut sum = [0u32; 8];
-        let mut from = from.chunks_exact(64);
-        let mut to = to.chunks_exact(64);
-        let mut words = self.words.iter();
-        for ((from, to), &m) in (&mut from).zip(&mut to).zip(&mut words) {
-            for (g, byte) in m.to_le_bytes().into_iter().enumerate() {
-                let from: &[i32; 8] = from[g * 8..g * 8 + 8].try_into().expect("8 offsets");
-                let to: &[i32; 8] = to[g * 8..g * 8 + 8].try_into().expect("8 offsets");
-                let lanes = &LANES[usize::from(byte)];
+        for ((from, to), &m) in from.iter().zip(to).zip(words) {
+            let (from, to) = (from.as_chunks::<8>().0, to.as_chunks::<8>().0);
+            for ((from, to), byte) in from.iter().zip(to).zip(m.to_le_bytes()) {
+                let lanes = &LANES.0[usize::from(byte)];
                 for j in 0..8 {
                     sum[j] = sum[j].wrapping_add((to[j].wrapping_sub(from[j]) as u32) & lanes[j]);
                 }
             }
         }
         let mut total = sum.iter().fold(0u32, |a, &b| a.wrapping_add(b));
-        if let Some(&m) = words.next() {
-            for (j, (&from, &to)) in from.remainder().iter().zip(to.remainder()).enumerate() {
+        if let Some(&m) = last.first() {
+            for (j, (&from, &to)) in from_rest.iter().zip(to_rest).enumerate() {
                 if (m >> j) & 1 == 1 {
                     total = total.wrapping_add(to.wrapping_sub(from) as u32);
                 }
@@ -385,7 +408,7 @@ enum Place {
 /// For each byte of a mask, the places of its set bits, lowest first. The
 /// rest of each row repeats place 0: those slots are written and then cut
 /// off (see [`RowFilter::vec`]).
-static PLACES: [[Place; 8]; 256] = {
+static PLACES: Aligned<[[Place; 8]; 256]> = Aligned({
     const ALL: [Place; 8] = [
         Place::P0,
         Place::P1,
@@ -410,10 +433,10 @@ static PLACES: [[Place; 8]; 256] = {
         byte += 1;
     }
     table
-};
+});
 
 /// For each byte of a mask, all ones in the lanes of its set bits.
-static LANES: [[u32; 8]; 256] = {
+static LANES: Aligned<[[u32; 8]; 256]> = Aligned({
     let mut table = [[0u32; 8]; 256];
     let mut byte = 0;
     while byte < 256 {
@@ -427,7 +450,7 @@ static LANES: [[u32; 8]; 256] = {
         byte += 1;
     }
     table
-};
+});
 
 /// The stretches of kept rows in one word of a mask, as (first row, rows),
 /// lowest first. The first rows and the last rows of every stretch are
@@ -652,6 +675,32 @@ mod tests {
                         );
                     }
                 }
+            }
+        });
+    }
+
+    #[test]
+    fn dictionary_matches_arrow_filter() {
+        let mut rng = Rng(0x0123_4567_89ab_cdef);
+        each_mask(|n, m, keep| {
+            let mask = BooleanArray::from(m.to_vec());
+            let values = texts(n + 5, &mut rng);
+            let whole: DictionaryArray<Int32Type> = values.iter().map(|v| v.as_deref()).collect();
+            // Whole and sliced (keys that do not start at the first row).
+            for skip in [0, 5] {
+                let a = whole.slice(skip, n);
+                let got = keep.dictionary(&a);
+                let arrow = filter(&a, &mask).unwrap();
+                let arrow = arrow.as_dictionary::<Int32Type>();
+                assert_eq!(got.keys(), arrow.keys(), "n {n}, skip {skip}");
+                // The same values behind the keys: all of the source's, or
+                // none when no row is kept.
+                assert_eq!(
+                    got.values().as_string::<i32>(),
+                    arrow.values().as_string::<i32>(),
+                    "n {n}, skip {skip}, {} kept",
+                    keep.count()
+                );
             }
         });
     }
