@@ -172,11 +172,13 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(cpu.at(0).unwrap().begin(), 0); // row at index 0
     assert_eq!(cpu.at(-1).unwrap().begin(), 119_000); // negative counts from the end
     assert_eq!(cpu.tail("1m")?.len(), 60); // rows whose begin > last begin - 60 s
+    assert_eq!(cpu.slice(..10).len(), 10); // first ten rows
+    assert_eq!(cpu.slice(-10..).first().unwrap().begin(), 110_000); // last ten rows
     Ok(())
 }
 ```
 
-Rust has no `head(n)` or `tail(n)` by count yet; `tail` takes a duration.
+Rust has no `head(n)` or `tail(n)` by count; `slice` does that job (`slice(..10)` for the first ten rows, `slice(-10..)` for the last ten), and `tail` takes a duration.
 
 </TabItem>
 <TabItem value="python" label="Python">
@@ -191,9 +193,11 @@ assert cpu.last().begin == 119_000  # last row
 assert cpu.at(0).begin == 0  # row at index 0
 assert cpu.at(-1).begin == 119_000  # negative counts from the end
 assert len(cpu.tail("1m")) == 60  # rows whose begin > last begin - 60 s
+assert len(cpu[:10]) == 10  # first ten rows
+assert cpu[-10:].first().begin == 110_000  # last ten rows
 ```
 
-Python has no `head(n)` or `tail(n)` by count yet; `tail` takes a duration. A row comes back as a `Row`, or `None` past the end.
+Python has no `head(n)` or `tail(n)` by count; slicing does that job (`cpu[:10]` for the first ten rows, `cpu[-10:]` for the last ten), and `tail` takes a duration. A row comes back as a `Row`, or `None` past the end.
 
 </TabItem>
 </Tabs>

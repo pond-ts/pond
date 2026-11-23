@@ -573,8 +573,8 @@ assert fused.columns == ["host", "cpu_avg", "cpu_sd", "cpu_samples"]
 ## Fan-in patterns
 
 Three ways to consume per-partition output (the table uses the
-TypeScript names; Rust and Python have `collect` and `apply` under the
-same names, and read partitions with `partition(key)` / `partitions()`
+TypeScript names; Rust has `collect` and `apply` under the same names,
+Python has `collect` only, and both read partitions with `partition(key)` / `partitions()`
 rather than `toMap()`):
 
 | Pattern              | Returns                                           | Use when                                       |

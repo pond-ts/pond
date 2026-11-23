@@ -16,8 +16,8 @@ triggers consume to bucket or sample events.
 A sequence is a _grid definition_, not a finite bucket list. By
 default it extends infinitely in both directions, anchored at the
 Unix epoch. Operators that consume a sequence either intersect it
-with the data (`aggregate(seq, mapping)`) or with an explicit range
-to produce a finite slice.
+with the data (`aggregate(seq, mapping)`) or, in TypeScript, with an
+explicit range to produce a finite slice.
 
 <SequenceGrid />
 
@@ -216,8 +216,7 @@ time-zone database (`pond_rs::tzdb_version()` in Rust and
 ### `TimeZone`
 
 _TypeScript only._ The zone primitive `Sequence.calendar` buckets with,
-exported for callers
-who need the same answers directly — a chart axis placing ticks, a report
+exported for callers who need the same answers directly — a chart axis placing ticks, a report
 labelling a bucket in the zone it was cut in:
 
 ```ts
@@ -269,7 +268,7 @@ The `Sequence` types above are **unbounded** — they describe a grid
 that extends in both directions. To work with a finite list of
 buckets, either:
 
-1. Pass an explicit range to the operator (`aggregate(seq, mapping, { range })`)
+1. Pass an explicit range to the operator (`aggregate(seq, mapping, { range })`, TypeScript only; Rust and Python `aggregate` take no range)
 2. Use `BoundedSequence` directly when the buckets are irregular
 
 ### `BoundedSequence`
