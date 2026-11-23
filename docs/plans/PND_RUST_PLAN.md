@@ -789,8 +789,23 @@ class in TypeScript and Rust**, and **Python needs its own API reference**.
   method fails CI until the pages are regenerated; the output is identical
   on Python 3.9 and 3.13. The pages are in `.prettierignore` because the
   check compares bytes.
-- **Next:** [PND-PROCRUSTDOCS] (Rust tabs on the processing-graph pages),
-  in PLAN.md.
+- **[PND-PROCRUSTDOCS] Processing graphs in Rust (PR 3, done).** The
+  process pages now cover `pond-process` beside `@pond-ts/process`: the
+  overview is retitled "Processing graphs", opens with a TypeScript and a
+  Rust tab, gives the Rust install (a git dependency, since the crate is
+  `publish = false`) and a table of what each language has (taken from the
+  R5 scope: no builder, joins, `runRange`, live graph, `toJsonSchema` or
+  pool in Rust; threads instead). Registry, requests, host and plans have
+  Rust tabs on their main examples, each a whole program with asserts,
+  compiled and run by `check-rust-snippets.sh` (which now also depends on
+  `pond-process` from the same checkout). Performance gets the R5 step 7
+  table. Authoring and the tutorial say they are TypeScript only and point
+  at the Rust tabs. Considered and not done: a separate Rust page for
+  processing graphs (would make Rust the side room again), and Rust tabs
+  on every tutorial step (the tutorial is about the fluent builder, which
+  Rust does not have). Left: the Rust snippet check is still not in CI
+  ([PND-RUSTDOCS]); the pond-rs Roadmap line "`@pond-ts/process` stays
+  TypeScript only" belongs to the thread rewriting that section.
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 

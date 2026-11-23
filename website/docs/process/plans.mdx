@@ -3,6 +3,9 @@ title: Plans and identity
 description: The data model — specs, inputs, picked outputs, content-addressed ids, lineage, and units.
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Plans and identity
 
 A plan is **data**: an array of specs, each naming an operation, its
@@ -10,8 +13,9 @@ parameters, and where its inputs come from. Nothing in a plan is
 executable — no callbacks, no URLs, no closures — which is what lets one
 arrive as JSON from a saved view, a UI, or a model.
 
-Application code rarely writes this shape by hand — the
-[fluent builder](./authoring) emits it. It is still worth knowing
+TypeScript application code rarely writes this shape by hand — the
+[fluent builder](./authoring) emits it. Rust code writes it directly,
+with `serde_json::json!`. It is still worth knowing
 precisely, because it is the wire format, the persistence format, the
 thing a remote composer writes directly, and the input to the identity
 rules that make caching work.
@@ -50,6 +54,9 @@ nested input otherwise reads the upstream op's first output: with a
 Bollinger-shaped op declaring `Upper` / `Middle` / `Lower`, feeding the
 lower band onward requires saying so.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const lowerTrend = {
   op: 'sma',
@@ -57,6 +64,43 @@ const lowerTrend = {
   inputs: [{ from: bollinger, output: 'Lower' }],
 };
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+In Rust a spec is a `serde_json::Value`. `spec_id` gives its id and `explain` its lineage, the same text TypeScript gives:
+
+```rust
+use pond_process::{Registry, explain, spec_id, study_ops};
+use serde_json::json;
+
+fn main() {
+    let mut registry = Registry::standard();
+    for def in study_ops() {
+        registry.define(def).unwrap();
+    }
+    let bollinger = json!({ "op": "bollinger", "params": { "period": 20, "stdDev": 2 }, "inputs": ["close"] });
+    let lower_trend = json!({
+        "op": "sma",
+        "params": { "period": 10 },
+        "inputs": [{ "from": bollinger, "output": "Lower" }]
+    });
+
+    // The id: the cache key, the column name and the citation.
+    let id = spec_id(&registry, &lower_trend, true).unwrap();
+    assert_eq!(id, "p1:sma(p1:bollinger(close;period=20,stdDev=2)#Lower;period=10)");
+
+    // An omitted param is its default: one node, one id.
+    let a = spec_id(&registry, &json!({ "op": "sma", "inputs": ["close"] }), true).unwrap();
+    let b = spec_id(&registry, &json!({ "op": "sma", "params": { "period": 20 }, "inputs": ["close"] }), true).unwrap();
+    assert_eq!(a, b);
+
+    println!("{}", explain(&registry, &lower_trend).unwrap());
+}
+```
+
+</TabItem>
+</Tabs>
 
 A fold (a fact-producing terminal — see [the registry](./registry#folds))
 can never be an input. That is rejected at compile time with an error
@@ -99,6 +143,9 @@ convention of moving a family of columns as a unit.
 registry — derived, never hand-built, because hand-built lineage is
 exactly what loses the inner step of `ema(sma(x))`:
 
+In Rust: `pond_process::explain(&registry, &spec)` (see the Rust tab
+above).
+
 ```ts
 import { explain } from '@pond-ts/process';
 
@@ -123,6 +170,8 @@ const host = createHost({
   units: { close: 'USD', volume: 'shares' },
 });
 ```
+
+In Rust the same record is the second argument of `Host::new`.
 
 From there, units **propagate**: an op's output either declares a unit
 outright (`'%'`) or inherits from its first input, recursively down to a
