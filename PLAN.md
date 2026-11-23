@@ -587,19 +587,12 @@ of pond's core and financial studies, for agents writing Rust, with a WASM
 bridge back into pond-ts later where it measurably pays. Building started
 2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
 shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
-(batch core, financial studies, live layer) are complete, and the R4 bridges
-and column expressions ([PND-EXPR]) are built. Most entries below are
+(batch core, financial studies, live layer) are complete; the R4 bridges
+(`@pond-ts/wasm` on npm, `pond-timeseries` on PyPI), column expressions
+([PND-EXPR]) and the R5 port of `@pond-ts/process` (crate `pond-process`, not
+yet on crates.io) are built. Most entries below are
 pond-ts bugs found while porting.
 
-- **[PND-RUST-R4]** — Bridges from pond-rs to JavaScript (npm `@pond-ts/wasm`)
-  and Python (PyPI `pond-timeseries`, `import pond`): every step (J1–J3, P1–P3) is built and merged
-  (outcomes in the breakout plan). Left, both owner actions: the first
-  `@pond-ts/wasm` publish by hand on npmjs.com (npm trusted publishing needs
-  the package to exist), and PyPI's pending trusted publisher for `pond-rs`
-  (owner `pond-ts`, repo `pond`, workflow `python-wheels.yml`, environment
-  `pypi`) before the first upload. As of 2026-11-13 neither package is on
-  its registry. The npm name became `@pond-ts/wasm` (was `@pond-ts/rs`)
-  on 2026-11-21, before any publish.
 
 - **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
   `apply`, both libraries) don't say which partition they came from: a
@@ -613,19 +606,12 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-PROCRUSTDOCS]** — Processing graphs as a first-class feature in
-  both TypeScript and Rust on the docs site (Peter, 2026-11-23): Rust tabs
-  on the `process/` pages (registry, JSON requests, the host, your own ops),
-  checked by compiling them, and the "no Rust version" note replaced. The
-  crate (`crates/pond-process`) is not on crates.io yet, so the pages say
-  how to depend on it from git. Same breakout section as above.
-- **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
-  about 47 code blocks) are TypeScript only, and Mental model leans on
-  TypeScript ideas (`as const`, type narrowing), though the sidebar calls
-  them the ideas every language shares. Add Rust and Python tabs (checked
-  by the snippet scripts) and say the shared idea first. Same for
-  `series/arrays`, `series/columns`, `series/other-chart-libraries`.
-  Found in the #964 review.
+- **[PND-SERIESTABS]** — Three "Working with series" pages are still
+  TypeScript only: `series/arrays` (list columns, 22 examples),
+  `series/columns` (9) and `series/other-chart-libraries` (5). Add Rust and
+  Python tabs as the Concepts pages got them (each a whole program, run by
+  the snippet scripts). For other chart libraries the Python tab is the
+  frame hand-off (`to_pandas` / `to_polars`) to matplotlib or plotly.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/rust/`) and the Rust / Python tabs on the core pages
   (what is covered so far is in the breakout plan). The Python tabs already

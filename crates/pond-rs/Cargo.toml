@@ -1,6 +1,6 @@
 [package]
 name = "pond-rs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Time series analytics: rolling windows, calendar buckets in any time zone, joins, 109 finance studies and live streams, with Arrow I/O. Same results as pond-ts."
 edition.workspace = true
 rust-version.workspace = true

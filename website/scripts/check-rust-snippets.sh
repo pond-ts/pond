@@ -21,6 +21,8 @@ edition = "2024"
 publish = false
 [dependencies]
 pond-rs = { path = "$crate" }
+# The process layer, from the same checkout as the crate above.
+pond-process = { path = "$crate/../pond-process" }
 serde_json = "1"
 [workspace]
 TOML

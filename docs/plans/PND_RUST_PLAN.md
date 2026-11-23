@@ -645,6 +645,12 @@ crates.io trusted publishing (OIDC) once it is gone. Left on PLAN.md: set up
 trusted publishing for the crate on crates.io and delete the secret. Neither
 can be seen from the repo, so check crates.io before closing it.
 
+**0.2.0 (2026-11-23, Peter's go).** crates.io still had only 0.1.0 while
+main had gained column expressions, `push_series`, `OutputKind::Columns`,
+cumulative thresholds and the November speedups. A minor bump because
+`cumulative`'s signature changed (pre-1.0, a minor may change the API).
+Install lines in the docs moved to `"0.2"`.
+
 ## Codex review of the whole crate (2026-10-29)
 
 pjm17971 relayed a Codex review of main at b5f6ecb (through #849): 14
@@ -789,8 +795,33 @@ class in TypeScript and Rust**, and **Python needs its own API reference**.
   method fails CI until the pages are regenerated; the output is identical
   on Python 3.9 and 3.13. The pages are in `.prettierignore` because the
   check compares bytes.
-- **Next:** [PND-PROCRUSTDOCS] (Rust tabs on the processing-graph pages),
-  in PLAN.md.
+- **[PND-PROCRUSTDOCS] Processing graphs in Rust (PR 3, done).** The
+  process pages now cover `pond-process` beside `@pond-ts/process`: the
+  overview is retitled "Processing graphs", opens with a TypeScript and a
+  Rust tab, gives the Rust install (a git dependency, since the crate is
+  `publish = false`) and a table of what each language has (taken from the
+  R5 scope: no builder, joins, `runRange`, live graph, `toJsonSchema` or
+  pool in Rust; threads instead). Registry, requests, host and plans have
+  Rust tabs on their main examples, each a whole program with asserts,
+  compiled and run by `check-rust-snippets.sh` (which now also depends on
+  `pond-process` from the same checkout). Performance gets the R5 step 7
+  table. Authoring and the tutorial say they are TypeScript only and point
+  at the Rust tabs. Considered and not done: a separate Rust page for
+  processing graphs (would make Rust the side room again), and Rust tabs
+  on every tutorial step (the tutorial is about the fluent builder, which
+  Rust does not have). Left: the Rust snippet check is still not in CI
+  ([PND-RUSTDOCS]); the pond-rs Roadmap line "`@pond-ts/process` stays
+  TypeScript only" belongs to the thread rewriting that section.
+- **[PND-CONCEPTTABS] Concepts in every language (PR 4, done).** Found by
+  the #964 review: the Concepts pages, which the new sidebar calls the
+  ideas every language shares, had TypeScript examples only. All 37
+  examples on the ten pages now have Rust and Python tabs (whole programs
+  with asserts, run by both snippet scripts). Where an idea has no Rust or
+  Python form yet the page says "TypeScript only" (TimeZone,
+  BoundedSequence, `Sequence.kind`, the hourly/daily aliases, `head` /
+  `tail` by count). Mental model now explains that TypeScript checks
+  columns when the code is compiled and Rust/Python when it runs, instead
+  of leaning on `as const`. Left: three series pages, [PND-SERIESTABS].
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 
@@ -5066,6 +5097,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     owner actions are left, and PLAN.md's [PND-RUST-R4] entry now holds only
     those: the first `@pond-ts/wasm` publish by hand, and PyPI's pending
     trusted publisher for `pond-rs`.
+
+  - Status 2026-11-23: both are published, so R4 is done and its PLAN.md
+    entry is removed. npm has `@pond-ts/wasm` 0.79.0; PyPI has
+    `pond-timeseries` 0.78.0 and 0.79.0 (the PyPI name became
+    `pond-timeseries` and the import `import pond`, #956).
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

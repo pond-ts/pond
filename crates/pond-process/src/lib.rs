@@ -10,8 +10,8 @@
 //! The port is in progress ([PND-RUST-R5] in the pond plan). So far:
 //! registries, param checks, spec ids, lineage text, the basic ops, the
 //! standard and summary folds, the run engine (nested and slot requests,
-//! every error policy) and the long-lived [`Host`] with async sources.
-//! Not yet: the studies, joins.
+//! every error policy), the long-lived [`Host`] with async sources, and the
+//! finance studies ([`study_ops`]). Not yet: joins.
 
 pub mod basic_ops;
 pub mod context;

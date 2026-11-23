@@ -90,6 +90,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   methods with their options. It is generated from the package's own type
   file and docstrings (`website/scripts/gen-python-api.py`), and CI fails
   when the package changes without the pages being regenerated.
+- **Docs: processing graphs in Rust.** The processing-graph pages now cover
+  the Rust crate `pond-process` beside `@pond-ts/process`: how to depend on
+  it, what each language has, and a Rust tab on the main examples of the
+  registry, requests, host and plans pages, each compiled and run in the
+  docs' Rust snippet check. The overview is retitled "Processing graphs"
+  and the performance page compares the two.
+- **Docs: the Concepts pages in every language.** Every example on the
+  ten Concepts pages (mental model, temporal keys, sequences, series, temporal relations,
+  windowing, triggers, partitioning, late data, the value axis) now has a
+  Rust and a Python tab beside TypeScript, each checked by the docs'
+  snippet scripts, and the prose no longer assumes TypeScript.
 
 ### Changed
 

@@ -3,6 +3,9 @@ title: Requests and responses
 description: The two request forms, selecting columns and facts, error policies, and reading the response.
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Requests and responses
 
 A request carries a plan **and** what it wants back. A renderer asks for
@@ -14,6 +17,9 @@ the columns it labels — one call, one pass, one cache.
 **The slot form** names every node with a caller-owned **slot**, and
 wires by name. It is what the [fluent builder](./authoring) emits, and
 the form to prefer when a UI needs stable handles:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 host.run({
@@ -31,6 +37,53 @@ host.run({
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+In Rust the request is the same JSON, here with the Bollinger study as `bands`:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use pond_process::{Host, Registry, basic_ops, study_ops};
+use pond_rs::{Column, TimeSeries};
+use serde_json::json;
+
+fn main() {
+    let mut registry = Registry::standard();
+    for def in study_ops().into_iter().chain(basic_ops()) {
+        registry.define(def).unwrap();
+    }
+    let time: Vec<i64> = (0..100).map(|i| i * 300_000).collect();
+    let close: Vec<f64> = (0..100).map(|i| 50.0 + (i as f64 * 0.4).cos()).collect();
+    let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]).unwrap();
+    let mut host = Host::new(Arc::new(registry), HashMap::new());
+    host.add("ACME_5m", Arc::new(bars));
+
+    let result = host
+        .run(&json!({
+            "from": "ACME_5m",
+            "nodes": {
+                "average": { "op": "sma", "params": { "period": 20 }, "in": ["close"] },
+                "bands": { "op": "bollinger", "params": { "period": 20 }, "in": ["close"] },
+                "width": { "op": "subtract", "in": ["bands#Upper", "bands#Lower"] },
+                "latestWidth": { "op": "last", "in": ["width"] }
+            },
+            "outputs": {
+                "band": { "on": "bands" },
+                "latest": { "on": "latestWidth" }
+            }
+        }))
+        .unwrap();
+    assert_eq!(result.facts[0]["name"], "latest");
+    assert_eq!(result.columns.as_ref().unwrap().len(), 3); // Middle, Upper, Lower
+}
+```
+
+</TabItem>
+</Tabs>
+
 A fold is a node like any other here — the fluent builder derives names
 like `width:last` for the fold nodes it adds, but that is a builder
 convention, not request syntax; in a hand-written slot request the fold
@@ -40,6 +93,9 @@ takes an ordinary slot.
 layer, which suits a one-shot composed request or a saved view that
 never edits itself:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 host.run({
   from: 'ACME_5m',
@@ -47,6 +103,41 @@ host.run({
   select: [{ on: { op: 'sma', params: { period: 20 }, inputs: ['close'] } }],
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use pond_process::{Host, Registry, study_ops};
+use pond_rs::{Column, TimeSeries};
+use serde_json::json;
+
+fn main() {
+    let mut registry = Registry::standard();
+    for def in study_ops() {
+        registry.define(def).unwrap();
+    }
+    let time: Vec<i64> = (0..100).map(|i| i * 300_000).collect();
+    let close: Vec<f64> = (0..100).map(|i| 50.0 + (i as f64 * 0.4).cos()).collect();
+    let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]).unwrap();
+    let mut host = Host::new(Arc::new(registry), HashMap::new());
+    host.add("ACME_5m", Arc::new(bars));
+
+    let sma = json!({ "op": "sma", "params": { "period": 20 }, "inputs": ["close"] });
+    let result = host
+        .run(&json!({ "from": "ACME_5m", "process": [sma], "select": [{ "on": sma }] }))
+        .unwrap();
+
+    // The same id the slot form gives the same step.
+    assert_eq!(result.columns.unwrap()[0].0, "p1:sma(close;period=20)");
+}
+```
+
+</TabItem>
+</Tabs>
 
 A slot is **topology identity**: it survives a param edit, while the
 content-addressed id changes with the computation. `slot#Output` picks one
@@ -92,6 +183,12 @@ interface RunResult {
   nodes: NodeTiming[]; // the per-node badge row
 }
 ```
+
+In Rust, `RunResult` has the same fields but no `series`: `columns` is
+`Option<Vec<(String, Arc<Vec<f64>>)>>`, each column named by its id with
+NaN for a gap, and `outputs`, `facts`, `explain`, `skipped` and `nodes`
+are the same JSON as in TypeScript. `result.to_wire(None)` gives the
+wire form. There is no `assemble` option, because nothing is assembled.
 
 **`assemble: false`** skips building the `series` and is what a wire
 consumer wants: a `TimeSeries` cannot cross a boundary, but a packed
@@ -151,6 +248,9 @@ Nothing is thrown under `'skip'` / `'collect'`, so `instanceof` never
 reaches a caller reading `skipped` — and `reason` is prose for a human,
 whose wording is not a contract. Branch on `code`:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 for (const entry of result.skipped) {
   if (entry.code === 'UnknownColumnError') {
@@ -162,6 +262,61 @@ for (const entry of result.skipped) {
   }
 }
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+In Rust, `throw` returns an `Err` whose `code()` is the same text, and `collect` puts the entries in `result.skipped` as JSON:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use pond_process::{Host, Registry, study_ops};
+use pond_rs::{Column, TimeSeries};
+use serde_json::json;
+
+fn main() {
+    let mut registry = Registry::standard();
+    for def in study_ops() {
+        registry.define(def).unwrap();
+    }
+    let time: Vec<i64> = (0..100).map(|i| i * 300_000).collect();
+    let close: Vec<f64> = (0..100).map(|i| 50.0 + (i as f64 * 0.4).cos()).collect();
+    let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]).unwrap();
+    let mut host = Host::new(Arc::new(registry), HashMap::new());
+    host.add("ACME_5m", Arc::new(bars));
+
+    // A saved view that cites a column the feed no longer carries.
+    let request = json!({
+        "from": "ACME_5m",
+        "process": [{ "op": "sma", "params": { "period": 20 }, "inputs": ["vwap"] }],
+        "select": [{ "on": { "op": "sma", "params": { "period": 20 }, "inputs": ["close"] } }]
+    });
+
+    // `throw` (the default): an error, with the same code.
+    let err = host.run(&request).unwrap_err();
+    assert_eq!(err.code(), Some("UnknownColumnError"));
+
+    // `collect`: the good branch answers, the bad one is a skipped entry.
+    let mut collect = request.clone();
+    collect["onError"] = json!("collect");
+    let result = host.run(&collect).unwrap();
+    assert_eq!(result.columns.unwrap().len(), 1);
+    for entry in &result.skipped {
+        if entry["code"] == "UnknownColumnError" {
+            // The feed no longer carries a column this saved view cites.
+            println!("dim {} and offer to remove it", entry["spec"]);
+        } else {
+            // Anything else is a plan the caller should repair.
+            println!("broken: {}", entry["reason"]);
+        }
+    }
+}
+```
+
+</TabItem>
+</Tabs>
 
 `code` is **absent** when the throw did not come from this package, which
 is itself the signal: op code failed, not the plan layer. Under `'throw'`
