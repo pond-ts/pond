@@ -2,12 +2,15 @@
 sidebar_position: 9
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreByValue from '@site/src/examples/core-byvalue';
 
 # Value axis
 
-Most of pond-ts keys events by **time**. But nothing in the series
+Most of pond keys events by **time**. But nothing in the series
 algebra is _really_ about time — the key is a numeric interval
 `[begin, end)`, and time is one **tag** on it. A **value axis** keys a
 series by a different monotonic number: cumulative distance, cumulative
@@ -31,7 +34,7 @@ elapsed time, because pauses and pace differences smear the time axis.
 ## Time is a tag
 
 A temporal key is a numeric interval with a `kind` discriminator —
-`'time'`, `'timeRange'`, `'interval'`. pond-ts adds one more kind,
+`'time'`, `'timeRange'`, `'interval'`. pond adds one more kind,
 `'value'`, and with it a value-keyed series:
 
 - **`TimeSeries`** — key kind is temporal; carries the calendar/clock
@@ -70,6 +73,9 @@ columns and returns a closed `ValueSeries`:
   <CoreByValue />
 </ConceptViz>
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 // Re-key a ride onto cumulative distance. `cumDist` becomes the axis
 // and is dropped from the value columns — it's now the key.
@@ -82,6 +88,61 @@ byDistance.column('hr'); // a value column: read with .read(i) / .values()
 byDistance.nearestIndex(40_000); // row nearest the 40 km mark (binary search)
 byDistance.sliceByValue(40_000, 60_000); // the 40–60 km sub-series (zero-copy)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        (0..5).map(|i| i * 60_000).collect(),
+        vec![
+            Column::required("cumDist", vec![0.0, 20_000.0, 38_000.0, 41_000.0, 60_000.0]),
+            Column::required("hr", vec![120.0, 130.0, 140.0, 150.0, 145.0]),
+        ],
+    )?;
+
+    // Re-key the ride onto cumulative distance. `cumDist` becomes the axis
+    // and is dropped from the value columns: it is now the key.
+    let by_distance = ride.by_value("cumDist")?;
+
+    assert_eq!(by_distance.axis_name(), "cumDist");
+    assert_eq!(by_distance.axis()[3], 41_000.0); // the axis value of row 3
+    assert_eq!(by_distance.column("hr")?.numbers()?.get(3), Some(150.0));
+    assert_eq!(by_distance.nearest_index(40_000.0), Some(3)); // binary search
+    assert_eq!(by_distance.slice_by_value(40_000.0, 60_000.0).len(), 1); // [40 km, 60 km): the end is left out
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(5)],
+    "cumDist": [0.0, 20_000.0, 38_000.0, 41_000.0, 60_000.0],
+    "hr": [120.0, 130.0, 140.0, 150.0, 145.0],
+})
+
+# Re-key the ride onto cumulative distance. `cumDist` becomes the axis
+# and is dropped from the value columns: it is now the key.
+by_distance = ride.by_value("cumDist")
+
+assert by_distance.axis_name == "cumDist"
+assert by_distance.axis()[3] == 41_000.0  # the axis value of row 3
+assert by_distance.column("hr")[3] == 150.0
+assert by_distance.nearest_index(40_000) == 3  # binary search
+assert len(by_distance.slice_by_value(40_000, 60_000)) == 1  # [40 km, 60 km): the end is left out
+```
+
+</TabItem>
+</Tabs>
 
 The axis column must be **defined, finite, and non-decreasing at every
 row** — it's becoming the index, so (unlike an ordinary value column) it
@@ -103,7 +164,7 @@ any row — skip the detour:
 
 ## Closed vs projected-out: `byValue` vs `byColumn`
 
-pond-ts is a **closed algebra** — a `TimeSeries` transform returns a
+pond is a **closed algebra** — a `TimeSeries` transform returns a
 `TimeSeries`, so you can keep chaining. `byValue` extends that closure
 sideways: `TimeSeries → ValueSeries`, and a `ValueSeries` is itself a
 series you can slice and read. This is a **projection**, not a dead end.
@@ -112,6 +173,9 @@ The value-axis _aggregators_ — [`byColumn`](/docs/series/aggregation#bycolumn)
 and `rollingByColumn` — are different. They bin a numeric column and
 return a plain **array of bin records** (`{ start, end, ...aggregates }`),
 not a series:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 // byValue: project onto the axis — stays in the algebra.
@@ -124,6 +188,62 @@ const splits = ride.byColumn(
   { gain: { from: 'ele', using: 'sum' } },
 ); // → [{ start: 0, end: 1000, gain: 12.4 }, …]
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Bins, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let ride = TimeSeries::new(
+        "ride",
+        (0..4).map(|i| i * 60_000).collect(),
+        vec![
+            Column::required("cumDist", vec![0.0, 600.0, 1_200.0, 1_900.0]),
+            Column::required("ele", vec![3.0, 4.0, 2.0, 5.0]),
+        ],
+    )?;
+
+    // by_value: project onto the axis, and stay in the algebra.
+    let by_distance = ride.by_value("cumDist")?; // a ValueSeries
+    assert_eq!(by_distance.len(), 4);
+
+    // by_column: aggregate over the axis, and leave it: a Table, one column per field.
+    let splits = ride.by_column("cumDist", &Bins::width(1_000.0), &[Agg::new("gain", "ele", Reducer::Sum)])?;
+    assert_eq!(splits.column("start")?.numbers()?.values(), &[0.0, 1_000.0]);
+    assert_eq!(splits.column("gain")?.numbers()?.values(), &[7.0, 7.0]);
+    Ok(())
+}
+```
+
+In Rust the records come back as a `Table`: one column per field (`start`, `end`, then one per `Agg`).
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+ride = pond.TimeSeries({
+    "time": [i * 60_000 for i in range(4)],
+    "cumDist": [0.0, 600.0, 1_200.0, 1_900.0],
+    "ele": [3.0, 4.0, 2.0, 5.0],
+})
+
+# by_value: project onto the axis, and stay in the algebra.
+by_distance = ride.by_value("cumDist")  # a ValueSeries
+assert len(by_distance) == 4
+
+# by_column: aggregate over the axis, and leave it: a dict of columns.
+splits = ride.by_column("cumDist", {"gain": ("ele", "sum")}, width=1_000)
+assert splits == {"start": [0.0, 1_000.0], "end": [1_000.0, 2_000.0], "gain": [7.0, 7.0]}
+```
+
+In Python the records come back as a dict of lists: one list per field (`start`, `end`, then one per output).
+
+</TabItem>
+</Tabs>
 
 A value-bin (a per-kilometre split, a watt band) isn't itself keyed by
 anything you'd chain further, so these operators deliberately leave the
@@ -165,7 +285,9 @@ const splits = ride
 ```
 
 `scan` isolates the order-dependent state; `byColumn` stays pure. This
-composition is why pond-ts has no domain-specific `split()` operator.
+composition is why pond has no domain-specific `split()` operator.
+`scan` and `by_column` work the same way in Rust and Python; see the
+[scan reference](/docs/series/transformations#scan) for each language.
 
 ## Non-goals
 

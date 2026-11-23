@@ -615,13 +615,12 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
-  about 47 code blocks) are TypeScript only, and Mental model leans on
-  TypeScript ideas (`as const`, type narrowing), though the sidebar calls
-  them the ideas every language shares. Add Rust and Python tabs (checked
-  by the snippet scripts) and say the shared idea first. Same for
-  `series/arrays`, `series/columns`, `series/other-chart-libraries`.
-  Found in the #964 review.
+- **[PND-SERIESTABS]** — Three "Working with series" pages are still
+  TypeScript only: `series/arrays` (list columns, 22 examples),
+  `series/columns` (9) and `series/other-chart-libraries` (5). Add Rust and
+  Python tabs as the Concepts pages got them (each a whole program, run by
+  the snippet scripts). For other chart libraries the Python tab is the
+  frame hand-off (`to_pandas` / `to_polars`) to matplotlib or plotly.
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/rust/`) and the Rust / Python tabs on the core pages
   (what is covered so far is in the breakout plan). The Python tabs already

@@ -2,6 +2,9 @@
 sidebar_position: 8
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Late data
 
 Real streams misbehave: events arrive out of order, network delays
@@ -41,7 +44,7 @@ in the consumer (compare `lastEvent.begin()` to `Date.now()`).
 
 ## Compared to Beam / Flink
 
-| Concept                            | Beam / Flink                                                                                                                                                          | pond-ts                                                                     |
+| Concept                            | Beam / Flink                                                                                                                                                          | pond                                                                        |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | Time progression                   | Watermarks advance event time; processing-time timers can also fire                                                                                                   | `latestEvent.begin()` (data-only)                                           |
 | Late event handling                | Configurable allowed lateness; late elements may be dropped or emitted as later panes / updates                                                                       | `strict`, `drop`, or `reorder`; optional bounded grace; no retraction       |
@@ -52,7 +55,8 @@ in the consumer (compare `lastEvent.begin()` to `Date.now()`).
 | Best at                            | Distributed, fault-tolerant, large-scale pipelines                                                                                                                    | In-process live time-series buffers and transforms with a simple cost model |
 
 Pond is **not** trying to compete with Beam or Flink at scale.
-It's trying to give a TypeScript-native time-series buffer with
+It's trying to give an in-process time-series buffer (in TypeScript,
+Rust or Python) with
 the same operator surface as its batch counterpart and a
 predictable cost model. The trade-offs above are what makes that
 fit in-process and stay reasonable to debug.
@@ -71,11 +75,86 @@ design space pond deliberately steps away from.
 
 A `LiveSeries` accepts events one of three ways:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 new LiveSeries({ name, schema, ordering: 'strict' }); // default
 new LiveSeries({ name, schema, ordering: 'drop' });
 new LiveSeries({ name, schema, ordering: 'reorder', graceWindow: '5s' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn schema() -> Vec<ColumnDef> {
+    vec![
+        ColumnDef::required("time", ColumnKind::Time),
+        ColumnDef::optional("cpu", ColumnKind::Number),
+    ]
+}
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Strict (the default): a late event is an error.
+    let mut strict = LiveSeries::new("cpu", schema())?;
+    strict.push(5_000, [Some(1.0.into())])?;
+    assert!(strict.push(4_000, [Some(2.0.into())]).is_err());
+
+    // Drop: a late event is skipped and counted.
+    let mut drop = LiveSeries::with_options("cpu", schema(), LiveOptions::new().ordering(OrderingMode::Drop))?;
+    drop.push(5_000, [Some(1.0.into())])?;
+    drop.push(4_000, [Some(2.0.into())])?;
+    assert_eq!((drop.len(), drop.stats().rejected), (1, 1));
+
+    // Reorder: put in its place, if it is late by no more than the grace window.
+    let mut reorder = LiveSeries::with_options(
+        "cpu",
+        schema(),
+        LiveOptions::new().ordering(OrderingMode::Reorder).grace_window("5s"),
+    )?;
+    reorder.push(5_000, [Some(1.0.into())])?;
+    reorder.push(4_000, [Some(2.0.into())])?;
+    assert_eq!(reorder.first().unwrap().begin(), 4_000);
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+schema = {"time": "time", "cpu": "number"}
+
+# Strict (the default): a late event is an error.
+strict = pond.LiveSeries(schema)
+strict.push(5_000, cpu=1.0)
+try:
+    strict.push(4_000, cpu=2.0)
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+
+# Drop: a late event is skipped and counted.
+drop = pond.LiveSeries(schema, ordering="drop")
+drop.push(5_000, cpu=1.0)
+drop.push(4_000, cpu=2.0)
+assert len(drop) == 1
+
+# Reorder: put in its place, if it is late by no more than the grace window.
+reorder = pond.LiveSeries(schema, ordering="reorder", grace_window="5s")
+reorder.push(5_000, cpu=1.0)
+reorder.push(4_000, cpu=2.0)
+assert reorder.events()[0].begin == 4_000
+```
+
+</TabItem>
+</Tabs>
 
 | Mode      | Late event behaviour                               | Use when                                |
 | --------- | -------------------------------------------------- | --------------------------------------- |
@@ -91,6 +170,9 @@ loud error in most applications. Switch deliberately.
 In `reorder` mode, a `graceWindow` bounds **how late** an event
 can be and still be accepted:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 new LiveSeries({
   name,
@@ -100,9 +182,52 @@ new LiveSeries({
 });
 ```
 
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::live::{LiveOptions, LiveSeries, OrderingMode};
+use pond_rs::{ColumnDef, ColumnKind};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let mut live = LiveSeries::with_options(
+        "cpu",
+        vec![
+            ColumnDef::required("time", ColumnKind::Time),
+            ColumnDef::optional("cpu", ColumnKind::Number),
+        ],
+        LiveOptions::new().ordering(OrderingMode::Reorder).grace_window("5s"),
+    )?;
+    live.push(10_000, [Some(1.0.into())])?;
+    live.push(6_000, [Some(2.0.into())])?; // 4 s late: accepted
+    assert!(live.push(4_000, [Some(3.0.into())]).is_err()); // 6 s late: refused
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+live = pond.LiveSeries({"time": "time", "cpu": "number"}, ordering="reorder", grace_window="5s")
+live.push(10_000, cpu=1.0)
+live.push(6_000, cpu=2.0)  # 4 s late: accepted
+try:
+    live.push(4_000, cpu=3.0)  # 6 s late: refused
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+</TabItem>
+</Tabs>
+
 An event is "late" if `event.begin() < latestEvent.begin()`. Late
 events are accepted if `(latestEvent.begin() - event.begin()) ≤ graceWindow`,
-rejected (with a `ValidationError`) otherwise.
+rejected otherwise (a `ValidationError` in TypeScript, an `Err` in Rust,
+a `pond.PondError` in Python).
 
 The grace window does two things:
 

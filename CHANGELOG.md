@@ -96,6 +96,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   registry, requests, host and plans pages, each compiled and run in the
   docs' Rust snippet check. The overview is retitled "Processing graphs"
   and the performance page compares the two.
+- **Docs: the Concepts pages in every language.** Every example on the
+  ten Concepts pages (mental model, temporal keys, sequences, series, temporal relations,
+  windowing, triggers, partitioning, late data, the value axis) now has a
+  Rust and a Python tab beside TypeScript, each checked by the docs'
+  snippet scripts, and the prose no longer assumes TypeScript.
 
 ### Changed
 
