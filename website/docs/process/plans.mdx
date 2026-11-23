@@ -143,9 +143,6 @@ convention of moving a family of columns as a unit.
 registry — derived, never hand-built, because hand-built lineage is
 exactly what loses the inner step of `ema(sma(x))`:
 
-In Rust: `pond_process::explain(&registry, &spec)` (see the Rust tab
-above).
-
 ```ts
 import { explain } from '@pond-ts/process';
 
@@ -153,6 +150,9 @@ explain(registry, spec);
 // 'SMA(20) of close'  — from the op's own label function
 // 'scale(by=2) of SMA(3) of px'  — derived when no label is declared
 ```
+
+In Rust: `pond_process::explain(&registry, &spec)` (see the Rust tab
+above).
 
 Every response carries an `explain` map covering the whole resolved
 closure — including nested specs that never appear at the plan's top

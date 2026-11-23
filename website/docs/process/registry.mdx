@@ -57,7 +57,7 @@ fn main() {
                     // One column per declared output, as long as the data.
                     let n = ctx.number("period") as usize;
                     let v = ctx.input("source");
-                    let mut out = vec![f64::NAN; v.len()]; // NaN is a gap
+                    let mut out = vec![f64::NAN; v.len()]; // NaN marks the warm-up rows; this short example assumes no gaps in the input
                     let mut sum = 0.0;
                     for i in 0..v.len() {
                         sum += v[i];
