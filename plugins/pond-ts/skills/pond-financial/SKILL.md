@@ -113,6 +113,6 @@ no buckets, and `@pond-ts/charts` takes the same calendar
 
 ## Read next
 
-- Financial hub: <https://pond-ts.org/docs/financial/> · charts for OHLC: <https://pond-ts.org/docs/charts/financial>
+- Financial hub: <https://pond-ts.org/docs/finance/> · charts for OHLC: <https://pond-ts.org/docs/charts/financial>
 - Single-file dump: <https://pond-ts.org/llms-financial.txt>
 - `node_modules/@pond-ts/financial/API.md` — every study, its outputs and parameters.

@@ -41,7 +41,7 @@
     "node": ">=20.19"
   },
   "license": "MIT",
-  "homepage": "https://pond-ts.org/docs/pond-rs/",
+  "homepage": "https://pond-ts.org/docs/rust/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pond-ts/pond.git",

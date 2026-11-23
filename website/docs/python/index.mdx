@@ -1,0 +1,102 @@
+---
+id: python-index
+title: Python
+sidebar_position: 1
+description: 'pond for Python. pip install pond-timeseries, pass polars, pandas or pyarrow frames in and get frames back; rolling windows, per-host work, calendar days in a time zone, the 109 finance studies and live series, with the same answers as TypeScript and Rust.'
+---
+
+# pond for Python
+
+pond takes the frames you already use (polars, pandas, pyarrow) and gives
+frames back, so time-aware work fits into an existing notebook or service:
+rolling windows, buckets by calendar day in a time zone (days of 23 and 25
+hours included), per-host work on several cores, the 109 finance studies,
+and live series that update as events arrive.
+
+The work is done by pond's Rust core, so it is fast and it gives the same
+answers as the TypeScript and Rust libraries: the package's tests run the
+same test cases as theirs and compare every value to the bit.
+
+```sh
+pip install pond-timeseries              # on PyPI as pond-timeseries
+pip install "pond-timeseries[polars]"    # plus polars; or [pandas], [pyarrow]
+```
+
+```python
+import pond                              # imported as pond
+```
+
+- **Python 3.9 or newer.** There is one wheel per platform for every
+  Python from 3.9 on: Linux (x86-64 and ARM, glibc 2.17 or newer), macOS
+  (Intel and Apple silicon) and Windows (x86-64). Elsewhere pip builds it
+  from source, which needs Rust 1.88 or newer.
+- **No required dependencies.** Frames cross through Arrow's C interface.
+  `to_polars()` needs polars, `to_pyarrow()` needs pyarrow, and
+  `to_pandas()` needs pandas 2.2+ and pyarrow; the extras above install
+  them.
+- **Versions** move together with the TypeScript packages: each
+  `pond-timeseries` release has the same number as the pond-ts release it
+  ships with, and gives the same answers. `pond.__version__` says which you
+  have.
+- **Type hints** for every method ship in the package, so an editor
+  completes method and option names.
+
+To try work not yet released, install from the repository (needs Rust):
+`pip install "git+https://github.com/pond-ts/pond#subdirectory=crates/pond-py"`.
+
+## A first example
+
+Hourly CPU readings for two hosts. A five-hour average per host, then one
+row per calendar day in New York.
+
+```python
+import datetime as dt
+import polars as pl
+import pond
+
+df = pl.DataFrame({
+    "time": [dt.datetime(2026, 3, 8, h) for h in range(24)],  # no zone: UTC
+    "host": ["a", "b"] * 12,
+    "cpu": [float(h) for h in range(24)],
+})
+s = pond.TimeSeries(df)  # the time column is called "time"
+
+# Five-hour trailing average, per host, back as a polars frame.
+avg = s.partition_by("host").rolling("5h", {"cpu_avg": ("cpu", "avg")}).collect()
+avg.to_polars()  # columns: time, cpu_avg, host
+
+# Calendar days in New York. 8 March 2026 is the day the clocks go
+# forward, so that day is 23 hours long.
+days = pond.Sequence.calendar("day", "America/New_York")
+daily = s.aggregate(days, {"cpu_max": ("cpu", "max"), "n": ("cpu", "count")})
+daily.as_time().to_pandas()  # columns: time (each day's start), cpu_max, n
+```
+
+Every operation returns a new series; nothing changes in place.
+
+## What the Python package has
+
+| Area                                  | In Python                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| Series and operations                 | Yes: every batch operation, frames in and out ([Working with series](./operations.mdx)) |
+| Live series                           | Yes ([Live series](./live.mdx))                                                         |
+| Finance studies and trading calendars | Yes, all 109 studies ([Finance studies](./finance.mdx))                                 |
+| Processing graphs                     | Not in Python. TypeScript and Rust have them                                            |
+| Charts, React hooks, fitness files    | Not in Python. Hand a frame to your own plotting tool (`to_polars()`, `to_pandas()`)    |
+
+A few smaller things the TypeScript library has are missing too; they are
+listed on [Errors, threads and speed](./errors-and-speed.mdx#not-in-python-yet).
+
+## Where next
+
+- [Frames in and out](./frames.mdx): the rules for the time column, order,
+  gaps and time zones.
+- [Working with series](./operations.mdx): reducers, rolling windows,
+  `partition_by`, calendar buckets and the rest.
+- [Concepts](/docs/concepts/): the ideas every language shares (time keys,
+  windows, partitions, late data).
+- The shared [Working with series](/docs/series/creating?language=python)
+  pages explain each operation in depth, with a Python tab on every
+  example.
+- [Finance studies](./finance.mdx) and [Live series](./live.mdx).
+- [Errors, threads and speed](./errors-and-speed.mdx).

@@ -1,0 +1,153 @@
+---
+sidebar_position: 1
+---
+
+import { TemporalKeys } from '@site/src/components/ConceptFigures';
+
+# Temporal keys
+
+Every `Event` in pond-ts has exactly one **temporal key** — the value
+that places the event on the timeline. The key is the first column of
+a `TimeSeries`'s schema and is what every transform indexes against.
+
+Three shapes are available; which one you pick is a modeling choice
+that says how the event sits on the timeline.
+
+<TemporalKeys />
+
+| Key         | Shape on the timeline             | Use when                                                 |
+| ----------- | --------------------------------- | -------------------------------------------------------- |
+| `Time`      | One instant                       | The event is a point measurement                         |
+| `TimeRange` | An unlabeled span between two ts  | The event covers a duration but has no bucket identity   |
+| `Interval`  | A labeled span (carries an index) | The event is a bucket produced by `aggregate` or `align` |
+
+## `Time`
+
+A single instant on the timeline. The most common temporal key —
+sensor samples, request timings, individual ticks.
+
+```ts
+import { Time } from 'pond-ts';
+
+new Time(1735689600000);
+new Time(new Date('2025-01-01T00:00:00Z'));
+new Time(Date.parse('2025-01-01T00:00:00Z'));
+```
+
+Constructor accepts `number | Date`. The library does not parse ISO
+strings — go through `Date.parse(...)` or `new Date(...)` explicitly
+when starting from a string. Internal representation is milliseconds
+since Unix epoch.
+
+`time.begin()` and `time.end()` both return the same number — a `Time`
+has zero extent. This makes `Time` interchangeable with `TimeRange`
+or `Interval` for any operator that only cares about the begin or end
+of the key.
+
+## `TimeRange`
+
+A span between two timestamps with no bucket identity attached.
+
+```ts
+import { TimeRange } from 'pond-ts';
+
+new TimeRange({
+  start: Date.parse('2025-01-01T00:02:00Z'),
+  end: Date.parse('2025-01-01T00:04:00Z'),
+});
+```
+
+Use a `TimeRange` key when the event covers a duration but doesn't
+need to round-trip through a bucket-style identifier — sessions,
+request durations, outage windows, scrolling user-interaction frames.
+
+`range.begin()` and `range.end()` return the two endpoints. Pond-ts
+treats the range as half-open `[begin, end)` — an event "at" the end
+boundary does not belong to this range.
+
+## `Interval`
+
+A labeled span. Identical extent semantics to `TimeRange` plus an
+`index` value that lets the bucket round-trip through JSON and stay
+stable across transforms.
+
+```ts
+import { Interval } from 'pond-ts';
+
+new Interval({
+  value: 1735689600000,
+  start: 1735689600000,
+  end: 1735689660000,
+});
+```
+
+You almost never construct `Interval`s directly. They are produced by
+`aggregate(sequence, mapping)` and `align(sequence, ...)` — the
+sequence's bucket boundaries become the `start` / `end`, and the
+bucket's start timestamp becomes the `index`.
+
+The `index` is what survives the
+`series.toJSON()` → `TimeSeries.fromJSON()` round-trip. A bucketed
+event keyed by `Interval` reads back with the same identity it had
+before serialization; a `TimeRange`-keyed event would not.
+
+## Picking a key
+
+| If the event is…                                     | Use         |
+| ---------------------------------------------------- | ----------- |
+| A reading at one moment                              | `Time`      |
+| A duration-shaped observation (session, span, frame) | `TimeRange` |
+| A bucket from a `Sequence`                           | `Interval`  |
+
+You declare the key kind in the schema's first column:
+
+```ts
+const schema = [
+  { name: 'time', kind: 'time' }, // Time-keyed events
+  { name: 'duration', kind: 'timeRange' }, // TimeRange-keyed events
+  { name: 'bucket', kind: 'interval' }, // Interval-keyed events
+  // ...value columns
+] as const;
+```
+
+When you pass rows to `new TimeSeries({ rows })`, the library
+constructs the right key shape from the cell value:
+
+- `kind: 'time'` accepts `number | Date | Time`
+- `kind: 'timeRange'` accepts a `[start, end]` tuple, `{ start, end }`,
+  or `TimeRange`
+- `kind: 'interval'` accepts an `[value, start, end]` tuple,
+  `{ value, start, end }`, or `Interval`
+
+## Common operations
+
+All three key shapes share the same minimal interface:
+
+```ts
+key.begin(); // number — the earliest instant in the key's extent
+key.end(); // number — the latest instant in the key's extent
+key.toJSON(); // serialise to the schema-typed JSON form
+```
+
+For `Time`, `begin() === end()`. Operators that compare events by
+position on the timeline (sorting, between, tail, rolling cutoffs)
+work on any of the three uniformly through `begin()` / `end()`.
+
+## Where this shows up
+
+- **Event construction** — `new Event(key, data)` accepts any of the
+  three key shapes; the type system threads the schema's first-column
+  kind through to the resulting `Event`.
+- **Schema first-column declaration** — the
+  `kind: 'time' | 'timeRange' | 'interval'` field drives row
+  construction. See [Creating series](/docs/series/creating).
+- **Aggregation and alignment** — `aggregate(seq, mapping)` and
+  `align(seq, …)` always produce `Interval`-keyed events. See
+  [Aggregation](/docs/series/aggregation) and
+  [Alignment](/docs/series/alignment).
+- **Temporal relations** — operations like `tail`, `between`,
+  `within`, `overlapping`, `trim` all work in terms of `begin()` /
+  `end()`. See [Temporal relations](./temporal-relations).
+- **Sequences** — a `Sequence` defines a grid of bucket boundaries
+  that `aggregate` and `align` consume to produce `Interval` keys.
+  See [Sequences](./sequences).

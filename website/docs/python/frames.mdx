@@ -1,0 +1,86 @@
+---
+id: frames
+title: Frames in and out
+sidebar_position: 2
+description: 'Pass polars, pandas or pyarrow frames (or a dict of columns) into pond, and get frames back: the time column, ordering, gaps, time zones and bucket keys.'
+---
+
+# Frames in and out
+
+pond takes the frames you already use and gives frames back. This page has the rules for each direction.
+
+## Frames in
+
+`pond.TimeSeries(data)` takes:
+
+- a **polars** `DataFrame`,
+- a **pandas** `DataFrame` (pandas 2.2 or newer),
+- a **pyarrow** `Table` or `RecordBatch`, or anything else with
+  `__arrow_c_stream__`,
+- a **dict** of columns: `{"time": [...], "cpu": [...]}`.
+
+Rules for the data:
+
+- **The time column** is `"time"` unless you say otherwise:
+  `TimeSeries(df, key="ts")`. It may hold datetimes (one without a time
+  zone is read as UTC), dates, or integers (milliseconds since 1970). In a
+  dict it may also hold text such as `"2026-03-08T12:00:00Z"`, but in a
+  frame text is refused: parse it first, with
+  `pl.read_csv(path, try_parse_dates=True)` or
+  `pd.read_csv(path, parse_dates=["time"])`.
+- **Rows must be in time order.** Out of order is an error that names the
+  first bad row, so sort first: `df.sort("time")` in polars,
+  `df.sort_values("time", ignore_index=True)` in pandas. Several rows may
+  share a time (one per host, say).
+- **pandas: mind the index.** A pandas frame hands its index over too,
+  unless it is the plain 0, 1, 2, … one. After `sort_values` without
+  `ignore_index=True`, or a filter, it turns up as an extra number column
+  called `__index_level_0__`; `df.reset_index(drop=True)` removes it. Times
+  kept in the index are read as the key only if the index is named `time`
+  (or the `key=` name); otherwise `df.rename_axis("time").reset_index()`
+  makes them the `time` column.
+- **Times are whole milliseconds.** A time with a part smaller than a
+  millisecond is an error, not rounded. To drop it, use
+  `pl.col("time").dt.truncate("1ms")` in polars or `df["time"].dt.floor("ms")`
+  in pandas.
+- **Every other column is a value column.** Numbers (integers become
+  floats), text (pandas categoricals too), true/false values, exact
+  decimals and lists.
+- **Gaps:** `None`, a null or a NaN is a gap. Reducers skip gaps; `fill`
+  fills them.
+- `key_kind="time_range"` or `"interval"` reads a key of spans: columns
+  `<key>` and `<key>End`, plus `<key>Label` for intervals (this is what an
+  `aggregate` writes out, so its output reads back in).
+
+Files: `TimeSeries.read_ipc(path)` reads an Arrow IPC (Feather v2) file,
+compressed or not; `s.write_ipc(path)` writes one.
+
+## Frames out
+
+- `s.to_polars()`, `s.to_pandas()`, `s.to_pyarrow()`. A series is also an
+  Arrow stream, so `pl.DataFrame(s)` and `pa.table(s)` work.
+- **Times come out in UTC**, as `datetime[ms, UTC]` (polars) or
+  `datetime64[ms, UTC]` (pandas). For local times convert the column:
+  `pl.col("time").dt.convert_time_zone("America/New_York")` in polars,
+  `df["time"].dt.tz_convert("America/New_York")` in pandas.
+- **Numbers come out as floats**, counts included. Cast if you want
+  integers: `pl.col("n").cast(pl.Int64)`.
+- **A bucket key is three columns.** `aggregate` keys each row by its
+  bucket, which comes out as `interval` (the start), `intervalEnd` and
+  `intervalLabel` (the start again, as a number). `as_time()` turns the key
+  into one `time` column holding each bucket's start; `as_time("end")` or
+  `as_time("center")` picks another point. Then `select` / `drop` the rest
+  in polars or pandas as usual.
+
+Single values without a frame:
+
+```python
+s.columns                  # ["host", "cpu"]: the value columns
+len(s)                     # rows
+s.column("cpu")            # a list, None for a gap
+s.last()["cpu"]            # one cell; s[0], s.first(), s.at(i) also give a Row
+s.last().key               # the time, as epoch milliseconds
+s.reduce({"peak": ("cpu", "max")})   # {"peak": 23.0}
+for row in s:              # rows, if you must
+    row.key, row["host"], row.to_dict()
+```

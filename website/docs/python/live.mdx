@@ -1,0 +1,100 @@
+---
+id: live
+title: Live series
+sidebar_position: 5
+description: 'pond.LiveSeries in Python: push events, frames or batches as they arrive; live filters, buckets, rolling windows and per-host partitions; watching what each push produces.'
+---
+
+# Live series in Python
+
+`LiveSeries` takes events as they arrive. Nodes built on it (filters,
+fills, buckets, rolling windows, per-host partitions) update with every
+push. The results match pond-ts's live layer, output for output.
+
+```python
+live = pond.LiveSeries(
+    {"time": "time", "host": "string", "cpu": "number"},  # key first, then values
+    max_age="10m",                                        # keep ten minutes
+)
+avg = live.rolling("1m", {"avg": ("cpu", "avg")})        # a node
+per_min = live.aggregate("1m", {"max": ("cpu", "max")})
+per_min.watch("event")                                    # report closed buckets
+
+live.push("2026-03-08T12:00:00Z", host="a", cpu=0.5)     # one event
+live.push_many([("2026-03-08T12:00:10Z", {"host": "b", "cpu": 0.2})])
+outputs = live.push_frame(frame)                          # a polars / pandas / pyarrow frame
+
+for out in outputs:            # what the watched nodes emitted during this push
+    out.kind                   # "event": per_min closed a bucket
+    out.event.key              # the bucket: (label, begin, end) in ms
+    out.event["max"]
+avg.value()                    # {"avg": ...}: the rolling window now
+per_min.to_polars()            # every closed bucket so far
+```
+
+- **Schema** is `{column: kind}`, key first. Key kinds: `"time"`,
+  `"time_range"`, `"interval"`; value kinds: `"number"`, `"string"`,
+  `"boolean"`, `"array"`, `"decimal"`. `TimeSeries.schema` works too. Value columns may
+  have gaps unless given as `(name, kind, True)`.
+- **Pushing:** `push(time, values)` takes keywords, a dict or a list in
+  schema order; `push_many` takes `(time, values)` pairs or dicts holding
+  the time column; `push_frame` takes a frame with the key column and
+  exactly the series' value columns, and is the fastest way in (about 4.5
+  million events a second into a rolling window and buckets).
+- **Gaps in a push** are `None` or a column left out. A NaN is refused by
+  `push` and `push_many` (in a frame, `push_frame` included, NaN is a gap
+  as usual), so when looping over pandas rows turn NaN into `None` first:
+  `cpu=None if math.isnan(r.cpu) else r.cpu`.
+- **Order:** an event older than the newest is an error by default.
+  `ordering="drop"` drops it; `ordering="reorder", grace_window="5s"`
+  puts it in place if it is at most that late.
+- **Memory:** `max_age="10m"` or `max_events=n` drop the oldest events.
+- **Reading:** every node has `len()`, `events()`, `last()`,
+  `to_series()`, `to_polars()`, `to_pandas()`. A rolling window or `reduce`
+  has `value()`; an aggregation has `snapshot()` (closed buckets plus the
+  open one).
+- **When a bucket closes:** an aggregation's bucket closes when an event at
+  or after its end arrives (on a partitioned node: an event of the same
+  partition). Closing is what `watch("event")` reports. The bucket still
+  open is in `snapshot()`, not in `events()` or the pushes' outputs.
+- **What a push returns:** a list of `LiveOutput`s from the nodes you
+  `watch()`; an empty list when nothing is watched. `out.kind` is `"event"`
+  (a new event; for an aggregation a closed bucket), `"batch"`,
+  `"evict"`, `"bucket"` (an open bucket's current values) or `"update"`.
+  `watch("event")` limits it to those kinds.
+
+Per host:
+
+```python
+by_host = live.partition_by("host")
+per_host = by_host.fill("hold").rolling(
+    "1m", {"cpu": "avg", "host": ("host", "last")}
+).collect()
+per_host.to_polars()           # time, cpu, host
+```
+
+**A live partition's output does not carry the partition column by
+itself.** Unlike the batch `collect()`, the gathered rows have only the
+reducer columns, so add the column through a reducer (`("host", "last")`
+or `"keep"`), as above, if you need to know which host a row is from.
+Watch the `collect()` node to hear about every partition's outputs as they
+happen (a partitioned node itself emits nothing, and `watch()` on it is an
+error):
+
+```python
+buckets = live.partition_by("host").aggregate(
+    "30m", {"max": ("cpu", "max"), "host": ("host", "last")}
+).collect()
+buckets.watch("event")
+for i, (t, host, cpu) in enumerate(rows):
+    for out in live.push(t, host=host, cpu=cpu):
+        label, begin, end = out.event.key      # the bucket that closed
+        print(out.event["host"], begin, out.event["max"], "closed by", i)
+```
+
+A function given to a live node (`filter`, `map`) runs during the push. If
+it raises, that event gets no value from it, the other nodes carry on, and
+the first error is raised when the push returns, with the push's outputs as
+its `outputs` attribute (the push has happened). It must not use the series
+it belongs to. Calls from several threads are safe: each takes the series
+in turn.

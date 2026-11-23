@@ -76,7 +76,7 @@ ever draws the latest snapshot.
 
 `retention: { maxEvents: 60 }` caps how much history `LiveSeries` keeps —
 without a policy it would grow forever. The full eviction/windowing model
-is [LiveSeries](../pond-ts/live/live-series).
+is [LiveSeries](/docs/live/live-series).
 
 :::caution[Memoize what useSnapshot feeds into]
 `snapshot` is a fresh `TimeSeries` reference on every throttled re-render
@@ -140,7 +140,7 @@ keeps changing until its bar closes isn't a live edit to one event; it's
 open bucket, you don't mutate a pushed row after the fact. That's exactly
 what the rightmost bar in the demo above is doing: it isn't being edited,
 its 2-second window is being re-aggregated every snapshot until it fills.
-See the [@pond-ts/financial](../financial/) section for the calendar-aware
+See the [@pond-ts/financial](/docs/finance/) section for the calendar-aware
 side of that shape.
 
 ## Recap

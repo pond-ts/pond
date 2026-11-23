@@ -10,19 +10,19 @@ type FeatureItem = {
 
 const featureList: FeatureItem[] = [
   {
-    title: 'Explicit temporal keys',
+    title: 'One library, three languages',
     description:
-      'Work with Time, TimeRange, and Interval directly instead of treating time as an unnamed first column convention.',
+      'TypeScript for the browser and Node, Rust for native speed on many cores, Python with polars and pandas frames. Every language runs the same test cases and gives the same numbers, to the bit.',
   },
   {
-    title: 'Typed analytical transforms',
+    title: 'Time is the point',
     description:
-      'Align, aggregate, join, roll, and smooth series while preserving schema-driven TypeScript types.',
+      'Rows keyed by a moment, a span or a labelled bucket. Calendar days that know a day can be 23 or 25 hours long. Gaps that stay gaps. Rolling windows, buckets, joins and 109 finance studies.',
   },
   {
-    title: 'Modern deployment targets',
+    title: 'Batch and live',
     description:
-      'Designed for current Node and frontend projects with immutable values, ESM packaging, and timezone-aware ingest.',
+      'The same operations on a whole series or on events as they arrive, with live buckets, rolling windows and per-host partitions. Charts and React hooks on top, in TypeScript.',
   },
 ];
 

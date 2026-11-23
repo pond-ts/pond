@@ -82,6 +82,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs: one site for every language.** pond-ts.org is now organised by
+  task rather than by npm package, with a front door each for TypeScript,
+  Rust, Python and JavaScript with WebAssembly, a "Choose your language"
+  page, and Python on six pages of its own instead of one inside the Rust
+  section. The shared pages moved out of `/docs/pond-ts/` to
+  `/docs/concepts/`, `/docs/series/` and `/docs/live/`; Rust is at
+  `/docs/rust/`, Python at `/docs/python/`, finance at `/docs/finance/`.
+  Every old address redirects to its new one. The home page and top bar
+  now offer npm, crates.io and PyPI installs.
+
 ## [0.79.0] — 2026-11-23
 
 ### Added
