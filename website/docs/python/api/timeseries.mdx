@@ -712,7 +712,7 @@ key being the value (or a tuple of values for several columns).
 
 ## Operations
 
-These also work on a [PartitionedSeries](./partitioned-series.mdx), where each runs per group.
+These also work on a [PartitionedSeries](./partitioned-series.mdx), where each runs per group. `Self` in a signature means the kind of series you called it on: a TimeSeries gives a TimeSeries, a PartitionedSeries gives a PartitionedSeries.
 
 ### `TimeSeries.rolling`
 
@@ -727,7 +727,7 @@ rolling(
     over: Optional[Grid] = None,
     sample: At = 'begin',
     range: Range = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Reduce a window around each row: a duration, or an int count of
@@ -737,7 +737,7 @@ append=True keeps the source columns beside the outputs.
 ### `TimeSeries.aggregate`
 
 ```python
-aggregate(sequence: Grid, aggs: Aggs) -> TimeSeries
+aggregate(sequence: Grid, aggs: Aggs) -> Self
 ```
 
 One row per bucket of the grid, keyed by the bucket (interval).
@@ -750,7 +750,7 @@ diff(
     *,
     drop_first: bool = False,
     output: Optional[str] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Change from the previous row, per column.
@@ -763,7 +763,7 @@ rate(
     *,
     drop_first: bool = False,
     output: Optional[str] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Change per second.
@@ -776,7 +776,7 @@ pct_change(
     *,
     drop_first: bool = False,
     output: Optional[str] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Fractional change from the previous row.
@@ -784,7 +784,7 @@ Fractional change from the previous row.
 ### `TimeSeries.shift`
 
 ```python
-shift(columns: Columns, n: int) -> TimeSeries
+shift(columns: Columns, n: int) -> Self
 ```
 
 Move column values `n` rows later (earlier when negative).
@@ -792,7 +792,7 @@ Move column values `n` rows later (earlier when negative).
 ### `TimeSeries.cumulative`
 
 ```python
-cumulative(spec: Mapping[str, str]) -> TimeSeries
+cumulative(spec: Mapping[str, str]) -> Self
 ```
 
 Running reductions: \{"cpu": "sum"\}.
@@ -805,7 +805,7 @@ fill(
     *,
     limit: Optional[int] = None,
     max_gap: Optional[Duration] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 "hold", "bfill", "linear", "zero" or a value; or \{column: strategy\}.
@@ -819,7 +819,7 @@ align(
     method: Literal['hold', 'linear'] = 'hold',
     sample: At = 'begin',
     range: Range = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Values at each point of a grid, holding or interpolating.
@@ -833,7 +833,7 @@ materialize(
     pick: Literal['first', 'last', 'nearest'] = 'last',
     sample: At = 'begin',
     range: Range = None,
-) -> TimeSeries
+) -> Self
 ```
 
 One row per grid bucket, picked from the rows inside it.
@@ -843,7 +843,7 @@ One row per grid bucket, picked from the rows inside it.
 ```python
 dedupe(
     keep: Union[Literal['first', 'last', 'error', 'drop'], tuple[Literal['min', 'max'], str], None] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 One row per key: `keep` is `"first"`, `"last"`, `"error"`,
@@ -864,7 +864,7 @@ smooth(
     alignment: Optional[Alignment] = None,
     missing: Literal['bridge', 'skip'] = 'bridge',
     output: Optional[str] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Smooth one column: `method` is `"ema"` (with `alpha` or
@@ -882,7 +882,7 @@ baseline(
     alignment: Alignment = 'trailing',
     min_samples: int = 0,
     names: Union[Mapping[str, str], _Seq[str], None] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 Adds avg, sd, upper, lower (rename with names=).
@@ -897,7 +897,7 @@ outliers(
     *,
     alignment: Alignment = 'trailing',
     min_samples: int = 0,
-) -> TimeSeries
+) -> Self
 ```
 
 The rows of `column` more than `sigma` rolling deviations
@@ -912,7 +912,7 @@ scan(
     init: Any,
     *,
     output: Optional[str] = None,
-) -> TimeSeries
+) -> Self
 ```
 
 step(state, value, index) -&gt; (state, output); None output is a gap.
@@ -927,7 +927,7 @@ sample(
     stride: Optional[int] = None,
     reservoir: Optional[int] = None,
     seed: int = 0,
-) -> TimeSeries
+) -> Self
 ```
 
 Keep every `stride`-th row, or a random `reservoir` of rows
@@ -936,7 +936,7 @@ Keep every `stride`-th row, or a random `reservoir` of rows
 ### `TimeSeries.study`
 
 ```python
-study(name: str, **options: Any) -> TimeSeries
+study(name: str, **options: Any) -> Self
 ```
 
 Run a financial study by name ("rsi", "bollinger",

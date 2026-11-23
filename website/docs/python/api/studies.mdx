@@ -11,14 +11,15 @@ description: 'The 109 finance study methods on a pond TimeSeries in Python, each
 
 Each study is a method on [TimeSeries](./timeseries.mdx) and
 [PartitionedSeries](./partitioned-series.mdx). It adds its columns and
-keeps every row (gaps until its window fills). `s.study(name, **options)`
+keeps every row (gaps until its window fills). It returns the same kind
+of series it was called on, written `Self` below. `s.study(name, **options)`
 runs one by name, and `pond.studies()` / `pond.study_info(name)` describe
 them at run time. The guide is [Finance studies in Python](../finance.mdx).
 
 ### `TimeSeries.sma`
 
 ```python
-sma(*, column: str = 'close', period: int, output: str = 'sma') -> TimeSeries
+sma(*, column: str = 'close', period: int, output: str = 'sma') -> Self
 ```
 
 Simple moving average of a column.
@@ -28,7 +29,7 @@ Options: period: min 1; usually 5-200; required, e.g. 20.
 ### `TimeSeries.ema`
 
 ```python
-ema(*, column: str = 'close', period: int, output: str = 'ema') -> TimeSeries
+ema(*, column: str = 'close', period: int, output: str = 'ema') -> Self
 ```
 
 Exponential moving average, span convention (α = 2/(period+1)).
@@ -44,7 +45,7 @@ moving_average(
     period: int,
     type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     output: str = 'ma',
-) -> TimeSeries
+) -> Self
 ```
 
 Moving average of a selectable type (the shared MaType menu).
@@ -61,7 +62,7 @@ macd(
     signal_period: int = 9,
     slow_period: int = 26,
     prefix: str = 'macd',
-) -> TimeSeries
+) -> Self
 ```
 
 Appel's MACD — a fast/slow EMA spread with its signal line.
@@ -78,7 +79,7 @@ moving_average_cross(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     slow_period: int = 30,
     output: str = 'maCross',
-) -> TimeSeries
+) -> Self
 ```
 
 Fast/slow moving-average crossings as a +1/−1 event column.
@@ -94,7 +95,7 @@ moving_average_deviation(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     period: int = 20,
     output: str = 'maDev',
-) -> TimeSeries
+) -> Self
 ```
 
 How far price sits from its moving average, in price units.
@@ -109,7 +110,7 @@ guppy(
     column: str = 'close',
     type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'ema',
     prefix: str = 'gmma',
-) -> TimeSeries
+) -> Self
 ```
 
 Guppy's GMMA — the fixed twelve-average trader/investor ribbon.
@@ -125,7 +126,7 @@ rainbow(
     period: int = 2,
     type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     prefix: str = 'rainbow',
-) -> TimeSeries
+) -> Self
 ```
 
 Widner's Rainbow — ten recursively smoothed moving averages.
@@ -142,7 +143,7 @@ rainbow_oscillator(
     period: int = 2,
     type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     prefix: str = 'rbo',
-) -> TimeSeries
+) -> Self
 ```
 
 ChartIQ's rainbow oscillator, banded by the stack's own width.
@@ -158,7 +159,7 @@ trix(
     period: int = 15,
     signal_period: int = 9,
     prefix: str = 'trix',
-) -> TimeSeries
+) -> Self
 ```
 
 Hutson's TRIX — percent rate of change of a triple EMA.
@@ -175,7 +176,7 @@ schaff_trend_cycle(
     fast_period: int = 23,
     slow_period: int = 50,
     output: str = 'stc',
-) -> TimeSeries
+) -> Self
 ```
 
 Schaff's double stochastic of a MACD, bounded 0…100.
@@ -191,7 +192,7 @@ detrended_price_oscillator(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     period: int = 20,
     output: str = 'dpo',
-) -> TimeSeries
+) -> Self
 ```
 
 Price less a moving average displaced ⌊period/2⌋+1 bars back.
@@ -207,7 +208,7 @@ disparity_index(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     period: int = 14,
     output: str = 'disparity',
-) -> TimeSeries
+) -> Self
 ```
 
 Nison's disparity — price against its moving average, in percent.
@@ -224,7 +225,7 @@ coppock(
     short_period: int = 11,
     wma_period: int = 10,
     output: str = 'coppock',
-) -> TimeSeries
+) -> Self
 ```
 
 Coppock Curve — a WMA of two percent rates of change, summed.
@@ -234,7 +235,7 @@ Options: long\_period: min 1; usually 8-24; short\_period: min 1; usually 6-20; 
 ### `TimeSeries.kst`
 
 ```python
-kst(*, column: str = 'close', signal_period: int = 9, prefix: str = 'kst') -> TimeSeries
+kst(*, column: str = 'close', signal_period: int = 9, prefix: str = 'kst') -> Self
 ```
 
 Pring's Know Sure Thing — four weighted smoothed percent ROCs.
@@ -244,7 +245,7 @@ Options: signal\_period: min 1; usually 3-20.
 ### `TimeSeries.special_k`
 
 ```python
-special_k(*, column: str = 'close', output: str = 'specialK') -> TimeSeries
+special_k(*, column: str = 'close', output: str = 'specialK') -> Self
 ```
 
 Pring's Special K — the KST extended to twelve terms.
@@ -261,7 +262,7 @@ price_oscillator(
     mode: Literal['percent', 'absolute'] = 'percent',
     slow_period: int = 26,
     output: str = 'priceOsc',
-) -> TimeSeries
+) -> Self
 ```
 
 Fast/slow MA spread, as a percent (PPO) or in points (APO).
@@ -271,7 +272,7 @@ Options: fast\_period: min 1; usually 5-20; ma\_type: one of sma, ema, wma, smma
 ### `TimeSeries.price_momentum_oscillator`
 
 ```python
-price_momentum_oscillator(*, column: str = 'close', prefix: str = 'pmo') -> TimeSeries
+price_momentum_oscillator(*, column: str = 'close', prefix: str = 'pmo') -> Self
 ```
 
 DecisionPoint's PMO — a double-smoothed 1-bar percent ROC.
@@ -286,7 +287,7 @@ bollinger(
     period: int,
     std_dev: float = 2,
     prefix: str = 'bb',
-) -> TimeSeries
+) -> Self
 ```
 
 Bollinger Bands — an SMA middle band with bands at ±k·σ.
@@ -302,7 +303,7 @@ bollinger_bandwidth(
     period: int = 20,
     std_dev: float = 2,
     output: str = 'bbWidth',
-) -> TimeSeries
+) -> Self
 ```
 
 Bollinger BandWidth — the channel's width in percent of price.
@@ -318,7 +319,7 @@ bollinger_percent_b(
     period: int = 20,
     std_dev: float = 2,
     output: str = 'percentB',
-) -> TimeSeries
+) -> Self
 ```
 
 Bollinger %B — where price sits inside its own channel.
@@ -338,7 +339,7 @@ keltner(
     multiplier: float = 2,
     period: int = 20,
     prefix: str = 'kc',
-) -> TimeSeries
+) -> Self
 ```
 
 Keltner Channel — an EMA of typical price with bands at ±k·ATR.
@@ -358,7 +359,7 @@ starc_bands(
     multiplier: float = 2,
     period: int = 20,
     prefix: str = 'starc',
-) -> TimeSeries
+) -> Self
 ```
 
 STARC Bands (Stoller) — an MA of close with bands at ±k·ATR.
@@ -377,7 +378,7 @@ atr_bands(
     multiplier: float = 2,
     period: int = 14,
     prefix: str = 'atrb',
-) -> TimeSeries
+) -> Self
 ```
 
 A field with volatility bands at ±k·ATR either side of it.
@@ -393,7 +394,7 @@ donchian(
     low: str = 'low',
     period: int = 20,
     prefix: str = 'dc',
-) -> TimeSeries
+) -> Self
 ```
 
 Donchian channel — the window's highest high and lowest low.
@@ -411,7 +412,7 @@ high_low_bands(
     percent: float = 1,
     period: int = 10,
     prefix: str = 'hlb',
-) -> TimeSeries
+) -> Self
 ```
 
 High Low Bands — a smoothed median price ±percent.
@@ -421,12 +422,7 @@ Options: ma\_type: one of sma, ema, wma, smma, dema, tema, trima, hull, kama, zl
 ### `TimeSeries.prime_number_bands`
 
 ```python
-prime_number_bands(
-    *,
-    high: str = 'high',
-    low: str = 'low',
-    prefix: str = 'pnb',
-) -> TimeSeries
+prime_number_bands(*, high: str = 'high', low: str = 'low', prefix: str = 'pnb') -> Self
 ```
 
 The primes immediately bracketing each bar's high and low.
@@ -442,7 +438,7 @@ envelope(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     percent: float = 2.5,
     prefix: str = 'env',
-) -> TimeSeries
+) -> Self
 ```
 
 Moving-average envelope — bands at ±percent of the centre line.
@@ -452,7 +448,7 @@ Options: ma\_type: one of sma, ema, wma, smma, dema, tema, trima, hull, kama, zl
 ### `TimeSeries.rsi`
 
 ```python
-rsi(*, column: str = 'close', period: int = 14, output: str = 'rsi') -> TimeSeries
+rsi(*, column: str = 'close', period: int = 14, output: str = 'rsi') -> Self
 ```
 
 Wilder's relative strength index, bounded 0..100.
@@ -471,7 +467,7 @@ stochastic(
     k_period: int = 14,
     slowing: int = 3,
     prefix: str = 'stoch',
-) -> TimeSeries
+) -> Self
 ```
 
 Lane's stochastic — where the close sits in its recent range.
@@ -491,7 +487,7 @@ stochastic_momentum_index(
     short_period: int = 2,
     signal_period: int = 3,
     prefix: str = 'smi',
-) -> TimeSeries
+) -> Self
 ```
 
 Blau's SMI — the close against the range midpoint, smoothed.
@@ -509,7 +505,7 @@ stochastic_rsi(
     rsi_period: int = 14,
     stoch_period: int = 14,
     prefix: str = 'stochRsi',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande & Kroll's stochastic of the RSI's own range.
@@ -526,7 +522,7 @@ williams_r(
     close: str = 'close',
     period: int = 14,
     output: str = 'williamsR',
-) -> TimeSeries
+) -> Self
 ```
 
 Williams %R — the close below the recent high, −100..0.
@@ -536,12 +532,7 @@ Options: period: min 1; usually 5-30.
 ### `TimeSeries.chande_momentum`
 
 ```python
-chande_momentum(
-    *,
-    column: str = 'close',
-    period: int = 14,
-    output: str = 'cmo',
-) -> TimeSeries
+chande_momentum(*, column: str = 'close', period: int = 14, output: str = 'cmo') -> Self
 ```
 
 Chande's momentum oscillator — unsmoothed up/down sums.
@@ -551,12 +542,7 @@ Options: period: min 1; usually 5-30.
 ### `TimeSeries.momentum`
 
 ```python
-momentum(
-    *,
-    column: str = 'close',
-    period: int = 10,
-    output: str = 'momentum',
-) -> TimeSeries
+momentum(*, column: str = 'close', period: int = 10, output: str = 'momentum') -> Self
 ```
 
 The change from n bars ago, in the price’s own units.
@@ -571,7 +557,7 @@ percent_change(
     column: str = 'close',
     periods: int = 1,
     output: str = 'pctChange',
-) -> TimeSeries
+) -> Self
 ```
 
 Percent change from n bars ago — the rate of change.
@@ -587,7 +573,7 @@ intraday_momentum_index(
     close: str = 'close',
     period: int = 14,
     output: str = 'imi',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande's IMI — RSI's question asked of the candle body.
@@ -604,7 +590,7 @@ awesome_oscillator(
     fast_period: int = 5,
     slow_period: int = 34,
     output: str = 'ao',
-) -> TimeSeries
+) -> Self
 ```
 
 Bill Williams' AO — fast minus slow SMA of the median price.
@@ -623,7 +609,7 @@ ultimate_oscillator(
     medium_period: int = 14,
     short_period: int = 7,
     output: str = 'uo',
-) -> TimeSeries
+) -> Self
 ```
 
 Williams' three-horizon buying pressure, weighted 4/2/1.
@@ -640,7 +626,7 @@ commodity_channel_index(
     close: str = 'close',
     period: int = 20,
     output: str = 'cci',
-) -> TimeSeries
+) -> Self
 ```
 
 Lambert's CCI — typical price in mean absolute deviations.
@@ -656,7 +642,7 @@ fisher_transform(
     low: str = 'low',
     period: int = 10,
     prefix: str = 'fisher',
-) -> TimeSeries
+) -> Self
 ```
 
 Ehlers' Fisher transform of the normalised median price.
@@ -671,7 +657,7 @@ psychological_line(
     column: str = 'close',
     period: int = 12,
     output: str = 'psy',
-) -> TimeSeries
+) -> Self
 ```
 
 The percentage of the last n bars that closed up.
@@ -689,7 +675,7 @@ pretty_good_oscillator(
     close: str = 'close',
     period: int = 14,
     output: str = 'pgo',
-) -> TimeSeries
+) -> Self
 ```
 
 Johnson's PGO — distance from the SMA in average true ranges.
@@ -699,7 +685,7 @@ Options: period: min 1; usually 5-50.
 ### `TimeSeries.prime_number_oscillator`
 
 ```python
-prime_number_oscillator(*, column: str = 'close', output: str = 'pno') -> TimeSeries
+prime_number_oscillator(*, column: str = 'close', output: str = 'pno') -> Self
 ```
 
 The distance from the price to the prime nearest it.
@@ -715,7 +701,7 @@ qstick(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     period: int = 8,
     output: str = 'qstick',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande's QStick — a moving average of the candle body.
@@ -733,7 +719,7 @@ relative_vigor_index(
     close: str = 'close',
     period: int = 10,
     prefix: str = 'rvi',
-) -> TimeSeries
+) -> Self
 ```
 
 Ehlers' RVI — the body as a fraction of the range, plus signal.
@@ -748,7 +734,7 @@ center_of_gravity(
     column: str = 'close',
     period: int = 10,
     output: str = 'cog',
-) -> TimeSeries
+) -> Self
 ```
 
 Ehlers' CG — where the window's price mass balances, in bars.
@@ -763,7 +749,7 @@ chande_forecast_oscillator(
     column: str = 'close',
     period: int = 14,
     output: str = 'cfo',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande's CFO — the price against its own forecast, in percent.
@@ -780,7 +766,7 @@ true_strength_index(
     short_period: int = 13,
     signal_period: int = 7,
     prefix: str = 'tsi',
-) -> TimeSeries
+) -> Self
 ```
 
 Blau's TSI — double-smoothed net change over total change.
@@ -797,7 +783,7 @@ directional_movement(
     close: str = 'close',
     period: int = 14,
     prefix: str = 'dmi',
-) -> TimeSeries
+) -> Self
 ```
 
 Wilder's directional movement system — +DI/−DI, DX, ADX, ADXR.
@@ -813,7 +799,7 @@ aroon(
     low: str = 'low',
     period: int = 25,
     prefix: str = 'aroon',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande's Aroon — how recently the window's extremes printed.
@@ -830,7 +816,7 @@ vortex(
     close: str = 'close',
     period: int = 14,
     prefix: str = 'vi',
-) -> TimeSeries
+) -> Self
 ```
 
 Vortex Indicator — Botes & Siepman's crossed movement pair.
@@ -845,7 +831,7 @@ vertical_horizontal_filter(
     column: str = 'close',
     period: int = 28,
     output: str = 'vhf',
-) -> TimeSeries
+) -> Self
 ```
 
 Adam White's VHF — net movement over total movement.
@@ -862,7 +848,7 @@ random_walk_index(
     close: str = 'close',
     period: int = 14,
     prefix: str = 'rwi',
-) -> TimeSeries
+) -> Self
 ```
 
 Poulos' RWI — the move in units of a random walk's reach.
@@ -880,7 +866,7 @@ super_trend(
     multiplier: float = 3,
     period: int = 10,
     prefix: str = 'st',
-) -> TimeSeries
+) -> Self
 ```
 
 SuperTrend — a ratcheting ATR band that flips with the close.
@@ -897,7 +883,7 @@ parabolic_sar(
     max_step: float = 0.2,
     step: float = 0.02,
     prefix: str = 'psar',
-) -> TimeSeries
+) -> Self
 ```
 
 Wilder's parabolic stop-and-reverse.
@@ -915,7 +901,7 @@ atr_trailing_stop(
     multiplier: float = 3,
     period: int = 14,
     prefix: str = 'ats',
-) -> TimeSeries
+) -> Self
 ```
 
 Vervoort's close-anchored ratcheting ATR stop.
@@ -931,7 +917,7 @@ zig_zag(
     low: str = 'low',
     deviation: float = 5,
     prefix: str = 'zz',
-) -> TimeSeries
+) -> Self
 ```
 
 ZigZag — percent-reversal pivots and the line joining them.
@@ -951,7 +937,7 @@ ichimoku(
     displacement: int = 26,
     span_b_period: int = 52,
     prefix: str = 'ichi',
-) -> TimeSeries
+) -> Self
 ```
 
 Ichimoku Kinko Hyo — Hosoda's five lines.
@@ -969,7 +955,7 @@ elder_impulse(
     signal_period: int = 9,
     slow_period: int = 26,
     output: str = 'impulse',
-) -> TimeSeries
+) -> Self
 ```
 
 Elder's impulse system — EMA and MACD histogram agreeing.
@@ -986,7 +972,7 @@ elder_ray(
     close: str = 'close',
     period: int = 13,
     prefix: str = 'elder',
-) -> TimeSeries
+) -> Self
 ```
 
 Elder Ray — the bar's high and low against an EMA.
@@ -1002,7 +988,7 @@ trend_intensity_index(
     ma_period: int = 60,
     period: int = 30,
     output: str = 'tii',
-) -> TimeSeries
+) -> Self
 ```
 
 M. H. Pee's trend intensity index — deviations above an SMA.
@@ -1018,7 +1004,7 @@ ravi(
     long_period: int = 65,
     short_period: int = 7,
     output: str = 'ravi',
-) -> TimeSeries
+) -> Self
 ```
 
 Chande's RAVI — the two SMAs' gap as a percent of the slow one.
@@ -1036,7 +1022,7 @@ swing_index(
     close: str = 'close',
     limit: float,
     output: str = 'si',
-) -> TimeSeries
+) -> Self
 ```
 
 Wilder's swing index — one bar's move against the limit move.
@@ -1054,7 +1040,7 @@ accumulative_swing_index(
     close: str = 'close',
     limit: float,
     output: str = 'asi',
-) -> TimeSeries
+) -> Self
 ```
 
 Wilder's accumulative swing index — the running swing total.
@@ -1071,7 +1057,7 @@ atr(
     close: str = 'close',
     period: int = 14,
     output: str = 'atr',
-) -> TimeSeries
+) -> Self
 ```
 
 Wilder's average true range.
@@ -1087,7 +1073,7 @@ historical_volatility(
     annualize: float = 252,
     period: int = 20,
     output: str = 'hv',
-) -> TimeSeries
+) -> Self
 ```
 
 Annualised σ of log returns, as a decimal.
@@ -1104,7 +1090,7 @@ chaikin_volatility(
     period: int = 10,
     roc_period: int = 10,
     output: str = 'chaikinVol',
-) -> TimeSeries
+) -> Self
 ```
 
 Chaikin's percent rate of change of a smoothed bar range.
@@ -1121,7 +1107,7 @@ mass_index(
     ema_period: int = 9,
     sum_period: int = 25,
     output: str = 'mass',
-) -> TimeSeries
+) -> Self
 ```
 
 Dorsey's range-expansion sum — the reversal bulge.
@@ -1138,7 +1124,7 @@ choppiness_index(
     close: str = 'close',
     period: int = 14,
     output: str = 'chop',
-) -> TimeSeries
+) -> Self
 ```
 
 Dreiss' Choppiness Index — trending against ranging, 0..100.
@@ -1154,7 +1140,7 @@ gopalakrishnan_range_index(
     low: str = 'low',
     period: int = 10,
     output: str = 'gapo',
-) -> TimeSeries
+) -> Self
 ```
 
 GAPO — the window's high-low range, logged in base period.
@@ -1164,12 +1150,7 @@ Options: period: min 2; usually 5-30.
 ### `TimeSeries.ulcer_index`
 
 ```python
-ulcer_index(
-    *,
-    column: str = 'close',
-    period: int = 14,
-    output: str = 'ulcer',
-) -> TimeSeries
+ulcer_index(*, column: str = 'close', period: int = 14, output: str = 'ulcer') -> Self
 ```
 
 Martin's RMS percent drawdown from the rolling peak.
@@ -1185,7 +1166,7 @@ relative_volatility_index(
     period: int = 14,
     stdev_period: int = 10,
     output: str = 'relVol',
-) -> TimeSeries
+) -> Self
 ```
 
 Dorsey's RSI form applied to σ instead of price.
@@ -1195,7 +1176,7 @@ Options: period: min 1; usually 5-30; stdev\_period: min 1; usually 5-30.
 ### `TimeSeries.obv`
 
 ```python
-obv(*, close: str = 'close', volume: str = 'volume', output: str = 'obv') -> TimeSeries
+obv(*, close: str = 'close', volume: str = 'volume', output: str = 'obv') -> Self
 ```
 
 Granville's running total of signed volume.
@@ -1211,7 +1192,7 @@ accumulation_distribution(
     close: str = 'close',
     volume: str = 'volume',
     output: str = 'ad',
-) -> TimeSeries
+) -> Self
 ```
 
 Chaikin's A/D line — volume signed by the close's place in the bar.
@@ -1225,7 +1206,7 @@ price_volume_trend(
     close: str = 'close',
     volume: str = 'volume',
     output: str = 'pvt',
-) -> TimeSeries
+) -> Self
 ```
 
 Running total of volume scaled by fractional price change.
@@ -1242,7 +1223,7 @@ chaikin_money_flow(
     volume: str = 'volume',
     period: int = 20,
     output: str = 'cmf',
-) -> TimeSeries
+) -> Self
 ```
 
 Chaikin's A/D term as a volume-weighted mean over a window.
@@ -1261,7 +1242,7 @@ chaikin_oscillator(
     fast_period: int = 3,
     slow_period: int = 10,
     output: str = 'chaikinOsc',
-) -> TimeSeries
+) -> Self
 ```
 
 MACD of the Accumulation/Distribution line.
@@ -1279,7 +1260,7 @@ money_flow_index(
     volume: str = 'volume',
     period: int = 14,
     output: str = 'mfi',
-) -> TimeSeries
+) -> Self
 ```
 
 RSI computed on money flow instead of price.
@@ -1297,7 +1278,7 @@ twiggs_money_flow(
     volume: str = 'volume',
     period: int = 21,
     output: str = 'tmf',
-) -> TimeSeries
+) -> Self
 ```
 
 Twiggs' money flow — true range, Wilder-smoothed.
@@ -1313,7 +1294,7 @@ force_index(
     volume: str = 'volume',
     period: int = 13,
     output: str = 'force',
-) -> TimeSeries
+) -> Self
 ```
 
 Elder's force index — price change times volume, EMA-smoothed.
@@ -1332,7 +1313,7 @@ ease_of_movement(
     period: int = 14,
     scale: float = 100000000,
     output: str = 'eom',
-) -> TimeSeries
+) -> Self
 ```
 
 Arms' ease of movement — midpoint travel per unit of volume.
@@ -1352,7 +1333,7 @@ klinger(
     signal_period: int = 13,
     slow_period: int = 55,
     prefix: str = 'kvo',
-) -> TimeSeries
+) -> Self
 ```
 
 Klinger's volume oscillator with its signal line.
@@ -1369,7 +1350,7 @@ volume_oscillator(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     slow_period: int = 10,
     output: str = 'volOsc',
-) -> TimeSeries
+) -> Self
 ```
 
 Fast minus slow moving average of volume, as a percent.
@@ -1385,7 +1366,7 @@ trade_volume_index(
     volume: str = 'volume',
     min_tick: float,
     output: str = 'tvi',
-) -> TimeSeries
+) -> Self
 ```
 
 Tick-direction volume accumulation (needs the instrument tick).
@@ -1401,7 +1382,7 @@ negative_volume_index(
     volume: str = 'volume',
     start: float = 1000,
     output: str = 'nvi',
-) -> TimeSeries
+) -> Self
 ```
 
 Fosback's index compounding returns on lower-volume bars.
@@ -1417,7 +1398,7 @@ positive_volume_index(
     volume: str = 'volume',
     start: float = 1000,
     output: str = 'pvi',
-) -> TimeSeries
+) -> Self
 ```
 
 Fosback's index compounding returns on higher-volume bars.
@@ -1433,7 +1414,7 @@ market_facilitation_index(
     low: str = 'low',
     volume: str = 'volume',
     output: str = 'bwmfi',
-) -> TimeSeries
+) -> Self
 ```
 
 Bill Williams' price movement per unit of volume.
@@ -1450,7 +1431,7 @@ shinohara_intensity_ratio(
     close: str = 'close',
     period: int = 26,
     prefix: str = 'sir',
-) -> TimeSeries
+) -> Self
 ```
 
 Shinohara's strong and weak intensity ratios.
@@ -1468,7 +1449,7 @@ vwap(
     volume: str = 'volume',
     period: int,
     output: str = 'vwap',
-) -> TimeSeries
+) -> Self
 ```
 
 Volume-weighted average price over a trailing window.
@@ -1486,7 +1467,7 @@ anchored_vwap(
     volume: str = 'volume',
     output: str = 'avwap',
     anchor: Time,
-) -> TimeSeries
+) -> Self
 ```
 
 VWAP accumulated from a user-chosen bar onward.
@@ -1500,7 +1481,7 @@ linear_regression(
     column: str = 'close',
     period: int = 14,
     prefix: str = 'linreg',
-) -> TimeSeries
+) -> Self
 ```
 
 Rolling OLS fit against the bar index, with slope, angle and R².
@@ -1515,7 +1496,7 @@ time_series_forecast(
     column: str = 'close',
     period: int = 14,
     output: str = 'tsf',
-) -> TimeSeries
+) -> Self
 ```
 
 The rolling OLS fit projected one bar past the window.
@@ -1531,7 +1512,7 @@ beta(
     benchmark: str,
     period: int = 5,
     output: str = 'beta',
-) -> TimeSeries
+) -> Self
 ```
 
 Slope of a column's one-bar returns on a benchmark's.
@@ -1547,7 +1528,7 @@ correlation(
     benchmark: str,
     period: int = 30,
     output: str = 'corr',
-) -> TimeSeries
+) -> Self
 ```
 
 Rolling Pearson correlation against a benchmark column.
@@ -1562,7 +1543,7 @@ price_relative(
     column: str = 'close',
     benchmark: str,
     output: str = 'priceRel',
-) -> TimeSeries
+) -> Self
 ```
 
 Ratio of a column to a benchmark column, with no look-back.
@@ -1577,7 +1558,7 @@ performance_index(
     benchmark: str,
     period: int = 20,
     output: str = 'perf',
-) -> TimeSeries
+) -> Self
 ```
 
 Each side's own period-bar growth, divided — 1 is parity.
@@ -1587,7 +1568,7 @@ Options: period: min 1; usually 10-60.
 ### `TimeSeries.z_score`
 
 ```python
-z_score(*, column: str = 'close', period: int, output: str = 'zscore') -> TimeSeries
+z_score(*, column: str = 'close', period: int, output: str = 'zscore') -> Self
 ```
 
 Deviation from the rolling mean, in standard deviations.
@@ -1597,12 +1578,7 @@ Options: period: min 1; usually 10-60; required, e.g. 20.
 ### `TimeSeries.rolling_stdev`
 
 ```python
-rolling_stdev(
-    *,
-    column: str = 'close',
-    period: int,
-    output: str = 'stdev',
-) -> TimeSeries
+rolling_stdev(*, column: str = 'close', period: int, output: str = 'stdev') -> Self
 ```
 
 Rolling population standard deviation (ddof = 0).
@@ -1612,7 +1588,7 @@ Options: period: min 1; usually 5-100; required, e.g. 20.
 ### `TimeSeries.rolling_min`
 
 ```python
-rolling_min(*, column: str = 'close', period: int, output: str = 'min') -> TimeSeries
+rolling_min(*, column: str = 'close', period: int, output: str = 'min') -> Self
 ```
 
 Rolling minimum over the last period bars.
@@ -1622,7 +1598,7 @@ Options: period: min 1; usually 5-100; required, e.g. 20.
 ### `TimeSeries.rolling_max`
 
 ```python
-rolling_max(*, column: str = 'close', period: int, output: str = 'max') -> TimeSeries
+rolling_max(*, column: str = 'close', period: int, output: str = 'max') -> Self
 ```
 
 Rolling maximum over the last period bars.
@@ -1638,7 +1614,7 @@ rolling_percentile(
     period: int,
     q: float,
     output: str = 'p90',
-) -> TimeSeries
+) -> Self
 ```
 
 Rolling q-th percentile, linearly interpolated.
@@ -1654,7 +1630,7 @@ typical_price(
     low: str = 'low',
     close: str = 'close',
     output: str = 'typicalPrice',
-) -> TimeSeries
+) -> Self
 ```
 
 Typical price — (high + low + close) / 3.
@@ -1669,7 +1645,7 @@ median_price(
     low: str = 'low',
     close: str = 'close',
     output: str = 'medianPrice',
-) -> TimeSeries
+) -> Self
 ```
 
 Median price — (high + low) / 2.
@@ -1684,7 +1660,7 @@ weighted_close(
     low: str = 'low',
     close: str = 'close',
     output: str = 'weightedClose',
-) -> TimeSeries
+) -> Self
 ```
 
 Weighted close — (high + low + 2·close) / 4.
@@ -1700,7 +1676,7 @@ average_price(
     close: str = 'close',
     open: str = 'open',
     output: str = 'averagePrice',
-) -> TimeSeries
+) -> Self
 ```
 
 Average price — (open + high + low + close) / 4.
@@ -1718,7 +1694,7 @@ balance_of_power(
     ma_type: Literal['sma', 'ema', 'wma', 'smma', 'dema', 'tema', 'trima', 'hull', 'kama', 'zlema'] = 'sma',
     period: Optional[int] = None,
     output: str = 'bop',
-) -> TimeSeries
+) -> Self
 ```
 
 TA-Lib's per-bar (close − open)/(high − low), optionally smoothed.
@@ -1738,7 +1714,7 @@ session_vwap(
     sessions: Union[TradingCalendar, Iterable[Session], None] = None,
     session: Optional[str] = None,
     stamped: Literal['open', 'close'] = 'open',
-) -> TimeSeries
+) -> Self
 ```
 
 Volume-weighted average price, reset at each session's open.
@@ -1758,7 +1734,7 @@ pivot_points(
     sessions: Union[TradingCalendar, Iterable[Session], None] = None,
     session: Optional[str] = None,
     stamped: Literal['open', 'close'] = 'open',
-) -> TimeSeries
+) -> Self
 ```
 
 The prior session's pivot with its support and resistance levels.

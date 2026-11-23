@@ -59,7 +59,12 @@ def runtime(owner: object, name: str) -> str | None:
     if not doc or not doc.strip():
         return None
     # Built-in fallbacks (property(), object.__init__ …) are not ours.
-    if doc.startswith(("Return ", "Initialize self", "str(object", "Property attribute")):
+    # Skip the texts Python gives builtin slots (`__repr__`, `__len__`, ...),
+    # not every docstring that happens to start with "Return".
+    builtin = ("Return repr(self)", "Return hash(self)", "Return len(self)", "Return str(self)",
+               "Return self", "Return iter(self)", "Return bool(self)", "Initialize self",
+               "str(object", "Property attribute")
+    if doc.startswith(builtin):
         return None
     return doc
 
@@ -87,6 +92,8 @@ def clean(doc: str) -> str:
     import textwrap
 
     doc = textwrap.dedent(doc).strip()
+    if not doc:
+        return ""
     out, block = [], []
     for line in doc.splitlines() + [""]:
         if line.startswith("    "):
@@ -134,7 +141,9 @@ def signature(owner: str | None, f: ast.FunctionDef) -> str:
     if args.kwarg:
         shown.append("**" + arg(args.kwarg, None))
     ret = ast.unparse(f.returns) if f.returns else "None"
-    concrete = {"_Shared": "TimeSeries", "_LiveBase": "LiveNode"}.get(owner or "", owner)
+    # `_Shared` methods keep `Self`: on a PartitionedSeries they return a
+    # PartitionedSeries, so naming TimeSeries here would be wrong.
+    concrete = {"_Shared": "Self", "_LiveBase": "LiveNode"}.get(owner or "", owner)
     ret = re.sub(r"\bSelf\b", concrete or "Self", ret)
     name = f.name
     one = f"{name}({', '.join(shown)}) -> {ret}"
@@ -297,7 +306,9 @@ tour start at [pond for Python](../index.mdx).
             ("Making, reading and writing", [entry("TimeSeries", f, "TimeSeries") for f in ts]),
             (
                 "Operations",
-                ["These also work on a [PartitionedSeries](./partitioned-series.mdx), where each runs per group.\n"]
+                ["These also work on a [PartitionedSeries](./partitioned-series.mdx), where each runs per group. "
+                 "`Self` in a signature means the kind of series you called it on: a TimeSeries "
+                 "gives a TimeSeries, a PartitionedSeries gives a PartitionedSeries.\n"]
                 + [entry("_Shared", f, "TimeSeries") for f in shared],
             ),
         ],
@@ -327,7 +338,8 @@ tour start at [pond for Python](../index.mdx).
         """
 Each study is a method on [TimeSeries](./timeseries.mdx) and
 [PartitionedSeries](./partitioned-series.mdx). It adds its columns and
-keeps every row (gaps until its window fills). `s.study(name, **options)`
+keeps every row (gaps until its window fills). It returns the same kind
+of series it was called on, written `Self` below. `s.study(name, **options)`
 runs one by name, and `pond.studies()` / `pond.study_info(name)` describe
 them at run time. The guide is [Finance studies in Python](../finance.mdx).
 """,
