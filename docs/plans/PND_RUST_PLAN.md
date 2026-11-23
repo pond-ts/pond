@@ -1184,10 +1184,17 @@ Outcome, measured on Peter's M1 (Linux VM, 4 cores), 1M rows, 100 hosts:
 
 ## [PND-RSFILTER] — a faster filter (2026-11-23)
 
-Asked for by pjm17971 after the six-engine suite (#961) ran on his M1:
+Asked for by pjm17971 after the six-engine suite (#961) ran on an M1:
 "keep rows where v > 500" was the one case of sixteen where polars was
 clearly ahead (pond-rs 7.1 ms, polars 2.2 ms; one core, 1M rows, with #960
 already in).
+
+**Read the follow-up below with this.** This section is #969 as it
+merged. On two kinds of series its benchmark did not have (long or
+non-ASCII text, and many number columns on one core) #969 was slower than
+the code before it, and #971 took both back the same day: see
+"[PND-RSFILTER] follow-up". The numbers here are right for the series they
+name.
 
 **Where the time went**, measured piece by piece on that M1, inside a
 Linux VM (timings there repeat to a few percent; the cloud machine's moved
@@ -1257,8 +1264,9 @@ value: over masks of every shape the copies branch on, lengths around the
 64-row words, sliced inputs, and text with empty, long and multi-byte
 strings. The series-level test compares with the row-number path for every
 column kind and key kind, on one core and on several, and pins each number
-column's "no gaps" note. Of 19 mistakes planted, 18 fail a test; the 19th
-is not a mistake (the two ways of counting text bytes must agree).
+column's "no gaps" note. Of 34 mistakes planted in what merged, 33 fail a
+test; the 34th is not a mistake (the two ways of counting text bytes must
+agree).
 
 One corner differs from before, in how an empty result is held, not in
 what it holds. When no row is kept, a dictionary text column comes back
@@ -1378,7 +1386,9 @@ one is about level. On macOS itself both are faster under mimalloc, the
 new one by 1 ms. So the new path does not escape the allocator: it only
 does in the VM. Which part of either path an allocator slows was not
 pinned down on either system. (The VM's "after, mimalloc" is the first
-version; its tables happened to sit clear of page ends.)
+version; its tables happened to sit clear of page ends. The macOS "before"
+of 7.0 here and the 6.45 in the next table are two runs on a machine that
+was busy both times; see below.)
 
 **On macOS itself** (M1 Pro, macOS 15.7.7, Rust 1.97, the first version,
 the suite's filter case, median of 7, ms). The machine was busy: Spotlight
@@ -1405,12 +1415,13 @@ PLAN.md as [PND-RSFILTER].
   offset is on a character boundary. That is 0.64 ms of the 2.8. Arrow's
   own filter skips the check with `unsafe`, and no safe way around it was
   found (builders, `MutableArrayData`, `take`, `concat`, `interleave`,
-  `ArrayData` and a Binary-to-Utf8 cast were each tried or read). pond-rs's
-  `src` has no `unsafe` block today. Measured with the one block, on the
-  first version: 2.75 → 2.07 ms on one core and 2.19 → 1.47 on four in the
-  VM; 3.90 → 2.77 and 2.69 → 1.99 on macOS. A dictionary column has a check
-  of the same kind (every kept key is inside the dictionary): 0.27 ms for
-  the 565,000 keys, of the 1.74.
+  `ArrayData` and a Binary-to-Utf8 cast were each tried or read). One was
+  missed, and the follow-up uses it for rows in long stretches: a
+  builder's `append_array`. pond-rs's `src` has no `unsafe` block today.
+  Measured with the one block, on the first version: 2.75 → 2.07 ms on one
+  core and 2.19 → 1.47 on four in the VM; 3.90 → 2.77 and 2.69 → 1.99 on
+  macOS. A dictionary column has a check of the same kind (every kept key
+  is inside the dictionary): 0.27 ms for the 565,000 keys, of the 1.74.
 - **Text as 16-byte views** (Arrow's `Utf8View`, what polars holds; the
   branch `perf/pond-rs-text-views`, parked over its export cost). Filtering
   this column as views through Arrow's own kernel takes 0.43 to 0.55 ms,
@@ -1432,6 +1443,225 @@ PLAN.md as [PND-RSFILTER].
   column in the one pair of builds compared. That pair predates the table
   fix, so the comparison was not a clean one, and it was not repeated.
 - **Hand-written SIMD** stays unscheduled, as before: it needs `unsafe`.
+
+## [PND-RSFILTER] follow-up — two slowdowns taken back (2026-11-23)
+
+#969 merged before its Layer 2 review had finished. The review, and a
+re-check on the M1 over more kinds of series, found the new filter
+**slower than the code before it** in two places. #971 removes both. What
+#969's section above says about text ("a stretch of kept rows is one
+copy") and about lists ("no list of row numbers is built") describes #969
+as it merged, not the code now.
+
+**What was slower** (the M1, Linux VM, one core, ms; 1M rows, but 833,333
+for the 120-byte text, since the benchmark holds at most 100 MB of text):
+
+| series                                       | before #969 | with #969 |
+| -------------------------------------------- | ----------- | --------- |
+| text of 24 bytes in 2-byte letters, 56% kept | 4.10        | 10.73     |
+| the same, 93% kept                           | 4.45        | 15.92     |
+| text of 60 bytes in 3-byte letters, 56% kept | 9.16        | 27.91     |
+| text of 120 bytes, ASCII, 56% kept           | 5.35        | 8.23      |
+| 8 number columns, 25% kept                   | 3.31        | 3.69      |
+| 16 number columns, 25% kept                  | 4.83        | 6.74      |
+| 32 number columns, 25% kept                  | 7.81        | 12.84     |
+| 32 number columns, 56% kept                  | 10.45       | 13.57     |
+
+**Why it was missed.** `examples/perf_filter.rs` timed one shape of text
+(6-byte ASCII host names) and at most one column beside `v`. Every number
+in #969's section is for that shape, and is right for it.
+
+**Cause 1: Arrow checks text it is handed.** #969 copied text with its own
+loop and built the array with `StringArray::new`. Every safe way to build a
+text array from bytes checks them: all the bytes for UTF-8, and every row's
+start for a character boundary. Shown on the M1 by switching only that last
+step in one program (24 bytes of 2-byte letters, 56% kept, the text column
+alone): 9.54 ms with the check, 1.56 without. The check is cheap for short
+ASCII (0.64 ms of #969's 2.8), grows with the bytes, and costs far more for
+a letter of more than one byte. Arrow's own `filter` kernel skips it, with
+`unsafe`.
+
+**Cause 2: the mask was walked again for every column.** #969's copy from
+the mask costs about 0.40 ms per number column on the M1 (56% kept),
+whatever came before. Arrow's kernel makes a list of the kept rows once
+(about 0.44 ms) and then gathers each column by it in 0.26 to 0.30 ms. With
+enough columns the list wins, most where 20 to 40% of rows are kept, since
+the copy from the mask does the same work per eight rows however few of
+them are kept.
+
+**What changed (#971).**
+
+- Text is no longer put together from bytes by pond-rs. Scattered rows go
+  by Arrow's `filter` kernel. Rows in long stretches go stretch by stretch
+  through `StringBuilder::append_array`, which moves a stretch's offsets in
+  one loop and its bytes in one copy. Both copy from an array already known
+  to be valid, so neither is checked again. (`append_array` is the safe
+  bulk path that #969's notes above say was not found.)
+- `RowFilter::by_list` holds the kernel's list of the kept rows, made the
+  first time it is needed and shared by every column copied that way.
+- `TimeSeries::filter_copy` picks one of three ways (`FilterCopy`): a core
+  for the key and each column when 131,072 rows or more are kept and there
+  is more than one core (as #969); otherwise one after another, with number
+  and dictionary columns by the list when there are eight or more of them
+  and the mask is mixed; otherwise each straight from the mask.
+- In the copy from the mask, a run of words with every row kept is one
+  copy (it was a copy per word), and a word is walked bit by bit up to 24
+  kept rows (it was 12).
+
+**The four numbers in those rules, and what set them.** All four were
+timed on an x86 cloud server (one core, 1M rows, ms), whose runs differ by
+tens of percent on the larger cases, so each figure is the middle or the
+lowest of two to five runs. The M1's crossovers are not all the same, and
+a run on the Mac itself is still owed (PLAN.md).
+
+- _Text by stretches from 32 rows a stretch_ (`TEXT_STRETCH_ROWS`). Each
+  stretch costs about 70 ns to set up. 6-byte text, half the rows kept:
+  stretches of 16 rows 3.97 by stretches against 4.12 by the kernel; of 32
+  rows 2.96 against 4.25; of one row 39.5 against 4.25. Where one dropped
+  row follows each stretch (nearly every row kept) the kernel copies by
+  stretches of its own: the two are level at 32 rows (4.40 against 4.38)
+  and the kernel is behind from 48 (3.80 against 4.12). 24-byte text
+  crosses at the same lengths.
+- _The list from eight number or dictionary columns_
+  (`FILTER_LIST_COLUMNS`). At 8 number columns the two were level at 25%
+  kept (4.5 from the mask, 4.6 by the list) and the mask ahead at 56% (6.5
+  against 7.6). At 16 the list was ahead at every mix (56%: 17.5 against
+  22.1; 25%: 11.0 against 15.0), and at 32 by more. On the M1 the list
+  already paid at about four columns (cause 2). Eight sits between the two
+  machines.
+- _Not by the list unless one word of the mask in four holds both kept and
+  dropped rows_ (`RowFilter::is_scattered`). In long stretches the copy
+  from the mask is mostly whole words copied or skipped. 8 columns,
+  stretches of 64 kept and 64 dropped: 4.53 from the mask against 6.03 by
+  the list; one dropped row after every 1,000: 7.72 against 7.67.
+- _Bit by bit up to 24 kept rows in a word_ (`SPARSE`). At 25% kept, 20 and
+  28 against 12: 1.57 to 1.26 ms with no column beside `v`, 5.55 to 4.5
+  with 7 more, 18.1 to 15.0 with 15 more. 36 is slower than 28 at 56%
+  kept. On the M1, 4 to 40 made no difference that could be measured.
+
+**Same answers.** Each way of copying is held to a row-by-row reading and
+to Arrow's kernel over the masks #969 used; text with and without gaps,
+whole and sliced; the three ways of going about a series each against
+`take_rows`; the rule that picks one, case by case; and `filter_expr` in
+full against `take_rows` (it compared row counts only, a finding of the
+review). Of 54 mistakes planted one at a time, the 49 that change a result
+each fail a test; the other 5 change how a copy is made, not what comes
+out.
+
+**Measured** on the x86 cloud server (`examples/perf_filter.rs`, ms, the
+lowest of five runs of it; 1M rows, but 833,333 for the 120-byte text and
+250,000 for the 400-byte). "Before" is ff2ff27, the commit before #969; it
+never uses a second core. Freed memory was held on to so that runs
+compare (next paragraph).
+
+| case                                         | before | #969  | #971  | #969, four cores | #971, four cores |
+| -------------------------------------------- | ------ | ----- | ----- | ---------------- | ---------------- |
+| 6-byte ASCII text, 56% kept (the suite's)    | 6.96   | 4.15  | 5.42  | 2.95             | 4.18             |
+| the same, 1% kept                            | 2.57   | 0.76  | 0.72  | 0.76             | 0.72             |
+| the same, 93% kept                           | 7.67   | 4.94  | 5.85  | 3.32             | 4.31             |
+| the same, 50% kept in stretches of 1,000     | 6.12   | 2.68  | 1.52  | 2.06             | 1.06             |
+| key and `v` only                             | 4.09   | 1.77  | 1.75  | 1.65             | 1.24             |
+| text of 24 bytes, ASCII, 56% kept            | 7.00   | 5.95  | 5.24  | 5.27             | 4.65             |
+| text of 120 bytes, ASCII, 56% kept           | 15.61  | 19.76 | 12.88 | 18.47            | 14.57            |
+| the same, stretches of 1,000                 | 10.50  | 11.55 | 5.31  | 12.02            | 4.62             |
+| text of 400 bytes, ASCII, 56% kept           | 8.14   | 13.12 | 9.28  | 15.32            | 10.85            |
+| text of 24 bytes in 2-byte letters, 56% kept | 7.24   | 13.89 | 5.21  | 15.70            | 4.78             |
+| text of 60 bytes in 3-byte letters, 56% kept | 11.70  | 34.52 | 10.69 | 35.94            | 10.15            |
+| 2 number columns, 25% kept                   | 3.83   | 2.08  | 1.76  | 1.22             | 0.99             |
+| 8 number columns, 25% kept                   | 6.64   | 5.52  | 4.45  | 2.42             | 1.91             |
+| 16 number columns, 25% kept                  | 13.98  | 20.40 | 10.61 | 5.74             | 5.01             |
+| 32 number columns, 25% kept                  | 27.87  | 46.92 | 25.00 | 13.69            | 11.08            |
+| 32 number columns, 56% kept                  | 43.52  | 48.88 | 40.70 | 15.07            | 15.36            |
+| 1,000 series of 1,000 rows, 56% kept         | 7.57   | 4.88  | 6.23  | 4.92             | 6.08             |
+| `filter` with a closure                      | 7.56   | 5.69  | 7.00  | 4.47             | 5.77             |
+
+Against "before", #971 is no slower on any of the benchmark's 51 cases, on
+one core or four, beyond what two runs of one program differ by. The line
+that reads worst is 400-byte text at 56% kept on one core (8.14 before,
+9.28 after): its five runs range from 8.1 to 14.1 ms before and from 9.3
+to 13.4 after, with the middle run at 11.7 and 11.8. Both copy that text by
+the same Arrow kernel.
+
+Against #969, #971 is slower on eight of the 51 lines, all of them the
+6-byte host names with kept rows in stretches of 3 to 16 (the suite's
+case, which the benchmark times twice, 93% kept, the 1,000 small series,
+the closure, and stretches of 4, 8 and 16 rows), by 0.9 to 1.4 ms on one
+core and 1.0 to 1.6 on four. It is faster or level on the other 43. The
+section after next is about those eight.
+
+**Fresh memory can cost more than the copy.** The benchmark now prints
+page faults per call. When a call's output buffers come fresh from the
+system (the allocator did not reuse what the last call freed), each MB
+costs about 0.2 ms on the M1 before a byte is copied. Whether that happens
+depends on the allocator's state, not on `filter`: with the allocator left
+as it comes, the same program gave 4.4 and 29.0 ms for one case (400-byte
+text in stretches of 1,000) in two runs minutes apart. So the tables here
+hold freed memory on to (`GLIBC_TUNABLES` with `mmap_max=0` and a large
+`trim_threshold` and `top_pad`), and a line that still shows page faults is
+compared only with another that does. Those settings did not do the same
+for the pool's threads. With four cores a long text column is copied on a
+pool thread, and in a first set of four-core runs the 400-byte line showed
+page faults in three of #971's five runs and none of "before"'s (9.41
+before, 11.63 after). The four-core columns above are a second set with
+`arena_max=1` added, which has every thread take its memory from the one
+place: no long-text line showed page faults in any of the three programs,
+and that line read 11.48 before and 10.85 after.
+
+**What #971 gives back, and the two ways to get it back.** Short ASCII
+text in scattered rows, which is the suite's case, is the one shape where
+#969's own loop beat the kernel even with Arrow's check on top. #971 sends
+it back to the kernel. On the M1 (Linux VM, one core, whole call, ms; a
+lab build of #969 in which only the text copy changes, so the middle
+column stands for #971 on these scattered cases, which itself has not
+been timed on the M1 yet):
+
+| text, 56% kept unless said | #969  | text by Arrow's kernel | #969's loop, unchecked |
+| -------------------------- | ----- | ---------------------- | ---------------------- |
+| 6 bytes, ASCII (the suite) | 2.75  | 3.46                   | 2.08                   |
+| the same, 93% kept         | 3.18  | 2.88                   | 2.02                   |
+| the same, 1% kept          | 0.54  | 0.48                   | 0.53                   |
+| 12 bytes, ASCII            | 2.94  | 3.39                   | 2.14                   |
+| 24 bytes, ASCII            | 3.69  | 3.37                   | 2.66                   |
+| 120 bytes, ASCII           | 8.16  | 4.80                   | 4.90                   |
+| 24 bytes in 2-byte letters | 10.63 | 3.38                   | 2.65                   |
+
+Before #969 the suite's case took 4.24 there. So #971 should leave it at
+about 3.5 where #969 had 2.75, and it wins everywhere #969 lost.
+
+- **Unchecked** (one `unsafe` block: `StringArray::new_unchecked` on
+  pond-rs's own copy, which is what Arrow's kernel does with its own). The
+  fastest, or level, at every length and mix above, ASCII or not, and on
+  the x86 server at every length from 2 to 32 bytes at 12% kept or more
+  (lowest of three runs; 6 bytes, 56%: 3.10 against the kernel's 4.86;
+  33%: 2.68 against 3.34).
+  Long stretches should stay with `append_array`, which beat the loop on
+  them (x86, 120-byte text in stretches of 1,000: 5.09 against 7.26). An
+  owner decision, as before, and now the only one that matters to this
+  case.
+- **A safe special case**: #969's loop with Arrow's check, only where the
+  check is cheap. That needs to know the text is plain ASCII, which takes a
+  scan of the column's bytes on each call, and on the x86 server it paid
+  only for text of about 8 bytes a row or less with half the rows or more
+  kept (6 bytes, 56%: 4.04 against the kernel's 4.86; 12 bytes: 4.58
+  against 4.80; 16 bytes: 5.08 against 4.81; 6 bytes at 33% kept: 3.30
+  against 3.34). On the M1 the loop with the check already loses to the
+  kernel at 93% kept and at 24 bytes (table above). Timed in a lab build
+  and left out of #971: about 130 lines and three more rules for one
+  narrow shape, all of which the unchecked hand-off would replace.
+
+**Considered, not done.**
+
+- **Text row by row through a builder** (`append_value`), the other safe
+  way to add text with no check: a copy call per row, as the kernel makes,
+  so nothing to gain. Not timed.
+- **A lower bar for the list** (four columns, where it starts to pay on
+  the M1). On the x86 server the list at four and eight columns was up to
+  26% slower than the copy from the mask at 56 to 93% kept. Left at eight
+  until both are timed on the Mac itself.
+- **`par.rs` running inline on one thread.** #969 guarded its own split
+  with `par::threads() > 1`; the other callers of `par::map`, `par::join`
+  and `par::fill_chunks` still hand their work to the pool's one thread
+  and wait. Logged as [PND-RSPAR1].
 
 ## Next
 
