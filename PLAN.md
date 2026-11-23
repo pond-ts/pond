@@ -615,12 +615,6 @@ pond-ts bugs found while porting.
   trusted publishing for the crate and delete the secret; `release-rs.yml`
   already falls back to trusted publishing when the secret is gone. Details
   in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-PROCRUSTDOCS]** — Processing graphs as a first-class feature in
-  both TypeScript and Rust on the docs site (Peter, 2026-11-23): Rust tabs
-  on the `process/` pages (registry, JSON requests, the host, your own ops),
-  checked by compiling them, and the "no Rust version" note replaced. The
-  crate (`crates/pond-process`) is not on crates.io yet, so the pages say
-  how to depend on it from git. Same breakout section as above.
 - **[PND-CONCEPTTABS]** — The Concepts pages (`website/docs/concepts/`,
   about 47 code blocks) are TypeScript only, and Mental model leans on
   TypeScript ideas (`as const`, type narrowing), though the sidebar calls

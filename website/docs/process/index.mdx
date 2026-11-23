@@ -1,12 +1,25 @@
 ---
 id: process-index
-title: '@pond-ts/process'
+title: Processing graphs
+description: 'Processing graphs in TypeScript (@pond-ts/process) and Rust (pond-process): computations as plain JSON, run by a long-lived host with a cache, with the same ids and numbers in both languages.'
 ---
 
-# @pond-ts/process
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
-**Computations as data, authored like code.** In application code you
-build a graph fluently, typed end to end by your own op vocabulary:
+# Processing graphs
+
+**Computations as data.** A processing graph is a list of steps (an
+average, a band, the latest value) written as plain JSON, run against a
+dataset by a long-lived host that remembers what it has already worked
+out. It comes in **TypeScript** (`@pond-ts/process`) and **Rust**
+(`pond-process`). Both give every step the same id and the same numbers.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+In TypeScript you build the graph fluently, typed end to end by your own
+op vocabulary:
 
 ```ts
 const graph = process(registry, 'ACME_5m');
@@ -24,29 +37,131 @@ const result = host.run(
 );
 ```
 
-The request that emits is **plain JSON** — the same
-`{ op, params, inputs }` format a saved view replays and a tool-calling
-model composes directly from the registry's schema. One format, one
-resolver, one content-addressed cache serving the renderer's columns and
-the agent's facts alike. The fluent API is the developer's front door;
-the data underneath is the contract.
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+In Rust you write the request as JSON with `serde_json::json!`: the same
+data the TypeScript builder emits. Slots (`average`, `bands`, `latest`)
+are your own names for the steps.
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use pond_process::{Host, Registry, study_ops};
+use pond_rs::{Column, TimeSeries};
+use serde_json::json;
+
+fn main() {
+    // The vocabulary: the standard folds (`last`, …) and every finance study.
+    let mut registry = Registry::standard();
+    for def in study_ops() {
+        registry.define(def).unwrap();
+    }
+
+    // Sixty daily closes.
+    let time: Vec<i64> = (0..60).map(|i| i * 86_400_000).collect();
+    let close: Vec<f64> = (0..60).map(|i| 100.0 + (i as f64 * 0.3).sin() * 5.0).collect();
+    let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]).unwrap();
+
+    let units = HashMap::from([("close".to_string(), "USD".to_string())]);
+    let mut host = Host::new(Arc::new(registry), units);
+    host.add("ACME", Arc::new(bars));
+
+    let result = host
+        .run(&json!({
+            "from": "ACME",
+            "nodes": {
+                "average": { "op": "sma", "params": { "period": 20 }, "in": ["close"] },
+                "bands": { "op": "bollinger", "params": { "period": 20 }, "in": ["close"] },
+                "latest": { "op": "last", "in": ["average"] }
+            },
+            "outputs": {
+                "average": { "on": "average" }, // columns, for a chart
+                "bands": { "on": "bands" },
+                "latest": { "on": "latest" }    // a small fact
+            }
+        }))
+        .unwrap();
+
+    // Columns are named by each step's id: the same id TypeScript gives it.
+    let columns = result.columns.as_ref().unwrap();
+    assert_eq!(columns[0].0, "p1:sma(close;period=20)");
+    assert_eq!(columns.len(), 4); // the average, then the three bands
+
+    // The fact: the latest average, with its unit and where it came from.
+    let fact = &result.facts[0];
+    assert_eq!(fact["name"], "latest");
+    assert_eq!(fact["unit"], "USD");
+    assert_eq!(fact["at"], "1970-03-01");
+}
+```
+
+</TabItem>
+</Tabs>
+
+The request is **plain JSON**, the same `{ op, params, inputs }` format a
+saved view replays and a tool-calling model composes directly from the
+registry's description. One format, one resolver, one content-addressed
+cache serving a chart's columns and an agent's facts alike. In
+TypeScript the fluent API is the developer's front door; in both
+languages the data underneath is the contract.
 
 :::info[Experimental]
-`@pond-ts/process` is newly published and **experimental**: pre-1.0, and
-the API is expected to move as friction reports land. Pin an exact
-version.
+Both are new and **experimental**: before 1.0, and the API is expected
+to move as friction reports land. Pin an exact version.
 :::
 
-:::note[TypeScript only]
-`@pond-ts/process` has no Rust version. pond's core and financial studies
-come in [Rust](../rust/index.mdx) as well, but the process layer
-(registry, host, requests, cache) is TypeScript only for now, so the
-examples here have no Rust tab.
-:::
+## Install
 
-**Install** — `npm install @pond-ts/process pond-ts`. Peer-depends on
-`pond-ts`; the pond packages release together, so keep their ranges in
-step.
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
+```sh
+npm install @pond-ts/process pond-ts
+```
+
+Peer-depends on `pond-ts`; the pond packages release together, so keep
+their ranges in step.
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+`pond-process` is not on crates.io yet (its name there is still to be
+chosen), so depend on it from the pond repository:
+
+```toml
+[dependencies]
+pond-process = { git = "https://github.com/pond-ts/pond" }
+pond-rs = { git = "https://github.com/pond-ts/pond" }
+serde_json = "1"
+```
+
+Take `pond-rs` from the same place, so both use one copy of it.
+
+</TabItem>
+</Tabs>
+
+## What each language has
+
+The Rust crate is a port of the TypeScript package. Every Rust answer is
+checked against a file of cases the TypeScript package writes
+(`packages/process/test/fixtures/parity.json`), so the two cannot drift
+apart without a test failing.
+
+|                                                              | TypeScript                 | Rust                                                           |
+| ------------------------------------------------------------ | -------------------------- | -------------------------------------------------------------- |
+| Registry: your own ops and folds, param checks, `describe()` | Yes                        | Yes                                                            |
+| Slot and nested requests, every error policy, `toWire`       | Yes                        | Yes                                                            |
+| Host: datasets, byte budget, async sources, `maxSources`     | Yes                        | Yes                                                            |
+| Basic ops, standard and summary folds                        | Yes                        | Yes                                                            |
+| Finance studies as steps                                     | Yes                        | Yes, except the session studies (they need a trading calendar) |
+| Fluent builder (`process(registry, …)`)                      | Yes                        | No: write the JSON                                             |
+| Joins, ranged recompute (`runRange`), the live graph         | Yes                        | Not yet                                                        |
+| JSON Schema for a model (`toJsonSchema`)                     | Yes                        | Not yet: `describe()` gives the same facts as plain JSON       |
+| Running requests in parallel                                 | A worker pool (`HostPool`) | Threads inside one host (`with_threads`)                       |
+
+Python and the WebAssembly bridge do not have processing graphs yet.
 
 ## When _not_ to use this
 

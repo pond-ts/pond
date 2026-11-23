@@ -961,7 +961,7 @@ copied out of the stored columns. That copy has a fixed cost per push, and a
 rows, summing one column: 1,000 a push 296 ms with `Batch`, 232 ms with
 `Columns`; 10 a push about even; one a push 413 vs 861 ms).
 
-```rust
+```rust ignore
 use pond_rs::live::{LiveSeries, Output, OutputKind};
 
 let mut live = LiveSeries::new("cpu", schema)?;

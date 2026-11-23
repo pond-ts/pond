@@ -5,6 +5,12 @@ description: The fluent API — the developer's way to build a typed graph that 
 
 # Authoring graphs
 
+:::note[TypeScript only]
+The fluent builder is TypeScript only. In Rust you write the request it
+emits directly, as JSON: see [Requests and responses](./requests), whose
+examples have a Rust tab.
+:::
+
 Application code authors a graph **fluently**, bound to a registry. The
 registry's literal types supply the op methods, their params, their
 secondary input roles, and their output names — so most invalid graphs

@@ -3,6 +3,9 @@ title: The host
 description: Datasets, opaque async sources, revisions, and the lifecycle dials that bound a long-lived process.
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # The host
 
 A `Host` owns `Map<datasetId, BoundGraph>` and **outlives requests**. That
@@ -13,6 +16,9 @@ this design assumes a warm binding.
 Where the host runs is a separate question — a long-lived worker proves
 client-side execution with an unblocked main thread; a server process
 proves one cache shared across sessions. Both satisfy the invariant.
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 import { createHost } from '@pond-ts/process';
@@ -25,6 +31,40 @@ const host = createHost({
   maxSources: 32, // optional — LRU cap on registry-loaded sources
 });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use pond_process::{Host, Registry, SourceRegistry};
+use pond_rs::{Column, TimeSeries};
+
+fn main() {
+    let registry = Arc::new(Registry::standard());
+    let units = HashMap::from([("close".to_string(), "USD".to_string())]);
+    let mut host = Host::new(registry, units)
+        .with_sources(SourceRegistry::new()) // optional: loaders for run_async
+        .with_budget_bytes(64 * 1024 * 1024) // optional: per-graph cache cap
+        .with_max_sources(32) // optional: cap on loaded sources, least recently used goes
+        .with_threads(4); // optional: independent steps run on up to 4 threads
+
+    let time: Vec<i64> = (0..10).map(|i| i * 300_000).collect();
+    let close: Vec<f64> = (0..10).map(|i| 50.0 + i as f64).collect();
+    let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]).unwrap();
+    host.add("ACME_5m", Arc::new(bars));
+
+    let datasets = host.datasets();
+    assert_eq!(datasets[0].id, "ACME_5m");
+    assert_eq!(datasets[0].rows, 10);
+    assert!(host.remove("ACME_5m"));
+}
+```
+
+</TabItem>
+</Tabs>
 
 ## Datasets
 
@@ -51,6 +91,9 @@ A plan should never contain a URL, a token, or a callback — those are
 execution details, and often secrets. `defineSource` splits the two
 halves:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const marketBars = defineSource({
   name: 'market.bars',
@@ -63,6 +106,64 @@ const marketBars = defineSource({
 marketBars.ref({ symbol: 'ACME', interval: '5m' });
 // { source: 'market.bars', params: { … } }  — safe request data
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+In Rust a loader is a function from the params (and the last load) to a future, kept on a `SourceRegistry`; `host.run_async(&request)` loads and runs:
+
+```rust
+use std::collections::HashMap;
+use std::pin::pin;
+use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
+
+use pond_process::{Host, LoadedSource, Registry, SourceRegistry};
+use pond_rs::{Column, TimeSeries};
+use serde_json::json;
+
+fn main() {
+    let sources = SourceRegistry::new().define(
+        "market.bars",
+        Arc::new(|params, previous| {
+            // params: { "symbol": "ACME", "interval": "5m" }. Fetch here,
+            // sending previous.revision (an ETag, say) to skip an unchanged load.
+            let _ = (params, previous);
+            let time: Vec<i64> = (0..10).map(|i| i * 300_000).collect();
+            let close: Vec<f64> = (0..10).map(|i| 50.0 + i as f64).collect();
+            let bars = TimeSeries::new("ACME", time, vec![Column::optional_raw("close", close)]);
+            Box::pin(async move {
+                Ok(LoadedSource { value: Arc::new(bars.unwrap()), revision: "etag-1".into() })
+            })
+        }),
+    );
+    let mut host = Host::new(Arc::new(Registry::standard()), HashMap::new()).with_sources(sources);
+
+    // The request names the source, never the URL or the token.
+    let request = json!({
+        "from": { "source": "market.bars", "params": { "symbol": "ACME", "interval": "5m" } },
+        "nodes": { "latest": { "op": "last", "in": ["close"] } },
+        "outputs": { "latest": { "on": "latest" } }
+    });
+    let result = block_on(host.run_async(&request)).unwrap();
+    assert_eq!(result.facts[0]["value"], 59.0);
+}
+
+/// Any async runtime works (tokio, smol, …). This one polls until done,
+/// which is enough for a loader that never waits.
+fn block_on<F: Future>(f: F) -> F::Output {
+    let mut f = pin!(f);
+    let mut cx = Context::from_waker(Waker::noop());
+    loop {
+        if let Poll::Ready(out) = f.as_mut().poll(&mut cx) {
+            return out;
+        }
+    }
+}
+```
+
+</TabItem>
+</Tabs>
 
 The **reference** crosses wires; the **loader** stays host-side, on a
 `SourceRegistry` the host is constructed with. `host.runAsync(request)`
@@ -81,7 +182,9 @@ current?_ The revision is supplied by the loader — an ETag, cursor, or
 object version — because the host cannot cheaply or honestly derive
 freshness from a `TimeSeries`. Concurrent requests for one identity share
 a single in-flight load, so a stale response cannot win a race and one
-refresh cannot invalidate the graph twice.
+refresh cannot invalidate the graph twice. (A Rust `Host` runs one
+request at a time, since `run_async` borrows it mutably, so the race
+cannot happen there.)
 
 ## Bounding a long-lived host
 
@@ -116,3 +219,8 @@ ships `HostPool` — each worker holds a long-lived `Host`, plans travel as
 JSON, and result columns travel as transferable buffers. When it pays and
 when it very much does not is measured in
 [caching and performance](./performance#the-worker-pool).
+
+In Rust, `result.to_wire(None)` is the same JSON as `toWire`. There is no
+worker pool; instead `Host::with_threads(n)` runs independent steps of
+one request on up to `n` threads, for data of at least 10,000 rows
+(`with_parallel_min_rows` moves that line).
