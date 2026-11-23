@@ -2,6 +2,9 @@
 sidebar_position: 2
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 import { SequenceGrid } from '@site/src/components/ConceptFigures';
 
 # Sequences
@@ -22,6 +25,9 @@ to produce a finite slice.
 
 Equally-spaced boundaries every `duration` milliseconds.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 import { Sequence } from 'pond-ts';
 
@@ -29,6 +35,42 @@ const minutely = Sequence.every('1m');
 const second = Sequence.every('1s');
 const tick = Sequence.every('200ms');
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::Sequence;
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minutely = Sequence::every("1m")?;
+    let _second = Sequence::every("1s")?;
+    let _tick = Sequence::every_ms(200)?; // or a plain millisecond number
+    // The buckets overlapping a span, as begin and end lists.
+    let b = minutely.buckets_overlapping(0, 150_000)?;
+    assert_eq!(b.begin, [0, 60_000, 120_000]);
+    assert!(Sequence::every("1M").is_err()); // a month is not a duration
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+from datetime import timedelta
+
+import pond
+
+minutely = pond.Sequence.every("1m")
+second = pond.Sequence.every("1s")
+tick = pond.Sequence.every(timedelta(milliseconds=200))  # or a timedelta
+# The buckets overlapping a span, as (begin, end) pairs.
+assert minutely.buckets(0, 150_000) == [(0, 60_000), (60_000, 120_000), (120_000, 180_000)]
+```
+
+</TabItem>
+</Tabs>
 
 `duration` accepts the standard duration string format
 (`ms` / `s` / `m` / `h` / `d` suffixes) or a plain millisecond number.
@@ -43,10 +85,41 @@ which means independently-created sequences with the same step align
 exactly. Override with the `anchor` option when you need a different
 phase:
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 Sequence.every('30s', { anchor: 5_000 });
 // boundaries at 5_000, 35_000, 65_000, … instead of 0, 30_000, 60_000
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::Sequence;
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let seq = Sequence::every("30s")?.with_anchor(5_000);
+    // Boundaries at 5_000, 35_000, 65_000, … instead of 0, 30_000, 60_000.
+    assert_eq!(seq.buckets_overlapping(10_000, 40_000)?.begin, [5_000, 35_000]);
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+seq = pond.Sequence.every("30s", anchor=5_000)
+# Boundaries at 5_000, 35_000, 65_000, … instead of 0, 30_000, 60_000.
+assert seq.buckets(10_000, 40_000) == [(5_000, 35_000), (35_000, 65_000)]
+```
+
+</TabItem>
+</Tabs>
 
 The anchor is a `number | Date`; sequences with the same step but
 different anchors produce different bucket boundaries and will not
@@ -61,6 +134,7 @@ Sequence.daily(); // = Sequence.every('1d')
 Sequence.daily({ anchor: 5 * 3600_000 }); // anchor at 05:00 UTC
 ```
 
+TypeScript only: in Rust and Python write `every("1h")` / `every("1d")`.
 Same shape as `Sequence.every`, just named for the common cases.
 Note that `daily()` here is **fixed-step** (86,400,000 ms exactly,
 no DST awareness) — for local-calendar daily boundaries reach for
@@ -73,11 +147,57 @@ quarter / year) in a chosen time zone. Use these when calendar
 boundaries matter — daily reports, monthly aggregates, weekday-vs-
 weekend rollups.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 Sequence.calendar('day', { timeZone: 'America/New_York' });
 Sequence.calendar('week', { timeZone: 'Europe/Madrid', weekStartsOn: 1 });
 Sequence.calendar('month', { timeZone: 'UTC' });
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Sequence, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let days = Sequence::calendar("day", "America/New_York")?;
+    let _weeks = Sequence::calendar("week", "Europe/Madrid")?.with_week_start(1)?; // Monday
+    let _months = Sequence::calendar("month", "UTC")?;
+
+    // The day the clocks went forward in New York is 23 hours long.
+    let b = days.buckets_overlapping(parse_time("2025-03-09T12:00:00Z")?, parse_time("2025-03-09T12:00:00Z")?)?;
+    assert_eq!(b.end[0] - b.begin[0], 23 * 3_600_000);
+    assert!(Sequence::calendar("day", "Mars/Olympus").is_err()); // an unknown zone
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+days = pond.Sequence.calendar("day", "America/New_York")
+weeks = pond.Sequence.calendar("week", "Europe/Madrid", week_starts_on=1)  # Monday
+months = pond.Sequence.calendar("month", "UTC")
+
+# The day the clocks went forward in New York is 23 hours long.
+t = pond.parse_time("2025-03-09T12:00:00Z")
+[(begin, end)] = days.buckets(t, t)
+assert end - begin == 23 * 3_600_000
+try:
+    pond.Sequence.calendar("day", "Mars/Olympus")  # an unknown zone
+    raise AssertionError("expected an error")
+except pond.PondError:
+    pass
+```
+
+</TabItem>
+</Tabs>
 
 A month is not a duration, so `Sequence.every('1M')` **throws** — reach for
 `Sequence.calendar('month', …)` instead.
@@ -88,11 +208,15 @@ except on DST transition days, where it's 23 or 25. Boundaries are
 computed by [`TimeZone`](#timezone), which is IANA-correct (Temporal
 underneath) and caches each zone's offset transitions, so bucketing a
 long series costs the same as fixed-step arithmetic. An unknown unit or
-zone throws `RangeError` at construction.
+zone throws `RangeError` at construction (an `Err` in Rust, a
+`pond.PondError` in Python). Rust and Python carry their own copy of the
+time-zone database (`pond_rs::tzdb_version()` in Rust and
+`pond.tzdb_version` in Python say which).
 
 ### `TimeZone`
 
-The zone primitive `Sequence.calendar` buckets with, exported for callers
+_TypeScript only._ The zone primitive `Sequence.calendar` buckets with,
+exported for callers
 who need the same answers directly — a chart axis placing ticks, a report
 labelling a bucket in the zone it was cut in:
 
@@ -133,7 +257,7 @@ indexing math assumes a constant step. See
 ## `Sequence.kind()` — discriminator
 
 ```ts
-seq.kind(); // 'fixed' | 'calendar'
+seq.kind(); // 'fixed' | 'calendar' (TypeScript only)
 ```
 
 Operators that need to know whether the boundaries are constant-step
@@ -150,7 +274,8 @@ buckets, either:
 
 ### `BoundedSequence`
 
-An explicit finite list of `Interval`s. Use when the buckets are
+_TypeScript only for now._ An explicit finite list of `Interval`s. Use
+when the buckets are
 **not** regular — business quarters, predefined report ranges,
 boundaries supplied by an external system.
 
@@ -197,10 +322,43 @@ Every sequence — fixed-step, calendar, or bounded — produces
 timestamp equals a boundary lands in the _later_ bucket, not the
 earlier one.
 
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
+
 ```ts
 const seq = Sequence.every('1m');
 // Boundary at t=60_000 belongs to bucket [60_000, 120_000), not [0, 60_000)
 ```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new("s", vec![30_000, 60_000], vec![Column::required("v", vec![1.0, 2.0])])?;
+    let out = s.aggregate(&Sequence::every("1m")?, &[Agg::of("v", Reducer::Count)])?;
+    // The row at 60_000 belongs to [60_000, 120_000), not [0, 60_000).
+    assert_eq!(out.column("v")?.numbers()?.values(), &[1.0, 1.0]);
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+s = pond.TimeSeries({"time": [30_000, 60_000], "v": [1.0, 2.0]})
+out = s.aggregate("1m", {"v": "count"})
+# The row at 60_000 belongs to [60_000, 120_000), not [0, 60_000).
+assert out.column("v") == [1.0, 1.0]
+```
+
+</TabItem>
+</Tabs>
 
 This is consistent across all temporal-relation operations
 (`within`, `overlapping`, `trim`) and matters when event timestamps

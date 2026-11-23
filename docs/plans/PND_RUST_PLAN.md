@@ -812,6 +812,16 @@ class in TypeScript and Rust**, and **Python needs its own API reference**.
   Rust does not have). Left: the Rust snippet check is still not in CI
   ([PND-RUSTDOCS]); the pond-rs Roadmap line "`@pond-ts/process` stays
   TypeScript only" belongs to the thread rewriting that section.
+- **[PND-CONCEPTTABS] Concepts in every language (PR 4, done).** Found by
+  the #964 review: the Concepts pages, which the new sidebar calls the
+  ideas every language shares, had TypeScript examples only. All 37
+  examples on the ten pages now have Rust and Python tabs (whole programs
+  with asserts, run by both snippet scripts). Where an idea has no Rust or
+  Python form yet the page says "TypeScript only" (TimeZone,
+  BoundedSequence, `Sequence.kind`, the hourly/daily aliases, `head` /
+  `tail` by count). Mental model now explains that TypeScript checks
+  columns when the code is compiled and Rust/Python when it runs, instead
+  of leaning on `as const`. Left: three series pages, [PND-SERIESTABS].
 
 ## [PND-RUST-R5] — a Rust port of `@pond-ts/process`
 

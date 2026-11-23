@@ -2,13 +2,19 @@
 sidebar_position: 1
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 import { TemporalKeys } from '@site/src/components/ConceptFigures';
 
 # Temporal keys
 
-Every `Event` in pond-ts has exactly one **temporal key** — the value
-that places the event on the timeline. The key is the first column of
-a `TimeSeries`'s schema and is what every transform indexes against.
+Every row of a pond series (an `Event` in TypeScript) has exactly one
+**temporal key** — the value that places it on the timeline. The key is
+the first column of a `TimeSeries` and is what every transform indexes
+against. The three kinds below are the same in TypeScript, Rust and
+Python; the code to build each, in every language, is under
+[Picking a key](#picking-a-key).
 
 Three shapes are available; which one you pick is a modeling choice
 that says how the event sits on the timeline.
@@ -36,8 +42,10 @@ new Time(Date.parse('2025-01-01T00:00:00Z'));
 
 Constructor accepts `number | Date`. The library does not parse ISO
 strings — go through `Date.parse(...)` or `new Date(...)` explicitly
-when starting from a string. Internal representation is milliseconds
-since Unix epoch.
+when starting from a string. In every language a time is stored as
+milliseconds since 1970 (UTC). Rust reads text with `parse_time` /
+`parse_time_in`; Python takes text, `datetime`s or numbers directly
+(and has `pond.parse_time`).
 
 `time.begin()` and `time.end()` both return the same number — a `Time`
 has zero extent. This makes `Time` interchangeable with `TimeRange`
@@ -61,7 +69,7 @@ Use a `TimeRange` key when the event covers a duration but doesn't
 need to round-trip through a bucket-style identifier — sessions,
 request durations, outage windows, scrolling user-interaction frames.
 
-`range.begin()` and `range.end()` return the two endpoints. Pond-ts
+`range.begin()` and `range.end()` return the two endpoints. Pond
 treats the range as half-open `[begin, end)` — an event "at" the end
 boundary does not belong to this range.
 
@@ -99,7 +107,11 @@ before serialization; a `TimeRange`-keyed event would not.
 | A duration-shaped observation (session, span, frame) | `TimeRange` |
 | A bucket from a `Sequence`                           | `Interval`  |
 
-You declare the key kind in the schema's first column:
+You declare the key kind when you build the series. In TypeScript it is
+the schema's first column:
+
+<Tabs groupId="language" queryString>
+<TabItem value="ts" label="TypeScript" default>
 
 ```ts
 const schema = [
@@ -110,8 +122,93 @@ const schema = [
 ] as const;
 ```
 
-When you pass rows to `new TimeSeries({ rows })`, the library
-constructs the right key shape from the cell value:
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+```rust
+use pond_rs::{Column, IntervalKeys, Key, TimeRangeKeys, TimeSeries, parse_time};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Moments: the key is a list of epoch milliseconds.
+    let readings = TimeSeries::new(
+        "cpu",
+        vec![parse_time("2025-01-01T00:00:00Z")?, parse_time("2025-01-01T00:01:00Z")?],
+        vec![Column::required("load", vec![0.5, 0.7])],
+    )?;
+    assert_eq!(readings.key_name(), "time");
+
+    // Spans with no label: two outages.
+    let outages = TimeSeries::from_time_ranges(
+        "outages",
+        TimeRangeKeys { begin: vec![0, 5_000], end: vec![2_000, 5_500] },
+        vec![Column::required("hosts", vec![3.0, 1.0])],
+    )?;
+    assert_eq!(outages.key_name(), "timeRange");
+
+    // Labelled spans: two days.
+    let days = TimeSeries::from_intervals(
+        "days",
+        IntervalKeys {
+            label: vec!["mon", "tue"].into(),
+            begin: vec![0, 86_400_000],
+            end: vec![86_400_000, 172_800_000],
+        },
+        vec![Column::required("total", vec![12.0, 7.5])],
+    )?;
+
+    // Every kind has a begin; spans also have an end (a moment has none).
+    assert_eq!(days.key().begin(), &[0, 86_400_000]);
+    assert_eq!(outages.key().end(), Some(&[2_000, 5_500][..]));
+    assert_eq!(readings.key().end(), None);
+    if let Key::Interval(keys) = days.key() {
+        assert_eq!(keys.label.strings().unwrap().get(1), Some("tue"));
+    }
+    Ok(())
+}
+```
+
+Rust has no schema to write: the function you build with picks the key kind (`TimeSeries::new`, `from_time_ranges`, `from_intervals`), and the value columns take their kind from their values.
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+import pond
+
+# Moments: times as text, datetimes or epoch milliseconds.
+readings = pond.TimeSeries(
+    {"time": ["2025-01-01T00:00:00Z", "2025-01-01T00:01:00Z"], "load": [0.5, 0.7]}
+)
+assert readings.key_kind == "time"
+
+# Spans with no label: (begin, end) pairs.
+outages = pond.TimeSeries(
+    {"timeRange": [(0, 2_000), (5_000, 5_500)], "hosts": [3.0, 1.0]},
+    key="timeRange",
+    key_kind="time_range",
+)
+
+# Labelled spans: (label, begin, end).
+days = pond.TimeSeries(
+    {"interval": [("mon", 0, 86_400_000), ("tue", 86_400_000, 172_800_000)],
+     "total": [12.0, 7.5]},
+    key="interval",
+    key_kind="interval",
+)
+
+# Every row has a begin and an end; for a moment they are the same.
+assert days.at(1).key == ("tue", 86_400_000, 172_800_000)
+assert outages.at(0).end == 2_000
+assert readings.at(0).begin == readings.at(0).end == 1735689600000
+```
+
+In Python the `key_kind` argument picks the key kind. A polars, pandas or pyarrow frame works as well as a dict; spans then come as `<key>` and `<key>End` columns (and `<key>Label` for intervals).
+
+</TabItem>
+</Tabs>
+
+In TypeScript, when you pass rows to `new TimeSeries({ rows })`, the
+library constructs the right key shape from the cell value:
 
 - `kind: 'time'` accepts `number | Date | Time`
 - `kind: 'timeRange'` accepts a `[start, end]` tuple, `{ start, end }`,
@@ -129,18 +226,19 @@ key.end(); // number — the latest instant in the key's extent
 key.toJSON(); // serialise to the schema-typed JSON form
 ```
 
+In Rust, `series.key().begin()` and `.end()` give the whole column of
+begins or ends (`end()` is `None` for moments). In Python each row has
+`.begin` and `.end` (`series.at(i).begin`).
+
 For `Time`, `begin() === end()`. Operators that compare events by
 position on the timeline (sorting, between, tail, rolling cutoffs)
 work on any of the three uniformly through `begin()` / `end()`.
 
 ## Where this shows up
 
-- **Event construction** — `new Event(key, data)` accepts any of the
-  three key shapes; the type system threads the schema's first-column
-  kind through to the resulting `Event`.
-- **Schema first-column declaration** — the
-  `kind: 'time' | 'timeRange' | 'interval'` field drives row
-  construction. See [Creating series](/docs/series/creating).
+- **Building a series** — the key kind is chosen when you build one:
+  the schema's first column in TypeScript, the constructor in Rust, the
+  `key_kind` argument in Python. See [Creating series](/docs/series/creating).
 - **Aggregation and alignment** — `aggregate(seq, mapping)` and
   `align(seq, …)` always produce `Interval`-keyed events. See
   [Aggregation](/docs/series/aggregation) and
