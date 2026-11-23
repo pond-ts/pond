@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "pond-py"
-version = "0.78.0"
+version = "0.79.0"
 dependencies = [
  "arrow-array",
  "arrow-pyarrow",
