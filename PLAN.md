@@ -643,10 +643,14 @@ pond-ts bugs found while porting.
     for `LIST_STRETCH_ROWS`; and a lower column bar for the list where few
     rows are kept.
   - **Left, no decision needed.** Nothing in CI times `filter`: two tests
-    pin which way a copy goes, and none how long it takes. Decimal gap
-    marks could go by the list where under about a third of the rows are
-    kept (5 to 10 points on 16 decimal columns with gaps and a tenth of
-    the rows kept; timed, not built). Split one column's rows across cores
+    pin which way a copy goes, and none how long it takes. On a table that
+    goes by the list, a decimal column's gap marks could go with its
+    values by Arrow's kernel where rows are kept one at a time and a
+    quarter of them or fewer: 4 to 18 points on 8 and 16 decimal columns
+    with gaps and a tenth of the rows kept or fewer on masks with no
+    pattern, and 5 to 10 on a mask that repeats (timed in lab builds, not
+    built; it is what keeps one of the three kinds of table from reading
+    below before #969 at 100,000 rows). Split one column's rows across cores
     (with #969 four cores gave 2.3 ms in the VM and ten gave 2.7 on the
     Mac, where polars 2.1.0 takes 1.06). A look at the WebAssembly build
     (6.0 ms with #969, no SIMD). The bridges timed again. A quiet run on

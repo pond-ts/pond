@@ -1601,8 +1601,10 @@ did not hold:
   to a word. Put into the third round's code, so that nothing else
   differs, the rule took 18 to 35% longer than the table alone on tables
   of 1, 2 and 4 number columns with 85 to 93% of the rows kept at random
-  at 100,000 rows, and 9 to 17% longer at 1,000,000: each stretch is a
-  copy of a length the processor cannot guess.
+  at 100,000 rows, and 9 to 17% longer at 1,000,000. Each stretch is then
+  a copy of its own length, and what a copy a stretch at a time costs on
+  lengths with no pattern was measured by itself ("Why a rule can win on
+  a mask that repeats", below).
 - **One text column, most rows kept, by the kernel without its list**
   (the second round's answer to the first review's fourth finding). On
   masks that repeat it was the faster. With rows kept at random it was
@@ -2021,10 +2023,17 @@ above it, in every run:
 - **16 decimal columns with gaps and a quarter of the rows kept at
   random**: 1.02 and 1.06 (the second round 1.05 and 1.07).
 
-On all three the third round copies the way "before" did, by Arrow's
-kernel with the list made once, so level is what the code should give. No
-cause was found for the few points above it. The same three read 0.93 to
-1.01 at 1,000,000 rows.
+On the first two, the columns that make up nearly all of the work (the 32
+number columns, the 8 text columns) are copied the way "before" copied
+them, by Arrow's kernel with the list made once, so level is what the
+code should give. No cause was found for the few points above it. On the
+third, the values go that way and the gap marks do not: "before" left
+them to the kernel, and since #969 they are copied from the mask, which
+is the slower way where rows are kept one at a time and few of them. Timed after the third round was committed: the same source with
+the gap marks left to the kernel read 0.93 of "before" on that line, on
+both copies, where the third round read 1.02 and 1.00 ("Considered, not
+done" has the other shares; the rule is not built). The same three kinds
+read 0.93 to 1.01 at 1,000,000 rows.
 
 **The second review's first finding** (several text columns with most
 rows kept at random) in the main runs: 2, 4 and 8 columns of 6- and
@@ -2053,9 +2062,11 @@ The one line is 16 decimal columns with gaps and 10% of the rows kept:
 24.84 ms against 23.22 on one core (its eleven runs went from 22.1 to
 29.3, and those of "before" from 20.5 to 27.9) and 25.77 against 24.91 on
 four. In the paired tool the same line read 0.96 and 1.02 of "before" on
-one core and 1.00 and 0.97 on four, so it is level. Of the 72 lines with
-no pattern, the third round is above "before" on none (the second round
-on 4, #969 on 19, on one core).
+one core and 1.00 and 0.97 on four, so it is level. (With its gap marks
+left to the kernel it read 0.85 to 0.87 in the second round's lab build:
+"Considered, not done".) Of the 72 lines with no pattern, the third round
+is above "before" on none (the second round on 4, #969 on 19, on one
+core).
 
 How far two builds of the same code read from each other in this table:
 the build with the unchecked change (below) runs the third round's code
@@ -2460,8 +2471,12 @@ The first family on the benchmark's own line with 93% of the rows kept
 `v`), each version run alone in the paired tool at 1,000,000 rows, ms:
 "before" 7.7 and 8.5, #969 5.7 to 6.0, the second round 4.5 to 4.9, the
 third round 6.3 and 6.4. So on that line the third round takes 30 to 40%
-longer than the second and about 8% longer than #969, and is about a
-fifth faster than "before".
+longer than the second and is about a fifth faster than "before". Against
+#969 its readings do not agree from run to run: 5 to 12% longer here, 5
+to 8% longer in the main run (0.81 and 0.83 of "before" against 0.77), 7
+to 9% shorter in the run of the 174 kinds of series with text (0.68 to
+0.70 against 0.75, the table above), and 23% longer as programs of their
+own (6.76 ms against 5.50, "Measured").
 
 **Why a rule can win on a mask that repeats and lose on one that does
 not.** What was measured is the cost: work that goes a stretch at a time
@@ -2794,6 +2809,48 @@ Timed in the third round, on masks with no pattern:
   both; not built, not timed.
 - **Text by stretches from 16 or from 64 rows** in place of 32: nothing
   moved by more than two runs differ by.
+- **A decimal column's gap marks left to the kernel where rows are kept
+  one at a time.** On a table that goes by the list, a decimal column's
+  values go by Arrow's kernel and its gap marks are copied from the mask,
+  a stretch at a time. "Before" left both to the kernel. Timed after the
+  third round was committed, as its source with that one change, on 8
+  and 16 decimal columns with gaps and rows kept at random (121 rounds
+  at 100,000 rows, 25 at 1,000,000; two copies of each; ratios to the
+  mean of two copies of "before", the third round's two copies first
+  and then the change's):
+
+  | rows kept | 16 columns, 100,000 rows | 16 columns, 1,000,000  | 8 columns, 100,000     | 8 columns, 1,000,000   |
+  | --------- | ------------------------ | ---------------------- | ---------------------- | ---------------------- |
+  | 5%        | 0.91, 0.92; 0.81, 0.82   | 0.93, 1.01; 0.77, 0.80 | 0.83, 0.77; 0.72, 0.71 | 0.84, 0.86; 0.75, 0.71 |
+  | 10%       | 0.96, 0.96; 0.86, 0.87   | 0.94, 0.92; 0.92, 0.86 | 0.85, 0.94; 0.85, 0.84 | 0.92, 0.90; 0.76, 0.80 |
+  | 25%       | 1.02, 1.00; 0.93, 0.93   | 0.98, 0.98; 0.97, 0.95 | 0.98, 0.99; 0.84, 0.89 | 0.88, 0.92; 0.86, 0.90 |
+  | 50%       | 0.98, 0.95; 0.97, 0.96   | 0.90, 0.87; 0.97, 0.97 | 0.97, 0.92; 0.94, 0.93 | 0.88, 0.91; 0.96, 0.94 |
+  | 75%       | 0.84, 0.82; 0.98, 0.97   | 0.78, 0.78; 0.98, 0.95 | 0.80, 0.81; 0.95, 0.94 | 0.77, 0.78; 0.98, 0.97 |
+  | 85%       | 0.61, 0.63; 0.97, 0.97   | 0.59, 0.60; 0.99, 0.95 | 0.61, 0.61; 0.99, 0.96 | 0.60, 0.63; 0.94, 0.93 |
+  | 93%       | 0.68, 0.69; 0.98, 0.96   | 0.70, 0.71; 0.98, 0.98 | 0.67, 0.69; 0.98, 0.94 | 0.70, 0.70; 0.93, 0.94 |
+  | 99%       | 0.90, 0.91; 0.96, 0.94   | 0.89, 0.89; 0.94, 0.95 | 0.84, 0.85; 0.90, 0.90 | 0.88, 0.86; 0.89, 0.89 |
+
+  So the kernel's copy of the gap marks is the faster only where rows
+  are kept one at a time and few of them. With a tenth of the rows kept
+  or fewer the change read 4 to 18 points lower (10 on the middle of the
+  eight pairs), and with a quarter kept 8 and 12 points lower at 100,000
+  rows and 2 at 1,000,000. With half kept the two are level at 100,000
+  rows and the copy from the mask is 5 to 9 points the faster at
+  1,000,000; with 75 to 93% kept it is 14 to 38 points the faster. In
+  stretches of random length the kernel's copy was never the faster (16
+  columns with 4 rows kept and 30 dropped: 0.83 and 0.78 against 0.83
+  and 0.83 at 100,000 rows, 0.88 and 0.88 against 0.93 and 0.89 at
+  1,000,000; with 3 kept and 3 dropped the copy from the mask is 8 and
+  12 points the faster). The first two rounds read the same on masks
+  that repeat: 16 columns with a tenth of the rows kept, 0.85 to 0.87 by
+  the kernel against 0.90 to 0.96, and at 45% kept 0.91 to 1.01 against
+  0.83 to 0.94. This is what keeps the third of the three kinds of table
+  under "Measured" from reading below "before" at 100,000 rows. A rule
+  for it would send the gap marks with the values where the kept rows
+  come under 1.5 to a stretch and a quarter of the rows or fewer are
+  kept. Not built: it was timed after the third round's code had been
+  compared with the code that was timed, and one more rule needs its own
+  tests and its lines timed again.
 
 Timed in the first two rounds, on masks that repeat, and not timed again:
 
@@ -2816,14 +2873,6 @@ Timed in the first two rounds, on masks that repeat, and not timed again:
   table, in place of a stretch at a time. Two lab runs over decimal and
   true/false columns with gaps: no gain that held from line to line, and
   the table was 13 to 22% slower with 10% of the rows kept.
-- **Decimal gap marks by the kernel where few rows are kept.** On a table
-  that goes by the list, a decimal column's gap marks are still copied
-  from the mask, a stretch at a time. Where few rows are kept that was
-  slower than leaving them to the kernel with the values (16 decimal
-  columns with gaps and 10% kept: 0.85 to 0.87 against 0.90 to 0.96), and
-  at 45% kept it was the other way round (0.91 to 1.01 against 0.83 to
-  0.94). A rule would have to turn on the share kept. Left for the pass on
-  the Mac.
 - **`par.rs` running inline on one thread.** #969 guarded its own split
   with `par::threads() > 1`; the other callers of `par::map`, `par::join`
   and `par::fill_chunks` still hand their work to the pool's one thread

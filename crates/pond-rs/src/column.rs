@@ -1348,10 +1348,10 @@ impl ColumnData {
                     keep.vec(a.values()).into()
                 };
                 // The gap marks come straight from the mask either way.
-                // That timed faster than the kernel's copy of them from
-                // 45% of the rows kept on; with a quarter kept or fewer
-                // the kernel's was a few points the faster (the numbers
-                // are in PND_RUST_PLAN.md, "Considered, not done").
+                // That is level with the kernel's copy of them or faster
+                // from half the rows kept on. With a quarter kept or
+                // fewer, one row at a time, the kernel's is the faster by
+                // 2 to 18 points (PND_RUST_PLAN.md, "Considered, not done").
                 let kept = Decimal128Array::new(values, keep.nulls(a.nulls()));
                 ColumnData::Decimal(DecimalColumn {
                     values: kept.with_data_type(a.data_type().clone()),

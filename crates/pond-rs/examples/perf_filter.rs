@@ -43,10 +43,14 @@
 //!
 //! The first case is the six-engine suite's (`bench/suite`): `v > 500` on
 //! its `even` series. That series, like the stretches of one length, is a
-//! pattern that repeats, and a processor learns to guess a pattern: the
-//! copies that branch on the mask look faster on it than they are on rows
-//! kept with no pattern. The two groups of lines on rows kept at random
-//! and on stretches of random length are the ones to judge a change by.
+//! pattern that repeats, and work that goes a stretch at a time was
+//! measured at up to 2.8 times the cost on stretches of random length as
+//! on a repeating mask with the same rows and the same number of
+//! stretches (PND_RUST_PLAN.md, "Why a rule can win on a mask that
+//! repeats"). So the copies that branch on the mask look faster on it
+//! than they are on rows kept with no pattern. The two groups of lines on
+//! rows kept at random and on stretches of random length are the ones to
+//! judge a change by.
 
 use std::sync::Arc;
 use std::time::Instant;
