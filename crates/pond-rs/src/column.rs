@@ -220,17 +220,17 @@ impl StringColumn {
 }
 
 impl StringColumn {
-    /// The rows where `keep` is set, in order. A dictionary column filters
-    /// its keys and keeps its values, as [`StringColumn::take_indices`];
-    /// `listed` copies the keys by the list of kept rows
-    /// ([`RowFilter::by_list`]) rather than straight from the mask, and
-    /// tells the copy of plain text that the list is there to share
-    /// ([`RowFilter::text`]).
+    /// The rows where `keep` is set, in order. Plain text goes as
+    /// [`RowFilter::text`] has it. A dictionary column filters its keys and
+    /// keeps its values, as [`StringColumn::take_indices`]: straight from
+    /// the mask, or by the list of kept rows ([`RowFilter::by_list`]) when
+    /// `listed` says the list is there to share and the keys are the
+    /// faster by it ([`RowFilter::list_pays`]).
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> Self {
         match &self.repr {
-            StringRepr::Plain(a) => Self::plain(keep.text(a, listed)),
+            StringRepr::Plain(a) => Self::plain(keep.text(a)),
             StringRepr::Dictionary(a) => Self {
-                repr: StringRepr::Dictionary(if listed {
+                repr: StringRepr::Dictionary(if listed && keep.list_pays(size_of::<i32>()) {
                     keep.by_list(a).as_dictionary::<Int32Type>().clone()
                 } else {
                     keep.dictionary(a)
@@ -1319,13 +1319,15 @@ impl ColumnData {
     /// The rows where `keep` is set, in order: what `filter` keeps. Text
     /// goes by Arrow's kernel or stretch by stretch ([`RowFilter::text`])
     /// and arrays by row number; the other kinds are copied straight from
-    /// the mask, except that `listed` sends numbers, decimal values and
-    /// dictionary keys by the kernel's list of kept rows (see [`RowFilter`]
-    /// for the two ways, and `TimeSeries::filter_rows` for the choice).
+    /// the mask. Except that numbers, decimal values and dictionary keys
+    /// go by the kernel's list of kept rows when `listed` says the list is
+    /// there to share and [`RowFilter::list_pays`] that this mask is the
+    /// faster by it for values of that width (see [`RowFilter`] for the
+    /// two ways, and `TimeSeries::filter_rows` for the choice).
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
-                let values: ScalarBuffer<f64> = if listed {
+                let values: ScalarBuffer<f64> = if listed && keep.list_pays(size_of::<f64>()) {
                     let all = Float64Array::new(c.values.clone(), None);
                     let kept = keep.by_list(&all);
                     kept.as_primitive::<Float64Type>().values().clone()
@@ -1338,7 +1340,7 @@ impl ColumnData {
             }
             ColumnData::Decimal(c) => {
                 let a = &c.values;
-                let values: ScalarBuffer<i128> = if listed {
+                let values: ScalarBuffer<i128> = if listed && keep.list_pays(size_of::<i128>()) {
                     let all = Decimal128Array::new(a.values().clone(), None);
                     let kept = keep.by_list(&all);
                     kept.as_primitive::<Decimal128Type>().values().clone()

@@ -13,18 +13,25 @@
 //! copied by the mask:
 //! - Key, numbers, decimals, dictionary keys: straight from the mask, 64
 //!   rows at a time. 64 rows all dropped are skipped and all kept are one
-//!   copy; rows in stretches of six or more are a copy per stretch; the
-//!   rest are one step per eight rows (a table gives the places of the
-//!   kept ones) whatever their mix, or one step per kept row when few are
-//!   kept and for decimals.
+//!   copy. When the mask's kept rows come 16 or more to a stretch on
+//!   average, 64 rows whose kept rows come in three stretches or fewer,
+//!   of eight rows or more on average, are a copy per stretch. The rest
+//!   are one step per eight rows (a table gives the places of the kept
+//!   ones) whatever their mix, or one step per kept row when few are
+//!   kept. A decimal has no table: its rows go a stretch at a time from
+//!   six rows a stretch, and one at a time otherwise.
 //! - Numbers, decimals and dictionary keys, when the columns are copied
-//!   one after another and there are eight or more of them: by a list made
-//!   once, of the kept rows when they are scattered (a step per kept row),
-//!   or of their stretches when nearly all rows are kept and come 40 or
-//!   more to a stretch (a copy per stretch).
+//!   one after another and eight or more of them are the faster for it (a
+//!   decimal column counting as two): by a list made once. With more than
+//!   four rows in five kept that is a list of stretches (a copy per
+//!   stretch), which pays from 8 rows a stretch on average, and always for
+//!   decimals. With fewer kept it is a list of rows (a step per kept row),
+//!   which pays until the stretches reach 32 rows on average (16 for
+//!   decimals).
 //! - Text: stretch by stretch when the kept rows come 32 or more to a
 //!   stretch on average (a step per stretch, plus its bytes); otherwise by
-//!   Arrow's kernel (a step per kept row or per stretch, plus the bytes).
+//!   Arrow's kernel and its list of the kept rows (a step per kept row or
+//!   per stretch, plus the bytes).
 //! - True/false values, and the marks for gaps: one step per stretch.
 //! - Arrays: by row number.
 //!
@@ -35,7 +42,11 @@
 //! another that shows the same count. (Counted on Linux only.)
 //!
 //! The first case is the six-engine suite's (`bench/suite`): `v > 500` on
-//! its `even` series.
+//! its `even` series. That series, like the stretches of one length, is a
+//! pattern that repeats, and a processor learns to guess a pattern: the
+//! copies that branch on the mask look faster on it than they are on rows
+//! kept with no pattern. The two groups of lines on rows kept at random
+//! and on stretches of random length are the ones to judge a change by.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -115,6 +126,48 @@ fn holes(rows: usize, kept: usize) -> Column {
         "v",
         (0..rows)
             .map(|i| if i % (kept + 1) == kept { 0.0 } else { 1000.0 })
+            .collect::<Vec<f64>>(),
+    )
+}
+
+/// A tested column of values 0 to 999 from a pseudo-random generator
+/// (xorshift64): `v > k` keeps each row or not with no tie to its
+/// neighbours.
+fn random_values(rows: usize) -> Column {
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    Column::required(
+        "v",
+        (0..rows)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x % 1000) as f64
+            })
+            .collect::<Vec<f64>>(),
+    )
+}
+
+/// A tested column whose kept rows (1000) and dropped rows (0) come in
+/// stretches of random length: `kept` rows on average, then `dropped` on
+/// average, and so on.
+fn runs(rows: usize, kept: f64, dropped: f64) -> Column {
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    let mut keep = true;
+    Column::required(
+        "v",
+        (0..rows)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                let u = (x >> 11) as f64 / (1u64 << 53) as f64;
+                let mean = if keep { kept } else { dropped };
+                if u * mean < 1.0 {
+                    keep = !keep;
+                }
+                if keep { 1000.0 } else { 0.0 }
+            })
             .collect::<Vec<f64>>(),
     )
 }
@@ -387,6 +440,93 @@ fn main() -> pond_rs::Result<()> {
             &s,
             &over(12.5),
         );
+    }
+
+    // No pattern for the processor to learn: each row kept or not by a
+    // pseudo-random number, then stretches of random length. Beside the
+    // key and the tested column, each table has the columns it is named
+    // for.
+    type Extra = Box<dyn Fn() -> pond_rs::Result<Vec<Column>>>;
+    let numbers = |count: usize| -> Extra {
+        Box::new(move || {
+            let column = |c: usize| {
+                Column::required(
+                    format!("w{c}"),
+                    (0..rows).map(|i| (i + c) as f64).collect::<Vec<f64>>(),
+                )
+            };
+            Ok((0..count).map(column).collect())
+        })
+    };
+    let texts = |count: usize| -> Extra {
+        Box::new(move || {
+            let column = |c: usize| {
+                let names: Vec<String> = (0..8).map(|h| format!("{c}ost-{h}")).collect();
+                Column::required(
+                    format!("t{c}"),
+                    (0..rows)
+                        .map(|i| names[(i / 90 + c) % 8].as_str())
+                        .collect::<Vec<_>>(),
+                )
+            };
+            Ok((0..count).map(column).collect())
+        })
+    };
+    let decimals = |count: usize| -> Extra {
+        Box::new(move || {
+            let column = |c: usize| {
+                let values = (0..rows).map(|i| (i + c) as i128 * 125).collect();
+                Ok(Column::required(
+                    format!("m{c}"),
+                    DecimalColumn::from_values(values, 2)?,
+                ))
+            };
+            (0..count).map(column).collect()
+        })
+    };
+    let tables: [(&str, Extra); 6] = [
+        ("1 text", texts(1)),
+        ("4 texts", texts(4)),
+        ("1 number", numbers(1)),
+        ("7 numbers", numbers(7)),
+        ("31 numbers", numbers(31)),
+        ("4 decimals", decimals(4)),
+    ];
+    println!("Rows kept at random, by the share kept (key, v and the columns named):");
+    for (what, extra) in &tables {
+        let mut columns = vec![random_values(rows)];
+        columns.extend(extra()?);
+        let s = TimeSeries::new("s", time_key(rows), columns)?;
+        for (share, k) in [
+            ("5%", 949.5),
+            ("25%", 749.5),
+            ("50%", 499.5),
+            ("85%", 149.5),
+            ("97%", 29.5),
+        ] {
+            time(&format!("{what}, {share} kept"), &s, &over(k));
+        }
+    }
+    println!("Stretches of random length, by the rows kept and dropped on average (the same):");
+    for (kept, dropped) in [
+        (4.0, 30.0),
+        (8.0, 8.0),
+        (32.0, 32.0),
+        (200.0, 200.0),
+        (6.0, 1.2),
+        (12.0, 1.2),
+        (60.0, 1.5),
+    ] {
+        for (what, extra) in &tables {
+            let mut columns = vec![runs(rows, kept, dropped)];
+            columns.extend(extra()?);
+            let s = TimeSeries::new("s", time_key(rows), columns)?;
+            time(
+                &format!("{what}, {kept} kept, {dropped} dropped"),
+                &s,
+                &over(500.0),
+            );
+        }
     }
 
     // The same rule as a closure: the test is a call per row, the copy is
