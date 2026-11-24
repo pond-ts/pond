@@ -251,95 +251,6 @@ open until 2026-11-13.
 [#606]: https://github.com/pond-ts/pond/pull/606
 [#577]: https://github.com/pond-ts/pond/issues/577
 
-### [PND-XAXISOWN] — a mounted `<XAxis>` should win over the container's
-
-pjm, on the third sighting: _"I wonder if when you add an XAxis that wins over
-the container (or it warns at the prop conflict), this is like the 3rd time I've
-seen that issue."_
-
-`showAxis` defaults to `true`, so `<ChartContainer>` renders an x-axis strip the
-declaration never mentions. Mount an explicit `<XAxis>` and you get **two**, and
-nothing says so — the consumer has to already know to pass `showAxis={false}`.
-
-**Three sightings, and they are one root cause: the container renders an axis
-the declaration does not mention.**
-
-1. `<GalleryCard height>` carries a comment warning that the caller "must budget
-   for the auto-rendered time-axis strip… the stage clips anything taller,
-   silently cutting off axis labels."
-2. [PND-AXISGUT] / [#607] — estela hand-subtracts `X_AXIS_H` for that same
-   strip, got it wrong once, and shipped overlapping labels.
-3. The `ValueXLog` stories in this wave drew two x axes until `showAxis={false}`
-   was added — as does every other story in `Axes.stories.tsx`, which is the
-   tell: **the whole file works around the default.**
-
-**Proposed:** a mounted `<XAxis>` takes precedence and the implicit strip stands
-down, with `showAxis` kept as the explicit override. Nobody mounts an `<XAxis>`
-_wanting_ a second one, so precedence is what the declaration already means.
-Failing that, warn on the conflict — but silence is the one option the evidence
-rules out.
-
-Worth doing with [PND-AXISGUT], since both are "the implicit axis is invisible
-to the layout and to the declaration", and a mounted-wins rule makes the height
-reservation question answerable — the container would know whether an axis is
-present rather than assuming one.
-
-It is also the concrete cost of the shape pjm named while building [PND-XLOG]:
-had at least one `<XAxis>` been **mandatory**, there would be no implicit strip
-to conflict with, the scale props would live on it, and x would mirror y.
-
-**Stated against the ownership test** ([PND-XLOG] above): container props earn
-their place by defining the **mapping or the domain**, which is what forces them
-to be shared across stacked rows. `showAxis` defines neither. It is "does the
-container draw a strip" — presentation, which landed on the container only
-because it was x-shaped, at a time when nothing distinguished "x-related" from
-"scale-defining". So the precise complaint is **not that the default is
-annoying; it is that the prop is on the wrong object**, and the two-axes
-collision is what that misplacement looks like from a consumer's seat. Useful
-because it sets the fix's direction: presentation belongs with `<XAxis>`, so
-**Unblocked — build it.** The `<Domain>` RFC
-([`docs/rfcs/container-decomposition.md`](../rfcs/container-decomposition.md))
-would have made this task cease to exist, so it was held pending that
-decision. That RFC was **declined on review 2026-08-13**: its central
-evidence was overstated by 46%, and the reviewer's explicit finding was that
-`xAxis="auto"` **is not wasted work** — it fixes a live bug while the larger
-design fails review. Nothing is waiting on anything now.
-
-Consumer evidence, gathered while measuring the RFC's blast radius: **Tidal
-passes `showAxis` at 2 of 2 sites and estela at 5 of 14.** Every consumer we
-can measure is working around the implicit strip.
-
-mounted-wins is the correction and `showAxis` is the compatibility shim, rather
-than mounted-wins being a special case bolted onto a prop that stays where it
-is.
-
-**Shipped (wave "Path to 1.0") — mounted wins.** A declared `<XAxis>`
-registers with the container (`registerXAxis`, in a layout effect, so the
-implicit strip is gone before first paint). `showAxis` now defaults to
-*undefined*, meaning "draw the implicit strip iff nothing is declared". The
-container's own strip renders inside an internal `ImplicitXAxisContext` so it
-does not count itself. `showAxis={false}` behaves as before. `showAxis={true}`
-plus a declared axis keeps both and dev-warns: honouring an explicit request
-beats overriding it, and the warning is the "warn at the conflict" half of the
-ask. Every `showAxis={false}` in `Axes.stories.tsx` (the tell) is gone, and
-the GalleryCard comment and the axes/layout/cheat-sheet docs are updated.
-Other stories' `showAxis={false}` were left alone: it is still correct there,
-and a sweep is churn. **Not done here:** [PND-AXISGUT]'s height reservation,
-which this makes answerable (the container now knows whether an axis is
-declared) but does not implement. Nothing else in `ChartContainer` reads
-`showAxis` (checked); the managed-`height` strip subtraction is pinned by a
-structural test.
-
-**Intended visual diffs.** Two story files mounted an axis without
-`showAxis={false}` and were drawing a duplicate strip, which is now gone: every
-`charts-barchart-category-stack--*` story, and every
-`performance-decimation--*` story. Neither has a committed e2e snapshot. The
-only e2e spec that touches them, `decimation.spec.ts`, compares
-`performance-decimation--default` against `--off`, and both lose the strip the
-same way, so no baselines needed regenerating. The `axes--x-axis-*` and
-`axes--value-x-*` stories dropped their `showAxis={false}` but still draw one
-axis, so they are visually unchanged.
-
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
 Filed by the estela agent after it shipped overlapping labels, and its framing
@@ -371,64 +282,6 @@ auto mode that silently double-reserves would shrink every chart already doing
 the subtraction. Opt-in, or stand down when an explicit `height` is present.
 
 [#607]: https://github.com/pond-ts/pond/issues/607
-
-### [PND-ANNROLE] — Annotation **roles**: a resting mark's alpha is a role question
-
-`theme.annotation.depth` is `[1, 0.7, 0.4]`, so a **resting** annotation draws
-at 0.4 alpha. That is a level, and the evidence says the thing it is trying to
-express is a **role**.
-
-**Two consumers overrode it in opposite directions in the same week**, each
-locally, neither reporting it until asked:
-
-| consumer                       | what annotations are for them                             | override                                    |
-| ------------------------------ | --------------------------------------------------------- | ------------------------------------------- |
-| measles gallery card (pond-ts) | the three vaccine dates **are** the argument              | crimson `#d81e5b`, `depth: [1, 0.95, 0.85]` |
-| estela                         | a **focus wash** behind data when a lap/split is selected | `fillOpacity: 0.07`, foam                   |
-
-That is the whole case. No single resting alpha serves both, because they are
-not the same _kind_ of mark: one is an argument the reader must not miss, the
-other is a wash that must not compete with the data on top of it. A level can
-only be wrong for one of them.
-
-`<Marker role>` / `<Zone role>` already exist and read
-`theme.annotation.roles[role]` (`color`, optionally `fillOpacity`) — but the
-**site theme defines no roles**, so `role` currently has nothing to select and
-both consumers fell back to patching `theme.annotation` wholesale.
-
-**The work:** define an annotation role vocabulary in the shipped themes with
-its own depth ramp per role — at minimum a _wash_ (quiet, sits behind data) and
-an _argument_ (loud, resting stays legible) — and extend `roles[role]` to carry
-`depth` rather than only `color` / `fillOpacity`. Estela says it would adopt
-immediately and drop its local override; the measles card would drop its
-per-chart theme spread.
-
-Two things to get right rather than assume:
-
-- **Naming by intent, not by loudness.** `wash` / `argument` survives a theme
-  change; `subtle` / `strong` becomes a lie the moment a theme rebalances.
-- **The default has to stay put.** `[1, 0.7, 0.4]` is right for the common case
-  (annotations secondary to a line), so an unrolled mark must not move.
-
-**Shipped** in #834 (on the wave base). `annotation.roles[role]` may now carry
-`depth` (its own three-level ramp), and `color` became optional, so a role
-without one takes the register hue. `defaultTheme` and `estelaTheme` ship
-`wash` (edges rest at 0.2, fill 0.06; estela's is a 7% foam tint) and
-`argument` (rests at 0.85). Marks with no role keep `[1, 0.7, 0.4]`. The measles
-gallery card moved to `role="argument"`, and estela's handoff
-(`docs/notes/estela-fit-swap-2026-10.md`) points its `theme.annotation`
-override at `<Region role="wash">`. Wave "Path to 1.0" added the story fan-out
-#834 left out: `Annotations/Marker` `RoleArgument` / `RoleWash` and
-`Annotations/Region` `RoleWash` / `RoleWashSelected` / `RoleArgument`. These
-render `defaultTheme`, so each shipped role can be seen and reviewed against the
-default. They are pinned by `test/annotation-stories.test.tsx`.
-
-Related friction from the same exchange, **not yet tracked**: estela reserves
-x-axis height by hand (`ChartRow height={h - X_AXIS_H}` plus a matching
-`<XAxis height>`), got the arithmetic wrong once, and shipped labels overlapping
-its own controls. Their framing is the right one — the axis should participate
-in row layout rather than the consumer subtracting for it, which makes that
-whole class of mismeasurement unrepresentable. Estela is filing it.
 
 ### [PND-CATAX] — Land categorical axis Phase 1
 
@@ -1113,48 +966,6 @@ suppressed on the decimated path; and the measured category's real ceiling — t
 per-frame `fromColumns` **rebuild** (data-side, [PND-LIVELYR]) — still bounds it,
 so the 73 fps is the draw win layered on top of that ceiling, not a full fix.
 
-### [PND-HOVCTX] — Split cursor position out of the container context
-
-**Source:** external bench 2026-07-22, uPlot-bench mousemove leg + follow-up
-CPU/React profile (finding 6 in
-[charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
-The **hover** counterpart to the draw-path tasks above, and the answer to "why
-is mousemove still kind of slow" after [#524](https://github.com/pond-ts/pond/pull/524).
-
-#524 stopped the cursor from repainting the **data canvas** (the 2.8–9 ms/event
-killer). What remains: cursor position lives in `useState` on `ChartContainer`
-(`hoverX`, `hoverPoint`) and is exposed as `ContainerFrame` fields
-(`cursorX`, `cursorY`, `cursorRowKey`; note `ContainerFrame.cursorTime` is an
-unrelated boolean config flag — the cursor _time value_ is derived locally by
-each consumer from `cursorX` + `xScale`). Because those are frame fields,
-`handlePointerMove`'s three setState calls rebuild the frame memo with a new
-identity every mousemove, and **every** `ContainerContext` consumer
-re-renders — including the ones that never read the cursor. Measured (React
-Profiler, 179-event sweep): 4 commits/event; both `YAxis`, the right `YAxis`,
-and `Legend` each re-render on every move. Per-event script ≈ 0.68 ms vs
-uPlot's 0.13 ms (uPlot has no vdom — it nudges the cursor with a direct DOM
-write). No hot function, no redraw; it's the render+commit cascade of the whole
-context subtree.
-
-**Fix:** a dedicated `CursorContext` carrying only the every-move-varying
-fields `{ cursorX, cursorY, cursorRowKey }`, provided nested inside
-`ContainerContext`. Remove those three from `ContainerFrame` (and `cursorX` +
-`hoverPoint` from the frame memo's deps, so the frame stays identity-stable
-across a hover). The three real
-cursor consumers subscribe to it (`Layers` overlay — always; `XAxis` crosshair
-pill; `useChartLegend` values-in-legend); everyone else
-(`YAxis`, `BarChart`/`BoxPlot` — the latter read only the transition-gated
-`hovered`, which stays in `ContainerFrame`) stops re-rendering on hover with
-**zero code change**, because the frame they read no longer changes identity.
-`ContainerFrame` is internal (not exported), so this is a safe refactor.
-Expected: 4 commits/event → ~2 (only `Layers` + `Legend` + the state-owning
-`ChartContainer`, all of which genuinely track the cursor). Verify with the
-render-counter harness in the external bench notes. Follow-ups left open:
-`XAxis`/`Legend` still re-render on hover even in non-crosshair / no-values
-configs (they subscribe unconditionally) — a selector-context or config-gated
-subscription could trim those, but they're one component each, not the axis
-fan-out that dominated.
-
 ### [PND-BOXPLT] — Finish BoxPlot
 
 The G3/G4 direction from the vol-smile review
@@ -1302,6 +1113,20 @@ steered toward extending the canvas path (`BoxPlot orientation='horizontal'`
   lists render a real `<table>`; `<BarChart orientation="horizontal">` remains
   the in-plot histogram, and the docs page states the split.
 
+**Closed.** The scope considered and deliberately not built, plus the known
+sharp edge, moves to [PND-LISTDEFER], where each item waits for a driver.
+
+Review record: adversarial review + response on #585 (both comments). Its
+one process find worth remembering: a corrupted write left two raw NUL bytes
+in a key literal, making the .tsx binary to git — `file`/`git diff --numstat`
+is the fast check when a text diff mysteriously shows "Binary files differ".
+
+### [PND-LISTDEFER] — BarList + BoxList deferred scope — WAITING ON A DRIVER
+
+Scope carried out of [PND-LISTS] (shipped in
+[#585](https://github.com/pond-ts/pond/pull/585)) that was considered and
+deliberately not built; pick an item up only when a consumer drives it.
+
 **Considered and deliberately not built:** canvas
 `BoxPlot orientation='horizontal'` (no in-plot consumer; [PND-BOXPLT]'s
 backlog doesn't ask for it — revisit only if one appears); diverging
@@ -1312,11 +1137,6 @@ controlled expansion state (uncontrolled + `defaultExpanded` +
 track (fill at fixed 0.15 opacity, works on both grounds). Known sharp edge:
 the box tick's inline label is an absolute overlay and can overpaint the
 after-cells near the domain's right edge.
-
-Review record: adversarial review + response on #585 (both comments). Its
-one process find worth remembering: a corrupted write left two raw NUL bytes
-in a key literal, making the .tsx binary to git — `file`/`git diff --numstat`
-is the fast check when a text diff mysteriously shows "Binary files differ".
 
 ### [PND-LEGEND] — `<Legend>` wave — DONE
 
