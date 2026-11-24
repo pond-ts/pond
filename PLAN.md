@@ -594,51 +594,65 @@ yet on crates.io) are built. Most entries below are
 pond-ts bugs found while porting.
 
 - **[PND-RSFILTER]** — What is left of the pond-rs filter speed-up (#969,
-  then #971 in two rounds; all in the breakout plan). #969 took "keep rows
+  then #971 in three rounds; all in the breakout plan). #969 took "keep rows
   where v > 500" on 1M rows from 4.3 to 2.8 ms on one core of an M1 (in a
   Linux VM; polars takes 1.9 ms there), and was slower than the code before
   it on long or non-ASCII text, on many number or decimal columns, and on
-  wide tables kept nearly whole. #971 took those back: of 249 kinds of
-  series timed on an x86 cloud server, none is slower than before #969 on
-  one core or on four (with #969, 97 and 14 were), and three are level
-  with it. It gives back part of #969's gain on short text: the suite's
-  case takes 5.3 ms on that server, against 7.0 before #969 and 5.1 with
-  it.
+  wide tables kept nearly whole. #971 took those back. Its second round's
+  rules had been set on masks that repeat (a second review caught it), and
+  its third round set every rule again on masks with no pattern. Of 680
+  kinds of series timed on an x86 cloud server (249 whose masks repeat, 431
+  with no pattern), none is slower than before #969 at 1M rows, on one core
+  or on four (with #969, 242 and 31 were). At 100,000 rows three kinds of
+  wide table read from level with it to 10% above. What #971 gives back:
+  part of #969's gain on short text (on that server the suite's case takes
+  about 5.5 ms, against 7.0 before #969 and about 4.9 with it), and, to
+  its own second round, 10 to 40% on some masks that repeat (one text
+  column with most rows kept; 8 to 32 number columns with 8 to 16 rows
+  kept and then one dropped).
   - **Owner decision 1: one `unsafe` block.** pond-rs's own copy of text
     in rows kept a few at a time is faster than Arrow's `filter`, but every
     safe way to hand that copy to Arrow has Arrow check it again, and on
     all but short plain ASCII the check costs more than the copy saves
     (which is what made #969 slow). Handing it over unchecked, as Arrow's
-    own `filter` does with its copy, is written, tested and timed as the
-    final code plus that one change (the breakout plan says what it is and
-    what the block rests on; it is not in #971). On the x86 server the
-    suite's case takes 4.3 ms with it, and 3.2 on four cores (#969: 5.1 and
-    3.9; #971: 5.3 and 4.5). It would be the first `unsafe` in the crate's
-    `src`.
+    own `filter` does with its copy, is written, tested and timed as
+    #971's code plus that one change (the breakout plan says what it is
+    and what the block rests on; it is not in #971). Over 174 kinds of
+    series with text at 1M rows on one core it is faster than #971 on 90
+    and slower on 2, and faster than #969 on 163 and slower on none. As a
+    program of its own the suite's case takes 4.3 ms with it, and 3.0 on
+    four cores (#969: 4.8 and 3.9; #971: 6.0 and 4.5 in the same runs). It
+    would be the first `unsafe` in the crate's `src`.
   - **Owner decision 2: text as 16-byte views**, the parked
     `perf/pond-rs-text-views` branch (the text copy 1.6 → about 0.5 ms, at
     the export cost that parked it).
   - **Owed: the Mac.** #971 has not been timed on the M1: the Mac went
-    offline during the first round and stayed so through the second. Every
+    offline during the first round and was not reached again while the
+    other two were timed. Every
     number that picks a way of copying (`TEXT_STRETCH_ROWS`,
-    `FILTER_LIST_COLUMNS`, `SPARSE`, `STRETCH_ROWS`, `LIST_STRETCH_ROWS`,
-    one word in four for `is_scattered`, four rows in five for
-    `keeps_most`) was set on the x86 server; on the M1 the shared list of
-    kept rows already paid at about four number columns, against eight on
-    x86.
-  - **Left, no decision needed.** Tables of one to five number columns
-    with mixed rows pay 1 to 5 points on one core for the test that finds
-    stretches in a word (three ways to avoid it were timed, and none held
-    from one run to the next). Decimal gap marks could go by the list
-    where under about a third of the rows are kept (5 to 10 points on 16
-    decimal columns with gaps and a tenth of the rows kept; timed, not
-    built). Split one column's rows across cores (with #969 four cores
-    gave 2.3 ms in the VM and ten gave 2.7 on the Mac, where polars 2.1.0
-    takes 1.06). A look at the WebAssembly build (6.0 ms with #969, no
-    SIMD). The bridges timed again. A quiet run on macOS itself with both
-    allocators: the first, on a busy machine with #969, gave 6.4 → 3.9 ms
-    against polars 1.36.1 at 2.1, and 2.8 ms under mimalloc, which the
-    Python bridge uses.
+    `FILTER_LIST_COLUMNS`, `SPARSE`, `STRETCH_LOOP_ROWS`, `WORD_STRETCHES`,
+    `WORD_STRETCH_ROWS`, `WIDE_STRETCH_ROWS`, `LIST_STRETCH_ROWS`,
+    `DIRECT_STRETCH_ROWS`, `DIRECT_STRETCH_ROWS_WIDE`, and four rows in five
+    for `keeps_most`) was set on the x86 server; on the M1 the shared list
+    of kept rows already paid at about four number columns, against eight
+    on x86. First things to time there, each found on x86 and not built
+    (breakout plan, "Considered, not done"): one text column with most
+    rows kept by Arrow's kernel with no list; a bar for the copy from the
+    mask that also takes the share of rows kept; the loop that asks each
+    word picked by the share of words that pass; 10 rows in place of 8
+    for `LIST_STRETCH_ROWS`; and a lower column bar for the list where few
+    rows are kept.
+  - **Left, no decision needed.** Nothing in CI times `filter`: two tests
+    pin which way a copy goes, and none how long it takes. Decimal gap
+    marks could go by the list where under about a third of the rows are
+    kept (5 to 10 points on 16 decimal columns with gaps and a tenth of
+    the rows kept; timed, not built). Split one column's rows across cores
+    (with #969 four cores gave 2.3 ms in the VM and ten gave 2.7 on the
+    Mac, where polars 2.1.0 takes 1.06). A look at the WebAssembly build
+    (6.0 ms with #969, no SIMD). The bridges timed again. A quiet run on
+    macOS itself with both allocators: the first, on a busy machine with
+    #969, gave 6.4 → 3.9 ms against polars 1.36.1 at 2.1, and 2.8 ms under
+    mimalloc, which the Python bridge uses.
 
 - **[PND-RSPAR1]** — With a one-thread pool, pond-rs still hands work to
   the pool. `par::map`, `par::join` and `par::fill_chunks` go through rayon
