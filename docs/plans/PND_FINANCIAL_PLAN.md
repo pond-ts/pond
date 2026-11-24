@@ -1,5 +1,11 @@
 # PND_FINANCIAL_PLAN — `@pond-ts/financial` studies + trading time
 
+> **Frozen 2026-11-24.** Open tasks from this plan moved to Linear (project map in
+> [PLAN.md](../../PLAN.md); old IDs → issues in
+> [linear-migration.md](../archive/linear-migration.md)). Each issue carries its
+> task's write-up from here and keeps the `[PND-…]` tag in its title. This file
+> stays as the reasoning behind shipped work. Do not add tasks or outcomes here.
+
 > Breakout plan for the **Financial** roadmap section in
 > [PLAN.md](../../PLAN.md). Corpus analysis:
 > [docs/notes/financial-indicators-assessment-2026-07.md](../notes/financial-indicators-assessment-2026-07.md)

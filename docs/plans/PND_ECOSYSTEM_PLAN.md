@@ -1,5 +1,11 @@
 # PND_ECOSYSTEM_PLAN — Ecosystem and adapters (Phase 6)
 
+> **Frozen 2026-11-24.** Open tasks from this plan moved to Linear (project map in
+> [PLAN.md](../../PLAN.md); old IDs → issues in
+> [linear-migration.md](../archive/linear-migration.md)). Each issue carries its
+> task's write-up from here and keeps the `[PND-…]` tag in its title. This file
+> stays as the reasoning behind shipped work. Do not add tasks or outcomes here.
+
 > Breakout plan for the **Ecosystem** roadmap section in [PLAN.md](../../PLAN.md).
 > Tasks: [PND-SERVER], [PND-NODE], [PND-FITPUB]. Moved from PLAN.md (Phase 6)
 > on 2026-07-20; the content below is the original phase plan, unchanged except

@@ -768,7 +768,7 @@ live series, not copied (see `docs/plans/PND_LIVE_PLAN.md`).
 | Public exports                                 | `packages/core/src/index.ts`                                                                      |
 | Rust implementation (pond-rs) + parity tests   | `crates/pond-rs/` (tests read `packages/*/test/fixtures/{parity,study-oracle}.json`)              |
 | Python bridge (PyPI `pond-timeseries`)         | `crates/pond-py/` (PyO3 over pond-rs; Arrow frames in/out; pytest reads `parity.json`)            |
-| Plan / status / roadmap                        | `PLAN.md`                                                                                         |
+| Plan / status / roadmap                        | Linear (open work); `PLAN.md` (index, road to 1.0)                                                |
 | Process / discipline / release                 | `CLAUDE.md`                                                                                       |
 | Release notes                                  | `CHANGELOG.md`                                                                                    |
 

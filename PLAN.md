@@ -1,26 +1,43 @@
 # Plan
 
-This document is the **roadmap of future work only**. Each work section below
-gives a one-paragraph summary and a link to its breakout plan
-(`docs/plans/PND_*_PLAN.md`), which carries the full context per task. Work is
-broken into tasks named `[PND-XXXXXX]`.
+**Open work lives in Linear**: team **Pond** (`POND`), one project per
+package. This file is the thin index above it: the road to 1.0, one
+paragraph per work area saying where its issues are, the active-experiments
+roster, and the cross-cutting rules.
+
+| Project                                                               | Covers                                                                        |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Core](https://linear.app/pondts/project/core-56ab562a7fc7)           | `pond-ts` (batch, live, columnar, streaming, time zones) and `@pond-ts/react` |
+| [Charts](https://linear.app/pondts/project/charts-57e76455bf22)       | `@pond-ts/charts`, chart accessibility, consumer friction reports             |
+| [Docs](https://linear.app/pondts/project/docs-e90d5dd41988)           | the docs site, API reference, agent adoption                                  |
+| [Process](https://linear.app/pondts/project/process-af5982fb3c62)     | `@pond-ts/process` and the process demo                                       |
+| [Financial](https://linear.app/pondts/project/financial-8b09ced936c3) | `@pond-ts/financial` studies and trading time                                 |
+| [Ecosystem](https://linear.app/pondts/project/ecosystem-d581b8c07207) | `@pond-ts/fit`, server / node adapters                                        |
+| [Rust](https://linear.app/pondts/project/rust-d615b34b262d)           | `pond-rs`, `@pond-ts/wasm`, `pond-timeseries` (Python)                        |
 
 Where everything else lives:
 
-- **Breakout plans** — [docs/plans/](docs/plans/) (`PND_*_PLAN.md`, one per
-  work section; the long write-ups live there, not here).
+- **Tasks** — Linear (above). A task's write-up is its issue description; its
+  outcome (decision + reasoning, PR link) is the closing comment.
+- **Old `[PND-XXXXXX]` IDs** — every open task in this file moved to Linear on
+  2026-11-24 with its tag kept at the start of the issue title, so searching
+  Linear for `PND-PARITY` finds it.
+  [docs/archive/linear-migration.md](docs/archive/linear-migration.md) maps
+  each ID to its issue. New issues use Linear identifiers only.
+- **Frozen breakout plans** — [docs/plans/](docs/plans/) (`PND_*_PLAN.md`):
+  the reasoning behind shipped work, frozen at the migration. Do not add to
+  them.
 - **Strategic RFCs** — [docs/rfcs/](docs/rfcs/) (forward-looking context, not
-  commitments; only tasks adopted here are commitments).
+  commitments; only work adopted into Linear is a commitment).
 - **Shipped history** — [CHANGELOG.md](CHANGELOG.md) for releases;
-  [docs/archive/](docs/archive/) for the frozen phase/wave logs that used to
-  live in this file (design decisions, shipped milestone detail, walkbacks).
+  [docs/archive/](docs/archive/) for the frozen phase/wave logs.
 - **Evergreen rules** —
-  [docs/notes/design-principles.md](docs/notes/design-principles.md) (design
-  principles + semantics to preserve; these hold across all new work).
+  [docs/notes/design-principles.md](docs/notes/design-principles.md).
 
-Maintenance: when a task completes, remove it here and record the outcome
-(decision + reasoning) in its breakout plan; add new tasks with a `PND-` ID.
-A lost session should never erase the current state of the project.
+Maintenance: close the Linear issue when a task completes, with the outcome in
+the closing comment; open an issue in the owning project when new work surfaces.
+Edit this file only when a work area's direction changes. A lost session
+should never erase the current state of the project.
 
 ---
 
@@ -42,8 +59,8 @@ rather than a date:
 **The gate is "does the API look stable".** If it does at that point, that is
 1.0.
 
-**Coverage estimate:** RFCs + this plan account for perhaps **95% of the
-final surface**. The remaining 5% comes from experiments first and then real
+**Coverage estimate:** RFCs + the plan (now Linear) account for perhaps
+**95% of the final surface**. The remaining 5% comes from experiments first and then real
 consumers — it is discovered, not designed.
 
 **Why 1.0 is a real boundary, and not just a version number:** after it, the
@@ -83,7 +100,9 @@ waiting for the falsifying signal.
 
 ---
 
-## Roadmap
+---
+
+## Work areas
 
 ### `@pond-ts/charts`
 
@@ -93,297 +112,11 @@ and the trading-time + categorical axes; the package is **published**
 (`@pond-ts/charts` on npm, `private: false`). Remaining: the interaction
 tail, Phase-2 RFC slices, and the M5 parity gate for the stable /
 estela-parity milestone. Shipped write-ups that used to sit here are in the
-breakout plan. Plan:
+breakout plan. Frozen plan:
 [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md) · RFC:
 [charts.md](docs/rfcs/charts.md).
 
-- **[PND-PARITY]** — M5 estela parity (the stable milestone; the package
-  already publishes pre-parity). Faithful `DataChart` reproduction on real
-  activity data, no regressions. Gates: statistical bands, theme tokens
-  optional-with-default, shared axis-headroom policy.
-- **[PND-HSWEEP]** — Horizontal `<BarChart>` sweep **shipped** (write-up in
-  the breakout plan). Declared out of scope then, and still open: a
-  **horizontal heat map** can click-select but cannot sweep (`beginSweep`
-  returns `null` when horizontal, `HeatMap.tsx`), and a y-sweeping row has **no
-  resting-block preview** — it suppresses the resting band rather than draw
-  the x one, which would advertise a column the drag never selects.
-
-- **[PND-INTERACTCONF]** — **The conformance tail.** The list family's
-  selection currency, state ladder (`theme.list`), range gesture and keyboard
-  parity shipped 2026-08-10, and `<BoxPlot>` joined the sweep (write-up in the
-  breakout plan). Left:
-  - `format` is a container-wide channel and cannot be honoured per row
-    without reworking the readout plumbing (A8.4).
-  - The list's **per-row bullet target marker** — `theme.list` carries
-    `markerInk` for it, but the mark itself is unbuilt (`<BarList markers>`
-    draws a rule through every row, which is a different thing). Roving
-    tabindex, ARIA selection semantics and a touch range affordance are
-    tracked under [PND-A11Y].
-
-- **[PND-TRACESEL]** — Selection on `<LineChart>` / `<AreaChart>` **shipped
-  2026-08-10** (write-up in the breakout plan). **Owed: a perf commit.**
-  `sliceTrace` (`packages/charts/src/line.ts`) allocates per partitioned frame,
-  sized by the swept window, so it falls under the repo's perf gate — contrary
-  to what PR #634's body claimed. Fix: slice from the already-decimated
-  polyline (or reuse buffers across frames), plus
-  `scripts/perf-trace-sweep.mjs` and a before/after table. Not written as of
-  v0.76.0.
-
-- **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
-  Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to
-  **keep** the current one or **exclude** it.
-
-  Worth recording because it is a _third_ answer to the question a trace sweep
-  cannot answer by pointing. The first two were z-order (topmost-wins —
-  arbitrary to the reader) and take-everything (shipped, [PND-TRACESEL]).
-  Cycling is better than either: it hands the ambiguity to the user instead of
-  resolving it by a rule they cannot see, and it needs no new currency — plural
-  spans already exist, so cycling is a _filter_ over the set the gesture
-  produced.
-
-  Open: whether cycling happens **during** the drag (the preview narrows as you
-  tab) or **after** the commit (the selection narrows); which keys, given the
-  plot surface is not focusable at all today ([PND-A11Y]); and whether
-  keep/exclude are separate keys or a modifier on the cycle. The focus problem
-  is the real blocker — there is no keyboard path to a chart, so this task
-  depends on [PND-A11Y]'s focus model rather than standing alone.
-
-- **[PND-ANNSNAP]** — **A snap-target registry, and selection ↔ annotation.**
-  Owner design sketch, 2026-08-10. Two halves that share one mechanism.
-
-  **The scenario both halves are for** is written up as RFC **Amendment 9** —
-  a pace + elevation chart where a lap bar windows both traces, and a swept
-  segment is saved ("Chalk hill climb"), listed with stats, and clicked to
-  return to. Read it before designing: it is what makes lap boundaries the
-  motivating snap contributor and "save the range" a real step rather than a
-  nice-to-have.
-
-  **The mechanism: `<ChartContainer snap>`, with targets contributed by
-  sources.** A mode, not a per-gesture prop — and the consumer enumerates
-  nothing, because the sources already know where their edges are. Same
-  "declared, resolved by the container" shape as cursor snap policy and
-  `binIntervals`.
-
-  **This is a SECOND channel, deliberately not the existing one.** A **range
-  cursor is not bound by it** — an _interval sequence_ is what the range cursor
-  follows, and that is a **tiling** that partitions the axis ("which bucket am I
-  in"). Snap targets are a **sparse set of edges** ("what is the nearest one,
-  if it is close enough"). Different question, different resolution, so
-  conflating them into `cursorBuckets` would break the range cursor to serve
-  the sweep.
-
-  **The target sources** (owner's list):
-  - **series that are intervals or time-ranges** — a bar / bin / box layer's
-    `[begin, end)` edges. Already published as `binIntervals`, so this
-    contributor exists and only needs re-pointing.
-  - **category marks** — the unit slots `[i, i+1)`; also already `binIntervals`.
-  - **annotation edges** — a `<Region>`'s `from`/`to` and a `<Marker>`'s `at`.
-    (A `<Baseline>` is a y value and so is not an x target.)
-  - **session boundaries** — the trading calendar's collapse instants, which
-    `<LineChart>` already computes for its own drawing and the container holds
-    as `discontinuities`.
-  - **sweep selection edges** — an existing span's own boundaries. **This is
-    the elegant one:** sweeping up to an existing span's edge lands flush on
-    it, so regions merge _exactly_ rather than approximately — which is a
-    better answer to "sweeps merge regions" than a `mergeSpans` tolerance
-    could be, because the coincidence is made true at gesture time instead of
-    reconciled afterwards.
-
-  **The two actions:**
-  - **Promote a sweep to annotation(s)** — to save the range. Note the plural:
-    a trace sweep now commits one span per trace ([PND-TRACESEL]), so promoting
-    yields several annotations, and "which ones" is a question.
-  - **Select within an annotation** — the inverse, making selections and
-    annotations interconvertible.
-
-  **Open questions, and the first two must be answered before any code:**
-  1. **Precedence among targets.** With five contributors a pixel is often
-     near several. "Nearest in pixels" is the obvious rule and probably right,
-     but ties need a tie-break and it may be that an annotation edge should
-     beat a bin edge regardless of distance (the user placed the annotation
-     deliberately; the bin edge is just data shape).
-  2. **The radius is in pixels, so it is view-dependent.** Zoomed out, many
-     targets fall inside it and snapping becomes unpredictable; zoomed in,
-     nothing does. Needs an explicit rule, and probably a cap on how far the
-     cut may move from where the pointer actually is.
-  3. **A span must not snap to its own edge.** Sweep edges being targets means
-     the live preview's own boundaries enter the target set _during_ the drag
-     that is creating them — a feedback loop that would pin the cut to itself.
-     The preview spans have to be excluded from their own snap resolution.
-  4. **`snap` as a boolean vs a set of kinds.** A boolean is the right first
-     shape (the repo does not add speculative options), but "snap to
-     annotations but not to bins" is a plausible early ask, so the widening
-     path should be obvious before the boolean ships.
-  5. **What activates "select within an annotation".** A `<Region>` is already
-     draggable when `onChange` is given, so a click on one is partly spoken
-     for.
-
-  **A visual experiment is in the tree, unsettled** (2026-08-10): light-orange
-  vertical rules at a committed window's edges,
-  `theme.annotation.spanEdge` + `strokeSpanEdges`, drawn from each trace layer.
-  It previews what promoting a sweep to an annotation would look like, and it
-  reads well on both a line and an area. **Two things about it are wrong and
-  need deciding before it stays:**
-  - **A real annotation cannot sit there.** Annotations render in the **SVG
-    overlay above** the canvas; these are canvas-side _under_ the trace ink,
-    because "underneath" is what was asked for. So the experiment shows a look
-    the annotation register cannot currently produce. Either the rules move
-    above the ink, or the register gains a canvas-underlay pass.
-  - **It collided with the brush band, twice.** Mid-drag the band strokes its
-    own edges at the same two x positions, and at rest the **resting block
-    band** did too — so each boundary carried two vertical rules a pixel apart,
-    reading as one muddy smear. Fixed by making the rules committed-only and by
-    suppressing the resting block band on a span-only row, which was a bug in
-    its own right: that band previews "a drag here selects this block", and a
-    trace has no blocks. The lesson generalises — **a boundary should be marked
-    once**, and three separate things now want to mark one.
-  - **Every spanned layer draws its own copy** at the same x. They are opaque so
-    the overdraw is idempotent, but that is a workaround for the rules living on
-    the wrong owner: a window's edges belong to the row, not to each trace in
-    it. Two traces currently stroke the same two lines twice.
-
-  **Note on scope:** promoting a sweep to an annotation may not need library
-  machinery at all — `onCreate({kind: 'region'})` exists and a consumer holding
-  the span can create it in a line, which is the same call made for
-  `mergeSpans` and the lists' set arithmetic. **Snapping cannot be done
-  consumer-side**, because it has to happen _during_ the drag. That asymmetry
-  is the argument for building the registry and leaving promotion to policy.
-
-- **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
-  litmus rather than by argument: every built-in **and** SpiderRock's gapped
-  crosshair written against it with nothing needing a new slot. The surface
-  count has already been found short **twice** — three slots became four when
-  the inline/flag chips turned out to be DOM in plot space — so the contract
-  publishes on evidence, not on a claim of sufficiency.
-- **[PND-SELECT]** — Selection Phase 2 remainder. Most of the phase shipped
-  under other tasks: multi-select as `<MultiSelector>` plus the plural
-  `onSelect` ([PND-INTERACT], [PND-INTERACTDOCS]), a `LineChart` hit test
-  ([PND-TRACESEL]), and theme `dimmed` states. **Still unbuilt:**
-  `selectionMode` and the `snapToClosest | snapToClosestSelected` prop —
-  re-decide whether either is still wanted now that `<MultiSelector>` exists.
-  RFC: [selection.md](docs/rfcs/selection.md).
-- **[PND-BOXPLT]** — Finish BoxPlot: a line-only / stem-without-caps
-  `shape` (today `whisker`, `solid` or `none`). The rest of the ticket has
-  shipped (write-up in the breakout plan).
-- **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
-  its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
-  centre: with the solid shape, ink and hit are both ~50px wide everywhere
-  (they agree). With the whisker shape, in the p75→p95 region the drawn stem is
-  **2px** while the hit is **50px** — so clicking visually empty plot beside a
-  stem selects the box. That directly contradicts the bar rule shipped this
-  same wave, where a click above the ink is the _deselect_ path, so the two
-  layers now disagree about what empty space means. Sharpest under `offset`
-  (paired call/put boxes), where two ±4px-shifted boxes have near-identical hit
-  rects and layer order decides the winner.
-- **[PND-HITMODE]** — **The stacked/categorical `hitTest` ignores `mode`, so
-  hover is ink-only there.** The single-series path takes `(px, py, xScale,
-yScale, mode)` and uses `mode` to let hover claim the whole slot while
-  select requires the drawn ink (#582's continuous hover model); the stacked
-  path takes no `mode` and is ink-only for both. So hovering above a short bar
-  reports nothing on a categorical or stacked chart and reports the bar on a
-  time-axis one. Carries a design question — which segment an above-the-ink
-  hover should report on a stack — which is why it isn't a one-liner.
-- **[PND-TICKGAP]** — **The trading axis's tick budget doesn't bound label
-  spacing under collapse.** `TRADING_TICK_PX` budgets 65px of plot per tick and
-  picks the finest grain that fits, but a wall-clock anchor that falls in
-  closed time gets relocated to the session open — a `00:00` anchor lands at
-  09:30, ~33px from that session's `12:00` label. The budget measures
-  wall-clock spacing while the axis draws in trading time, so it does not bound
-  what it thinks it bounds. Visible in every `MultiSelector/TradingSessions`
-  story.
-- **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
-  chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
-  fix).
-- **[PND-AXES]** — Axis backlog (label align, custom ticks, scale variety) +
-  the deferred value-axis naming follow-up. (Relative/elapsed time is done —
-  `<ChartContainer origin>`; **symlog is done** — `<YAxis scale="symlog"
-linearWindow>`, [PND-SYMLOG].)
-- **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the
-  `ValueSeries` algebra only when a second consumer (geo) pulls.
-- **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var
-  naming convention, no new plumbing).
-- **[PND-YFIT]** — `<YAxis>` can only fit the whole series, never the visible
-  window, so a narrow band (a 20-period Bollinger on 150k bars) is a few pixels
-  tall and zooming in can't recover it. The process demo works around it with
-  ~40 lines of its own (`apps/process-demo/web/Viz.tsx`, `useVisibleExtent`).
-  Likely shape: opt-in `<YAxis fit="visible">`, default unchanged; open
-  questions (pan stability, readout) in the breakout plan.
-- **[PND-LOGTICK-N18]** — Unexplained sixth log-axis label on Node 18 (CI only;
-  blocked the v0.56.0 publish twice). The test was loosened to a subsequence
-  check, which is a workaround, not a diagnosis. Next: run the charts suite on
-  Node 18 and dump every digit-bearing label to see whether the tick selector
-  depends on the environment.
-- **[PND-HEATLABEL]** — Heat map leftovers: the cell's value drawn in the cell
-  when it fits (text colour must stay readable at both ends of the ramp), and
-  smooth colour instead of steps if a consumer asks. (The grouped two-level x
-  axis it also listed belongs to [PND-AXES].)
-- **[PND-AREAFADE]** — When an area's zero line is off the plot, start the
-  colour fade at the real zero line rather than the clamped edge, so the fill
-  runs off the bottom instead of fading out at it. Raised with the owner when
-  the baseline stopped widening the axis (2026-10-08); not decided. Gradient
-  fill only: a solid fill (`AreaStyle.flatFill`) has no fade to anchor.
-- **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
-  charts layers take only `TimeSeries`, forcing a fresh per-tick handle
-  (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
-  a documented cheap-handle idiom for live charts — closes it. Overlaps
-  [PND-PARITY] / the live layer.
-- **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
-  (offscreen-stream spike). A scrolling window misses the M4 cache every
-  frame, so `drawLine` re-thins every visible point: on an M1 Pro at Retina
-  resolution, 120 fps at 1M points (4.3 ms a frame), 74 fps at 3M. Folding
-  ticks into one bucket per pixel column as they arrive held 120 fps at
-  0.6 ms a frame or less, up to 29M points in a full window. Design call:
-  a line/area mode vs a live layer ([PND-LIVELYR]), and what zoom/hover
-  read.
-- **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
-  worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
-  page-thread chart fell to 33. Blocked today by layer draw closures,
-  unexported draw functions, page-thread hit-testing and DOM theming.
-  Its guide should show the socket on its own worker (in the spike that
-  kept every tick flowing where the drawing worker's own socket fell
-  behind); an interim guide without the charts package shipped 2026-11-01
-  (`how-to-guides/live-chart-in-a-worker`). Also fix `drawLine`'s fresh
-  `boundaries = []` default (defeats the M4 cache for direct callers)
-  before exporting draw functions.
-- **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
-  (the assessment's **C2**), plus a crossing-band fill (**C3**). The
-  fixed-time half (`xOffset`, core `offsetTime`) has shipped (write-up in
-  the breakout plan); what remains is the **bar-count** form, which differs
-  across a session break. `ichimokuOffsets` says how far to draw Ichimoku's
-  spans (+26 forward, chikou −26 back); Alligator / Gator would use the same
-  lever. Charts needs (a) x-domain padding measured in **bars** past the
-  last datum and (b) a per-layer `xOffsetBars` — trivial on a daily grid,
-  calendar arithmetic intraday (it lands on `scaleTradingTime`) — and (c) a
-  `BandChart` mode that fills between two _crossing_ columns with the
-  colour flipping by which is on top (the cloud; generally useful for
-  price-vs-MA shading). Data side is done; this is the charts half.
-  Breakout: `docs/plans/PND_CHARTS_PLAN.md`.
-- **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
-  record the owner asked for (confirm still wanted).
-- **[PND-APIREV-REST]** — What the 2026-08 API review left open after
-  [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] shipped
-  (#590/#592/#593/#594; note:
-  [charts-api-review-2026-08.md](docs/notes/charts-api-review-2026-08.md)):
-  - **The union-typed-series limitation.** A layer's props are a union _per
-    series kind_, so a value typed as `TimeSeries<A> | ValueSeries<B>` (a
-    wrapper forwarding whatever it is given) matches no member and must be
-    narrowed or cast — `DurationAxis.stories.tsx` is the worked example. The
-    owner chose this over the single-generic alternative (`LineChartProps<Sr>`,
-    which distributes over the union but changes every props type's public
-    generic parameters); both are verified in
-    `spikes/charts-type-seam/REPORT.md`. Revisit only if a real consumer hits it.
-  - **A Codex adversarial pass on the type work**, recommended by the Layer-2
-    reviewer at medium confidence and not yet run. The class it flags is real:
-    the type seam twice shipped guarantees that looked right and were inert
-    (the two-generic widening; the loose-vs-no-numeric conflation), so "it
-    compiles" is not evidence "it checks".
-  - **`<BarChart categories>` selection/readout on the horizontal axis** — the
-    capability landed but its interaction contract was not exercised beyond
-    the geometry; and **the gallery funnel** still hand-builds its ordinal
-    bins + `i + 0.5` ticks because it lives on the unmerged
-    `feat/gallery-track-g` branch. Simplify it when those meet.
-  - **`categories` + horizontal + a multi-group stack** is untried; only the
-    one-segment case has a story.
+**Open issues:** Linear project [Charts](https://linear.app/pondts/project/charts-57e76455bf22) (label `charts`).
 
 ### Time zones
 
@@ -395,39 +128,21 @@ is a parameter, never state on `Time` / `TimeRange` / `Interval`; **one**
 zone-arithmetic implementation in core, consumed by charts, so the bucket
 `aggregate` used and the tick that labels it are the same instant; defaults
 do not move (core UTC, charts viewer-local); the d3 specifier strings stay
-the format API. What is left is Phase 2. Plan:
+the format API. What is left is Phase 2. Frozen plan:
 [PND_TIMEZONE_PLAN.md](docs/plans/PND_TIMEZONE_PLAN.md).
 
-- **Phase 2, consumer-gated:** **[PND-TZLIVE]** calendar sequences on
-  `Trigger.clock` (still refused; live `aggregate` takes them since #844);
-  **[PND-TZFLOW]** the zone flows from the sequence to the aggregate's
-  output so the chart can default to it; **[PND-TZDAYGRID]** sub-day grids
-  anchored at zone-local midnight.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (label `timezones`).
 
 ### Docs site, landing, and API reference
 
 The docs-site wave shipped P0–P1 and most of P2/P3 (Learn track, the
 interaction and annotations reference sections, Axes/Layout/Chart-types, the
-financial hub, and the in-site API reference for core + charts). Plan:
+financial hub, and the in-site API reference for core + charts). Frozen plan:
 [PND_DOCS_PLAN.md](docs/plans/PND_DOCS_PLAN.md) · plan notes:
 [charts-docs-site-plan-2026-07.md](docs/notes/charts-docs-site-plan-2026-07.md),
 [core-and-landing-docs-plan-2026-07.md](docs/notes/core-and-landing-docs-plan-2026-07.md).
 
-- **[PND-STORY]** — P2 finish: story-coverage fill for thin Storybook groups
-  plus the prop-identity recipe (#464 landed only the tree scaffolding).
-- **[PND-DOCP3]** — P3 remaining reference pages: Data adapters, Rendering &
-  performance, Design philosophy ×2, Accessibility, Troubleshooting, RTC
-  migration, the financial end-to-end guide.
-- **[PND-GUIDES]** — P4 guides library: ops-dashboard, annotation workflows,
-  value-axis guides + remaining recipes.
-- **[PND-LAND]** — Landing-page story + remaining core concept pages beyond
-  the transforms set.
-- **[PND-APIREF]** — In-site API reference completion: `{@link}` resolution,
-  react/fit/financial tranches, big-page ergonomics, missing class-level
-  docstrings.
-- **[PND-OBSDOC]** — "Observing pond-ts in production" how-to: the
-  documentation-backlog items (pushMany guidance, bench-honesty callout, GC
-  snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
+**Open issues:** Linear project [Docs](https://linear.app/pondts/project/docs-e90d5dd41988) (label `docs-site`).
 
 ### Agent adoption
 
@@ -440,69 +155,21 @@ zero npm keywords on every package, `pond-ts` **last** in `npm search "time
 series"`, not indexed by Context7, a bare-URL `llms.txt` with a 1.2 MB full
 dump, dead docs links in two shipped READMEs and eight docs pages.
 [PND-ADOPTMETA] / [PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped
-(#722 + owner-applied GitHub topics; outcomes in the breakout). Plan:
+(#722 + owner-applied GitHub topics; outcomes in the breakout). Frozen plan:
 [PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) (baseline table,
 per-task reasoning, deferred alternatives).
 
-- **[PND-SKILL]** — The in-repo Claude Code plugin marketplace shipped in the
-  first tranche (#722). Remaining: Cursor rules + a Codex snippet, deferred
-  until the skill has survived one cold-start run.
-- **[PND-PREDECESSORS]** — Point the two unmaintained predecessors at their
-  successors. `esnet/pond` (`pondjs`, last release 2019, ~10.5k downloads /
-  month) and `esnet/react-timeseries-charts` (last release 2019, ~6.4k / month)
-  still outdraw pond 4:1 and mention no successor anywhere. Drafts — an issue
-  and a README notice per repo, in the original author's voice — are in
-  `docs/adoption/predecessors/`. Posted: both issues and the
-  react-timeseries-charts README PR (URLs in the breakout); **owner action
-  open:** the `esnet/pond` README PR.
-- **[PND-COLDSTART]** — The measurement loop: fresh headless agents, one
-  realistic task, four harness arms (nothing / pond in deps / skills / skills
-  - a competitor). **Run 1 (2026-09-12, n = 1 per arm):** the no-harness arm
-    never mentioned pond; the deps arm read the tarball `AGENTS.md`; both skill
-    arms chose pond within seven turns, one uninstalling `arquero` to do so.
-    Write-up and next steps:
-    [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
-    harness in `docs/adoption/cold-start/`. [PND-PARTCOL] (the library friction
-    it surfaced) shipped, and run 1b re-ran arms C/D against a local build of
-    the fix; a re-run against the published package is pending.
-- **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
-  danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
-  index phrased the way an agent receives the job. Source:
-  `docs/notes/agent-workloads-2026-07.md` §3.
-- **[PND-ERRLINKS]** — Errors agents hit carry the fix and a `pond-ts.org`
-  URL. Deferred until [PND-COLDSTART] shows which errors are actually hit.
+**Open issues:** Linear project [Docs](https://linear.app/pondts/project/docs-e90d5dd41988) (label `adoption`).
 
 ### Accessibility — audit and fixes, library-wide
 
 Pond's interaction surface grew one gesture at a time — cursors, selection, the
 sweep, the 2-D rect, the list range gesture — and each landed with its own
 keyboard story or none. Nobody has yet walked the **whole** surface from a
-keyboard or a screen reader. Plan (and the finding register):
+keyboard or a screen reader. Frozen plan (and the finding register):
 [PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md).
 
-- **[PND-A11Y]** — **Audit the interaction surface, then fix.** Per surface,
-  not per component: what can a keyboard user do, what does a screen reader
-  say, and what does the DOM claim. Findings accumulate in the breakout plan
-  as they are found — including the ones deliberately not fixed and why — so a
-  later pass does not re-derive them.
-
-  **The finding that prompted it:** the list family now supports single and
-  multi-row selection by pointer _and_ keyboard, and **none of it is exposed to
-  assistive technology.** `aria-selected` is not valid on a plain `<tr>`, and
-  the obvious repair (`role="grid"`) promises cell-level Left/Right navigation
-  the list does not implement — telling assistive technology a lie about the
-  widget is worse than the current silence. The honest options are implementing
-  the full ARIA grid pattern or rebuilding the interactive list as a
-  `listbox`, and that is a design decision rather than a prop. Also open on the
-  same surface: no roving tabindex (a 100-row list is 100 tab stops), no touch
-  affordance for a range at all, and unverified focus visibility against the
-  selection band.
-
-  **The canvas is in scope and unaudited.** Every chart gesture is
-  mouse-driven with no keyboard path, and what a screen reader should be told
-  about a chart is a question this has not opened. The first step there is an
-  inventory, not a fix — recorded so the audit's scope is not silently "the
-  lists".
+**Open issues:** Linear project [Charts](https://linear.app/pondts/project/charts-57e76455bf22) (label `a11y`).
 
 ### Agent workloads — the defensible bench
 
@@ -519,38 +186,7 @@ questions is missing _primitives_: unpivoting a wide row into a value-axis
 series (a term structure is the object these people think in), tall→wide pivot,
 and ranking across partitions.
 
-- **[PND-AGENTBENCH]** — **Built and measured** —
-  `packages/financial/scripts/perf-agent-bench.mjs`. Q11 (500 symbols × 1000
-  bars, per-symbol `zScore`, rank across symbols) answers in **39 ms**, and
-  **79 ms at 1M points** — both inside the 100 ms gate, so **pond is the client,
-  not the viewer**: a resident panel answers a 7-question flurry in 266 ms
-  against ~140–350 ms of round trips for the same questions, and that is before
-  any caching. Two findings reorder what comes next:
-  - **`withWorkers` does nothing here (1.00×)** — it partitions _within_ a
-    series, and every partition is 1000 rows, far below `MIN_ROWS`. The panel
-    shape wants parallelism _across_ partitions. Right idea, wrong axis.
-  - **`partitionBy`+`toMap` is 43–44% of the time and it is serial.** The
-    studies are only ~53%, so the Amdahl ceiling for partition-level
-    parallelism is **2.0×**, not 8×. Making the split cheaper is worth as much
-    as threading it, and is worth doing first.
-
-  Remaining: a flurry variant driven through the process graph, to measure the
-  content-addressed cache rather than infer it (repetition is 68% of the work in
-  a realistic 21-from-7 session).
-
-- **[PND-SPLITCOST]** — `partitionBy`+`toMap` speed-up **shipped** (18.1 →
-  12.7 ms at 500×1000; write-up in
-  [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md)). Remaining, unmeasured: the
-  ~7 ms of `withRowSelection` + `TimeSeries` construction per group — a
-  contiguous-range slice could skip the gather where partitions happen to be
-  consecutive.
-- **[PND-UNPIVOT]** — Ingest a **long** value-axis result cleanly (tenor/strike
-  as a key column). Narrowed by the ClickHouse boundary in §8 of the note:
-  unpivot and pivot are `arrayZip`+`ARRAY JOIN` and conditional aggregation
-  respectively, so they belong in the query — pond's job is to receive the long
-  shape, not reshape a wide row in JS.
-- **[PND-XSECT]** — Rank/reduce across partitions. `partitionBy` gets you
-  per-symbol; nothing ranks across.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (label `agent-bench`).
 
 ### Numerical classes (RFC — not adopted)
 
@@ -590,453 +226,44 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0 to R3
 (batch core, financial studies, live layer) are complete; the R4 bridges
 (`@pond-ts/wasm` on npm, `pond-timeseries` on PyPI), column expressions
 ([PND-EXPR]) and the R5 port of `@pond-ts/process` (crate `pond-process`, not
-yet on crates.io) are built. Most entries below are
-pond-ts bugs found while porting.
+yet on crates.io) are built. The pond-ts bugs found while porting are Core
+issues (label `rs-parity`).
 
-- **[PND-RSFILTER]** — What is left of the pond-rs filter speed-up. The
-  rewrite (2026-11-23, in the breakout plan) took "keep rows where v > 500"
-  on 1M rows from 4.3 to 2.8 ms on one core of an M1 (in a Linux VM); polars
-  takes 1.9 ms there. The gap is all in the text column, and closing it is
-  two owner decisions: (1) skip Arrow's re-check of the text pond-rs has
-  just copied, which needs the crate's first `unsafe` block (2.8 → 2.1 ms;
-  a dictionary column's keys are re-checked the same way, 0.27 ms); (2)
-  hold text as 16-byte views, the parked `perf/pond-rs-text-views` branch
-  (the text copy 1.6 → about 0.5 ms, at the export cost that parked it).
-  Also left, no decision needed: split one column's rows across cores (four
-  cores give 2.3 ms today, polars 1.06 ms on ten); a look at the
-  WebAssembly build (6.0 ms, no SIMD); the bridges timed again on what
-  merged; and a quiet run on macOS itself. The first run there, on a busy
-  machine, gave 6.4 → 3.9 ms against polars 1.36.1 at 2.1, and showed that
-  on macOS the allocator matters to the new path too (3.8 ms with the
-  system allocator, 2.8 with mimalloc, which the Python bridge uses), so
-  the quiet run should time both.
-
-- **[PND-LIVEKEY]** — Outputs gathered from live partitions (`collect` /
-  `apply`, both libraries) don't say which partition they came from: a
-  per-host aggregate's closed bucket carries only its interval and reducer
-  columns. In the R3 step 7 agent trial all 10 pond-rs agents worked around
-  it (9 with a `first` / `keep` reducer on the key column). Options: write
-  the partition column into gathered outputs, or pass the key to the
-  `apply` recipe. An API change in both libraries; needs a decision.
-- **[PND-RUSTPUB]** — pond-rs 0.1.0 is on crates.io (first publish
-  2026-10-29, with the `CARGO_REGISTRY_TOKEN` secret). Left: set up crates.io
-  trusted publishing for the crate and delete the secret; `release-rs.yml`
-  already falls back to trusted publishing when the secret is gone. Details
-  in `docs/plans/PND_RUST_PLAN.md`.
-- **[PND-SERIESTABS]** — Three "Working with series" pages are still
-  TypeScript only: `series/arrays` (list columns, 22 examples),
-  `series/columns` (9) and `series/other-chart-libraries` (5). Add Rust and
-  Python tabs as the Concepts pages got them (each a whole program, run by
-  the snippet scripts). For other chart libraries the Python tab is the
-  frame hand-off (`to_pandas` / `to_polars`) to matplotlib or plotly.
-- **[PND-RUSTDOCS]** — pond-rs pages on the docs site
-  (`website/docs/rust/`) and the Rust / Python tabs on the core pages
-  (what is covered so far is in the breakout plan). The Python tabs already
-  run in CI (`check-python-snippets.py`). Left: run
-  `website/scripts/check-rust-snippets.sh`, which checks every Rust example
-  as a whole program, in CI (today it runs by hand); keep the pages in step
-  as pond-rs changes.
-- **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
-  column that is missing (a typo) or not a number column return an output of
-  all gaps instead of an error, so a mistake looks like "no data". Except
-  `rollingMin` / `rollingMax` / `rollingPercentile`, which throw on a missing
-  column (core `rolling` checks the name) but still give gaps for a text
-  column. Found building pond-rs R2 step 1, which refuses both. Fix: check
-  the source in the shared study helpers (a behaviour change, so it needs a
-  CHANGELOG entry); the study parity fixture's `name` / `flag` / `nope` cases
-  pin today's behaviour.
-- **[PND-CALGEN]** — `TradingCalendar.fromRules` / `generateSessions` are
-  slow: a 30-year New York calendar with a lunch break takes ~1.3 s in
-  pond-ts (pond-rs: 3.4 ms). Measured: ~43 µs per Temporal-polyfill
-  `ZonedDateTime.from` call, one per open, close and break edge (four a
-  day here; dropping the break halves the time), plus ~0.24 s walking the
-  dates. Found building pond-rs R2 step 3a. Fix idea: resolve each day's
-  offset once and add the wall-clock minutes, falling back to Temporal only
-  on the days the zone's offset changes.
-- **[PND-RWIBIG]** — `randomWalkIndex` takes time in proportion to its
-  `period`, even past the row count: it walks every horizon from 2 to
-  `period`, and any horizon longer than the series already makes every row
-  a gap. On 120 bars, period 1e4 takes 42 ms, 1e5 0.3 s, 1e6 5.2 s
-  (measured). A picker's slider or an agent can reach that. Fix: return all
-  gaps when `period >= length` (pond-rs does, same output). Found by the
-  pond-rs catalog's huge-option sweep (R2 step 4).
-- **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
-  error cases: `diff('nope')` throws a raw `Cannot read properties of
-undefined`; `rolling` with an unknown column says "aggregate mapping".
-  Agents act on error text, so both should name the column and the call.
-  More from the pond-rs R1b step 3a survey (2026-10-19; each reproduced
-  against the built package): an unknown or key column in `rate` /
-  `pctChange` / `cumulative` / `shift` is a raw V8 `TypeError` too;
-  `fill('bogus')` silently does nothing; `fill({ nope: 'hold' })` silently
-  ignores the unknown column; `fill`'s `limit` is never checked (`NaN`
-  means no limit); `parseDuration` rejects the number `0` but accepts
-  `'0s'`; `fill` on an empty series skips all checks; the `maxGap` doc says
-  "prior known value to next known value", but gaps at either end are
-  measured to their own first or last row.
-- **[PND-ARROWTSVAL]** — pond-ts `fromArrow` reads a `Timestamp` value
-  column (not the key) as raw counts in its own unit: a microsecond column
-  holding 1 comes in as `1`, not `0.001` ms. `Date32` value columns are
-  converted to ms, and the key is scaled, so the value path is the odd one
-  out. Found 2026-10-18 by the pond-rs Arrow probe.
-- **[PND-KINDREDUCE]** — pond-ts runs number reducers on text and
-  true/false columns at run time instead of refusing them: `aggregate` with
-  `sum` on a string column gives 0 per bucket, `avg` / `max` give gaps. Its
-  types already refuse these, so only untyped callers (JSON-driven mappings,
-  agents) reach it. pond-rs returns an error naming the column; pond-ts
-  should throw the same. Found 2026-10-18 while adding text columns to
-  pond-rs (R1b step 2a).
-- **[PND-ARROWTYPE]** — pond-ts `TimeSeries.fromArrow(table, { time: 'ts' })`
-  can't be typed truthfully: without a schema type argument a chain fails to
-  type-check at `rolling` (mapping becomes `never`), and the schema type's key
-  must be named `'time'` (`FirstColumn`), so a file keyed `ts` has to be
-  described as `time` while the series really calls it `ts`. The docs
-  (`creating.mdx`) suggest exactly that pair. Found 2026-10-22 writing a whole
-  read-Arrow-then-chain program (thread "Chaining studies and operators").
-- **[PND-ARROWNUM]** — the pond-rs step 8i4 bench saw a nullable number
-  column add ~60 ms per 1M rows to pond-ts `fromArrow`. Not reproduced on a
-  single-chunk `vectorFromArray` table (6.6 → 16 ms, 2026-10-22); the bench
-  read an IPC file, which may give a shape the bulk null-copy path declines
-  (`copyNumericWithNulls`) and so falls back to per-row `get`. Check with
-  that file before changing anything. Split out of [PND-ARROWTEXT].
-- **[PND-POINTSTS]** — a value column named `ts` collides with the time
-  in pond-ts's points: `toPoints` writes the column's value over the time
-  (and `JSON.stringify` then drops the time where the column has a gap),
-  and `fromPoints` reads the time into the column too. pond-rs refuses
-  such a column in both directions; pond-ts should throw, as `toColumns`
-  does for its own name collisions. Found 2026-10-20 (pond-rs R1b step
-  8d2).
-- **[PND-ARRAYCHECK]** — pond-ts's array calls never check the column
-  they are given. `arrayContains('v', 1)` on a number column, or on a
-  column that does not exist, gives an empty series; `arrayAggregate` with
-  `count` on a number column replaces it with a column of gaps marked
-  optional; `arrayExplode('nope')` gives no rows. `mapColumns` and `fill`
-  with an array holding `NaN` silently leave a gap, where `map` and
-  `new TimeSeries` throw; `shift` / `diff` on an array column throw an
-  internal `withColumnReplaced` message. pond-rs returns errors naming the
-  column. Found 2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ARRAYKIND]** — pond-ts `arrayAggregate` writes `first` / `last` /
-  custom results as `string` unless `kind` is given, and `arrayExplode`
-  defaults to `string` too, so both throw ("expected string") on number or
-  true/false arrays; `aggregate` on the same column takes the source kind.
-  `collapse` with an array result infers `string` and silently stores
-  gaps. pond-rs takes the elements' kind when none is given. Found
-  2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ARRAYKEY]** — pond-ts compares arrays as text or by reference
-  where it needs a key or an order: `groupBy` / `partitionBy` /
-  `pivotByGroup` on an array column key by `String(arr)`, so `['a,b']` and
-  `['a', 'b']` share a group and `[]` is `''`; `dedupe({ max })` on arrays
-  compares their text (`[9]` beats `[10]`); `keep` compares arrays by
-  reference, so two equal arrays give a gap (the live store's
-  `valuesEqual` compares them element by element). pond-rs refuses array
-  partition keys. Found 2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
-  number outputs, but it is all-or-nothing per call: one text output (a
-  `first` of a name column) sends every column to the slow general sweep.
-  On 1M rows a 20-row `avg` takes 51 ms alone and 920 ms beside
-  `host: first`. Partitioned rolling always adds such an output for the
-  partition column, so a 20-row `avg` per host takes 3.1 s (pond-rs:
-  169 ms). Proposed fix: decide per column, as [PND-AGGSIBLING] did for
-  `aggregate`; the fast path already drives the same window states, so
-  answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
-  Found 2026-10-20 (pond-rs R1b step 8g).
-- **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
-  unknown name gives the series back unchanged, and a text column gives a
-  gap in every row (`baseline` on a text column also gives gaps). pond-rs
-  refuses both. Proposed fix: the `RangeError` `scan` already gives.
-  Found 2026-10-21 (pond-rs R1b step 8h).
-- **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
-  bits) over a window of identical values is not exactly 0 once different
-  values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
-  window at 0.1, `1.7e-10` at 123456.789). The running sums carry rounding
-  from the values that left. Callers that divide by it (z-scores) or test
-  `sd > 0` get a meaningless value instead of a skip. Options: return exactly 0
-  when the window is flat (needs a cheap flatness check), or document it.
-  Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
-  guarded against it).
-- **[PND-DEQUEALLOC]** — The `min` / `max` reducer state
-  (`rollingMonotoneDeque`) allocates an object per row and, on small
-  windows, copies the deque's array on almost every row. Batch rolling over
-  number columns no longer uses it (#929 gave that sweep its own
-  `Int32Array` deque; write-up in the columnar plan), but live rolling and
-  the generic batch sweep (a call with a non-number output, for one) still
-  do. Proposed fix: give the state the [PND-ROLLDIFF] deque (plain number
-  arrays, compacts only past 1,024 used entries). Found 2026-10-20.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (label `rs-parity`); [Docs](https://linear.app/pondts/project/docs-e90d5dd41988) (label `docs-site`); [Financial](https://linear.app/pondts/project/financial-8b09ced936c3) (labels `studies`, `trading-time`); [Rust](https://linear.app/pondts/project/rust-d615b34b262d) (label `pond-rs`).
 
 ### `@pond-ts/financial`
 
 Calendar engine + trading-time axis + the first studies batch (10 studies,
-pandas-oracle-verified) have shipped. Plan:
+pandas-oracle-verified) have shipped. Frozen plan:
 [PND_FINANCIAL_PLAN.md](docs/plans/PND_FINANCIAL_PLAN.md) · assessment:
 [financial-indicators-assessment-2026-07.md](docs/notes/financial-indicators-assessment-2026-07.md).
 
-- **[PND-STUDY]** — **105 studies shipped** — every corpus row that needed
-  only a kernel (batch-by-batch history in the breakout plan). What remains of
-  the 124 is gated on core or charts, not on `@pond-ts/financial`:
-  - **G5 — forward displacement past the series end** (2): Alligator and Gator
-    Oscillator, a small batch once [PND-XOFFSET] gives the offset somewhere to
-    land.
-  - **G6 — repainting studies** (4): Darvas Box, Fractal Chaos Bands and
-    Oscillator, Williams Fractals. Ship batch-only with a documented
-    "confirmed at bar N" column (ZigZag is the precedent), or wait for a live
-    repaint contract — a decision.
-  - **G4 — calendar-gated** (2): Projected Aggregate Volume and Projected
-    Volume at Time; low value, deferred.
-  - Six skipped by decision. Package-wide questions, none blocking:
-    `ema()`'s seed against TA-Lib's, and the inconsistent answer
-    `rollingValues` gives to a misnamed column.
-- **[PND-STUDYCAT]** — Runtime study catalog **shipped complete in v0.67.0**
-  (all 109 fluent methods; F-charts-27 resolved in #736). **Open only for a
-  decision:** F-charts-26 (no per-output _mark_ — nothing says `macdHist` is a
-  histogram or pairs `bbUpper`/`bbLower` as a band) and F-charts-28
-  (`nearest` on charts' `TrackerSample`), which are one question about how
-  much rendering meaning belongs in a data package. Close this task, or split
-  those two out, once that is decided.
-- **[PND-TCAL]** — Trading-time deferred items: point-key slot widths on the
-  discontinuous axis, overnight sessions in `fromRules`. (The exchange-zone
-  items shipped with the time-zone work; see PND_TIMEZONE_PLAN.)
+**Open issues:** Linear project [Financial](https://linear.app/pondts/project/financial-8b09ced936c3) (labels `studies`, `trading-time`).
 
 ### Live layer
 
-Robustness debt plus the queued composition workstreams. Plan:
+Robustness debt plus the queued composition workstreams. Frozen plan:
 [PND_LIVE_PLAN.md](docs/plans/PND_LIVE_PLAN.md).
 
-- **[PND-LATE]** — Late-event propagation through stateful live transforms
-  (needs a reorder-aware event payload; overlaps [PND-CHANGE]). Views no
-  longer throw on a late event (2026-10-28, they insert it in order); the
-  recompute of later rows is what remains.
-- **[PND-EVICTDEQUE]** — Two live per-event buffers, the `drop` /
-  `reorder` row backing and rolling history, past ~16k events still copy
-  the whole array on each eviction (~150 µs at 100k events), because V8
-  cannot move a large array's start in place. Needs a start index with
-  occasional compaction behind every reader. (`LiveView` has one since
-  [PND-LVWIN], #761.) Found 2026-10-28 reviewing [PND-EVICTSPLICE].
-- **[PND-LJOIN]** — Live merge / join across sources.
-- **[PND-LALIGN]** — Live `align` + `materialize` (bounded-lag design);
-  prerequisite-or-sibling of [PND-LJOIN].
-- **[PND-LDEDUP]** — Live dedupe converging on the batch `keep` shape.
-- **[PND-BUFWIN]** — Buffer-as-window: the `'buffer'` window key in a
-  fused rolling mapping (reserved, throws today), the `count()`-vs-`length`
-  naming decision, then Tier 3 slicing. (`live.reduce`, `timeRange` and
-  `eventRate` shipped in v0.16.0.)
-- **[PND-TRIG]** — Trigger taxonomy: `Trigger.any` composition; the
-  `Trigger.idle` wall-clock RFC moment (gate on a second signal).
-- **[PND-RESV]** — Live-side reservoir sampling; gated on [PND-CHANGE]'s
-  exact-removal eviction channel.
-- **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
-  rolling shipped.
-- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` (offscreen-stream
-  spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
-  column read out, vs 16 ms to copy the stored chunks' columns. Still a
-  whole-window copy, so it suits throttled snapshots; per-frame reads go
-  through `live.on('columns')` ([PND-COLOUT], built 2026-11-05). Data side
-  of [PND-LIVELYR].
-- **[PND-LVCHAIN]** — A view chained after a window view
-  (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
-  window eviction doesn't emit `'evict'`, so the child's mirror never fires,
-  even under source retention. It grows with every event, and its
-  `eventRate()` counts all of them (10k events 10 ms apart: window 101,
-  filter-of-window 10,000). The pattern is tested, but only before events
-  age out. Found while fixing [PND-LVWIN] (#761).
-- **[PND-LVMIRROR]** — A view on a retention-capped `LiveSeries` makes the
-  source build an `Event` for every row retention drops: 0.7–1.0 ms more
-  per 1,600-row push in Node. The view only reads the last dropped timestamp,
-  but any `'evict'` listener switches the source off its skip-the-Events
-  path. Found while benchmarking [PND-LVWIN] (#761).
-- **[PND-LIVEONEPUSH]** — A one-event `push` on a default (strict,
-  in-order) `LiveSeries` builds a whole one-row column chunk
-  (`validateAndNormalizeColumnar` + `ColumnarStore.fromTrustedStore`), so
-  1M one-at-a-time in-order pushes take 3.9-4.4 s against 0.76-0.8 s for
-  the same rows into a `Reorder` series (2 s grace); ~60% of the time is garbage collection.
-  Measured 2026-10-29 in pond-rs R3 step 7. Fix idea: route small pushes
-  into the chunked backing's coalescing tier (as partition routing's `_stageRowsOpen` does)
-  instead of building a store per push.
-- **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
-  take the batch `{ append: true }` / `{ output }` options added in
-  [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
-  now.
-- **[PND-ONCHUNKISO]** — On a default (chunked) `LiveSeries`, a partition
-  error (a row for an undeclared group) escapes after the batch is stored, so
-  the source skips its own retention and listeners; the per-row backing
-  finishes the push, then throws. Fix by finishing then throwing, or by
-  refusing the whole batch first as pond-rs does. Needs Peter's call; detail
-  in `docs/plans/PND_LIVE_PLAN.md`.
-- **[PND-AGESCAN]** — `maxAge` retention finds its cutoff by walking rows from
-  the front (`#applyRetention`), about 2 ms per 100k rows when each push drops
-  ~1,600 (2–5 ms across runs; `maxEvents` costs nothing measurable). Rows are held in key order,
-  so a binary search would do. Measured 2026-11-01 in
-  `perf-live-push-series.mjs`. At 1M ticks a second (16,000-row pushes,
-  5M rows held) `pushSeries` alone cost 29–67 ms a second with `maxAge`
-  against 1–2 with `maxEvents` (`apps/worker-chart/bench/retention.mjs`,
-  2026-11-01).
-- **[PND-RSPUSHSERIES]** — `@pond-ts/wasm` has no `pushSeries` (pond-rs has
-  `push_series`). Add it with a `{ pushSeries }` step in the live parity
-  generator (`packages/core/scripts/parity/live.mjs`) and
-  `crates/pond-rs/tests/live_parity.rs` in one PR: `packages/rs/test/live.mjs`
-  reruns the generator, so the step alone would break it.
-
-- **[PND-PUSHTIME]** — `pushMany` on a default series makes a `Time` per row
-  and throws it away (`batch/validate.ts`, untrusted intake); the trusted
-  branch already skips it. No API change. The spike profiled it at ~27% of
-  `pushMany` (not re-measured).
-- **[PND-COLSTYPED]** — Type `fromColumns`' `columns` from the schema so a
-  misspelt column name fails to compile. Public type change; needs Peter's OK.
-- **[PND-LIVEFASTDROP]** — `pushSeries` into a `drop` / `reorder` series
-  builds an event per row, like `pushMany`. pond-rs takes columns straight in
-  when nothing is built on the series; port that if a consumer pushes columns
-  into such a series.
-- **[PND-CLAMPHINT]** — The chunked `LiveSeries` intra-batch order error
-  suggests `ordering: 'clamp'`, which `LiveSeries` doesn't have. Fix the
-  message.
-- **[PND-LATCACHE]** — On a default `LiveSeries`, `at(i)` caches every `Event`
-  it builds, and each retention eviction rebuilds that whole cache. Reading
-  every row through `at()` (hover lookups, user loops) slows the pushes after
-  it until retention has dropped those rows: after reading 200k rows, the
-  next 50 pushes of 1,600 took 47 ms each (median) instead of 0.2 ms.
-  Building an operator no longer sets it off ([PND-LIVEREPLAY]). Measured on
-  main 2026-11-01; detail in `docs/plans/PND_LIVE_PLAN.md`.
-- **[PND-LIVECLEAR]** — `clear()` on a default `LiveSeries` builds an
-  `Event` for every row it holds, even with no `'evict'` listener, and finds
-  each row by walking the chunk list: 3.1–3.2 s at 600k rows, 10.4–11.4 s
-  at 3M, 12.4–15.4 s at 5M, against 0.1–0.2 ms for a new series (Node,
-  2026-11-01, two runs). Skip the
-  Events when nothing listens, as retention already does. Found while
-  writing the off-main-thread chart guide; detail in
-  `docs/plans/PND_LIVE_PLAN.md`.
-- **[PND-LIVELOCATE]** — Lookups in the middle of a default `LiveSeries`
-  (`at(i)`, `bisect`, `atOrBefore`) walk the chunk list for every row they
-  touch, so they slow with the batch count: `atOrBefore` on 600k rows took
-  about 4 µs in one chunk and 72–131 µs in 3,750 (a 60 s window fed every
-  16 ms). Keep each chunk's start index and binary-search it. Detail in
-  `docs/plans/PND_LIVE_PLAN.md`.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (label `live`); [Rust](https://linear.app/pondts/project/rust-d615b34b262d) (label `wasm`).
 
 ### Streaming semantics (Phase 4.5)
 
 Adopted milestones A–D from [streaming.md](docs/rfcs/streaming.md): explicit
 time, lateness, finality, keyed state, structured change metadata. B/C/D were
 sequenced behind the columnar substrate, whose batch side is now complete.
-Plan: [PND_STREAMING_PLAN.md](docs/plans/PND_STREAMING_PLAN.md).
+Frozen plan: [PND_STREAMING_PLAN.md](docs/plans/PND_STREAMING_PLAN.md).
 
-- **[PND-CHANGE]** — Milestone A: `LiveChange` source-side change model
-  (append/reorder/evict), internal-first, 5% perf budget. Foundational;
-  unblocks [PND-RESV] and [PND-LATE].
-- **[PND-REPAIR]** — Milestone B: capability-based late repair. Design-ready
-  but driver-light by empirical test — wait for a consumer whose measurement
-  style surfaces it.
-- **[PND-FINAL]** — Milestone C: output finality (`append`/`upsert`),
-  wire-safe `AggregateEmission`, stable output IDs. Prerequisite for
-  [PND-SERVER].
-- **[PND-KEYED]** — Milestone D: `keyBy/window/aggregate` builder with
-  per-key grace, stable identity, `keyTtl`.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (label `streaming`).
 
 ### Columnar substrate (remaining levers)
 
 Batch columnar is complete; live columnar sits at a defensible
 retention-boundary waypoint. Everything left is friction-gated with a named
-consumer signal. Plan:
+consumer signal. Frozen plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
-- **[PND-SCANDATA]** — callback-free forms for the common `scan` folds.
-  A JS step function costs a tuple per row in pond-ts, and in pond-rs a
-  call back into JavaScript per row. `@pond-ts/fit` wants to run its maths
-  on either core, so the folds it needs should be named operators or
-  expressions. Shipped: `cumulative` `'increase'` / `'decrease'` with a
-  threshold (the 3 m climb rule, #906) and maths in expressions (`sqrt`,
-  `sin`, `cos`, `asin`, `atan2`, `pow`, #907; detail in
-  [`PND_EXPR_PLAN.md`](docs/plans/PND_EXPR_PLAN.md)). Add the next as fit's
-  port to operators finds them (breaks / slow-run detection is the likely
-  next).
-- **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
-  ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
-  a series carrying either kind exports through `toColumns` / `toArrow` but
-  cannot come back — the round trip is a compile error on the columnar door
-  and a throw on `ValueSeries.fromJSON`. On `TimeSeries` those kinds are
-  ordinary (the row constructor takes them), so this bites more often than
-  the `ValueSeries` case that surfaced it. The engine work is small — a
-  `'boolean'` branch building a packed bitmap and an `'array'` branch over
-  `arrayColumnFromArray`, plus the sort permutation for both — but it widens
-  `RawColumns` and `fromColumns`' contract, so it wants its own PR.
-  Friction-gated: no consumer has asked yet.
-- **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
-  until a signal arrives.
-- **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
-  only lever for the gRPC ceiling; parked at 2.1× headroom.
-- **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
-- **[PND-DICT]** — Dictionary/string reducer adaptation (step 6):
-  friction-gated.
-- **[PND-KERNEL]** — Algorithm wins from the Rust/WASM spike
-  (`spikes/columnar-wasm/`). Quickselect percentiles (12.9×) and blocked
-  `sum`/`mean` (2.5×) shipped; the write-up and the `minMax` ±0 correction
-  are in the breakout plan. Remaining: a branchless finite guard for
-  `allFinite: false` reductions. (Blocking the guarded sum path was taken
-  with [PND-NANREP]: `blockedSumFinite`.) Acceptance benchmarks:
-  `spikes/columnar-wasm/bench/controls.mjs`.
-
-- **[PND-NANREP]** — **Done except two small follow-ups.** The rule (any
-  non-finite number in a number column means missing) and the storage switch
-  (number columns hold a gap as `NaN` in their own `Float64Array`, no bitmap)
-  have both landed; decision and numbers in the breakout plan. Left:
-  (1) `@pond-ts/financial` comments and one oracle case description still say
-  "`withColumn` rejects `±Infinity`" — stale wording, guards still correct;
-  (2) `spikes/columnar-wasm/` benches and parity test still build
-  `Float64Column` with the old `(values, length, validity, allFinite)`
-  signature (those calls now throw) — port them (stamp `NaN`
-  at gaps) before the spike is next used as an acceptance benchmark
-  ([PND-KERNEL]).
-
-- **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
-  the standing acceptance benchmark:
-  `packages/financial/scripts/perf-agent-queries.mjs` (500k 1-minute OHLCV
-  bars, resident, per-query latency). Run it before and after anything
-  touching studies, `rolling`, or the reducers.
-
-  A 5-study strategy pass has gone **318 ms → 84 ms (3.78×)** across
-  [PND-ROLLKERN] and [PND-STUDYBOX]; summary facts were already under 3 ms and
-  are unchanged. Studies remain the dominant cost by an order of magnitude, so
-  they stay the place effort belongs. Current: `bollinger(20)` 31.5 ms,
-  `zScore(20)` 26.5 ms, `envelope(20)` 12.5 ms, `sma(20)` 10.5 ms,
-  `percentChange()` 4.5 ms, `ema(20)` 3.9 ms.
-
-  **Against the pandas oracle** (`scripts/perf-vs-oracle.mjs`, the timing
-  counterpart to the correctness oracle): the strategy pass has gone from
-  **5.6× slower than pandas to 1.64×**, and `median` / `percentile` are now
-  _faster_ than pandas (0.98× / 0.85×) on the back of the quickselect change.
-  Worst case is 2.39×. Two architectural differences explain most of what is
-  left and are the honest next question: pandas tracks missing values as
-  **inline NaN** in the same float64 buffer where pond-ts tests a **validity
-  bit per cell**, and pandas mutates a frame in place where every pond-ts
-  operation returns a new immutable series.
-
-  Next candidates, in the order the numbers suggest: a `stdev` specialisation
-  in the rolling kernel (now the dominant per-row cost in `bollinger` /
-  `zScore`, and the one reducer deliberately left on the state path because its
-  order-independent Welford delete is not worth duplicating carelessly);
-  `ema`, which is now the only study that did not move because it composes on
-  `smooth` rather than the rolling kernel; and re-asking the Rust question
-  against this new baseline (`spikes/columnar-wasm/REPORT.md` §10).
-
-- **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
-  HIGH — methods tree-shake out of browser bundles) + `hasAnyDefined()`.
-  Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
-  [PND-NANREP] — so a `{ missing }` fill option is only worth adding if a
-  consumer needs a value other than `NaN`.)
-- **[PND-DISTINCT]** — A column's distinct values
-  (`column(name).distinct()`, string and number), using the dictionary where
-  the column has one. Today an agent builds one `TimeSeries` per value via
-  `partitionBy(col).toMap().keys()` to read the names; only `uniqueCount()`
-  exists. Small. Surfaced by cold-start run 1b.
-- **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
-  append; design settled, build when the binary WS feed consumer arrives.
-- **[PND-GATHER]** — Dashboard snapshot-cost queue:
-  `partitionBy().toMap()` gather-only, `column.dropMissing()`, two doc
-  nudges.
-- **[PND-AUDIT]** — v2-audit P2 backlog (papercuts, parity matrix, CI TZ
-  matrix + perf-in-CI, schema helpers, bundle re-pin).
-- **[PND-CITYPE]** — Widen CI type-checking to `test/` (the v0.14.2 slip
-  class); ~half a day of existing-error cleanup first.
-- **[PND-PERF]** — Low-priority micro-perf leftovers from the original
-  audit; address incrementally.
-- **[PND-REACT]** — React remainders: `dt = 0` docs, dashboard-guide fixes,
-  `useSyncExternalStore` migration.
+**Open issues:** Linear project [Core](https://linear.app/pondts/project/core-56ab562a7fc7) (labels `columnar`, `core-backlog`).
 
 ### `@pond-ts/process` — declarative processing graph
 
@@ -1044,8 +271,8 @@ A package that turns "compute these derived series" from imperative calls into
 a declarative graph: plans arrive as data, a registry is the schema, identity is
 content-addressed, and one request serves both a renderer and an LLM tool
 caller. Design: [process.md](docs/rfcs/process.md) (RFC — context, not a
-commitment). Task detail, and the measurements each task is sized against:
-[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+commitment). Frozen plan (task detail, and the measurements each task was
+sized against): [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
 Ordering note: `PROCIDENT`'s slider half blocks any interactive (slider-style)
 consumer. `PROCCOL`, `PROCKERN`, `PROCJOIN`, `PROCRANGE` and `PROCSLOT` have
@@ -1054,90 +281,7 @@ shipped (write-ups in the breakout plan). The engine landed in
 experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
 [PND-PROCSUB] (outcome in the breakout plan).
 
-- **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
-  cache lifetime. Content-addressed params accumulate by design (right for the
-  MCP shape, where a repeated question should hit cache); params-as-Ins are
-  bounded by the plan's shape (right for a UI, where a superseded slider
-  position is worthless). Measured over a 200-position sweep: 200 nodes /
-  310 MB of buffers versus 1 node / 6 MB — flat rather than linear in sweep
-  length. The RFC's two consumers want opposite policies, so this is a design
-  call, not a leak to patch; an earlier framing of this ticket blamed the graph
-  for what was a plan-layer map. The conversational half was decided by the
-  process demo's M5 (content-addressing, bounded by [PND-PROCCACHE]'s
-  engine-wide budget); **the slider half is still open and blocks any
-  interactive consumer.**
-- **[PND-PROCSEL]** — Selective per-Out invalidation by declaration. The
-  hook has shipped: an output may declare `dependsOn` (the params it reads),
-  and `registry.mdx` documents it. Left: the multi-output studies the
-  finance bridge registers (`studyOps()` in `@pond-ts/financial/process`,
-  e.g. `bollinger`, `envelope`) declare none, so a param edit still
-  re-versions every output. Declare it there.
-- **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
-  compiled graph does not; persisted views recompile from the stored plan.
-  Deliberately no `fromJSON` yet. Two verified properties must become stated
-  requirements: `specId` is invariant under param key order, and an omitted
-  param collides with its explicit default.
-- **[PND-PROCSCHEMA]** — The schema projection is the caller's contract. M2 found
-  the recursive `$ref` was **not embeddable** — it resolves against the document
-  root, so the projection silently dangled inside a tool's `input_schema`; fixed
-  with `toJsonSchema({ base })`. Open: the projection carries no units, in either
-  direction, so a caller cannot know `annualise` refuses a raw price without a
-  `describe()` table in the prompt.
-- **[PND-PROCSOURCE]** — Harden the new opaque async-source boundary. The first
-  slice (`defineSource`, `SourceRegistry`, `Host.runAsync`) keeps loaders and
-  credentials host-side, preserves a bound graph across equal revisions, and
-  coalesces concurrent calls for one source identity. Remaining:
-  cancellation/freshness policy, source schema projection for remote composers,
-  and a measured revision contract.
-- **[PND-PROCHELD]** — Let a caller ask what the host already holds before it
-  composes a request. In the demo a model refused to compare with its last
-  answer, though those results were still in memory, until the prompt told it
-  re-asking was cheap. A read-only view (not a cache API, not
-  [PND-PROCCACHE]); the hard part is a summary small enough for a model's
-  context.
-- **[PND-PROCDRAW]** — Let a request say "draw this". Today a model asking
-  for a chart adds `shape` folds and calls the numbers a plot, while the demo
-  quietly adds the real columns behind its back. Open: where the intent lives,
-  who renders (process must not depend on charts), and what `shape` is for
-  once a response can carry a chart.
-- **[PND-PROCFIN]** — Finance questions for an agent / MCP server: close the
-  gaps the 48-question catalogue found after the finance kit. 23 of 48 are
-  answerable today; the rest need date windows, several datasets per request,
-  roll-ups and grouping, and one question run across many tickers. 16 tasks
-  remain, with their own ids, order and decisions for Peter in
-  [PND_PROCFIN_PLAN.md](docs/plans/PND_PROCFIN_PLAN.md); it replaces the
-  placeholders [PND-PROCWINDOW], [PND-PROCMULTI] and [PND-PROCFAN]. The first
-  step, sparklines, has shipped (the `shape` fold now ends at the newest bar
-  whenever that bar's bin has a value, shows spikes and carries its scale;
-  outcomes in the breakout plan). The 16, in build order: date windows
-  [PND-WINOUT], [PND-WINANCHOR]; several datasets per request [PND-MULTIFROM],
-  [PND-MULTIUNIT], [PND-MULTITEST]; trading sessions [PND-WINSESSION],
-  [PND-SESSMIN]; roll-ups and grouping [PND-ROLLBARS], [PND-GROUPBY]; missing
-  bars [PND-CALGAPS]; across many tickers [PND-FANRUN], [PND-FANCOLLECT],
-  [PND-FANLABEL], [PND-FANPAIRS]; any time: [PND-PARAMKIND]; inside every
-  task: [PND-FINREC]. New request fields (WINOUT, MULTIFROM, ROLLBARS, FANRUN)
-  need Peter's OK to merge.
-- **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
-  (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
-  partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —
-  split one query's nodes across workers (spike: 2.42×, bit-identical).
-  Blocked on an engine change: a node's value can only come from its own pure
-  `compute`, so a result computed in another worker has nowhere to land; it
-  needs a way to inject that value plus a ready-set scheduler over the
-  compiled graph. (2) Wire `ema` / `cumulative` to the parallel-scan kernel
-  (`spikes/parallel-scan/`, 3.14× measured, 99.91% bit-identical).
-  Assessment:
-  [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
-- **[PND-PROCAGENTDOCS]** — What agents writing process requests could not
-  learn from the docs, found by the R5 agent trial: `requests.md` shows only
-  TypeScript calls, never a JSON request, and never says `from` names the
-  dataset; `describe()` lists `outputs: []` for every fold, so what a fact
-  holds is learned by asking; op summaries leave out definitions an answer
-  depends on (`historicalVolatility`'s n vs n − 1 and decimal, `rsi`'s seed,
-  `percentChange` already × 100, `extremes` on a tie); facts are rounded to
-  six significant digits without saying so; units mislead after `scale`; and
-  a slot named like a source column refuses the whole request, even under
-  `onError: 'collect'`. Detail in the breakout plan.
+**Open issues:** Linear project [Process](https://linear.app/pondts/project/process-af5982fb3c62) (label `process`).
 
 ### Process demo — composer / request / results
 
@@ -1152,27 +296,22 @@ slider half, [PND-PROCSCHEMA]'s units); [PND-PROCSLOT] has since shipped.
 ### Ecosystem (Phase 6)
 
 Adapters and deployment-shape packages, after the streaming milestones they
-depend on. Plan:
+depend on. Frozen plan:
 [PND_ECOSYSTEM_PLAN.md](docs/plans/PND_ECOSYSTEM_PLAN.md).
 
-- **[PND-SERVER]** — `@pond-ts/server` extraction from the gRPC experiment's
-  aggregator shape (WS-snapshot-then-deltas, coalesce strategy, slow-client
-  policy). Depends on [PND-FINAL] + [PND-KEYED].
-- **[PND-NODE]** — Node stream adapters + third-party chart bridge helpers
-  (`toRecharts`, `toObservablePlot`).
-- **[PND-FITLEFT]** — Two small leftovers from moving Estela's activity code
-  into fit: the summary's `polyline` still uses the old metres-based
-  `simplify` instead of the outline code (folding them together was left for
-  later), and a lap split that falls inside a pool length is not moved to the
-  length's edge. Detail in the breakout plan.
-- **[PND-FITDEPTH]** — the sport layers after 0.76: pjm17971's first-release
-  lists in [docs/rfcs/fit-api.md](docs/rfcs/fit-api.md) §14.8, §15.8, §16.9.
-  The one-activity layers on any `Section` are built (aerobic, distribution,
-  coasting, dynamics, technique, efforts, grade-adjusted pace; outcome in
-  the breakout plan). Left: `TrainingHistory` (records, season curve, weekly
-  volume, load timeline), on per-activity digests; each activity's load
-  records the method that made it (power TSS, heart-rate load, none), since
-  devices come and go across a history (pjm17971, 2026-11-07).
+**Open issues:** Linear project [Ecosystem](https://linear.app/pondts/project/ecosystem-d581b8c07207) (labels `adapters`, `fit`).
+
+### Chart example friction
+
+Friction found by **building real chart examples** rather than by reading the
+API — the Gallery wave's replica of a production network dashboard
+(`charts/gallery/site-traffic-dashboard`) drove most of it. Each item cost a
+debugging cycle or forced a workaround that shipped in the example. Two bugs
+found the same way were fixed in-wave (`AreaStyle.flatFill` for stacked areas,
+and the `grid` / `sessionDividers` / `xKind` repaint dependencies), which is the
+argument for the rest.
+
+**Open issues:** Linear project [Charts](https://linear.app/pondts/project/charts-57e76455bf22) (label `friction`).
 
 ---
 
@@ -1195,140 +334,18 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 
 ---
 
-## Chart example friction
-
-Friction found by **building real chart examples** rather than by reading the
-API — the Gallery wave's replica of a production network dashboard
-(`charts/gallery/site-traffic-dashboard`) drove most of it. Each item cost a
-debugging cycle or forced a workaround that shipped in the example. Two bugs
-found the same way were fixed in-wave (`AreaStyle.flatFill` for stacked areas,
-and the `grid` / `sessionDividers` / `xKind` repaint dependencies), which is the
-argument for the rest.
-
-- **[PND-CHFRIC]** — Charts friction from the Gallery examples: `BoxStyle.strokeWidth`
-  is declared but never read (the list's tick is hard-coded 3px); `BoxList` has no
-  value-label gutter, no band-radius knob, no header row and one ink for every
-  column; the list's text and hover colours are reachable only through unrelated
-  theme tokens (`axis.band.label`, `legend.border`); `<Legend>` is always an
-  in-plot overlay; theme roles fall back **silently** per primitive; `panZoom`
-  uncontrolled ignores later `range` props; `<YAxis label>` defaults to the axis
-  id. The cursor is the recurring theme: `CursorMode`'s docs promise a
-  per-series crosshair the implementation doesn't draw, `TrackerSample.label`
-  reports a theme role rather than a column, a layer can't opt out of the
-  readout (so one column drawn twice raises two identical flags), the x-axis
-  time pill is gated on `crosshair` so the **default** `line` cursor shows no
-  position either, and `<BarChart>` has no `readout` prop — so a chart whose
-  colour carries the value has a pill reading its layout constant. Two more
-  from the scrubbable wind rose: **`PartitionedTimeSeries` has no `reduce`**
-  (a core gap — "collapse each partition to one scalar" is the histogram case
-  and has no direct form, only `toMap()` plus a `TimeSeries.reduce` per group),
-  and `<CategoryAxis>`'s label thinning is an **estimated** glyph width that
-  lands on the wrong side at Gallery-card width, printing all sixteen sector
-  names into one smear. The Niño 3.4 overlay adds a **core** cluster around a
-  series whose columns are named at runtime (one per year): `select` is
-  variadic and silently returns an empty series when handed an array, a
-  `collapse` key that names no column is an unguarded `TypeError` rather than a
-  named error, `TimeSeries<SeriesSchema>` resolves its data-column names to
-  `never` so no method compiles against it, and `collapse`'s result type
-  survives only while it is inferred. Itemised, with the workaround each one
-  forced, in [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
-
-- **[PND-SPARCFRIC]** — A **17-item friction survey** from an external consumer
-  planning the replacement of seven hand-rolled SVG charts with pond
-  compositions, assessed against 0.56.2 and written to be taken upstream as-is.
-  Four items are corroborating second reports of work already tracked
-  ([PND-SELECT], [PND-WIDTH], [PND-CHFRIC]'s `<YAxis label>` default, [PND-AXES]
-  for symlog + a mirrored axis), which is itself signal on their priority. The
-  owner's ordering for the rest: **(1) [PND-BANDBAR2]** first-class threshold
-  banding along one bar's length, **(2) [PND-AXISHIDE]** `<YAxis hide>`,
-  **(3) [PND-BANDPACK]** `maxBandWidth` + `bandAlign`, then **(4)** the three
-  items that **mislead rather than merely block** — [PND-SIGNSTACK]
-  (mixed-sign stacks silently render all-positive), [PND-CATEMPH] (the theme
-  accepts emphasis colours the category path never reads), [PND-TICKUNIT]
-  (`bins` silently forecloses the duration tick ladder). That last grouping is
-  the report's own best finding: three independent items where the library did
-  something defensible, the chart rendered, and the consumer had no way to see
-  which branch was taken. **All four groups are now shipped** (see the breakout
-  plan for what each landed as); what remains is [PND-BINSWATCH],
-  [PND-TICKCENSUS] and [PND-BARCAP] ([PND-CATRANGE] was folded into the
-  drag-to-select design; a fifth item was declined, reasoning in the breakout
-  plan), plus the deferred **dev-mode warning sweep**, which the trio
-  argued for as one pass rather than three fixes and which only [PND-BANDBAR2]
-  and [PND-SYMLOG] actually got. **[PND-CATSTACK], [PND-BARWIDTH] and
-  [PND-SYMLOG] shipped 2026-08-11** as stack #644, and the consumer migrated for
-  real against it on 0.59.0 — all three workarounds deleted (net −218/+91 lines of
-  consumer code), the **tick ladder** since verified on one domain via a story they
-  added for the axis their product hides, and the pan/zoom knee still unexercised
-  because their chart does not zoom.
-  [PND-BINSWATCH] is now partially resolved on the stack path only. Itemised, with
-  each workaround and its cost, in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
-
-- **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
-  (`PG-n`, merged from 39 raw) across seven planned financial panes, assessed
-  against 0.59.0, **zero blocking**. Prioritized for the library rather than
-  for the consumer — by leverage, by whether the workaround _duplicates
-  library-internal state_, by breadth, and by cost shape. Its P0 argument is a
-  **drift** argument: two themes force the consumer to re-derive geometry the
-  library already computed, correct only until the library changes how a gutter
-  is sized or how bands are packed, at which point their chrome silently
-  misaligns with no type error and no test failure. **Three of its four
-  one-line asks shipped 2026-08-12** in two PRs — [PND-IGNITEFRAME]
-  (`useChartFrame()`, publishing the plot rect / gutters / scales / band
-  edges), [PND-WIDTH] (`<ChartContainer width="auto">`, **closed** — third
-  consumer, and the recipe became the implementation), and [PND-IGNITECAT]
-  (`<ChartContainer categories>`, so any value-keyed layer can share an ordinal
-  axis). Triage corrected the report's own ordering on two counts: **theme B
-  was the cheaper P0**, because `scaleBand`'s domain is already numeric so a
-  value-keyed layer lands where the bars do; and theme A's placement half was
-  already structurally supported, leaving only the numbers missing. **PG-16
-  asks again for the mirrored second axis** declined on 2026-08-11 for want
-  of a consumer, one day before this arrived; it now sits in the
-  axis-parity pass below. Remaining, in the report's order: the in-plot
-  `<CustomLayer>` (theme A's better option, now that the frame exists), a
-  **ramp swatch** in the legend (PG-4, P1, cheap — a pure function of `colors`
-  and `domain`), then P2's style escape hatches, band gap-parity and the
-  axis-parity pass. Itemised, with each correction and what shipping did _not_
-  close, in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-ignite--ignite-charts-friction-2026-08-11).
-
-- **The estela two-families wave.** Four reports that are two families, not four
-  asks — **X/Y asymmetry** and **`<BarList>` lags `<BarChart>`** — each with the
-  same character: the mechanism exists and only points one way. **Shipped
-  2026-08-12** as [#653]: [PND-XLOG] (landed as `<ChartContainer xScale>`, not
-  `<XAxis scale>` — the container owns the one shared x scale) and
-  [PND-LISTCOLOR] (`<BarList barColors>`, keyed on `row.key` so a `sortBy`
-  cannot repaint the ramp onto the wrong rows). [PND-LISTHOVER] (the list's
-  `hovered` / `onHover`, #618) and [PND-XAXISOWN] (a mounted `<XAxis>` wins
-  over the implicit strip, wave "Path to 1.0") have shipped since. **Still
-  open:** [PND-AXISGUT] / [#607] (the X strip doesn't participate in layout,
-  though the Y gutter does; mounted-wins now makes its height reservation
-  answerable) and [PND-CASTDOC] (the charts docs have no prose on the
-  union-per-series-kind cast).
-
-  Newly surfaced by that wave: **[PND-XSYMKNEE]** — x `'symlog'` uses d3's
-  default knee (absolute 1) with no `linearWindow` counterpart, so on a
-  `[0, 5_000_000]` domain the linear band is invisible and on a `[0, 3]` domain
-  it swallows a third of the axis. Detail for all of these in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#two-families-not-four-issues).
-
-[#607]: https://github.com/pond-ts/pond/issues/607
-[#653]: https://github.com/pond-ts/pond/pull/653
-
----
-
 ## Cross-cutting work
 
 These happen throughout rather than being scheduled:
 
-- keep this roadmap current whenever a meaningful milestone lands (move
-  completed tasks' outcomes into their breakout plan)
+- keep Linear current whenever a meaningful milestone lands (close the
+  issue with its outcome; open issues for new work)
 - keep the docs site aligned with shipped behavior
 - add end-to-end examples whenever a major capability lands
 - keep API reference generation working in CI
 - expand tests alongside every new public API
 - **check the keyboard and screen-reader path for any new interaction** — a
   gesture is not finished because a sighted mouse user can drive it; record
-  what you find (fixed or not) in
-  [PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md)
+  what you find (fixed or not) on the `[PND-A11Y]` issue (Charts, label
+  `a11y`)
 - prefer benchmark-backed changes for performance-sensitive core refactors

@@ -1,5 +1,11 @@
 # PND_PROCFIN_PLAN — finance questions on `@pond-ts/process`
 
+> **Frozen 2026-11-24.** Open tasks from this plan moved to Linear (project map in
+> [PLAN.md](../../PLAN.md); old IDs → issues in
+> [linear-migration.md](../archive/linear-migration.md)). Each issue carries its
+> task's write-up from here and keeps the `[PND-…]` tag in its title. This file
+> stays as the reasoning behind shipped work. Do not add tasks or outcomes here.
+
 > Breakout plan for the **[PND-PROCFIN]** task in the `@pond-ts/process`
 > roadmap section of [PLAN.md](../../PLAN.md). Sibling of
 > [PND_PROCESS_PLAN.md](PND_PROCESS_PLAN.md), which carries the library's
