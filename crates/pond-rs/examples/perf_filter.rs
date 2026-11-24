@@ -176,10 +176,184 @@ fn runs(rows: usize, kept: f64, dropped: f64) -> Column {
     )
 }
 
+/// `count` number columns with no gaps.
+fn number_columns(rows: usize, count: usize) -> Vec<Column> {
+    let column = |c: usize| {
+        Column::required(
+            format!("w{c}"),
+            (0..rows).map(|i| (i + c) as f64).collect::<Vec<f64>>(),
+        )
+    };
+    (0..count).map(column).collect()
+}
+
+/// `count` columns of 6-byte text: eight strings, each for 90 rows on end.
+fn text_columns(rows: usize, count: usize) -> Vec<Column> {
+    let column = |c: usize| {
+        let names: Vec<String> = (0..8).map(|h| format!("{c}ost-{h}")).collect();
+        Column::required(
+            format!("t{c}"),
+            (0..rows)
+                .map(|i| names[(i / 90 + c) % 8].as_str())
+                .collect::<Vec<_>>(),
+        )
+    };
+    (0..count).map(column).collect()
+}
+
+/// `count` decimal columns, with a gap every nine rows when `gaps`.
+fn decimal_columns(rows: usize, count: usize, gaps: bool) -> pond_rs::Result<Vec<Column>> {
+    let column = |c: usize| {
+        let values = (0..rows)
+            .map(|i| (!gaps || !(i + c).is_multiple_of(9)).then_some((i + c) as i128 * 125));
+        Ok(Column::optional(
+            format!("m{c}"),
+            DecimalColumn::from_options(values, 2)?,
+        ))
+    };
+    (0..count).map(column).collect()
+}
+
+/// `count` true/false columns with a gap every nine rows: two sets of bits
+/// each, the values and the marks for gaps.
+fn flag_columns(rows: usize, count: usize) -> Vec<Column> {
+    let column = |c: usize| {
+        Column::optional(
+            format!("b{c}"),
+            (0..rows)
+                .map(|i| (!(i + c).is_multiple_of(9)).then_some((i + c).is_multiple_of(3)))
+                .collect::<Vec<_>>(),
+        )
+    };
+    (0..count).map(column).collect()
+}
+
+/// `s` with each text column held as a dictionary: per row a small number
+/// that names one of a short list of strings.
+fn as_dictionaries(s: &TimeSeries) -> pond_rs::Result<TimeSeries> {
+    let batch = s.to_arrow()?;
+    let schema = batch.schema();
+    let columns = batch.columns().iter().zip(schema.fields()).map(|(a, f)| {
+        let a = match a.as_any().downcast_ref::<StringArray>() {
+            Some(text) => Arc::new(text.iter().collect::<DictionaryArray<Int32Type>>()) as ArrayRef,
+            None => a.clone(),
+        };
+        (f.name().clone(), a)
+    });
+    let b = RecordBatch::try_from_iter(columns).expect("a batch");
+    TimeSeries::from_arrow(s.name(), &[b], schema.field(0).name().as_str())
+}
+
+/// `perf_filter <rows> bars`: the tables the rules' bars are judged on.
+/// Each group sweeps the rows to a stretch across one bar, on stretches of
+/// random length (or rows kept at random), for a table that the rule in
+/// question decides. To set a bar, time a build that always goes one way
+/// against a build that always goes the other on these lines, on each kind
+/// of machine: the bars in `row_filter.rs` say where they were set.
+fn bars(rows: usize) -> pond_rs::Result<()> {
+    let key = || -> Vec<i64> { (0..rows as i64).map(|i| i * 1000).collect() };
+    let test = col("v").gt(500.0);
+    let table = |tested: Column, extra: &[Column]| {
+        let mut columns = vec![tested];
+        columns.extend(extra.iter().cloned());
+        TimeSeries::new("s", key(), columns)
+    };
+    let wide: [(&str, Vec<Column>); 4] = [
+        ("8 numbers", number_columns(rows, 8)),
+        ("32 numbers", number_columns(rows, 32)),
+        ("4 decimals", decimal_columns(rows, 4, false)?),
+        ("16 decimals", decimal_columns(rows, 16, false)?),
+    ];
+    println!("Most rows kept (1.2 dropped between stretches), by the rows to a stretch:");
+    for kept in [6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0] {
+        for (what, extra) in &wide {
+            let s = table(runs(rows, kept, 1.2), extra)?;
+            time(&format!("{what}, {kept} kept, 1.2 dropped"), &s, &test);
+        }
+    }
+    println!("Half the rows kept, by the rows to a stretch:");
+    for kept in [2.0, 4.0, 8.0, 16.0, 24.0, 32.0, 48.0] {
+        for (what, extra) in &wide {
+            let s = table(runs(rows, kept, kept), extra)?;
+            time(&format!("{what}, {kept} kept, {kept} dropped"), &s, &test);
+        }
+    }
+    let bits: [(&str, Vec<Column>); 3] = [
+        ("4 true/false", flag_columns(rows, 4)),
+        ("16 true/false", flag_columns(rows, 16)),
+        ("8 decimals with gaps", decimal_columns(rows, 8, true)?),
+    ];
+    println!("True/false values and marks for gaps, rows kept one or a few at a time:");
+    for (share, k) in [
+        ("5%", 949.5),
+        ("10%", 899.5),
+        ("25%", 749.5),
+        ("50%", 499.5),
+    ] {
+        for (what, extra) in &bits {
+            let s = table(random_values(rows), extra)?;
+            time(&format!("{what}, {share} kept"), &s, &col("v").gt(k));
+        }
+    }
+    for (kept, dropped) in [(2.0, 2.0), (3.0, 3.0), (4.0, 12.0), (8.0, 8.0)] {
+        for (what, extra) in &bits {
+            let s = table(runs(rows, kept, dropped), extra)?;
+            time(
+                &format!("{what}, {kept} kept, {dropped} dropped"),
+                &s,
+                &test,
+            );
+        }
+    }
+    let text: [(&str, Vec<Column>); 2] = [
+        ("1 text", text_columns(rows, 1)),
+        ("4 texts", text_columns(rows, 4)),
+    ];
+    println!("Text, by the rows to a stretch:");
+    for (share, k) in [("25%", 749.5), ("50%", 499.5)] {
+        for (what, extra) in &text {
+            let s = table(random_values(rows), extra)?;
+            time(&format!("{what}, {share} kept"), &s, &col("v").gt(k));
+        }
+    }
+    for kept in [2.0, 4.0, 8.0, 16.0, 24.0, 32.0, 48.0, 64.0] {
+        for (what, extra) in &text {
+            let s = table(runs(rows, kept, kept), extra)?;
+            time(&format!("{what}, {kept} kept, {kept} dropped"), &s, &test);
+        }
+    }
+    println!("Dictionary columns:");
+    for count in [2, 8] {
+        let random = as_dictionaries(&table(random_values(rows), &text_columns(rows, count))?)?;
+        for (share, k) in [("10%", 899.5), ("50%", 499.5), ("85%", 149.5)] {
+            time(
+                &format!("{count} dictionaries, {share} kept"),
+                &random,
+                &col("v").gt(k),
+            );
+        }
+        for (kept, dropped) in [(16.0, 16.0), (64.0, 64.0), (64.0, 1.5)] {
+            let s = as_dictionaries(&table(
+                runs(rows, kept, dropped),
+                &text_columns(rows, count),
+            )?)?;
+            time(
+                &format!("{count} dictionaries, {kept} kept, {dropped} dropped"),
+                &s,
+                &test,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn main() -> pond_rs::Result<()> {
     let rows: usize = std::env::args()
         .nth(1)
         .map_or(1_000_000, |s| s.parse().expect("rows"));
+    if std::env::args().nth(2).as_deref() == Some("bars") {
+        return bars(rows);
+    }
     let time_key = |n: usize| -> Vec<i64> { (0..n as i64).map(|i| i * 1000).collect() };
     let names: Vec<String> = (0..8).map(|h| format!("host-{h}")).collect();
     let v = |n: usize| Column::optional("v", (0..n).map(value).collect::<Vec<_>>());
@@ -263,23 +437,7 @@ fn main() -> pond_rs::Result<()> {
     );
 
     // One more column of each kind, next to the key and `v`.
-    let dictionary = {
-        let batch = even.to_arrow()?;
-        let words: DictionaryArray<Int32Type> = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("text")
-            .iter()
-            .collect();
-        let b = RecordBatch::try_from_iter(vec![
-            ("time", batch.column(0).clone()),
-            ("v", batch.column(1).clone()),
-            ("host", Arc::new(words) as ArrayRef),
-        ])
-        .expect("a batch");
-        TimeSeries::from_arrow("dictionary", &[b], "time")?
-    };
+    let dictionary = as_dictionaries(&even)?;
     assert!(dictionary.column("host")?.strings()?.is_dictionary());
     let kinds = [
         ("no other column", with("none", vec![])?),
@@ -451,31 +609,8 @@ fn main() -> pond_rs::Result<()> {
     // key and the tested column, each table has the columns it is named
     // for.
     type Extra = Box<dyn Fn() -> pond_rs::Result<Vec<Column>>>;
-    let numbers = |count: usize| -> Extra {
-        Box::new(move || {
-            let column = |c: usize| {
-                Column::required(
-                    format!("w{c}"),
-                    (0..rows).map(|i| (i + c) as f64).collect::<Vec<f64>>(),
-                )
-            };
-            Ok((0..count).map(column).collect())
-        })
-    };
-    let texts = |count: usize| -> Extra {
-        Box::new(move || {
-            let column = |c: usize| {
-                let names: Vec<String> = (0..8).map(|h| format!("{c}ost-{h}")).collect();
-                Column::required(
-                    format!("t{c}"),
-                    (0..rows)
-                        .map(|i| names[(i / 90 + c) % 8].as_str())
-                        .collect::<Vec<_>>(),
-                )
-            };
-            Ok((0..count).map(column).collect())
-        })
-    };
+    let numbers = |count: usize| -> Extra { Box::new(move || Ok(number_columns(rows, count))) };
+    let texts = |count: usize| -> Extra { Box::new(move || Ok(text_columns(rows, count))) };
     let decimals = |count: usize| -> Extra {
         Box::new(move || {
             let column = |c: usize| {
@@ -530,6 +665,68 @@ fn main() -> pond_rs::Result<()> {
                 &s,
                 &over(500.0),
             );
+        }
+    }
+
+    // Tables the lines above have at most one column of: several
+    // true/false columns (each is two sets of bits, its values and its
+    // marks for gaps), several dictionary columns, and text beside numbers.
+    let wide: Vec<(String, TimeSeries)> = {
+        let table = |extra: Vec<Column>| {
+            let mut columns = vec![random_values(rows)];
+            columns.extend(extra);
+            TimeSeries::new("s", time_key(rows), columns)
+        };
+        let mut wide = Vec::new();
+        for count in [4, 16] {
+            wide.push((
+                format!("{count} true/false"),
+                table(flag_columns(rows, count))?,
+            ));
+        }
+        for count in [2, 8] {
+            let s = as_dictionaries(&table(text_columns(rows, count))?)?;
+            assert!(s.column("t0")?.strings()?.is_dictionary());
+            wide.push((format!("{count} dictionaries"), s));
+        }
+        for (text, number) in [(1, 6), (4, 3)] {
+            let mut extra = text_columns(rows, text);
+            extra.extend(number_columns(rows, number));
+            wide.push((format!("{text} text, {number} numbers"), table(extra)?));
+        }
+        wide
+    };
+    println!(
+        "More kinds of table, rows kept at random (key, v and the columns named; the \
+         true/false ones have gaps):"
+    );
+    for (what, s) in &wide {
+        for (share, k) in [
+            ("5%", 949.5),
+            ("25%", 749.5),
+            ("50%", 499.5),
+            ("85%", 149.5),
+        ] {
+            time(&format!("{what}, {share} kept"), s, &over(k));
+        }
+    }
+
+    // Every line so far tests `v > k`: one number column against a
+    // constant, which `filter` tests straight into its mask. Any other test
+    // is worked out row by row first, so the same rows cost more to choose
+    // and what the copy costs is a smaller share of the whole. A change to
+    // the copy is to be judged on both.
+    println!("The same rows by a test of two parts (v > k and v < 1e300):");
+    let both = |k: f64| col("v").gt(k).and(col("v").lt(1e300));
+    time(
+        "56% kept, stretches of ~3 (the suite's case)",
+        &even,
+        &both(500.0),
+    );
+    time("none kept (the test alone)", &even, &both(2000.0));
+    for (what, s) in &wide {
+        for (share, k) in [("25%", 749.5), ("85%", 149.5)] {
+            time(&format!("{what}, {share} kept"), s, &both(k));
         }
     }
 
