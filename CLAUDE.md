@@ -8,20 +8,29 @@ When reporting information to me, be concise, use plain english, but sacrifice g
 
 ## Plan
 
-**Read [PLAN.md](PLAN.md) at the start of every session.** It is the binding
-roadmap of **future work only**, organized into work sections whose tasks are
-named `[PND-XXXXXX]`. Each section links a breakout plan in
-`docs/plans/PND_*_PLAN.md` that carries the full per-task context. Shipped
-history lives in [CHANGELOG.md](CHANGELOG.md) and the frozen wave/phase logs
-in `docs/archive/`; evergreen design rules in
-`docs/notes/design-principles.md`.
+**Open work lives in Linear**: team **Pond** (`POND`), one project per
+package — Core, Charts, Docs, Process, Financial, Ecosystem, Rust. At the
+start of a session, read [PLAN.md](PLAN.md) — the thin index: the road to
+1.0, which project and label each work area's issues sit under, the
+active-experiments roster — then the open issues for the area you are
+working in (Linear connector / MCP, or the GraphQL API). Shipped history lives in [CHANGELOG.md](CHANGELOG.md) and
+`docs/archive/`; evergreen design rules in `docs/notes/design-principles.md`.
 
-**Update PLAN.md when meaningful work lands.** If you complete a task, remove
-it from PLAN.md and record the outcome (decision + reasoning) in its breakout
-plan in the same pass; if new work surfaces, add a `[PND-XXXXXX]` task with a
-1–5 sentence summary here and the longer write-up in the breakout plan. Do
-not defer this — a lost session should not erase the current state of the
-project.
+Tasks migrated from the old PLAN.md on 2026-11-24 keep their `[PND-XXXXXX]`
+tag at the start of the issue title, so an old ID in a commit, CHANGELOG
+entry or doc is found by searching Linear for it;
+[docs/archive/linear-migration.md](docs/archive/linear-migration.md) maps
+every one. The `docs/plans/PND_*_PLAN.md` breakout plans are **frozen** at
+that date — the reasoning behind shipped work — except
+`PND_EXPERIMENTS_PLAN.md`, which still carries the experiment roster detail.
+
+**Keep Linear current when meaningful work lands.** When you complete a task,
+close its issue with a comment recording the outcome (decision + reasoning,
+PR link). When new work surfaces, open an issue in the owning project with the
+write-up in its description — the issue is the breakout plan now. Put the
+issue identifier (e.g. `POND-42`) in the PR body so the two link. Do not
+defer this — a lost session should not erase the current state of the
+project. Edit PLAN.md only when a work area's direction changes.
 
 ## Architecture
 
@@ -59,18 +68,19 @@ context, and they are also a way to red-team a strategic direction
 through the multi-agent review process before any implementation work
 commits to it.
 
-The layering between RFCs and PLAN.md:
+The layering between RFCs and Linear:
 
-- **PLAN.md** is the binding source of truth for what is actually
-  being built. Items adopted into PLAN are commitments.
-- **RFCs** sit above PLAN. They explore a direction (e.g. "where the
+- **Linear** (indexed by PLAN.md) is the binding source of truth for
+  what is actually being built. Issues adopted into Linear are
+  commitments.
+- **RFCs** sit above Linear. They explore a direction (e.g. "where the
   streaming layer should go"), surface the tradeoffs, and let the
   design get red-teamed before code commits to it.
-- When work derived from an RFC lands in PLAN.md, the PLAN entry is
+- When work derived from an RFC lands as Linear issues, the issue is
   the binding version. The RFC stays as context for why.
 
 This means: do not treat an RFC as a roadmap to march through.
-Phases / sections adopted into PLAN are the contract; the rest of
+Phases / sections adopted into Linear are the contract; the rest of
 the RFC may evolve or be deferred indefinitely as friction signals
 arrive (or fail to arrive). The friction-driven cadence described
 under "Multi-agent experiments" below is the tactical loop; RFCs
@@ -130,13 +140,16 @@ compaction within a session.
 
 When a meaningful decision lands (API shape choice, design pivot,
 deferred-but-considered alternative, blind-alley walked-back), the
-_reasoning_ must end up in a committed artifact so future sessions
-can recover it without the transcript:
+_reasoning_ must end up in a durable artifact — committed, or on the
+Linear issue — so future sessions can recover it without the transcript:
 
-- **The relevant `docs/plans/PND_*_PLAN.md` breakout plan** is the
-  load-bearing artifact for library-level decisions (record shipped
-  outcomes and deferred-but-considered alternatives there; the frozen
-  pre-reorg history is in `docs/archive/`).
+- **The Linear issue** is the load-bearing artifact for library-level
+  decisions: the write-up in its description, the shipped outcome and
+  deferred-but-considered alternatives in comments (the closing comment
+  above all). Pre-migration decisions are in the frozen
+  `docs/plans/PND_*_PLAN.md` breakout plans and `docs/archive/`. A rule
+  that should outlive any one task goes in
+  `docs/notes/design-principles.md`.
 - **Experiment milestone files** (`experiments/<exp>/M*.md`) capture
   per-milestone friction notes and library carry-forwards.
 - **PR comment trail** (Layer 2 adversarial review + author response)
@@ -147,9 +160,9 @@ can recover it without the transcript:
   with a one-line "this approach was tried and rejected because…"
 
 If you find yourself reaching for the transcript to recover _why_ we
-made a choice and the answer isn't in any committed file, that's a
-gap — capture it in the most-relevant of the three artifacts above
-in the same session.
+made a choice and the answer isn't in any committed file or Linear
+issue, that's a gap — capture it in the most-relevant of the three
+artifacts above in the same session.
 
 ### Agent identity in PRs and comments
 

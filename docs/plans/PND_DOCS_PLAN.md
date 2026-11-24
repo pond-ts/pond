@@ -1,5 +1,11 @@
 # PND_DOCS_PLAN — docs site, landing, and API reference
 
+> **Frozen 2026-11-24.** Open tasks from this plan moved to Linear (project map in
+> [PLAN.md](../../PLAN.md); old IDs → issues in
+> [linear-migration.md](../archive/linear-migration.md)). Each issue carries its
+> task's write-up from here and keeps the `[PND-…]` tag in its title. This file
+> stays as the reasoning behind shipped work. Do not add tasks or outcomes here.
+
 > Breakout plan for the **Docs** roadmap section in [PLAN.md](../../PLAN.md).
 > The full docs-site plan (19-agent research + adversarial review + user
 > directives) is
