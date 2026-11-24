@@ -223,10 +223,12 @@ impl StringColumn {
     /// The rows where `keep` is set, in order. A dictionary column filters
     /// its keys and keeps its values, as [`StringColumn::take_indices`];
     /// `listed` copies the keys by the list of kept rows
-    /// ([`RowFilter::by_list`]) rather than straight from the mask.
+    /// ([`RowFilter::by_list`]) rather than straight from the mask, and
+    /// tells the copy of plain text that the list is there to share
+    /// ([`RowFilter::text`]).
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> Self {
         match &self.repr {
-            StringRepr::Plain(a) => Self::plain(keep.text(a)),
+            StringRepr::Plain(a) => Self::plain(keep.text(a, listed)),
             StringRepr::Dictionary(a) => Self {
                 repr: StringRepr::Dictionary(if listed {
                     keep.by_list(a).as_dictionary::<Int32Type>().clone()
@@ -1317,9 +1319,9 @@ impl ColumnData {
     /// The rows where `keep` is set, in order: what `filter` keeps. Text
     /// goes by Arrow's kernel or stretch by stretch ([`RowFilter::text`])
     /// and arrays by row number; the other kinds are copied straight from
-    /// the mask, except that `listed` sends numbers and dictionary keys by
-    /// the kernel's list of kept rows (see [`RowFilter`] for the two ways,
-    /// and `TimeSeries::filter_rows` for the choice).
+    /// the mask, except that `listed` sends numbers, decimal values and
+    /// dictionary keys by the kernel's list of kept rows (see [`RowFilter`]
+    /// for the two ways, and `TimeSeries::filter_rows` for the choice).
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
@@ -1336,7 +1338,19 @@ impl ColumnData {
             }
             ColumnData::Decimal(c) => {
                 let a = &c.values;
-                let kept = Decimal128Array::new(keep.vec(a.values()).into(), keep.nulls(a.nulls()));
+                let values: ScalarBuffer<i128> = if listed {
+                    let all = Decimal128Array::new(a.values().clone(), None);
+                    let kept = keep.by_list(&all);
+                    kept.as_primitive::<Decimal128Type>().values().clone()
+                } else {
+                    keep.vec(a.values()).into()
+                };
+                // The gap marks come straight from the mask either way.
+                // That timed faster than the kernel's copy of them from
+                // 45% of the rows kept on; with a quarter kept or fewer
+                // the kernel's was a few points the faster (the numbers
+                // are in PND_RUST_PLAN.md, "Considered, not done").
+                let kept = Decimal128Array::new(values, keep.nulls(a.nulls()));
                 ColumnData::Decimal(DecimalColumn {
                     values: kept.with_data_type(a.data_type().clone()),
                 })

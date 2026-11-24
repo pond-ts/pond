@@ -11,17 +11,20 @@
 //! Cost: the test is one pass over the tested column, several values at a
 //! time, into a mask of one bit per row. The key and each column are then
 //! copied by the mask:
-//! - Key, numbers, decimals, dictionary keys: straight from the mask, one
-//!   step per eight rows (a table gives the places of the kept ones),
-//!   whatever the mix of kept and dropped rows. 64 rows all dropped are
-//!   skipped; all kept are one copy.
-//! - Numbers and dictionary keys, when the columns are copied one after
-//!   another and there are eight or more of them: by a list of the kept
-//!   rows made once. One step per kept row, and less per column than by
-//!   the table.
-//! - Text: by a list of the kept rows when they are scattered (a step per
-//!   kept row, plus its bytes); stretch by stretch when they come 32 or
-//!   more to a stretch on average (a step per stretch, plus its bytes).
+//! - Key, numbers, decimals, dictionary keys: straight from the mask, 64
+//!   rows at a time. 64 rows all dropped are skipped and all kept are one
+//!   copy; rows in stretches of six or more are a copy per stretch; the
+//!   rest are one step per eight rows (a table gives the places of the
+//!   kept ones) whatever their mix, or one step per kept row when few are
+//!   kept and for decimals.
+//! - Numbers, decimals and dictionary keys, when the columns are copied
+//!   one after another and there are eight or more of them: by a list made
+//!   once, of the kept rows when they are scattered (a step per kept row),
+//!   or of their stretches when nearly all rows are kept and come 40 or
+//!   more to a stretch (a copy per stretch).
+//! - Text: stretch by stretch when the kept rows come 32 or more to a
+//!   stretch on average (a step per stretch, plus its bytes); otherwise by
+//!   Arrow's kernel (a step per kept row or per stretch, plus the bytes).
 //! - True/false values, and the marks for gaps: one step per stretch.
 //! - Arrays: by row number.
 //!
@@ -59,6 +62,10 @@ fn page_faults() -> u64 {
 /// faults per call.
 fn median_ms<T>(mut f: impl FnMut() -> T) -> (f64, T, u64) {
     let first = f(); // warm-up
+    // And once more while `first` is held: the timed calls each need room
+    // for a second result, and the first of them would otherwise be the
+    // one to take it fresh from the system.
+    std::hint::black_box(f());
     let before = page_faults();
     let mut t: Vec<f64> = (0..9)
         .map(|_| {
@@ -102,6 +109,16 @@ fn stretches(rows: usize, len: usize) -> Column {
     )
 }
 
+/// A tested column that drops one row after every `kept`.
+fn holes(rows: usize, kept: usize) -> Column {
+    Column::required(
+        "v",
+        (0..rows)
+            .map(|i| if i % (kept + 1) == kept { 0.0 } else { 1000.0 })
+            .collect::<Vec<f64>>(),
+    )
+}
+
 fn main() -> pond_rs::Result<()> {
     let rows: usize = std::env::args()
         .nth(1)
@@ -134,6 +151,17 @@ fn main() -> pond_rs::Result<()> {
         vec![stretches(rows, 1000), host()],
     )?;
 
+    // The suite's series with a gap in the text every 11 rows.
+    let gappy = with(
+        "gappy",
+        vec![Column::optional(
+            "host",
+            (0..rows)
+                .map(|i| (i % 11 != 3).then(|| names[(i / 90) % 8].as_str()))
+                .collect::<Vec<_>>(),
+        )],
+    )?;
+
     println!("How many rows are kept, and how they are spread (key, v, text):");
     for (label, s, k) in [
         ("56% kept, stretches of ~3 (the suite's case)", &even, 500.0),
@@ -141,6 +169,8 @@ fn main() -> pond_rs::Result<()> {
         ("1% kept", &even, 1238.0),
         ("93% kept (all but the gaps and 1%)", &even, 12.5),
         ("50% kept, stretches of 1,000", &blocks, 500.0),
+        ("56% kept, gaps in the text", &gappy, 500.0),
+        ("93% kept, gaps in the text", &gappy, 12.5),
     ] {
         time(label, s, &over(k));
     }
@@ -293,7 +323,10 @@ fn main() -> pond_rs::Result<()> {
 
     // More number columns. On one core these are copied one after another,
     // and from eight (seven more beside `v`) by a list of the kept rows.
-    println!("More number columns beside the key and v: 56% kept, 25% kept, stretches of 1,000:");
+    println!(
+        "More number columns beside the key and v: 56% kept, 25% kept, stretches of 1,000, \
+         and all but one row in 257:"
+    );
     for extra in [1, 3, 5, 7, 15, 31] {
         let more = || {
             (0..extra).map(|c| {
@@ -315,6 +348,44 @@ fn main() -> pond_rs::Result<()> {
             &format!("{extra} more, stretches of 1,000"),
             &long,
             &over(500.0),
+        );
+        let mut columns = vec![holes(rows, 256)];
+        columns.extend(more());
+        let nearly_all = TimeSeries::new("s", time_key(rows), columns)?;
+        time(
+            &format!("{extra} more, one row in 257 dropped"),
+            &nearly_all,
+            &over(500.0),
+        );
+    }
+
+    // Decimal columns: 16 bytes a value, twice a number's.
+    println!("Decimal columns beside the key and v: 10%, 45% and 93% kept:");
+    for (count, gaps) in [(8, false), (16, false), (16, true)] {
+        let mut columns = vec![v(rows)];
+        for c in 0..count {
+            let values = (0..rows).map(|i| (!gaps || i % 9 != 0).then_some((i + c) as i128 * 125));
+            columns.push(Column::optional(
+                format!("m{c}"),
+                DecimalColumn::from_options(values, 2)?,
+            ));
+        }
+        let s = TimeSeries::new("s", time_key(rows), columns)?;
+        let note = if gaps { ", with gaps" } else { "" };
+        time(
+            &format!("{count} decimals{note}, 10% kept"),
+            &s,
+            &over(1118.0),
+        );
+        time(
+            &format!("{count} decimals{note}, 45% kept"),
+            &s,
+            &over(653.0),
+        );
+        time(
+            &format!("{count} decimals{note}, 93% kept"),
+            &s,
+            &over(12.5),
         );
     }
 

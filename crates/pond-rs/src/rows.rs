@@ -36,9 +36,9 @@ use crate::series::{Column, TimeSeries};
 /// faster at 148,000.
 const FILTER_SPLIT_ROWS: usize = 1 << 17;
 
-/// From this many number and dictionary columns on, a filter that copies
-/// its columns one after another copies those by a list of the kept rows
-/// made once, not each straight from the mask.
+/// From this many number, decimal and dictionary columns on, a filter that
+/// copies its columns one after another copies those by a list of the kept
+/// rows made once, not each straight from the mask.
 const FILTER_LIST_COLUMNS: usize = 8;
 
 /// How [`TimeSeries::filter_rows`] copies the kept rows. The series that
@@ -458,21 +458,28 @@ impl TimeSeries {
     ///
     /// When many rows are kept and there is more than one core, the key
     /// and each column get a core of their own: a list of the kept rows
-    /// would be a step every core waits for. Otherwise the copies run one
-    /// after another, and the list pays once enough columns share it:
-    /// [`FILTER_LIST_COLUMNS`] number or dictionary columns. Not when most
-    /// words of the mask are all kept or all dropped: the copy from the
-    /// mask is then mostly whole words copied or skipped.
+    /// made first would be a step every core waits for. (Text in short
+    /// stretches still goes by Arrow's kernel; when the kernel takes its
+    /// list, that column's own core makes it.) Otherwise the copies run one
+    /// after another, and the list pays once enough columns share it
+    /// ([`FILTER_LIST_COLUMNS`] number, decimal or dictionary columns), in two
+    /// cases: when the kept rows are scattered, so that a copy from the
+    /// mask would go value by value; and when nearly all rows are kept in
+    /// long stretches, where the list is a short list of stretches. In
+    /// between (rows in stretches, with fewer kept or shorter stretches)
+    /// the copy from the mask moves a stretch at a time and is the faster.
     pub(crate) fn filter_copy(&self, keep: &RowFilter, threads: usize) -> FilterCopy {
         if keep.count() >= FILTER_SPLIT_ROWS && threads > 1 {
             return FilterCopy::Split;
         }
         let listable = self.columns().iter().filter(|c| match c.data() {
-            ColumnData::Number(_) => true,
+            ColumnData::Number(_) | ColumnData::Decimal(_) => true,
             ColumnData::String(s) => s.is_dictionary(),
             _ => false,
         });
-        if listable.count() >= FILTER_LIST_COLUMNS && keep.is_scattered() {
+        if listable.count() >= FILTER_LIST_COLUMNS
+            && (keep.is_scattered() || keep.keeps_most_in_long_stretches())
+        {
             FilterCopy::Listed
         } else {
             FilterCopy::Direct
@@ -640,13 +647,32 @@ mod tests {
         let d = with_words.column("d").unwrap();
         assert!(d.strings().unwrap().is_dictionary());
         assert_eq!(with_words.filter_copy(&scattered, 1), FilterCopy::Listed);
-        // Not when most words are all kept or all dropped.
+        // And so do a decimal column's values.
+        let cents = crate::column::DecimalColumn::from_options((0..640).map(Some), 2);
+        let cents = Column::optional("m", cents.unwrap());
+        let with_cents = series(640, 7, true).with_column(cents).unwrap();
+        assert_eq!(with_cents.filter_copy(&scattered, 1), FilterCopy::Listed);
+        // Not when the kept rows come in stretches: the copy from the mask
+        // moves those a stretch at a time.
         let first_half: RowFilter = (0..640).map(|i| i < 320).collect();
         assert!(!first_half.is_scattered());
         assert_eq!(
             series(640, 8, true).filter_copy(&first_half, 1),
             FilterCopy::Direct
         );
+        let short: RowFilter = (0..6600).map(|i| i % 33 != 32).collect();
+        assert!(!short.is_scattered() && !short.keeps_most_in_long_stretches());
+        assert_eq!(
+            series(6600, 8, false).filter_copy(&short, 1),
+            FilterCopy::Direct
+        );
+        // Unless nearly all rows are kept and the stretches are long: the
+        // list is then a list of stretches.
+        let nearly_all: RowFilter = (0..6500).map(|i| i % 65 != 64).collect();
+        assert!(!nearly_all.is_scattered() && nearly_all.keeps_most_in_long_stretches());
+        let how = |numbers| series(6500, numbers, false).filter_copy(&nearly_all, 1);
+        assert_eq!(how(8), FilterCopy::Listed);
+        assert_eq!(how(7), FilterCopy::Direct);
         // Many rows kept: a core each, when there is more than one.
         let rows = 2 * FILTER_SPLIT_ROWS;
         let (wide, many) = (series(rows, 8, false), every_other(rows));
