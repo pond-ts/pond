@@ -1264,17 +1264,6 @@ argument for the rest.
   each workaround and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
 
-- **[PND-CATID]** — **Split category display label from category identity.**
-  The split has shipped (wave "Path to 1.0", #836): `CategoryDatum.key`,
-  `mark` carries the key, the axis and readouts draw the label. Left, two
-  questions the implementation put to the owner: (a) `sameMark` keeps
-  `label` in a keyed category's identity, so an entry holding only a key, or
-  a stale label, highlights on the canvas but fails `selectionContains`
-  against a fresh hit (accept as documented, or let a mark say whether its
-  label is identity); (b) duplicate keys still collapse to one slot
-  silently (add a dev warning?). Write-up in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-catid--split-category-display-label-from-category-identity).
-
 - **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
   (`PG-n`, merged from 39 raw) across seven planned financial panes, assessed
   against 0.59.0, **zero blocking**. Prioritized for the library rather than
