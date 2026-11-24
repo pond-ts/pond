@@ -1444,17 +1444,22 @@ PLAN.md as [PND-RSFILTER].
   fix, so the comparison was not a clean one, and it was not repeated.
 - **Hand-written SIMD** stays unscheduled, as before: it needs `unsafe`.
 
-## [PND-RSFILTER] follow-up — two slowdowns taken back (2026-11-23)
+## [PND-RSFILTER] follow-up — slowdowns taken back (2026-11-23, 24)
 
 #969 merged before its Layer 2 review had finished. The review, and a
 re-check on the M1 over more kinds of series, found the new filter
-**slower than the code before it** in two places. #971 removes both. What
-#969's section above says about text ("a stretch of kept rows is one
-copy") and about lists ("no list of row numbers is built") describes #969
-as it merged, not the code now.
+**slower than the code before it** in two places, and #971 was opened to
+remove both (first round, below). #971's own Layer 2 review then found two
+more shapes that were still slower than before #969, and two smaller
+things; a second round in the same PR removes those too. What #969's
+section above says about text ("a stretch of kept rows is one copy") and
+about lists ("no list of row numbers is built") describes #969 as it
+merged, not the code now.
 
-**What was slower** (the M1, Linux VM, one core, ms; 1M rows, but 833,333
-for the 120-byte text, since the benchmark holds at most 100 MB of text):
+### First round: what #969 made slower
+
+(The M1, Linux VM, one core, ms; 1M rows, but 833,333 for the 120-byte
+text, since the benchmark holds at most 100 MB of text.)
 
 | series                                       | before #969 | with #969 |
 | -------------------------------------------- | ----------- | --------- |
@@ -1489,30 +1494,116 @@ enough columns the list wins, most where 20 to 40% of rows are kept, since
 the copy from the mask does the same work per eight rows however few of
 them are kept.
 
-**What changed (#971).**
+**What the first round changed.** Text is no longer put together from
+bytes by pond-rs: it goes by Arrow's `filter` kernel, or stretch by stretch
+through `StringBuilder::append_array` where the kept rows come in long
+stretches (the safe bulk path that #969's notes say was not found). Both
+copy from an array already known to be valid, so neither is checked again.
+`RowFilter::by_list` holds the kernel's list of the kept rows, made the
+first time it is needed and shared by every column copied that way, and
+`TimeSeries::filter_copy` picks one of three ways to go about a series
+(`FilterCopy`).
 
-- Text is no longer put together from bytes by pond-rs. Scattered rows go
-  by Arrow's `filter` kernel. Rows in long stretches go stretch by stretch
-  through `StringBuilder::append_array`, which moves a stretch's offsets in
-  one loop and its bytes in one copy. Both copy from an array already known
-  to be valid, so neither is checked again. (`append_array` is the safe
-  bulk path that #969's notes above say was not found.)
-- `RowFilter::by_list` holds the kernel's list of the kept rows, made the
-  first time it is needed and shared by every column copied that way.
-- `TimeSeries::filter_copy` picks one of three ways (`FilterCopy`): a core
-  for the key and each column when 131,072 rows or more are kept and there
-  is more than one core (as #969); otherwise one after another, with number
-  and dictionary columns by the list when there are eight or more of them
-  and the mask is mixed; otherwise each straight from the mask.
-- In the copy from the mask, a run of words with every row kept is one
-  copy (it was a copy per word), and a word is walked bit by bit up to 24
-  kept rows (it was 12).
+### Second round: what the review of #971 found
 
-**The four numbers in those rules, and what set them.** All four were
-timed on an x86 cloud server (one core, 1M rows, ms), whose runs differ by
-tens of percent on the larger cases, so each figure is the middle or the
-lowest of two to five runs. The M1's crossovers are not all the same, and
-a run on the Mac itself is still owed (PLAN.md).
+The review's own probe (23,730 results over every column and key kind, 43
+masks and 1, 2 and 4 threads) found nothing wrong in what `filter`
+returns. On speed it found four things, each reproduced here before
+anything was changed (numbers in the table further down):
+
+1. **Many decimal columns** were slower than before #969. #969 copied
+   16-byte decimal values by the same table as 8-byte numbers, and #971
+   had kept that.
+2. **Wide number tables with nearly every row kept** (one dropped row in
+   every few hundred) were slower than before #969. #971's rule sent a
+   table to the list only when its rows were mixed, and here the copy from
+   the mask went word by word where the list goes stretch by stretch.
+3. **No benchmark text had gaps.** With gaps, short text gave back more
+   against #969 than the first round said.
+4. **`by_list` always made its list.** One text column with most rows kept
+   was faster when Arrow's kernel read the mask as it went.
+
+### How versions are timed against each other now
+
+The first round's thresholds were set from separate runs of each build,
+and the review's findings 1 and 2 are what that let through. On the x86
+cloud server, five runs of one program gave 13.6, 18.7, 18.8, 21.9 and
+26.1 ms for one memory-bound line (16 decimal columns with 10% of the rows
+kept, on the code before #969), so not even the lowest of five is steady.
+
+The second round was decided with a small tool kept outside the repo:
+**every version linked into one program, timed a call of each in turn.**
+To build it again: a scratch cargo workspace; per version a copy of the
+crate's `Cargo.toml` under another package name (`pond-before`,
+`pond-after`, …) with `src` pointing at that version's tree; the benchmark
+cases in one file, `include!`d once per version inside
+`mod x { use pond_before as pond_rs; … }`; a thread and a copy of the data
+for each version (or one version finds its input still in the cache from
+the last); a new random order every round; and for each case the middle
+of the round-by-round ratio to the first version. A "lab" copy of the crate
+with switches read at run time stands for many variants in one build.
+
+What it can and cannot tell apart, measured on itself:
+
+- **Two copies of one source do not read the same.** Built under two
+  names and timed over 249 lines, in two runs, they were 2 and 3 points
+  apart on the middle line, 6 and 7 or more on one line in ten, and 18
+  and 15 on the widest. The compiler does not lay one loop out the same
+  way twice.
+- **One line moves from run to run.** The suite's case read between 0.74
+  and 0.95 of "before" for one build of the second round over eight runs
+  ("before" took 9.1 to 10.9 ms on that line over those runs, and that
+  build 7.7 to 8.9). Two versions in one run keep their order better than
+  that: the same build read 1.03 to 1.10 of #969 on that line in each of
+  the four runs that held both.
+- So one line of one run is not evidence. What is: a gap that every copy
+  shows (each version is linked in two or three times for any close
+  call), a count over many lines, or two settings of one lab build.
+- A ratio to "before" also moves with how many versions are in the run
+  (more versions, more copies of the data, colder caches), so ratios are
+  compared within a run only.
+
+The tables of ms are still from each build run as its own program, since
+that is what a user's program is: eleven runs of each build, the builds
+taking turns, and the middle of the eleven. The lowest was tried first and
+dropped: it had the final code 11 to 18% behind "before" on memory-bound
+lines where the paired runs, and the middles, have it ahead.
+
+### What the second round changed
+
+- **A word of the mask whose kept rows come in stretches is copied a
+  stretch at a time** (`in_stretches`: six rows or more to a stretch, on
+  average, within the word). Before, a word with both kept and dropped
+  rows always went eight rows at a time by the table, or bit by bit.
+- **Values wider than eight bytes are never copied by the table.** The
+  table moves eight values to keep some of them; for a 16-byte decimal
+  that is more to move than the kept ones alone. They are walked bit by
+  bit, or go by the list (next point).
+- **Decimal columns count toward the eight, and their values go by the
+  list** when the table does. Their gap marks are still copied straight
+  from the mask.
+- **A second case for the list**: more than four rows in five kept, in
+  stretches of 40 rows or more on average
+  (`keeps_most_in_long_stretches`). Arrow's list is then a short list of
+  stretches. The first case is still "scattered", which now means one word
+  in four whose rows are not in stretches (it meant one word in four with
+  both kept and dropped rows).
+- **Text with most rows kept and no list to share** goes by Arrow's kernel
+  reading the mask as it goes. With a list already made for other columns,
+  or with fewer rows kept, it goes by the list as before.
+- **The benchmark** has 17 more lines (68): text with gaps, a wide table
+  with one row in 257 dropped at every width, and tables of 8 and 16
+  decimal columns at 10, 45 and 93% kept. It also makes one more warm-up
+  call before it counts page faults, because a benchmark that holds its
+  first result needs fresh room once more, on its first timed call, and
+  that showed as page faults on lines that have none in steady use.
+
+### The numbers in the rules, and what set them
+
+All were timed on the x86 cloud server (one core, 1M rows). The first
+three are the first round's, from separate runs (ms); the rest are the
+second round's, from the paired tool (ratios to "before"). The M1's crossovers are not all the same,
+and a run on the Mac itself is still owed (PLAN.md).
 
 - _Text by stretches from 32 rows a stretch_ (`TEXT_STRETCH_ROWS`). Each
   stretch costs about 70 ns to set up. 6-byte text, half the rows kept:
@@ -1522,98 +1613,364 @@ a run on the Mac itself is still owed (PLAN.md).
   stretches of its own: the two are level at 32 rows (4.40 against 4.38)
   and the kernel is behind from 48 (3.80 against 4.12). 24-byte text
   crosses at the same lengths.
-- _The list from eight number or dictionary columns_
+- _The list from eight number, decimal or dictionary columns_
   (`FILTER_LIST_COLUMNS`). At 8 number columns the two were level at 25%
   kept (4.5 from the mask, 4.6 by the list) and the mask ahead at 56% (6.5
   against 7.6). At 16 the list was ahead at every mix (56%: 17.5 against
   22.1; 25%: 11.0 against 15.0), and at 32 by more. On the M1 the list
   already paid at about four columns (cause 2). Eight sits between the two
   machines.
-- _Not by the list unless one word of the mask in four holds both kept and
-  dropped rows_ (`RowFilter::is_scattered`). In long stretches the copy
-  from the mask is mostly whole words copied or skipped. 8 columns,
-  stretches of 64 kept and 64 dropped: 4.53 from the mask against 6.03 by
-  the list; one dropped row after every 1,000: 7.72 against 7.67.
 - _Bit by bit up to 24 kept rows in a word_ (`SPARSE`). At 25% kept, 20 and
   28 against 12: 1.57 to 1.26 ms with no column beside `v`, 5.55 to 4.5
   with 7 more, 18.1 to 15.0 with 15 more. 36 is slower than 28 at 56%
   kept. On the M1, 4 to 40 made no difference that could be measured.
+- _Decimals never by the table._ Table against walk in one lab build, ms:
+  16 decimal columns, 45% kept, 48.7 against 43.1; 56% kept, 51.2 against
+  46.2; 8 columns, 26.9 against 21.3 and 27.2 against 23.5.
+- _Decimal values by the list on tables of eight or more._ Walked, a table
+  of 8 or 16 decimal columns with 10% of its rows kept at random took 1.07
+  to 1.25 of the time before #969; by the list, 0.79 to 1.08 (one run,
+  both ways in it). With the gap marks left to the kernel as well, 8 and 16
+  columns with gaps read 0.96, 0.96, 0.93 and 1.01 at 45 and 56% kept,
+  against 0.87, 0.85, 0.91 and 0.84 with the marks copied from the mask.
+- _A word in stretches from six rows a stretch_ (`STRETCH_ROWS`). Timed at
+  4, 6, 8 and 12 in one lab build over tables of 4 to 32 number columns: 4
+  and 6 are level. 8 leaves stretches of 8 rows to the table, and 12 those
+  of 12, and the table was 13 to 18% slower on them (8 columns, 8 kept and
+  1 dropped: 0.75 at 6 against 0.86 at 8).
+- _The list from one word of the mask in four not in stretches_
+  (`is_scattered`). The first round's rule counted every word with both
+  kept and dropped rows, and so sent rows in stretches to the list, where
+  the copy from the mask now moves a stretch at a time: 16 number columns
+  with 48 rows kept then 48 dropped read 0.95 with the first round's code
+  and 0.66 to 0.68 with the final code (the two runs of 249 lines), and
+  32 with 100 then 100, 0.94 and 1.11 against 0.72 to 0.81.
 
-**Same answers.** Each way of copying is held to a row-by-row reading and
-to Arrow's kernel over the masks #969 used; text with and without gaps,
-whole and sliced; the three ways of going about a series each against
-`take_rows`; the rule that picks one, case by case; and `filter_expr` in
-full against `take_rows` (it compared row counts only, a finding of the
-review). Of 54 mistakes planted one at a time, the 49 that change a result
-each fail a test; the other 5 change how a copy is made, not what comes
-out.
+  Where the list starts to pay was then timed directly: 8, 16 and 32
+  number columns under masks in which one word in 16, 8, 4, 2 or every
+  word has its rows at random, and the rest come 16 words kept then 16
+  dropped; the list against the copy from the mask in one lab build, two
+  runs (25 rounds a line). At one word in 16 the copy from the mask was
+  ahead on 8 and 16 columns (0.62 and 0.63 against 0.73 and 0.75; 0.73
+  twice against 0.84 twice) and 3 to 4 points ahead on 32. At one in 8 the list read
+  from 3 points behind to 6 ahead. At one in 4 it was ahead on 16 and 32
+  columns (0.92 and 0.86 against 0.98 and 0.97; 0.96 and 0.93 against
+  1.07 and 1.02) and level on 8 (0.77 and 0.81 against 0.78 twice). With
+  every word at random it was ahead by 19 to 30 points at every width. So
+  one word in four is where the list has started to pay on this machine.
 
-**Measured** on the x86 cloud server (`examples/perf_filter.rs`, ms, the
-lowest of five runs of it; 1M rows, but 833,333 for the 120-byte text and
-250,000 for the 400-byte). "Before" is ff2ff27, the commit before #969; it
-never uses a second core. Freed memory was held on to so that runs
-compare (next paragraph).
+- _The list when most rows are kept in stretches of 40 or more_
+  (`LIST_STRETCH_ROWS`). With one dropped row after every N kept, on 8, 16
+  and 32 number columns, list against copy from the mask in one lab build
+  (25 rounds a line): N = 32, 0.88 to 0.95 against 0.85 to 0.90 (two
+  runs); N = 40, 0.83, 0.89 and 0.94 against 0.86, 0.91 and 0.94; N = 48,
+  0.80, 0.89, 0.96 against 0.81, 0.91, 1.01; N = 56, 0.85, 0.92, 0.96
+  against 0.95, 0.96, 1.05; N = 64, 0.82, 0.91, 0.96 against 0.85, 1.00,
+  1.09; N = 256, 0.78, 0.90, 0.88 against 0.91, 1.04, 1.05. On 8 and 16
+  decimal columns at N = 64, 0.85 to 0.96 against 0.92 to 1.07. So the
+  list is behind at 32, level at 40 and ahead from 48.
 
-| case                                         | before | #969  | #971  | #969, four cores | #971, four cores |
-| -------------------------------------------- | ------ | ----- | ----- | ---------------- | ---------------- |
-| 6-byte ASCII text, 56% kept (the suite's)    | 6.96   | 4.15  | 5.42  | 2.95             | 4.18             |
-| the same, 1% kept                            | 2.57   | 0.76  | 0.72  | 0.76             | 0.72             |
-| the same, 93% kept                           | 7.67   | 4.94  | 5.85  | 3.32             | 4.31             |
-| the same, 50% kept in stretches of 1,000     | 6.12   | 2.68  | 1.52  | 2.06             | 1.06             |
-| key and `v` only                             | 4.09   | 1.77  | 1.75  | 1.65             | 1.24             |
-| text of 24 bytes, ASCII, 56% kept            | 7.00   | 5.95  | 5.24  | 5.27             | 4.65             |
-| text of 120 bytes, ASCII, 56% kept           | 15.61  | 19.76 | 12.88 | 18.47            | 14.57            |
-| the same, stretches of 1,000                 | 10.50  | 11.55 | 5.31  | 12.02            | 4.62             |
-| text of 400 bytes, ASCII, 56% kept           | 8.14   | 13.12 | 9.28  | 15.32            | 10.85            |
-| text of 24 bytes in 2-byte letters, 56% kept | 7.24   | 13.89 | 5.21  | 15.70            | 4.78             |
-| text of 60 bytes in 3-byte letters, 56% kept | 11.70  | 34.52 | 10.69 | 35.94            | 10.15            |
-| 2 number columns, 25% kept                   | 3.83   | 2.08  | 1.76  | 1.22             | 0.99             |
-| 8 number columns, 25% kept                   | 6.64   | 5.52  | 4.45  | 2.42             | 1.91             |
-| 16 number columns, 25% kept                  | 13.98  | 20.40 | 10.61 | 5.74             | 5.01             |
-| 32 number columns, 25% kept                  | 27.87  | 46.92 | 25.00 | 13.69            | 11.08            |
-| 32 number columns, 56% kept                  | 43.52  | 48.88 | 40.70 | 15.07            | 15.36            |
-| 1,000 series of 1,000 rows, 56% kept         | 7.57   | 4.88  | 6.23  | 4.92             | 6.08             |
-| `filter` with a closure                      | 7.56   | 5.69  | 7.00  | 4.47             | 5.77             |
+  This number was 64 until the last round of timing, and that showed a
+  flaw in how it was applied. A series of 1M rows with one dropped row
+  after every 64 kept has 15,385 stretches, the last cut short by the end
+  of the series, so its average is a little under 64: it missed the list
+  and was the one line of 223 that read above "before" (1.05). The test
+  that pinned the rule used 6,500 rows, which divide evenly, and passed.
+  At 40 the same edge falls where the two ways are level.
 
-Against "before", #971 is no slower on any of the benchmark's 51 cases, on
-one core or four, beyond what two runs of one program differ by. The line
-that reads worst is 400-byte text at 56% kept on one core (8.14 before,
-9.28 after): its five runs range from 8.1 to 14.1 ms before and from 9.3
-to 13.4 after, with the middle run at 11.7 and 11.8. Both copy that text by
-the same Arrow kernel.
+  Why the list leads at all, when the copy from the mask also moves a
+  stretch at a time: its list of stretches is made once and shared. On 16 and 32 columns with one dropped row after
+  every 64 to 1,000 kept, Arrow's list read 0.87 to 0.98 and a copy loop
+  of our own over one shared list 0.88 to 0.99; the same list made again
+  for each column read 0.94 to 1.06, and reading the mask per column 0.91
+  to 1.08.
 
-Against #969, #971 is slower on eight of the 51 lines, all of them the
-6-byte host names with kept rows in stretches of 3 to 16 (the suite's
-case, which the benchmark times twice, 93% kept, the 1,000 small series,
-the closure, and stretches of 4, 8 and 16 rows), by 0.9 to 1.4 ms on one
-core and 1.0 to 1.6 on four. It is faster or level on the other 43. The
-section after next is about those eight.
+- _Text by the kernel without its list above four rows in five kept_
+  (`keeps_most`; the kernel itself switches from a list of rows to
+  stretches there). 6-byte text, one lab build: 93% kept in stretches of
+  16, 0.71 without the list against 0.78 with; 85% at random, 0.69
+  against 0.81; 24-byte text, 0.78 against 0.84 and 0.75 against 0.80.
+  Level at 99% and with gaps. At 56% and under the list is ahead (0.77
+  against 0.93 to 0.97).
 
-**Fresh memory can cost more than the copy.** The benchmark now prints
-page faults per call. When a call's output buffers come fresh from the
-system (the allocator did not reuse what the last call freed), each MB
-costs about 0.2 ms on the M1 before a byte is copied. Whether that happens
+**What the per-word test for stretches costs.** Every word with both kept
+and dropped rows is now tested for stretches before it is copied, in every
+column. Three copies each of the first round's code and the final code
+were timed against each other in three runs (25 rounds a line). Where no
+word is in stretches, so that the test is all that differs, the final code
+read 1 to 5 points higher on one core (two of the runs, first round then
+final):
+
+| line (56% kept, one core)  | first round                | final                      |
+| -------------------------- | -------------------------- | -------------------------- |
+| key and `v` only           | 0.60 to 0.62, 0.53 to 0.55 | 0.61 to 0.63, 0.55 to 0.58 |
+| one more number column     | 0.65 to 0.66, 0.62 to 0.65 | 0.67 to 0.69, 0.64 to 0.68 |
+| five more                  | 0.91 to 0.93, 0.82 to 0.86 | 0.96 to 0.97, 0.84 to 0.88 |
+| a dictionary column beside | 0.70 to 0.72, 0.66 to 0.69 | 0.74 to 0.76, 0.71 to 0.72 |
+
+On four cores the copies of the two overlapped on every such line.
+
+Two variants were built to take those points back and timed the same way:
+one that tests only one word in eight after a word that is not in
+stretches, and one that moves the stretch copy out of the loop into a
+function of its own. Neither read lower than the final code on those lines
+by more than copies of one version differ among themselves. The first
+also read 10 points higher on four decimal columns at 45% kept (0.92 to
+0.96 against 0.82 to 0.85), a mask where no word is in stretches, so that
+both versions make exactly the same copies. So what is read here turns
+at least as much on how the compiler lays the loop out as on the test
+itself, and it was left as it is.
+
+### Same answers
+
+Each way of copying is held to a row-by-row reading and to Arrow's kernel
+over the masks #969 used and three more (stretches of 6, 12 and 40 rows);
+text with and without gaps, whole and sliced, by each of its three routes;
+the three ways of going about a series each against `take_rows`, with a
+decimal column among them; the rules that pick one, case by case; and
+`filter_expr` in full against `take_rows` (it compared row counts only, a
+finding of #969's review).
+
+71 mistakes were then planted in the copying code and its rules, one at a
+time (a row dropped at the end of a word, a stretch one row short, a rule
+one row off, and so on), and the filter tests run on each. A test fails
+on each of the 61 that change what `filter` returns or which way a rule
+picks. The other 10 only swap one way of copying for another that gives
+the same rows, which no test of results can see; the timings are what
+hold those.
+
+### Measured
+
+On the x86 cloud server (4 cores, a 2.1 GHz Xeon), 1M rows, but 833,333
+for the 120-byte text and 250,000 for the 400-byte. "Before" is ff2ff27,
+the commit before #969; it never uses a second core. "First round" is
+#971 as first pushed (556ce9e). Freed memory was held on to so that runs
+compare (below).
+
+**Every version in one program, a call of each in turn**: 249 lines (the
+benchmark's 68 and 181 more, with decimals, wide tables, text of three
+lengths with and without gaps, kept rows at random from 5 to 99% and in
+stretches that do and do not line up with 64 rows), 15 rounds a line on
+one core and 9 on four. A line counts as slower than "before" when it
+reads more than 3% above it. The final code was linked in twice, and its
+column counts the lines that do so on both copies:
+
+|                                        | #969 | first round | final |
+| -------------------------------------- | ---- | ----------- | ----- |
+| lines slower than "before", one core   | 97   | 41          | 0     |
+| the middle line, one core              | 0.97 | 0.87        | 0.82  |
+| lines slower than "before", four cores | 14   | 4           | 0     |
+| the middle line, four cores            | 0.40 | 0.38        | 0.35  |
+
+(The same 249 lines, timed once earlier in the night, before the server
+was restarted: 95, 40 and 0 on one core, 13, 3 and 0 on four, and the
+same middle lines to within a point.)
+
+On four cores no line reads above 1.03 on either copy of the final code.
+On one core three do on one copy, and read under "before" on the other:
+400-byte text at 56% kept (1.04 and 0.96), 8 decimal columns at 45% kept
+(0.93 and 1.05) and 32 number columns with one dropped row after every 56
+kept (1.05 and 0.98). Those three, and the three lines that read highest
+as programs of their own (further down), were timed again with three
+copies of the final code against two of "before", twice, 25 rounds a line
+on one core and 15 on four, the rounds of the two runs pooled. The final
+code to "before", lowest and highest copy, four cores in brackets:
+
+| line                                                   | final to "before"           |
+| ------------------------------------------------------ | --------------------------- |
+| 120-byte text, 56% kept                                | 0.88 to 0.90 (0.78 to 0.82) |
+| 400-byte text, 56% kept                                | 0.95 to 0.96 (0.92 to 0.95) |
+| 8 decimal columns, 45% kept                            | 0.87 to 0.88 (0.35)         |
+| 32 number columns, one dropped row after every 56 kept | 0.94 to 1.00 (0.28 to 0.29) |
+| 16 decimal columns with gaps, 10% kept (the benchmark) | 0.99 to 1.01 (0.95 to 0.97) |
+| 16 decimal columns with gaps, 10% kept at random       | 0.97 to 1.01 (0.97 to 1.00) |
+
+So no line is slower than "before". On three the final code is level
+with it and not ahead: the two lines of 16 decimal columns with gaps and
+a tenth of the rows kept, on one core and on four (kept rows under
+131,072 are never split across cores), and 32 number columns at that one
+stretch length on one core. "Considered, not done" has what would move
+the decimal lines.
+
+**Against #969**, in the same runs of 249 lines, the final code is ahead
+by more than 3 points on both copies on 201 lines on one core and 148 on
+four, and behind on 16 and 15. On four cores every line behind is 6-byte
+text: in stretches of 4 to 16 rows, or with 56 to 93% of the rows kept,
+with gaps and without, and the 1,000 small series, which hold the same
+text. On one core 12 of the 16 are that text (with the closure, which
+filters it too). The next section is about those. The other four have no
+text: key and `v` only (0.65 and 0.64 against 0.57), three more number
+columns at 56% kept (0.85 and 0.87 against 0.75), eight number columns
+with 85% kept at random (0.86 and 0.84 against 0.79) and the array column
+(0.91 and 0.87 against 0.82).
+
+Which narrow table reads behind changes from one run to the next. In the
+earlier run of the 249 lines the lines without text that read behind
+were one more number column at 56% kept (0.81 and 0.76 against 0.69) and
+the array column (0.83 twice against 0.77). Key and `v` only then read
+ahead (0.53 and 0.51 against 0.58), and one more number column read ahead
+in the later run (0.67 twice against 0.74). The array column, whose array
+both versions copy by the same code, read from 6 points ahead to 4 behind
+over four other one-core runs. So single lines do not settle it. What the
+three-copy runs showed (above) is what holds: against the first round, a
+table of one to five number columns with mixed rows pays 1 to 5 points
+on one core for the per-word test, and nothing that could be measured on
+four. As programs of their own those lines are within 3% of #969 (2.33
+against 2.35 ms with key and `v` only, 3.11 against 3.03 with one more
+number column, 6.25 against 6.21 with five more). Tables whose
+rows come six or more to a stretch gain more than that (three copies of
+each, first round then final: four number columns with one dropped row
+after every 64 kept, 0.80 to 0.82 then 0.69 to 0.74; eight with one after
+every 12, 0.83 to 0.85 then 0.78 to 0.80).
+
+**The benchmark by itself**, `examples/perf_filter.rs`, ms: each build
+run as its own program, the builds taking turns, eleven runs of each, the
+middle of the eleven. The last two columns are the final code's ratio to
+"before" in the paired runs above (both copies), on one core and on four.
+(\* "before" has no second core to use; its column is there to show what
+the machine itself gives on a second run.)
+
+| line                                                | before | #969  | first round | final | before, 4 cores\* | #969, 4 cores | final, 4 cores | final to before, paired | the same, 4 cores |
+| --------------------------------------------------- | ------ | ----- | ----------- | ----- | ----------------- | ------------- | -------------- | ----------------------- | ----------------- |
+| **How many rows are kept, and how they are spread** |        |       |             |       |                   |               |                |                         |                   |
+| 56% kept, stretches of ~3 (the suite's case)        | 6.95   | 5.08  | 4.94        | 5.27  | 7.46              | 3.88          | 4.50           | 0.75, 0.80              | 0.53, 0.52        |
+| none kept (the test alone)                          | 2.55   | 0.62  | 0.51        | 0.62  | 2.67              | 0.63          | 0.63           | 0.22, 0.22              | 0.21, 0.23        |
+| 1% kept                                             | 3.00   | 1.28  | 0.98        | 1.16  | 3.02              | 1.25          | 1.18           | 0.45, 0.40              | 0.38, 0.43        |
+| 93% kept (all but the gaps and 1%)                  | 7.78   | 6.16  | 6.47        | 5.19  | 8.48              | 4.34          | 3.80           | 0.68, 0.69              | 0.45, 0.44        |
+| 50% kept, stretches of 1,000                        | 5.56   | 3.35  | 1.95        | 1.92  | 5.47              | 3.01          | 1.67           | 0.34, 0.34              | 0.30, 0.30        |
+| 56% kept, gaps in the text                          | 7.43   | 5.63  | 6.74        | 6.66  | 7.56              | 4.47          | 5.93           | 0.71, 0.72              | 0.60, 0.60        |
+| 93% kept, gaps in the text                          | 8.94   | 6.12  | 7.85        | 6.89  | 8.65              | 4.42          | 5.84           | 0.79, 0.75              | 0.58, 0.57        |
+| **Half the rows kept, in stretches of one length**  |        |       |             |       |                   |               |                |                         |                   |
+| stretches of 1                                      | 5.55   | 5.47  | 4.55        | 4.62  | 5.79              | 4.62          | 3.88           | 0.97, 0.87              | 0.57, 0.55        |
+| stretches of 4                                      | 6.15   | 3.95  | 4.54        | 4.50  | 5.95              | 3.03          | 3.75           | 0.78, 0.82              | 0.54, 0.55        |
+| stretches of 8                                      | 5.88   | 3.82  | 4.59        | 4.13  | 6.28              | 2.98          | 3.72           | 0.73, 0.74              | 0.59, 0.63        |
+| stretches of 16                                     | 5.85   | 3.90  | 4.49        | 3.88  | 6.26              | 2.87          | 3.55           | 0.64, 0.69              | 0.52, 0.54        |
+| stretches of 32                                     | 5.82   | 3.91  | 3.53        | 2.94  | 6.16              | 2.81          | 2.49           | 0.57, 0.62              | 0.42, 0.44        |
+| stretches of 64                                     | 5.86   | 3.40  | 2.51        | 2.44  | 5.90              | 2.88          | 1.95           | 0.45, 0.46              | 0.38, 0.36        |
+| stretches of 256                                    | 5.88   | 3.35  | 2.20        | 2.22  | 5.88              | 2.94          | 1.82           | 0.37, 0.42              | 0.36, 0.32        |
+| **The same rows as 1000 series of 1,000 rows**      |        |       |             |       |                   |               |                |                         |                   |
+| 56% kept, a call per series                         | 7.21   | 5.17  | 6.06        | 5.92  | 6.90              | 5.23          | 5.59           | 0.89, 0.92              | 0.95, 0.93        |
+| **v > 500**                                         |        |       |             |       |                   |               |                |                         |                   |
+| no other column                                     | 4.61   | 2.35  | 2.16        | 2.33  | 4.88              | 2.21          | 2.24           | 0.65, 0.64              | 0.45, 0.45        |
+| number, no gaps                                     | 5.42   | 3.00  | 2.92        | 3.03  | 5.66              | 2.20          | 2.36           | 0.67, 0.62              | 0.45, 0.43        |
+| text                                                | 7.11   | 4.89  | 4.68        | 5.27  | 7.29              | 3.90          | 4.54           | 0.78, 0.77              | 0.55, 0.51        |
+| text held as a dictionary                           | 5.25   | 3.35  | 2.96        | 3.42  | 5.37              | 2.49          | 2.42           | 0.80, 0.79              | 0.43, 0.43        |
+| true/false, with gaps                               | 6.43   | 3.45  | 3.15        | 3.46  | 6.69              | 2.31          | 2.40           | 0.49, 0.55              | 0.37, 0.41        |
+| decimal, with gaps                                  | 7.23   | 4.38  | 4.64        | 4.29  | 7.26              | 4.34          | 3.61           | 0.63, 0.67              | 0.51, 0.44        |
+| array (one number per row)                          | 16.68  | 14.30 | 13.80       | 14.48 | 18.57             | 14.75         | 14.36          | 0.91, 0.87              | 0.74, 0.77        |
+| **Text of other lengths and letters**               |        |       |             |       |                   |               |                |                         |                   |
+| 24 bytes, ASCII                                     | 7.71   | 7.45  | 5.87        | 6.20  | 8.01              | 7.55          | 5.99           | 0.79, 0.82              | 0.65, 0.69        |
+| 24 bytes, ASCII, stretches                          | 6.28   | 5.39  | 2.63        | 2.75  | 6.31              | 5.42          | 2.41           | 0.44, 0.43              | 0.34, 0.33        |
+| 120 bytes, ASCII                                    | 17.31  | 24.37 | 16.76       | 18.14 | 19.83             | 24.61         | 17.20          | 0.81, 0.93              | 0.79, 0.73        |
+| 120 bytes, ASCII, stretches                         | 12.89  | 14.77 | 5.46        | 5.41  | 15.31             | 16.34         | 8.38           | 0.60, 0.74              | 0.58, 0.60        |
+| 400 bytes, ASCII                                    | 12.77  | 19.21 | 11.18       | 11.88 | 13.63             | 21.44         | 14.10          | 1.04, 0.96              | 0.96, 0.96        |
+| 400 bytes, ASCII, stretches                         | 5.99   | 11.59 | 4.52        | 4.64  | 8.32              | 12.02         | 4.62           | 0.82, 0.84              | 0.82, 0.75        |
+| 12 bytes, 6 letters of 2 bytes                      | 6.53   | 9.05  | 5.40        | 5.42  | 7.25              | 8.61          | 4.92           | 0.82, 0.80              | 0.52, 0.56        |
+| 12 bytes, 6 letters of 2 bytes, stretches           | 5.42   | 7.14  | 2.15        | 2.14  | 5.96              | 7.04          | 2.07           | 0.38, 0.37              | 0.33, 0.31        |
+| 24 bytes, 12 letters of 2 bytes                     | 7.60   | 17.22 | 5.92        | 5.71  | 8.19              | 16.70         | 6.21           | 0.73, 0.76              | 0.63, 0.58        |
+| 24 bytes, 12 letters of 2 bytes, stretches          | 5.75   | 12.08 | 2.70        | 2.60  | 6.21              | 12.10         | 2.65           | 0.45, 0.43              | 0.37, 0.39        |
+| 60 bytes, 20 letters of 3 bytes                     | 13.77  | 37.51 | 10.24       | 12.13 | 15.55             | 36.50         | 12.51          | 0.87, 0.84              | 0.67, 0.68        |
+| 60 bytes, 20 letters of 3 bytes, stretches          | 10.78  | 28.22 | 4.40        | 4.02  | 10.89             | 29.54         | 5.65           | 0.50, 0.50              | 0.47, 0.48        |
+| **More number columns beside the key and v**        |        |       |             |       |                   |               |                |                         |                   |
+| 1 more, 56% kept                                    | 5.22   | 3.03  | 3.09        | 3.11  | 5.44              | 2.17          | 2.37           | 0.67, 0.67              | 0.43, 0.48        |
+| 1 more, 25% kept                                    | 4.25   | 2.70  | 2.31        | 2.25  | 4.09              | 1.87          | 1.69           | 0.61, 0.63              | 0.40, 0.44        |
+| 1 more, stretches of 1,000                          | 4.26   | 2.00  | 1.78        | 1.77  | 4.41              | 1.58          | 1.52           | 0.33, 0.32              | 0.31, 0.31        |
+| 1 more, one row in 257 dropped                      | 4.58   | 2.95  | 2.96        | 2.72  | 4.82              | 1.95          | 1.91           | 0.57, 0.57              | 0.38, 0.38        |
+| 3 more, 56% kept                                    | 6.83   | 4.67  | 4.70        | 4.74  | 7.00              | 2.68          | 2.69           | 0.85, 0.87              | 0.46, 0.44        |
+| 3 more, 25% kept                                    | 5.26   | 4.24  | 3.22        | 3.23  | 5.37              | 2.23          | 2.02           | 0.80, 0.76              | 0.45, 0.42        |
+| 3 more, stretches of 1,000                          | 5.72   | 3.04  | 2.62        | 2.46  | 5.81              | 1.95          | 1.64           | 0.46, 0.43              | 0.30, 0.28        |
+| 3 more, one row in 257 dropped                      | 6.27   | 4.91  | 4.46        | 4.38  | 5.96              | 2.66          | 2.59           | 0.79, 0.81              | 0.37, 0.35        |
+| 5 more, 56% kept                                    | 9.11   | 6.21  | 6.24        | 6.25  | 9.04              | 3.39          | 3.39           | 0.88, 0.93              | 0.38, 0.37        |
+| 5 more, 25% kept                                    | 6.28   | 5.44  | 4.34        | 4.33  | 6.39              | 2.92          | 2.23           | 0.81, 0.84              | 0.34, 0.37        |
+| 5 more, stretches of 1,000                          | 7.00   | 3.86  | 3.49        | 3.30  | 7.01              | 2.12          | 2.04           | 0.52, 0.49              | 0.25, 0.24        |
+| 5 more, one row in 257 dropped                      | 8.62   | 7.16  | 6.50        | 5.90  | 8.58              | 3.38          | 3.31           | 0.79, 0.86              | 0.32, 0.33        |
+| 7 more, 56% kept                                    | 11.49  | 11.66 | 9.22        | 9.95  | 12.46             | 4.29          | 4.28           | 0.95, 0.92              | 0.38, 0.37        |
+| 7 more, 25% kept                                    | 7.31   | 7.65  | 5.35        | 5.53  | 7.62              | 3.15          | 2.82           | 0.88, 0.85              | 0.35, 0.38        |
+| 7 more, stretches of 1,000                          | 8.18   | 4.97  | 4.31        | 4.37  | 8.74              | 2.64          | 2.38           | 0.59, 0.60              | 0.24, 0.26        |
+| 7 more, one row in 257 dropped                      | 10.78  | 10.89 | 10.66       | 8.57  | 12.19             | 4.42          | 3.72           | 0.91, 0.87              | 0.33, 0.33        |
+| 15 more, 56% kept                                   | 23.54  | 26.32 | 20.90       | 21.76 | 24.64             | 7.92          | 7.36           | 0.92, 0.84              | 0.37, 0.38        |
+| 15 more, 25% kept                                   | 14.91  | 23.33 | 12.99       | 12.22 | 16.89             | 6.38          | 5.04           | 0.87, 0.85              | 0.35, 0.34        |
+| 15 more, stretches of 1,000                         | 17.64  | 16.74 | 10.91       | 11.08 | 18.84             | 4.47          | 3.59           | 0.69, 0.66              | 0.23, 0.24        |
+| 15 more, one row in 257 dropped                     | 24.11  | 28.07 | 28.02       | 22.22 | 25.73             | 8.29          | 7.80           | 0.96, 0.91              | 0.33, 0.33        |
+| 31 more, 56% kept                                   | 44.04  | 50.71 | 41.72       | 42.09 | 45.58             | 14.71         | 15.47          | 0.87, 0.86              | 0.35, 0.36        |
+| 31 more, 25% kept                                   | 32.76  | 45.51 | 30.22       | 31.05 | 34.81             | 13.86         | 11.23          | 0.85, 0.85              | 0.35, 0.35        |
+| 31 more, stretches of 1,000                         | 33.67  | 34.80 | 28.09       | 26.54 | 34.94             | 9.68          | 7.95           | 0.81, 0.80              | 0.23, 0.23        |
+| 31 more, one row in 257 dropped                     | 45.34  | 52.55 | 53.28       | 44.67 | 47.24             | 16.70         | 14.16          | 0.95, 0.92              | 0.28, 0.28        |
+| **Decimal columns beside the key and v**            |        |       |             |       |                   |               |                |                         |                   |
+| 8 decimals, 10% kept                                | 8.17   | 8.02  | 7.55        | 6.50  | 11.88             | 9.89          | 6.92           | 0.76, 0.75              | 0.80, 0.89        |
+| 8 decimals, 45% kept                                | 19.08  | 26.21 | 26.00       | 17.99 | 20.82             | 8.23          | 6.65           | 0.89, 0.88              | 0.36, 0.34        |
+| 8 decimals, 93% kept                                | 30.35  | 32.07 | 32.42       | 27.95 | 32.86             | 10.93         | 7.66           | 0.87, 0.86              | 0.30, 0.30        |
+| 16 decimals, 10% kept                               | 19.89  | 22.75 | 23.31       | 18.12 | 21.93             | 23.24         | 19.35          | 0.90, 0.88              | 0.89, 0.84        |
+| 16 decimals, 45% kept                               | 38.84  | 51.31 | 51.76       | 36.09 | 39.04             | 15.84         | 12.54          | 0.93, 0.97              | 0.29, 0.30        |
+| 16 decimals, 93% kept                               | 57.19  | 61.20 | 62.48       | 54.82 | 57.89             | 18.51         | 14.93          | 0.96, 0.91              | 0.26, 0.26        |
+| 16 decimals, with gaps, 10% kept                    | 24.88  | 28.75 | 28.45       | 23.45 | 23.34             | 29.01         | 26.45          | 0.97, 0.91              | 0.97, 0.97        |
+| 16 decimals, with gaps, 45% kept                    | 53.10  | 61.89 | 61.55       | 47.21 | 52.49             | 18.30         | 15.37          | 0.96, 0.93              | 0.29, 0.28        |
+| 16 decimals, with gaps, 93% kept                    | 74.98  | 67.68 | 66.61       | 58.73 | 75.79             | 20.51         | 16.66          | 0.75, 0.76              | 0.21, 0.22        |
+| **v > 500 as a closure**                            |        |       |             |       |                   |               |                |                         |                   |
+| filter(\|row\| ...)                                 | 7.95   | 6.81  | 6.97        | 6.91  | 8.03              | 6.13          | 6.75           | 0.83, 0.83              | 0.64, 0.63        |
+
+As its own program the final code reads more than 3% above "before" on
+one of the 68 lines on one core and on two on four cores (#969 on 25 and
+12; the first round on 9 and 2), and more than 3% under it on 66 and 66.
+The one is 120-byte text (18.14 against 17.31 ms; the eleven runs went
+from 14.1 to 20.4 for the final code and from 15.5 to 20.1 for "before").
+The two are 400-byte text (14.10 against 13.63; 11.8 to 19.8 and 12.4 to
+15.6) and 16 decimal columns with gaps at 10% kept (26.45 against 23.34;
+23.9 to 27.9 and 21.8 to 26.8; that line never uses a second core in any
+version, and on one core the same two builds read 23.45 and 24.88). All
+three are in the table of three copies above: the two text lines ahead,
+the decimal line level. A middle of eleven is itself steady only to
+about 5% here: two sets of eleven, an hour apart, gave 4.94 then 5.08 ms
+on the suite's case for #969, 5.52 then 4.94 for the first round and
+5.35 then 5.27 for the final code.
+
+**Fresh memory can cost more than the copy.** The benchmark prints page
+faults per call. When a call's output buffers come fresh from the system
+(the allocator did not reuse what the last call freed), each MB costs
+about 0.2 ms on the M1 before a byte is copied. Whether that happens
 depends on the allocator's state, not on `filter`: with the allocator left
 as it comes, the same program gave 4.4 and 29.0 ms for one case (400-byte
 text in stretches of 1,000) in two runs minutes apart. So the tables here
-hold freed memory on to (`GLIBC_TUNABLES` with `mmap_max=0` and a large
-`trim_threshold` and `top_pad`), and a line that still shows page faults is
-compared only with another that does. Those settings did not do the same
-for the pool's threads. With four cores a long text column is copied on a
-pool thread, and in a first set of four-core runs the 400-byte line showed
-page faults in three of #971's five runs and none of "before"'s (9.41
-before, 11.63 after). The four-core columns above are a second set with
-`arena_max=1` added, which has every thread take its memory from the one
-place: no long-text line showed page faults in any of the three programs,
-and that line read 11.48 before and 10.85 after.
+hold freed memory on to (`GLIBC_TUNABLES` with `mmap_max=0`, a large
+`trim_threshold` and `top_pad`, and `arena_max=1` so that every thread
+takes its memory from the one place), and a line that still shows page
+faults is compared only with another that does.
 
-**What #971 gives back, and the two ways to get it back.** Short ASCII
-text in scattered rows, which is the suite's case, is the one shape where
-#969's own loop beat the kernel even with Arrow's check on top. #971 sends
-it back to the kernel. On the M1 (Linux VM, one core, whole call, ms; a
-lab build of #969 in which only the text copy changes, so the middle
-column stands for #971 on these scattered cases, which itself has not
-been timed on the M1 yet):
+### What #971 gives back, and the two ways to get it back
+
+Short ASCII text in rows kept a few at a time, which is the suite's case,
+is the one shape where #969's own loop beat the kernel even with Arrow's
+check on top. #971 sends that text back to the kernel, and the second
+round leaves it there.
+
+How much that gives back, from three copies of each version timed in two
+runs (25 rounds a line on one core, 15 on four, the rounds of the two
+runs pooled). Ratios to "before" (the mean of its two copies): the lowest
+and the highest copy, with four cores in brackets. "Unchecked" is the
+prepared change described below:
+
+| line                                         | #969                        | final                       | unchecked                   |
+| -------------------------------------------- | --------------------------- | --------------------------- | --------------------------- |
+| 56% kept, stretches of ~3 (the suite's case) | 0.69 to 0.70 (0.46 to 0.50) | 0.75 to 0.79 (0.51 to 0.52) | 0.64 to 0.65 (0.39 to 0.40) |
+| 1% kept                                      | 0.37 to 0.40 (0.42 to 0.44) | 0.39 to 0.42 (0.39 to 0.44) | 0.40 to 0.42 (0.41 to 0.42) |
+| 93% kept (all but the gaps and 1%)           | 0.70 to 0.71 (0.48)         | 0.68 to 0.70 (0.45)         | 0.53 to 0.54 (0.31 to 0.32) |
+| stretches of 1                               | 0.84 to 0.91 (0.61 to 0.63) | 0.76 to 0.77 (0.50 to 0.54) | 0.76 to 0.77 (0.51 to 0.53) |
+| stretches of 4                               | 0.74 to 0.76 (0.43 to 0.46) | 0.82 to 0.84 (0.51 to 0.53) | 0.64 to 0.66 (0.34 to 0.35) |
+| stretches of 8                               | 0.69 to 0.71 (0.40 to 0.42) | 0.76 to 0.80 (0.49 to 0.52) | 0.56 to 0.57 (0.30 to 0.32) |
+| stretches of 16                              | 0.66 to 0.70 (0.42 to 0.45) | 0.67 to 0.71 (0.49 to 0.51) | 0.50 to 0.53 (0.32)         |
+| 1,000 series: 56% kept, a call per series    | 0.78 to 0.82 (0.80 to 0.82) | 0.86 to 0.87 (0.86 to 0.91) | 0.74 to 0.76 (0.74 to 0.78) |
+| kind: text                                   | 0.67 to 0.71 (0.44 to 0.45) | 0.73 to 0.75 (0.50 to 0.52) | 0.60 (0.37 to 0.38)         |
+| filter(\|row\| ...)                          | 0.74 to 0.78 (0.56 to 0.58) | 0.83 to 0.84 (0.62 to 0.65) | 0.70 to 0.71 (0.51)         |
+| 56% kept, gaps in the text                   | 0.67 to 0.70 (0.47 to 0.48) | 0.78 to 0.79 (0.58 to 0.59) | 0.61 to 0.63 (0.40 to 0.42) |
+| 93% kept, gaps in the text                   | 0.66 to 0.67 (0.43)         | 0.73 to 0.75 (0.53 to 0.54) | 0.49 to 0.50 (0.28 to 0.30) |
+
+On the suite's case the final code takes 7 to 14% longer than #969 on one
+core and 2 to 13% longer on four, and the unchecked change 6 to 9% less
+than #969 on one core and 13 to 22% less on four.
+
+On the M1 in the first round (Linux VM, one core, whole call, ms; a lab
+build of #969 in which only the text copy changes, so the middle column
+stands for #971 on these scattered cases):
 
 | text, 56% kept unless said | #969  | text by Arrow's kernel | #969's loop, unchecked |
 | -------------------------- | ----- | ---------------------- | ---------------------- |
@@ -1625,32 +1982,143 @@ been timed on the M1 yet):
 | 120 bytes, ASCII           | 8.16  | 4.80                   | 4.90                   |
 | 24 bytes in 2-byte letters | 10.63 | 3.38                   | 2.65                   |
 
-Before #969 the suite's case took 4.24 there. So #971 should leave it at
-about 3.5 where #969 had 2.75, and it wins everywhere #969 lost.
+Before #969 the suite's case took 4.24 there.
 
 - **Unchecked** (one `unsafe` block: `StringArray::new_unchecked` on
-  pond-rs's own copy, which is what Arrow's kernel does with its own). The
-  fastest, or level, at every length and mix above, ASCII or not, and on
-  the x86 server at every length from 2 to 32 bytes at 12% kept or more
-  (lowest of three runs; 6 bytes, 56%: 3.10 against the kernel's 4.86;
-  33%: 2.68 against 3.34).
-  Long stretches should stay with `append_array`, which beat the loop on
-  them (x86, 120-byte text in stretches of 1,000: 5.09 against 7.26). An
-  owner decision, as before, and now the only one that matters to this
-  case.
+  pond-rs's own copy of the text, which is what Arrow's kernel does with
+  its own). Prepared in the second round as the final code plus that one
+  change. It is not part of #971 and not in the repo: the patch is kept
+  with the project's working files, and what follows is enough to write
+  it again. It is the last column of the table above. As its own program
+  on the x86 server (ms, the middle of eleven runs, the five builds
+  taking turns):
+
+  | text (1M rows; ms)                       | before | #969  | final | unchecked | #969, 4 cores | final, 4 cores | unchecked, 4 cores |
+  | ---------------------------------------- | ------ | ----- | ----- | --------- | ------------- | -------------- | ------------------ |
+  | 6-byte text, 56% kept (the suite's case) | 6.95   | 5.08  | 5.27  | 4.27      | 3.88          | 4.50           | 3.19               |
+  | the same, 93% kept                       | 7.78   | 6.16  | 5.19  | 3.96      | 4.34          | 3.80           | 2.76               |
+  | the same, 1% kept                        | 3.00   | 1.28  | 1.16  | 1.18      | 1.25          | 1.18           | 1.21               |
+  | the same, every other row                | 5.55   | 5.47  | 4.62  | 4.64      | 4.62          | 3.88           | 3.78               |
+  | the same, half kept in stretches of 4    | 6.15   | 3.95  | 4.50  | 3.00      | 3.03          | 3.75           | 2.22               |
+  | the same, in stretches of 8              | 5.88   | 3.82  | 4.13  | 2.67      | 2.98          | 3.72           | 1.96               |
+  | the same, in stretches of 16             | 5.85   | 3.90  | 3.88  | 2.50      | 2.87          | 3.55           | 1.90               |
+  | the same, in stretches of 32             | 5.82   | 3.91  | 2.94  | 2.88      | 2.81          | 2.49           | 2.65               |
+  | the same with gaps, 56% kept             | 7.43   | 5.63  | 6.66  | 4.79      | 4.47          | 5.93           | 3.63               |
+  | the same with gaps, 93% kept             | 8.94   | 6.12  | 6.89  | 4.27      | 4.42          | 5.84           | 2.90               |
+  | 24-byte text, 56% kept                   | 7.71   | 7.45  | 6.20  | 5.13      | 7.55          | 5.99           | 5.46               |
+  | 120-byte text, 56% kept                  | 17.31  | 24.37 | 18.14 | 16.87     | 24.61         | 17.20          | 16.98              |
+  | 400-byte text, 56% kept                  | 12.77  | 19.21 | 11.88 | 11.84     | 21.44         | 14.10          | 14.62              |
+  | 24 bytes in 2-byte letters, 56% kept     | 7.60   | 17.22 | 5.71  | 4.99      | 16.70         | 6.21           | 5.48               |
+  | 60 bytes in 3-byte letters, 56% kept     | 13.77  | 37.51 | 12.13 | 8.98      | 36.50         | 12.51          | 11.25              |
+  | 1,000 series of 1,000 rows               | 7.21   | 5.17  | 5.92  | 4.49      | 5.23          | 5.59           | 4.72               |
+  | `filter` with a closure                  | 7.95   | 6.81  | 6.91  | 5.81      | 6.13          | 6.75           | 5.29               |
+
+  Over all 68 lines of the benchmark the unchecked build reads more than
+  3% under the final one on 23 on one core and 37 on four, and more than
+  3% above it on 12 and 11. On every one of those but one the two builds
+  run the same code (no text, or text in long stretches), so that is how
+  far two builds of one source differ as programs of their own (3 to 20%
+  on those lines). The one is 400-byte text on four cores, 14.62 against
+  14.10 ms, which the paired run has 2 points ahead (0.89 against 0.91).
+
+  Over every text shape the paired tool has (118 lines: text of 6, 24 and
+  120 bytes, with gaps and without, 5 to 99% kept at random and in
+  stretches, and the benchmark's own lines; the unchecked change linked
+  in twice), it is faster than the final code by more than 3 points on
+  both copies on 58 lines on one core and 53 on four, and faster than
+  #969 on 96 and 89. A few of them, as ratios to "before" (four cores in
+  brackets):
+
+  | text (1M rows)                         | #969        | final       | unchecked   |
+  | -------------------------------------- | ----------- | ----------- | ----------- |
+  | 6 bytes, 56% kept (the suite's case)   | 0.82 (0.47) | 0.94 (0.59) | 0.75 (0.35) |
+  | the same, 93% kept                     | 0.81 (0.48) | 0.72 (0.43) | 0.55 (0.35) |
+  | the same, 1% kept                      | 0.46 (0.33) | 0.47 (0.35) | 0.47 (0.37) |
+  | the same, every other row kept         | 0.92 (0.63) | 0.79 (0.50) | 0.80 (0.54) |
+  | the same, half kept in stretches of 8  | 0.64 (0.47) | 0.77 (0.58) | 0.49 (0.34) |
+  | 6 bytes with gaps, 80% kept at random  | 0.69 (0.49) | 0.91 (0.64) | 0.62 (0.35) |
+  | 24 bytes, 56% kept at random           | 0.96 (0.70) | 0.83 (0.61) | 0.76 (0.51) |
+  | 24 bytes with gaps, 85% kept at random | 0.84 (0.65) | 0.81 (0.65) | 0.63 (0.43) |
+  | 120 bytes, 56% kept                    | 1.24 (1.11) | 0.86 (0.75) | 0.79 (0.72) |
+  | 400 bytes, 56% kept                    | 1.35 (1.39) | 0.96 (0.91) | 0.90 (0.89) |
+  | 60 bytes of 3-byte letters, 56% kept   | 2.02 (1.93) | 0.93 (0.68) | 0.73 (0.61) |
+  | 1,000 series of 1,000 rows             | 0.80 (0.87) | 0.88 (0.96) | 0.75 (0.84) |
+  | `filter` with a closure                | 0.79 (0.56) | 0.87 (0.63) | 0.74 (0.50) |
+
+  It read slower than the final code on 4 lines on one core and 3 on
+  four. Each of those is a line on which the two run the same code (rows
+  kept one at a time, long stretches, or no text at all), and three
+  copies of each version, two runs pooled, then put the unchecked change
+  level with the final code, or a little ahead, on every one of them:
+  6-byte text with 25% kept at random, 0.67 to 0.70
+  against 0.65 to 0.68; with 5% kept, 0.63 to 0.67 against 0.58 to 0.62
+  (0.60 to 0.63 against 0.61 to 0.63 on four cores); 24 bytes of 2-byte
+  letters in long stretches, 0.42 to 0.46 against 0.42 to 0.45; 16 number
+  columns in stretches of 1,000, 0.62 to 0.64 against 0.64 to 0.65. The
+  one line that had read slower than #969 (6-byte text with 5% kept at
+  random, on four cores) read 0.61 to 0.63 against #969's 0.57 to 0.63.
+
+  Text then goes one of three ways, by how many kept rows there are to a
+  stretch on average: under 1.5, by Arrow's kernel and its list of rows;
+  from 32, a stretch at a time through `append_array`, as now; between
+  the two, by the copy from the words, handed over unchecked. The second
+  round's rule for text with most rows kept and no list to share falls
+  away, because that text is then the copy's.
+
+  What the block rests on. `new_unchecked` asks for what the safe
+  constructor would check: offsets that start at 0, never fall and end at
+  the length of the bytes; bytes that are UTF-8, with every offset at the
+  start of a character; and one gap mark per row. The copy writes whole
+  strings of the source one after another (the source is a valid array),
+  and its offsets are where those strings start and end. The two lengths
+  are asserted in every build before the hand-over, and a debug build,
+  and so every test, has Arrow check the finished array in full. Nothing
+  in the copy itself is unchecked: it uses ordinary slices and `Vec`
+  calls.
+
+  Two things were learned on the way. A first version zero-filled its
+  output before copying into it, and was 9 to 17 points behind the kernel
+  on 120- and 400-byte text; the one timed here appends with nothing
+  zeroed first. And where rows are kept one at a time the kernel's list
+  of rows is the faster: in a run without the 1.5-row rule, 1% kept read
+  0.51 against the kernel's 0.42, every other row 0.94 against 0.89, and
+  24-byte text with 5% kept at random 0.89 to 1.07 against 0.78 to 0.80;
+  level at a quarter kept at random; ahead by 4 to 13 points from a
+  third. An owner decision, as before, and the only one that matters to
+  this case.
+
 - **A safe special case**: #969's loop with Arrow's check, only where the
   check is cheap. That needs to know the text is plain ASCII, which takes a
   scan of the column's bytes on each call, and on the x86 server it paid
   only for text of about 8 bytes a row or less with half the rows or more
-  kept (6 bytes, 56%: 4.04 against the kernel's 4.86; 12 bytes: 4.58
+  kept (6 bytes, 56%: 4.04 ms against the kernel's 4.86; 12 bytes: 4.58
   against 4.80; 16 bytes: 5.08 against 4.81; 6 bytes at 33% kept: 3.30
   against 3.34). On the M1 the loop with the check already loses to the
-  kernel at 93% kept and at 24 bytes (table above). Timed in a lab build
-  and left out of #971: about 130 lines and three more rules for one
-  narrow shape, all of which the unchecked hand-off would replace.
+  kernel at 93% kept and at 24 bytes. Timed in a lab build in the first
+  round and left out: about 130 lines and three more rules for one narrow
+  shape, all of which the unchecked hand-over would replace.
 
-**Considered, not done.**
+### Considered, not done
 
+- **The count of kept rows in a group of eight looked up in a table**, in
+  place of counted (a default x86-64 build has no instruction for the
+  count and makes it in about ten steps, eight times a word). Three
+  copies of it against three of the final code, in two runs. On the
+  suite's case, 0.78 to 0.79 against 0.82 to 0.84 in the first run and
+  0.81 to 0.83 against 0.81 to 0.84 in the second. With only the key and
+  `v`, a few points ahead in both (0.52 to 0.54 against 0.55 to 0.59,
+  then 0.59 to 0.60 against 0.62 to 0.64). On six number columns with 25%
+  kept, where no word goes by the table at all (each keeps 13 to 19 rows
+  and is walked bit by bit), 0.82 to 0.85 against 0.77 to 0.79 in the
+  second run. Level on four cores in both. Nothing that
+  holds from one run to the next, so it was left out. (The first run's
+  copy also had a short cut for words of fewer than six kept rows, which
+  showed nothing at 1% kept in either run.)
+- **A count per mask of the words in stretches**, to switch the per-word
+  test off for a whole mask (see "What the per-word test for stretches
+  costs"). It is one more pass over the mask on every call, with the same
+  two counts per word that the test makes for each column, to take back a
+  few points on narrow tables. Not built.
 - **Text row by row through a builder** (`append_value`), the other safe
   way to add text with no check: a copy call per row, as the kernel makes,
   so nothing to gain. Not timed.
@@ -1658,6 +2126,37 @@ about 3.5 where #969 had 2.75, and it wins everywhere #969 lost.
   the M1). On the x86 server the list at four and eight columns was up to
   26% slower than the copy from the mask at 56 to 93% kept. Left at eight
   until both are timed on the Mac itself.
+- **One copy per stretch across words** (a stretch that runs over several
+  words copied whole, where the code copies each word's part). Timed in
+  the lab build: no better than word by word, and often worse (200 kept
+  then 200 dropped, 8 to 32 number columns: 0.67 to 0.90 against 0.56 to
+  0.76).
+- **Decimal values by the list on narrower tables.** One decimal column
+  with no gaps read 0.75 to 0.83 by the list against 0.63 to 0.73 walked
+  (25 to 93% kept); four were level.
+- **Gap marks put together a word at a time**, in registers or by a small
+  table, in place of a stretch at a time. Two lab runs over decimal and
+  true/false columns with gaps: no gain that held from line to line, and
+  the table was 13 to 22% slower with 10% of the rows kept.
+- **Decimal gap marks by the kernel where few rows are kept.** On a table
+  that goes by the list, a decimal column's gap marks are still copied
+  from the mask, a stretch at a time. Where few rows are kept that is
+  slower than leaving them to the kernel with the values. One lab build,
+  two runs, 25 rounds a line, kernel against mask (the two copies of the
+  final code and the lab build's own mask setting): 16 decimal columns
+  with gaps and 10% kept at random, 0.87 against 0.95 to 0.96, then 0.85
+  against 0.90 to 0.95; the benchmark's line of that shape, 0.91 against
+  0.96 to 1.10, then 0.91 against 0.96 to 1.03; at 25% kept, 0.93 against
+  0.95 to 0.97, then 0.93 against 0.97 to 1.00. On 8 columns it was ahead
+  in one run and level in the other (10% kept: 0.81 against 0.87 to 0.89,
+  then 0.91 against 0.90 to 0.96). At 45% kept it is the other way round
+  (0.91 to 1.01 against 0.83 to 0.94). So a rule would have to turn on
+  how many rows are kept, or how many to a stretch, for tables of eight
+  or more decimal columns with gaps and under about a third of their
+  rows kept. As they are, the 16-column lines read level with "before"
+  and the 8-column ones under it. Left for the pass on the Mac, where
+  every such number is set again.
+- **A lower bar for text by stretches** (16 rows): nothing gained.
 - **`par.rs` running inline on one thread.** #969 guarded its own split
   with `par::threads() > 1`; the other callers of `par::map`, `par::join`
   and `par::fill_chunks` still hand their work to the pool's one thread
