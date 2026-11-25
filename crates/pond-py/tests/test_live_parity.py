@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_core_parity import REPO, cell_number, compare_cell, expr_of
+from test_core_parity import REPO, cell_number, compare_cell, expr_of, to_series
 
 from pond import LiveSeries, Sequence
 
@@ -364,6 +364,8 @@ def run_case(case):
     for s, step in enumerate(case["steps"]):
         outputs = []
         error = None
+        # Built outside the try: only push_frame's own error counts.
+        batch = to_series(step["pushSeries"]) if "pushSeries" in step else None
         try:
             if "push" in step or "pushMany" in step:
                 rows = [py_row(r) for r in step.get("push", step.get("pushMany"))]
@@ -373,6 +375,8 @@ def run_case(case):
                     outputs = live.push_many(rows)
             elif "pushJson" in step:
                 outputs = live.push_json(json.dumps(step["pushJson"]))
+            elif "pushSeries" in step:
+                outputs = live.push_frame(batch)
             elif "clear" in step:
                 outputs = live.clear()
             elif "dispose" in step:

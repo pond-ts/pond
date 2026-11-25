@@ -605,6 +605,16 @@ pub fn live_push_json(id: u32, text: &str) -> Result<JsValue, JsValue> {
     push_with(id, |l| Ok(l.live.push_json(text)))
 }
 
+/// pond-ts `pushSeries(series)`: the batch series with id `series`
+/// pushed as one batch (pond-rs `push_series`). The series is cloned out
+/// of its table first (the clone shares its buffers): a push that hands
+/// out a `'columns'` batch stores it in that same table.
+#[wasm_bindgen]
+pub fn live_push_series(id: u32, series: u32) -> Result<JsValue, JsValue> {
+    let series = crate::with(series, |s| Ok(s.clone())).map_err(err)?;
+    push_with(id, |l| Ok(l.live.push_series(&series)))
+}
+
 /// pond-ts `clear()`.
 #[wasm_bindgen]
 pub fn live_clear(id: u32) -> Result<JsValue, JsValue> {

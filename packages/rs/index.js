@@ -1566,6 +1566,41 @@ export class LiveSeries extends LiveNode {
   }
 
   /**
+   * Push a batch `TimeSeries` (this package's) as one batch, as pond-ts
+   * `pushSeries`: the checks, ordering, retention and listeners of
+   * `pushMany` of its rows, all or nothing. Value columns are matched by
+   * name, in any order. The rows go in from WebAssembly memory, with no
+   * copy through JavaScript; the series stays yours to use and `free()`.
+   */
+  pushSeries(series) {
+    if (!(series instanceof TimeSeries))
+      throw new TypeError('pushSeries: expected a TimeSeries');
+    this.#rootOnly('pushSeries');
+    const o = this._owner;
+    // An empty batch is checked for shape at once and otherwise ignored,
+    // as pond-ts.
+    if (series.length === 0) {
+      wasm.live_push_series(o.liveId, series.id);
+      return;
+    }
+    if (o.depth > 0) {
+      // From a listener: after the current push, as pond-ts. The caller may
+      // free its series before then, so the queue holds its own handle (a
+      // clone sharing the buffers), freed once the push has run or thrown.
+      const copy = new TimeSeries(TOKEN, wasm.series_clone(series.id));
+      o.pending.push(() => {
+        try {
+          this.pushSeries(copy);
+        } finally {
+          copy.free();
+        }
+      });
+      return;
+    }
+    o.settle(wasm.live_push_series(o.liveId, series.id));
+  }
+
+  /**
    * Remove every event (an `'evict'` of them all). From a listener it runs
    * at once, as pond-ts's does.
    */

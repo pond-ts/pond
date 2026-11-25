@@ -597,6 +597,210 @@ step('pushJson and clear from a listener, in pond-ts order', () => {
   check(`clear at once: ${clear}`, clear === 'ev0 evict2 ev1 batch2');
 });
 
+step('pushSeries: a batch TimeSeries goes in as pushMany of its rows', () => {
+  const data = [
+    [0, 1, 10],
+    [1000, undefined, 11],
+    [2000, -0, 12],
+  ];
+  const record = (live) => {
+    const out = [];
+    for (const kind of ['event', 'batch', 'columns', 'evict'])
+      live.on(kind, (p) => {
+        if (kind === 'columns') {
+          out.push(kind, p.toJSON().rows);
+          p.free();
+        } else if (kind === 'event') out.push(kind, p.toJsonRow(live.schema));
+        else
+          out.push(
+            kind,
+            p.map((e) => e.toJsonRow(live.schema)),
+          );
+      });
+    return out;
+  };
+  const opts = { schema: SCHEMA, retention: { maxEvents: 2 } };
+  const bySeries = new LiveSeries({ name: 's', ...opts });
+  const byRows = new LiveSeries({ name: 's', ...opts });
+  const a = record(bySeries);
+  const b = record(byRows);
+  const seriesBefore = rs.alive();
+  const ts = new rs.TimeSeries({ name: 'batch', schema: SCHEMA, rows: data });
+  bySeries.pushSeries(ts);
+  byRows.pushMany(data);
+  check('same outputs as pushMany', a.length > 0 && same(a, b));
+  check('same rows held', same(bySeries.stats(), byRows.stats()));
+  check('the series is still the caller’s', ts.length === 3);
+  ts.free();
+  check('freeing it leaves the rows held', bySeries.length === 2);
+  check('no series left behind', rs.alive() === seriesBefore);
+  check(
+    'not a TimeSeries: a TypeError',
+    throws(
+      () =>
+        bySeries.pushSeries({
+          name: 'b',
+          schema: SCHEMA,
+          rows: [[5000, 1, 1]],
+        }),
+      (e) => e instanceof TypeError,
+    ),
+  );
+  check(
+    'a freed series is refused',
+    throws(() => bySeries.pushSeries(ts)),
+  );
+  const missing = new rs.TimeSeries({
+    name: 'b',
+    schema: SCHEMA.slice(0, 2),
+    rows: [[5000, 1]],
+  });
+  const empty = new rs.TimeSeries({
+    name: 'b',
+    schema: SCHEMA.slice(0, 2),
+    rows: [],
+  });
+  check(
+    'a missing column is refused, nothing stored',
+    throws(
+      () => bySeries.pushSeries(missing),
+      (e) => /column 'mem' is missing/.test(e.message),
+    ) && bySeries.stats().ingested === 3,
+  );
+  check(
+    'an empty batch of the wrong shape is refused',
+    throws(() => bySeries.pushSeries(empty)),
+  );
+  missing.free();
+  empty.free();
+  bySeries.free();
+  byRows.free();
+});
+
+step(
+  'pushSeries with only columns watched, from a listener, on a partition',
+  () => {
+    // 'columns' alone: the push stores the batch it hands out in the series
+    // table the pushed series lives in.
+    const live = new LiveSeries({ name: 'c', schema: SCHEMA });
+    const got = [];
+    live.on('columns', (s) => {
+      got.push(s.toJSON().rows);
+      s.free();
+    });
+    const one = new rs.TimeSeries({
+      name: 'b',
+      schema: SCHEMA,
+      rows: [
+        [0, 1, 1],
+        [1000, 2, 2],
+      ],
+    });
+    live.pushSeries(one);
+    check(
+      'columns handed out',
+      same(got, [
+        [
+          [0, 1, 1],
+          [1000, 2, 2],
+        ],
+      ]),
+    );
+    // From a listener: queued until the current push is done, and the
+    // series read when it runs.
+    const order = [];
+    const later = new rs.TimeSeries({
+      name: 'b',
+      schema: SCHEMA,
+      rows: [[9000, 9, 9]],
+    });
+    live.on('event', (e) => {
+      order.push(e.begin());
+      if (e.begin() === 2000) live.pushSeries(later);
+    });
+    const two = new rs.TimeSeries({
+      name: 'b',
+      schema: SCHEMA,
+      rows: [
+        [2000, 3, 3],
+        [3000, 4, 4],
+      ],
+    });
+    live.pushSeries(two);
+    check('queued from a listener', same(order, [2000, 3000, 9000]));
+    two.free();
+    later.free();
+    one.free();
+    live.free();
+    const parted = new LiveSeries({
+      name: 'p',
+      schema: [...SCHEMA, { name: 'host', kind: 'string' }],
+    });
+    parted.push([0, 1, 1, 'a']);
+    const part = parted.partitionBy('host').toMap().get('a');
+    check(
+      'a partition takes no pushSeries',
+      throws(
+        () => part.pushSeries(one),
+        (e) => e instanceof TypeError && /root LiveSeries only/.test(e.message),
+      ),
+    );
+    parted.free();
+  },
+);
+
+step('pushSeries from a listener, the batch freed at once', () => {
+  const seriesBefore = rs.alive();
+  const live = new LiveSeries({ name: 'q', schema: SCHEMA });
+  const order = [];
+  let made;
+  live.on('event', (e) => {
+    order.push(e.begin());
+    if (e.begin() !== 0) return;
+    const batch = new rs.TimeSeries({
+      name: 'b',
+      schema: SCHEMA,
+      rows: [
+        [5000, 5, 50],
+        [6000, 6, 60],
+      ],
+    });
+    live.pushSeries(batch);
+    batch.free();
+    // Likely takes the freed slot before the queued push runs.
+    made = new rs.TimeSeries({
+      name: 'other',
+      schema: SCHEMA,
+      rows: [[0, -1, -1]],
+    });
+  });
+  live.push([0, 1, 1], [1000, 2, 2]);
+  check('queued rows arrive', same(order, [0, 1000, 5000, 6000]));
+  check(
+    'the batch’s rows, not the other series’',
+    same(live.at(-1).toJsonRow(live.schema), [6000, 6, 60]),
+  );
+  made.free();
+  // A queued batch the series refuses: the error reaches the caller and
+  // the queue's handle is freed all the same.
+  live.on('event', (e) => {
+    if (e.begin() !== 7000) return;
+    const late = new rs.TimeSeries({
+      name: 'late',
+      schema: SCHEMA,
+      rows: [[100, 1, 1]],
+    });
+    live.pushSeries(late);
+    late.free();
+  });
+  check(
+    'a refused queued batch throws',
+    throws(() => live.push([7000, 7, 7])) && live.length === 5,
+  );
+  live.free();
+  check('no series left behind', rs.alive() === seriesBefore);
+});
+
 step('a subclass of LiveSeries works', () => {
   class Mine extends LiveSeries {}
   const live = new Mine({ name: 'm', schema: SCHEMA });

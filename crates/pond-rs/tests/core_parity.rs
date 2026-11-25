@@ -9,15 +9,15 @@ mod common;
 
 use common::{
     ColumnDef, CoreCase, CoreFixture, Outcome, SeriesJson, cell_number, check_case, check_coverage,
-    compare_series, load_core_fixture, report,
+    compare_series, load_core_fixture, report, scalar, to_series,
 };
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Change, Column,
-    ColumnData, ColumnKind, Cumulative, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType,
-    JsonOptions, Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling,
-    RollingOver, RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
+    ColumnData, ColumnKind, Cumulative, Fill, FillLimits, FirstRow, Join, JoinType, JsonOptions,
+    Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver,
+    RowFormat, Scalar, Sequence, TimeSeries, ValueSeries,
 };
 use serde_json::{Value, json};
 
@@ -568,15 +568,6 @@ fn fill_limits(options: Option<&Value>) -> FillLimits {
     limits
 }
 
-/// One array element from the fixture (`{"f64": "-0"}` is -0).
-fn scalar(v: &Value) -> Scalar {
-    match v {
-        Value::String(s) => Scalar::String(s.clone()),
-        Value::Bool(b) => Scalar::Boolean(*b),
-        _ => Scalar::Number(decode_f64(v)),
-    }
-}
-
 /// `arrayAggregate` / `arrayExplode` options: `{ as, kind }`.
 fn array_options(v: Option<&Value>) -> ArrayOptions {
     ArrayOptions {
@@ -948,77 +939,6 @@ fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
     match json["weekStartsOn"].as_i64() {
         Some(day) => seq.with_week_start(day as i8),
         None => Ok(seq),
-    }
-}
-
-/// A fixture input series as a pond-rs `TimeSeries`.
-fn to_series(json: &SeriesJson) -> TimeSeries {
-    let key_kind = json.schema[0].kind.as_str();
-    assert!(
-        ["time", "timeRange", "interval"].contains(&key_kind),
-        "{}: inputs are time-, timeRange- or interval-keyed",
-        json.name
-    );
-    let columns = json.schema[1..]
-        .iter()
-        .enumerate()
-        .map(|(c, def)| {
-            let cells = json.rows.iter().map(|row| &row[c + 1]);
-            let data: ColumnData = match def.kind.as_str() {
-                "number" => cells.map(cell_number).collect::<Vec<_>>().into(),
-                "string" => cells
-                    .map(|v| v.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-                    .into(),
-                "boolean" => cells.map(Value::as_bool).collect::<Vec<_>>().into(),
-                "array" => cells
-                    .map(|v| v.as_array().map(|a| a.iter().map(scalar).collect()))
-                    .collect::<Vec<Option<Vec<Scalar>>>>()
-                    .into(),
-                other => panic!("{}.{}: unknown column kind {other}", json.name, def.name),
-            };
-            if def.required.unwrap_or(true) {
-                Column::required(&def.name, data)
-            } else {
-                Column::optional(&def.name, data)
-            }
-        })
-        .collect();
-    let ms = |v: &Value| v.as_i64().expect("key times are integers");
-    if key_kind == "time" {
-        let time = json.rows.iter().map(|row| ms(&row[0])).collect();
-        TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
-    } else if key_kind == "timeRange" {
-        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
-        let keys = TimeRangeKeys {
-            begin: part(0),
-            end: part(1),
-        };
-        TimeSeries::from_time_ranges(&json.name, keys, columns)
-            .expect("fixture input is a valid series")
-    } else {
-        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
-        let labels: Vec<&Value> = json.rows.iter().map(|row| &row[0][0]).collect();
-        let label: Labels = if labels.iter().all(|l| l.is_string()) {
-            labels
-                .iter()
-                .map(|l| l.as_str().unwrap())
-                .collect::<Vec<_>>()
-                .into()
-        } else {
-            labels
-                .iter()
-                .map(|l| l.as_f64().expect("interval labels are numbers or text"))
-                .collect::<Vec<_>>()
-                .into()
-        };
-        let keys = IntervalKeys {
-            label,
-            begin: part(1),
-            end: part(2),
-        };
-        TimeSeries::from_intervals(&json.name, keys, columns)
-            .expect("fixture input is a valid series")
     }
 }
 
