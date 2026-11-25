@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{ColumnDef, compare_cell, repo_path};
+use common::{ColumnDef, SeriesJson, compare_cell, repo_path};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -162,6 +162,9 @@ struct Step {
     push_many: Option<Vec<Vec<Value>>>,
     #[serde(default)]
     push_json: Option<Vec<Vec<Value>>>,
+    /// A batch series in `toJSON()` form, pushed with `push_series`.
+    #[serde(default)]
+    push_series: Option<SeriesJson>,
     #[serde(default)]
     clear: Option<bool>,
     #[serde(default)]
@@ -258,6 +261,7 @@ impl Step {
             ("push", self.push.is_some()),
             ("pushMany", self.push_many.is_some()),
             ("pushJson", self.push_json.is_some()),
+            ("pushSeries", self.push_series.is_some()),
             ("clear", self.clear.is_some()),
             ("node", self.node.is_some()),
             ("dispose", self.dispose.is_some()),
@@ -457,9 +461,11 @@ fn fixture_is_well_formed() {
             if let Some(id) = &step.dispose {
                 assert!(live.contains(id.as_str()), "{}: dispose {id}", case.name);
             }
+            let batch_rows = step.push_series.as_ref().map(|s| &s.rows);
             for row in [&step.push, &step.push_many, &step.push_json]
                 .into_iter()
                 .flatten()
+                .chain(batch_rows)
                 .flatten()
             {
                 row.iter()
@@ -556,7 +562,15 @@ fn fixture_is_well_formed() {
     }
     // The fixture exercises every action, output kind and operator, and a
     // reduce replay.
-    for action in ["push", "pushMany", "pushJson", "clear", "node", "dispose"] {
+    for action in [
+        "push",
+        "pushMany",
+        "pushJson",
+        "pushSeries",
+        "clear",
+        "node",
+        "dispose",
+    ] {
         assert!(actions.contains(action), "no {action} step");
     }
     assert_eq!(kinds, KINDS.iter().copied().collect(), "output kinds");
@@ -1495,6 +1509,9 @@ mod runner {
                     .and_then(|rows| live.push_many(rows).map_err(|e| e.to_string()))
             } else if let Some(rows) = &step.push_json {
                 live.push_json(&serde_json::to_string(rows).unwrap())
+                    .map_err(|e| e.to_string())
+            } else if let Some(batch) = &step.push_series {
+                live.push_series(&common::to_series(batch))
                     .map_err(|e| e.to_string())
             } else if step.clear.is_some() {
                 Ok(live.clear())

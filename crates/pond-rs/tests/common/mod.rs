@@ -18,6 +18,7 @@
 
 pub mod studies;
 
+use pond_rs::{Column, ColumnData, IntervalKeys, Labels, Scalar, TimeRangeKeys, TimeSeries};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -461,6 +462,87 @@ pub fn cell_number(cell: &Value) -> Option<f64> {
         };
     }
     cell.as_f64()
+}
+
+/// One array element from a fixture (`{"f64": "-0"}` is -0).
+pub fn scalar(v: &Value) -> Scalar {
+    match v {
+        Value::String(s) => Scalar::String(s.clone()),
+        Value::Bool(b) => Scalar::Boolean(*b),
+        _ => Scalar::Number(cell_number(v).unwrap_or_else(|| panic!("a number, got {v}"))),
+    }
+}
+
+/// A series in `toJSON()` form (a core fixture input, a live fixture
+/// `pushSeries` batch) as a pond-rs `TimeSeries`.
+pub fn to_series(json: &SeriesJson) -> TimeSeries {
+    let key_kind = json.schema[0].kind.as_str();
+    assert!(
+        ["time", "timeRange", "interval"].contains(&key_kind),
+        "{}: inputs are time-, timeRange- or interval-keyed",
+        json.name
+    );
+    let columns = json.schema[1..]
+        .iter()
+        .enumerate()
+        .map(|(c, def)| {
+            let cells = json.rows.iter().map(|row| &row[c + 1]);
+            let data: ColumnData = match def.kind.as_str() {
+                "number" => cells.map(cell_number).collect::<Vec<_>>().into(),
+                "string" => cells
+                    .map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+                    .into(),
+                "boolean" => cells.map(Value::as_bool).collect::<Vec<_>>().into(),
+                "array" => cells
+                    .map(|v| v.as_array().map(|a| a.iter().map(scalar).collect()))
+                    .collect::<Vec<Option<Vec<Scalar>>>>()
+                    .into(),
+                other => panic!("{}.{}: unknown column kind {other}", json.name, def.name),
+            };
+            if def.required.unwrap_or(true) {
+                Column::required(&def.name, data)
+            } else {
+                Column::optional(&def.name, data)
+            }
+        })
+        .collect();
+    let ms = |v: &Value| v.as_i64().expect("key times are integers");
+    if key_kind == "time" {
+        let time = json.rows.iter().map(|row| ms(&row[0])).collect();
+        TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+    } else if key_kind == "timeRange" {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let keys = TimeRangeKeys {
+            begin: part(0),
+            end: part(1),
+        };
+        TimeSeries::from_time_ranges(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
+    } else {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let labels: Vec<&Value> = json.rows.iter().map(|row| &row[0][0]).collect();
+        let label: Labels = if labels.iter().all(|l| l.is_string()) {
+            labels
+                .iter()
+                .map(|l| l.as_str().unwrap())
+                .collect::<Vec<_>>()
+                .into()
+        } else {
+            labels
+                .iter()
+                .map(|l| l.as_f64().expect("interval labels are numbers or text"))
+                .collect::<Vec<_>>()
+                .into()
+        };
+        let keys = IntervalKeys {
+            label,
+            begin: part(1),
+            end: part(2),
+        };
+        TimeSeries::from_intervals(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
+    }
 }
 
 pub fn compare_cell(
