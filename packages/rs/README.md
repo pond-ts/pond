@@ -213,7 +213,8 @@ live.free();
   WebAssembly memory, so they go straight in, with no copy through
   JavaScript. The series stays yours: keep using it, and `free()` it when
   done. Called from a listener, the push waits until the current push is
-  done, like any other; the package keeps its own handle on the series
+  done, like any other (an empty batch is only checked for shape, at
+  once, as in pond-ts); the package keeps its own handle on the series
   until then, so you may free yours straight away.
 - **Differences:** a disposed node cannot be read (pond-ts leaves it
   readable); `pushJson` takes no `timeZone`; only the root series takes
