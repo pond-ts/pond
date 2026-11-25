@@ -148,6 +148,16 @@ live.pushMany([
   [30_000, 0.44],
   [61_000, 0.52],
 ]);
+const more = new TimeSeries({
+  name: 'more',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ],
+  rows: [[90_000, 0.6]],
+});
+live.pushSeries(more);
+more.free();
 void avg.value()['avg'];
 live.reduce({ n: 'count' }, { trigger: Trigger.count(10) });
 const parts = live.partitionBy('cpu');
@@ -188,3 +198,9 @@ live.on('bucket', () => {});
 live.pushJson([], { timeZone: 'Europe/Madrid' });
 // @ts-expect-error: smooth has no 'kalman' method
 cpu.smooth('value', 'kalman');
+// @ts-expect-error: pushSeries takes a TimeSeries, not its toJSON() form
+live.pushSeries(cpu.toJSON());
+// @ts-expect-error: nor pond-ts's TimeSeries
+live.pushSeries(forCharts);
+// @ts-expect-error: nor null
+live.pushSeries(null);
