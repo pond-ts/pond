@@ -151,18 +151,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   ms. Over 1,393 kinds of table timed in one program against the code
   before, at 1M and at 100,000 rows and by two tests, the middle one takes
   0.60 to 0.88 of the time on one core. At most 15 are more than 3% slower,
-  nearly all of them short text with 15 to 30% of its rows kept at random
-  (up to 19%) or four to eight dictionary columns with half the rows kept
-  in runs of 3 to 8 (up to 10%, by a test of two parts); on four cores,
-  400-byte text with 56% kept is 11% slower. `filter` with a closure copies
-  its rows the same way, and the Python and WebAssembly bridges run the
-  same code. Two side effects. Any step whose result is a number column
-  with no gaps (`fill`, `cumulative`, `rolling`, …) is about 0.2 ms per 1M
-  rows faster, because the check for gaps that every new number column
-  gets now looks at 64 values at a time. And when a `filter` with a
-  closure keeps no row, a dictionary text column comes back with an empty
-  dictionary, as it already did from `filter_expr`; it used to keep the
-  source's list of strings behind its zero rows.
+  nearly all of them short text with from one row in eight to 30% of its
+  rows kept at random (up to 19%) or four to eight dictionary columns with
+  half the rows kept in runs of 3 to 8 (up to 10%, by a test of two parts);
+  on four cores, 400-byte text with 56% kept is 11% slower. Timed apart from
+  those, long text (400 and 1,000 bytes a row) with 13% to half of its rows
+  kept at random is up to 11% slower in some runs and level in others.
+  `filter` with a closure copies its rows the same way, and the Python and
+  WebAssembly bridges run the same code. Two side effects. Any step whose
+  result is a number column with no gaps (`fill`, `cumulative`, `rolling`,
+  …) is about 0.2 ms per 1M rows faster, because the check for gaps that
+  every new number column gets now looks at 64 values at a time. And when
+  a `filter` with a closure keeps no row, a dictionary text column comes
+  back with an empty dictionary, as it already did from `filter_expr`; it
+  used to keep the source's list of strings behind its zero rows.
 
 ## [0.79.0] — 2026-11-23
 

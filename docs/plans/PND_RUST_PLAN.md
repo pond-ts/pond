@@ -1810,16 +1810,29 @@ debug builds would still check everything.
   another, and its offsets are where those strings start and end. The
   source is a valid array, so each of its strings is UTF-8 by itself. Two
   things are checked in every build before the hand-over: that the copy
-  wrote exactly the rows the mask keeps and exactly the bytes counted for
+  wrote as many rows as the mask keeps and exactly the bytes counted for
   them beforehand (by other code, `kept_bytes`), and that the gap marks
-  number one per kept row. Nothing in the copy itself is unchecked: it
-  uses ordinary slices and `Vec` calls, so a wrong index stops the program
-  and reads nothing outside a buffer.
+  number one per kept row. Those are counts. Which rows were copied is
+  held by the tests, and does not bear on whether the array is sound: a
+  stretch's offsets and its bytes come from the same rows of the source.
+  (Until the fourth review this said "exactly the rows the mask keeps",
+  which is more than the check holds.) In a debug build, and so in every
+  test, the copy is also checked to have fitted in the room it made first.
+  Nothing in the copy itself is unchecked: it uses ordinary slices and
+  `Vec` calls, so a wrong index stops the program and reads nothing
+  outside a buffer.
 - **Dictionary keys.** Arrow's safe way in checks that every key that is
   not a gap is inside the dictionary. The kept keys and their gap marks
   are copied by the same mask, by the code that copies any column of
   four-byte values, from an array that was valid, and the values are the
   source's own.
+
+Arrow's own `filter` kernel, by which pond-rs copied text and
+dictionaries before #969, hands its results over the same way and on the
+same grounds (`filter_bytes` and `filter_dict` in arrow-select 59.3.1's
+`filter.rs`, which call `GenericByteArray::new_unchecked` and
+`DictionaryArray::new_unchecked`): the rows were valid before, so the
+same rows copied in order still are.
 
 In a debug build, and so in every test, Arrow then checks each finished
 array in full (`validate_full`). A release build does not: that is the
@@ -1855,8 +1868,8 @@ does not make the block safe by itself.
   list as a number column does.** The fourth round's rule for
   dictionaries (`dictionaries_for_list` and its three bars) is gone with
   the check it worked round.
-- **Tests** for each new way and each new bar, and 71 planted mistakes
-  ("Same answers").
+- **Tests** for each new way and each new bar, and 77 planted mistakes,
+  six of them since the fourth review ("Same answers").
 
 **What set the text rules.** Each was timed against the same code with
 one line of the rule changed, at 1,000,000 rows and at 100,000, on text
@@ -1880,8 +1893,10 @@ on 2 lines of 770.
   kept the copy from the words took 0.78 of the list's time (one text
   column, and four), and with 5% kept the list took 0.98 and 0.85 of the
   copy's. So the bar is one row in eight, between the two readings on
-  the M1, and short text with 15 to 30% of its rows kept is a gain not
-  taken on the x86 server (below).
+  the M1, and short text with from one row in eight (12.5%) to 30% of its
+  rows kept is a gain not taken on the x86 server (below). No line here
+  sat between 10 and 15% kept; the fourth review timed 13 and 14%, and
+  the slowdown starts at the bar.
 - **How the few rows lie.** With 5 and 10% kept in stretches of random
   length: at 2 rows to a stretch on average the list took 0.92 to 1.03
   (the middle of 8 lines 0.97) and 0.91 to 0.98 (0.96); at 3 rows, 0.98
@@ -1991,8 +2006,9 @@ middle line in each of the four runs):
 Where this round is slower than "before" (both copies over 1.03, in any
 of the four runs):
 
-- **Text whose kept rows come one or two at a time, with 15 to 50% of
-  them kept.** Four columns of 6-byte text with 15 to 30% kept at random:
+- **Text whose kept rows come one or two at a time, with from one row in
+  eight (12.5%) to half of them kept.** Four columns of 6-byte text with
+  15 to 30% kept at random:
   1.06 to 1.19 by the test of two parts, and 1.05 to 1.09 by `v > k`
   with a fifth kept. Eight of 6 bytes with a quarter kept: 1.07 to 1.19.
   Four beside `v` and three number columns, a quarter kept: 1.06 to 1.10.
@@ -2003,7 +2019,40 @@ of the four runs):
   these lines, and by `v > k` at 1,000,000 rows this round takes 1.10 to
   1.52 of the fourth round's time on 14 text lines (the most, four 6-byte
   columns with a fifth kept). This is the bar of one row in eight ("What
-  set the text rules").
+  set the text rules"). The whole check has no line between 10 and 15%
+  kept. The fourth review timed 13 and 14% in a program of its own (the
+  code before #969 and this round, each linked in twice, by the test of
+  two parts): four and eight columns of 6-byte text and four of 24 bytes
+  read 0.98 to 1.17 of "before" at 100,000 and 1,000,000 rows, and 0.81
+  to 0.99 at 11 and 12%, under the bar. The same program run here read
+  0.99 to 1.10 at 13 and 14%, and 0.81 to 0.97 at 11 and 12%.
+- **Long text with from 13% to half of its rows kept at random**, which
+  the whole check has none of (its text at random shares is 6 to 120
+  bytes). The fourth review's program has one column of 1,000 bytes and
+  two of 400, with 1, 5, 13, 25 and 50% kept, and the review ran it by
+  `v > k` and by the test of two parts, with freed memory held and with
+  the allocator as it comes (its comment does not give these lines).
+  With those runs and nine more made here (11 rounds each), each of the
+  four ways was timed three or four times at 1,000,000 rows, and the test
+  of two parts once at 100,000 rows with each memory setting (41 rounds).
+  One line read more than 3% over "before" on both copies of this round
+  in every run: 400-byte text with a quarter kept, by the test of two
+  parts with memory held, 1.05 to 1.11 in four runs of four (by `v > k`
+  1.01 to 1.08; with the allocator as it comes 0.98 to 1.00, and 1.09 at
+  100,000 rows). Others did in some runs: 1,000-byte text with half kept
+  with the allocator as it comes (1.02 to 1.09, in four runs of seven,
+  and 1.10 at 100,000 rows; with memory held 0.98 to 1.02); 400-byte
+  text with 13% kept (up to 1.09, in two runs of four with memory held,
+  and 1.04 and 1.05 at 100,000 rows with the allocator as it comes); and
+  1,000-byte text with a quarter kept and 400-byte with half (up to 1.10,
+  in one run of four each). The rest of the readings at 13 to 50% kept
+  were 0.93 to 1.06, none over 1.03 on both copies, and with 1 and 5%
+  kept, which go by the list, 0.43 to 1.00. These lines go by the copy
+  from the words, and "before" by Arrow's kernel and its list. Why the
+  copy is the slower on them is not known. It is not that one build
+  takes more fresh memory than another: every build has the same page
+  faults, none with memory held (counted here) and the same number a
+  call with the allocator as it comes (the fourth review's count).
 - **Four to eight dictionary columns with half the rows kept in runs of
   3 or 8, by the test of two parts:** 1.03 to 1.10, where the fourth
   round read 0.90 to 1.03. By `v > k` they are not slower than "before",
@@ -2016,20 +2065,27 @@ of the four runs):
   fourth round read 1.04 to 1.07 and the two copies of "before" were up
   to 7% apart.
 
-So the two kinds of table where the rules were set to suit the M1 are
-the two where this round is slower than "before" on the x86 server.
-Elsewhere it reads as the fourth round does on number columns, and
-faster on text and dictionaries with most of their rows kept.
+So where this round is slower than "before" on the x86 server is where
+its rules were set to suit the M1: text above the bar of one row in
+eight, long text with it (not timed at random shares on the M1), and a
+dictionary counted as one number column. Elsewhere it reads as the
+fourth round does on number columns, and faster on text and
+dictionaries with most of their rows kept.
 
 **What it costs, and gains not taken.**
 
 - **`unsafe` in a crate that had none.** Two blocks, held in as above.
-- **Short text with 15 to 30% of its rows kept at random**, on the x86
-  server, would be 7 to 27% faster by the list (6-byte text; 24-byte
+- **Short text with from one row in eight (12.5%) to 30% of its rows
+  kept at random**, on the x86 server, would be 7 to 27% faster by the
+  list where that was timed (6-byte text with 15 to 30% kept; 24-byte
   text only at 15%), and is up to 19% slower than "before" there (the
-  whole check, above). On the M1 the copy from the words was the faster
-  there, by 22% at a quarter kept, in the patch's readings ("On the M1:
-  not timed").
+  whole check, and the fourth review's 13 and 14%, above). On the M1 the
+  copy from the words was the faster there, by 22% at a quarter kept, in
+  the patch's readings ("On the M1: not timed").
+- **Long text with from 13% to half of its rows kept at random**, on the
+  x86 server: up to 11% slower than "before" in some runs, and on one
+  line in every run (above). This round's list was not timed on it,
+  there or on the M1, so what a higher bar would gain on it is not known.
 - **Three to six dictionary columns with half the rows kept in stretches
   of 3 to 16**, on the x86 server, would be 5 to 21% faster with a higher
   count for dictionaries (above); by the test of two parts four to eight
@@ -2560,6 +2616,26 @@ and for their rules:
   `dictionaries_make_the_list_by_how_many_rows_come_to_a_stretch` went
   with its rule.
 
+The fourth review planted twelve mistakes of its own, and five passed
+every test. One left out both checks made in every build before the
+hand-over, which this section had said no test could see (below). The
+other four only cost time, so only a test of the way can see them: the
+count of bytes made before the copy stuck on either of its routes, and
+the copy's spare room left out (the eight offsets or the 64 bytes past
+the end). Since then:
+
+- `kept_bytes_adds_up_the_kept_rows_either_way` also counts which route
+  each mask took, with a counter only test builds carry, and holds it to
+  `few_stretches`.
+- The copy of text checks, in a debug build and so in every test, that it
+  fitted in the room it made first. Without the spare room a short
+  stretch near the end of the bytes or of the offsets needs more, and the
+  check fails (`a_short_stretch_at_the_end_of_the_text` has such
+  stretches).
+- `a_copy_of_text_that_does_not_add_up_stops_before_the_hand_over` gives
+  the copy a count of kept rows one too high and expects the first check
+  made in every build to stop it before the hand-over.
+
 **Planted mistakes.** 98 mistakes were planted in the copying code and
 its rules, one at a time, and the filter tests run on each: every copy
 broken in some way (a row read from the wrong place, a stretch cut
@@ -2598,15 +2674,20 @@ its steps in test builds, a test holds each step to its bar
 (`text_takes_the_step_that_fits_each_stretch`, above), and three more
 mistakes of that kind were planted for it (64 bytes not taken as a fixed
 64, and each fixed step never taken). All 71 were then run again on the
-code as committed, and each fails a test.
+code as committed, and each fails a test. After the fourth review six
+more were planted: its five that passed (above), and the first of the
+checks made in every build left out by itself. All 77 were run on the
+code with the tests and checks added for them, and each fails a test.
 
-Three things no test can see, by their nature: the two checks made in
-every build before text is handed over (the rows and bytes written
-against the counts made beforehand, and a gap mark per kept row), and the
-full check Arrow makes of each finished array in a debug build. Each
-only stops a copy that is already wrong, so while the copy is right the
-tests pass with them or without them. They are there for a mistake made
-later.
+Two things no test can see, by their nature: the second of the checks
+made in every build before text is handed over (a gap mark per kept row:
+the marks are made one per counted row, so it cannot fail while the first
+check holds), and the full check Arrow makes of each finished array in a
+debug build. Each only stops a copy that is already wrong, so while the
+copy is right the tests pass with them or without them. They are there
+for a mistake made later. The first check, of the rows and bytes written
+against the counts made beforehand, has had a test of its own since the
+fourth review (above).
 
 No test times anything, and nothing in CI does (the second review's
 point). The two tests above hold each copy to the way the rules pick;
@@ -3148,7 +3229,12 @@ text in stretches of 1,000) in two runs minutes apart. So the tables here
 hold freed memory on to (`GLIBC_TUNABLES` with `mmap_max=0`, a large
 `trim_threshold` and `top_pad`, and `arena_max=1` so that every thread
 takes its memory from the one place), and a line that still shows page
-faults is compared only with another that does.
+faults is compared only with another that does. On the fourth review's
+long text (under "Fifth round") the setting moved which lines read
+slower than "before", though every build had the same page faults: at
+1,000,000 rows, 400-byte text with a quarter kept read 1.05 to 1.11 of
+"before" with memory held and 0.98 to 1.00 with the allocator as it
+comes, and 1,000-byte text with half kept 0.98 to 1.02 and 1.02 to 1.09.
 
 ### What #971 gives back, and the ways to get it back
 

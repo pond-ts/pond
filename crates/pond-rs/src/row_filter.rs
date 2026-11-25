@@ -585,6 +585,7 @@ impl RowFilter {
         // first, and the spare room below means nothing ever grows.
         let mut out_offsets: Vec<i32> = Vec::with_capacity(self.count + 1 + 8);
         let mut bytes: Vec<u8> = Vec::with_capacity(total + 64);
+        let room = (out_offsets.capacity(), bytes.capacity());
         let mut whole = 0usize; // words of a run of whole words still to skip
         for (w, &m) in self.words.iter().enumerate() {
             if whole > 0 {
@@ -646,6 +647,14 @@ impl RowFilter {
             "every kept row, once"
         );
         out_offsets.push(total as i32);
+        // Nothing grew: the room made first held every step, a short
+        // stretch's spare offsets and bytes too (checked in a debug build,
+        // and so in every test).
+        debug_assert_eq!(
+            (out_offsets.capacity(), bytes.capacity()),
+            room,
+            "nothing grows"
+        );
         let nulls = self.nulls(a.nulls(), false);
         assert!(
             nulls.as_ref().is_none_or(|n| n.len() == self.count),
@@ -701,6 +710,8 @@ impl RowFilter {
     /// eight rows at a time, reading them all.
     fn kept_bytes(&self, offsets: &[i32]) -> usize {
         if self.few_stretches() {
+            #[cfg(test)]
+            count_kept_bytes_way(0);
             let mut total = 0usize;
             for (w, &m) in self.words.iter().enumerate() {
                 for (first, len) in stretches(m) {
@@ -710,6 +721,8 @@ impl RowFilter {
             }
             return total;
         }
+        #[cfg(test)]
+        count_kept_bytes_way(1);
         // Eight rows at a time: each row's length, kept or not, and-ed
         // with all ones or all zeros from a table and added into eight
         // sums, so that no branch depends on the mask. A sum wraps at 4
@@ -1092,6 +1105,24 @@ fn count_text_step(way: usize) {
     let mut steps = TEXT_STEPS.get();
     steps[way] += 1;
     TEXT_STEPS.set(steps);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How [`RowFilter::kept_bytes`] has added up the bytes of the kept
+    /// rows on this thread: stretch by stretch, and eight rows at a time.
+    /// The total is the same either way, so this is how a test sees which
+    /// was taken.
+    static KEPT_BYTES_BY_WAY: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+/// One more count of the kept rows' bytes made this way (see
+/// [`KEPT_BYTES_BY_WAY`]).
+#[cfg(test)]
+fn count_kept_bytes_way(way: usize) {
+    let mut ways = KEPT_BYTES_BY_WAY.get();
+    ways[way] += 1;
+    KEPT_BYTES_BY_WAY.set(ways);
 }
 
 /// True for a word of the mask that is copied a stretch at a time: for
@@ -1770,6 +1801,10 @@ mod tests {
         assert_eq!(steps(&|i| i != 100), [2, 0, 2, 1, 1]);
     }
 
+    /// The bytes of the kept rows come out right whichever way they are
+    /// added up, and each mask is added up the way
+    /// [`RowFilter::few_stretches`] says: counted
+    /// ([`KEPT_BYTES_BY_WAY`]), since the total is the same either way.
     #[test]
     fn kept_bytes_adds_up_the_kept_rows_either_way() {
         let mut rng = Rng(0x0bad_cafe_dead_beef);
@@ -1786,17 +1821,33 @@ mod tests {
                 let a = whole.slice(skip, n);
                 let rows = (0..n).filter(|&i| m[i]);
                 let want: usize = rows.map(|i| a.value(i).len()).sum();
+                KEPT_BYTES_BY_WAY.set([0; 2]);
                 assert_eq!(
                     keep.kept_bytes(a.value_offsets()),
                     want,
                     "n {n}, skip {skip}"
                 );
+                let way = if keep.few_stretches() { [1, 0] } else { [0, 1] };
+                assert_eq!(KEPT_BYTES_BY_WAY.get(), way, "n {n}, skip {skip}");
             }
         });
         assert!(
             by_stretch > 20 && by_eights > 50,
             "{by_stretch} {by_eights}"
         );
+    }
+
+    /// The checks made in every build before the text goes to Arrow
+    /// unchecked stop a copy that does not add up. Here the count of kept
+    /// rows is one too high, as a mistake elsewhere could leave it, so the
+    /// copy writes one row fewer than the count.
+    #[test]
+    #[should_panic(expected = "every kept row, once")]
+    fn a_copy_of_text_that_does_not_add_up_stops_before_the_hand_over() {
+        let a = StringArray::from_iter_values((0..200).map(|i| format!("r{i}")));
+        let mut keep: RowFilter = (0..200).map(|i| i % 3 == 0).collect();
+        keep.count += 1;
+        let _ = keep.text_from_words(&a);
     }
 
     /// The bytes of the kept rows are added up by stretches where there is
