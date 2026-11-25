@@ -26,7 +26,19 @@ use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field};
 
 use crate::row_filter::RowFilter;
+use crate::rows::{
+    FILTER_LIST_COLUMNS, LIST_WEIGHT_BITS, LIST_WEIGHT_DECIMAL, LIST_WEIGHT_SCATTERED,
+    LIST_WEIGHT_SINGLE,
+};
 use crate::series::ColumnKind;
+
+/// True when every value is finite. Looks at 64 values at a time, with no
+/// branch inside the 64 (so they are tested several at a time), and stops
+/// at the first 64 that hold a value that is not.
+fn all_finite(v: &[f64]) -> bool {
+    v.chunks(64)
+        .all(|c| c.iter().fold(true, |ok, x| ok & x.is_finite()))
+}
 
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
 /// gap. Reading a gap gives `None`.
@@ -47,7 +59,7 @@ impl Float64Column {
     /// Wrap an Arrow buffer as it is, without copying: non-finite values are
     /// gaps.
     pub(crate) fn from_buffer(values: ScalarBuffer<f64>) -> Self {
-        let all_finite = crate::row_filter::all_finite(&values);
+        let all_finite = all_finite(&values);
         Self { values, all_finite }
     }
 
@@ -212,13 +224,22 @@ impl StringColumn {
 }
 
 impl StringColumn {
-    /// The rows where `keep` is set, in order. A dictionary column filters
-    /// its keys and keeps its values, as [`StringColumn::take_indices`].
-    pub(crate) fn filter(&self, keep: &RowFilter) -> Self {
+    /// The rows where `keep` is set, in order. Plain text goes as
+    /// [`RowFilter::text`] has it, whatever `listed` says. A dictionary
+    /// column filters its keys and keeps its values, as
+    /// [`StringColumn::take_indices`]: straight from the mask
+    /// ([`RowFilter::dictionary`]), or by the list of kept rows
+    /// ([`RowFilter::by_list`]) when `listed` says the list is there to
+    /// share and the keys are the faster by it ([`RowFilter::list_pays`]).
+    pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> Self {
         match &self.repr {
             StringRepr::Plain(a) => Self::plain(keep.text(a)),
             StringRepr::Dictionary(a) => Self {
-                repr: StringRepr::Dictionary(keep.dictionary(a)),
+                repr: StringRepr::Dictionary(if listed && keep.list_pays(size_of::<i32>()) {
+                    keep.by_list(a).as_dictionary::<Int32Type>().clone()
+                } else {
+                    keep.dictionary(a)
+                }),
             },
         }
     }
@@ -1300,40 +1321,106 @@ impl ColumnData {
         }
     }
 
-    /// The rows where `keep` is set, in order: what `filter` keeps. Every
-    /// kind but arrays is copied straight from the mask (see
-    /// [`RowFilter`]), with no list of row numbers in between.
-    pub(crate) fn filter(&self, keep: &RowFilter) -> ColumnData {
+    /// The rows where `keep` is set, in order: what `filter` keeps. Arrays
+    /// go by row number; the other kinds are copied straight from the
+    /// mask. Except that, when `listed` says the kernel's list of kept
+    /// rows is there to share, each kind but plain text goes by it where
+    /// this mask is the faster that way: numbers, decimal values and
+    /// dictionary keys by [`RowFilter::list_pays`] for values of their
+    /// width, true/false values and the marks for gaps by
+    /// [`RowFilter::bits_by_list`] (see [`RowFilter`] for the two ways,
+    /// and `TimeSeries::filter_rows` for the choice). Plain text takes the
+    /// list or not by the mask alone ([`RowFilter::text`]).
+    /// [`ColumnData::list_weight`] reads the same rules, to say what the
+    /// column counts toward making the list.
+    pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
-                let values = keep.vec(&c.values);
+                let values: ScalarBuffer<f64> = if listed && keep.list_pays(size_of::<f64>()) {
+                    let all = Float64Array::new(c.values.clone(), None);
+                    let kept = keep.by_list(&all);
+                    kept.as_primitive::<Float64Type>().values().clone()
+                } else {
+                    keep.vec(&c.values).into()
+                };
                 // A subset of values with no gap has no gap.
-                let all_finite = c.all_finite || crate::row_filter::all_finite(&values);
-                ColumnData::Number(Float64Column {
-                    values: values.into(),
-                    all_finite,
-                })
+                let all_finite = c.all_finite || all_finite(&values);
+                ColumnData::Number(Float64Column { values, all_finite })
             }
             ColumnData::Decimal(c) => {
                 let a = &c.values;
-                let kept = Decimal128Array::new(keep.vec(a.values()).into(), keep.nulls(a.nulls()));
+                let values: ScalarBuffer<i128> = if listed && keep.list_pays(size_of::<i128>()) {
+                    let all = Decimal128Array::new(a.values().clone(), None);
+                    let kept = keep.by_list(&all);
+                    kept.as_primitive::<Decimal128Type>().values().clone()
+                } else {
+                    keep.vec(a.values()).into()
+                };
+                // The gap marks go by the list too, where bits do
+                // (`RowFilter::nulls`).
+                let kept = Decimal128Array::new(values, keep.nulls(a.nulls(), listed));
                 ColumnData::Decimal(DecimalColumn {
                     values: kept.with_data_type(a.data_type().clone()),
                 })
             }
-            ColumnData::String(c) => ColumnData::String(c.filter(keep)),
+            ColumnData::String(c) => ColumnData::String(c.filter(keep, listed)),
             ColumnData::Boolean(c) => {
                 let a = &c.values;
-                ColumnData::Boolean(BooleanColumn::from_arrow(BooleanArray::new(
-                    keep.bits(a.values()),
-                    keep.nulls(a.nulls()),
-                )))
+                ColumnData::Boolean(BooleanColumn::from_arrow(
+                    if listed && keep.bits_by_list() {
+                        keep.by_list(a).as_boolean().clone()
+                    } else {
+                        BooleanArray::new(keep.bits(a.values()), keep.nulls(a.nulls(), false))
+                    },
+                ))
             }
             // Array cells are shared, not copied: keep the row-number path.
             ColumnData::Array(c) => {
                 let rows: Vec<Option<usize>> = keep.rows().map(Some).collect();
                 ColumnData::Array(c.take(&rows))
             }
+        }
+    }
+
+    /// What this column counts toward a list of the kept rows, made once
+    /// and shared (`TimeSeries::filter_copy` makes one when the columns'
+    /// counts come to `FILTER_LIST_COLUMNS` in `rows.rs`): one for a
+    /// number column that [`ColumnData::filter`] would copy faster by the
+    /// list than straight from the mask, more for the kinds and the masks
+    /// that gain more by it, nothing for a column the list does not help.
+    /// So a column counts exactly when, with the list there, it would go
+    /// by it.
+    pub(crate) fn list_weight(&self, keep: &RowFilter) -> usize {
+        let bits = |buffers: usize| LIST_WEIGHT_BITS * buffers * usize::from(keep.bits_by_list());
+        // A column of values of up to eight bytes: more the shorter the
+        // stretches its kept rows come in.
+        let narrow = |width: usize| {
+            if !keep.list_pays(width) {
+                0
+            } else if keep.mostly_single() {
+                LIST_WEIGHT_SINGLE
+            } else if keep.scattered() {
+                LIST_WEIGHT_SCATTERED
+            } else {
+                1
+            }
+        };
+        match self {
+            ColumnData::Number(_) => narrow(size_of::<f64>()),
+            ColumnData::Decimal(c) => {
+                LIST_WEIGHT_DECIMAL * usize::from(keep.list_pays(size_of::<i128>()))
+                    + bits(usize::from(c.missing_count() > 0))
+            }
+            // A dictionary's keys are values of four bytes, and count as a
+            // number column does. (Its gap marks go the way its keys do,
+            // so they have no count of their own.)
+            ColumnData::String(c) if c.is_dictionary() => narrow(size_of::<i32>()),
+            // Plain text goes by the kernel and its list on some masks
+            // whatever else does: the list is made, so it is there to
+            // share. On any other mask it counts nothing.
+            ColumnData::String(_) => FILTER_LIST_COLUMNS * usize::from(keep.text_by_list()),
+            ColumnData::Boolean(c) => bits(1 + usize::from(c.missing_count() > 0)),
+            ColumnData::Array(_) => 0,
         }
     }
 
@@ -1475,4 +1562,24 @@ column_data_from! {
     Option<bool> => |v| ColumnData::Boolean(BooleanColumn::from_options(v));
     Vec<Scalar> => |v| ColumnData::Array(ArrayColumn::from_options(v.into_iter().map(Some)));
     Option<Vec<Scalar>> => |v| ColumnData::Array(ArrayColumn::from_options(v));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all_finite;
+
+    #[test]
+    fn all_finite_finds_a_gap_anywhere() {
+        for n in [0, 1, 63, 64, 65, 200] {
+            let v = vec![1.5; n];
+            assert!(all_finite(&v));
+            for at in 0..n {
+                for gap in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    let mut v = v.clone();
+                    v[at] = gap;
+                    assert!(!all_finite(&v), "n {n}, gap at {at}");
+                }
+            }
+        }
+    }
 }

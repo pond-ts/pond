@@ -122,23 +122,49 @@ include new features and type-level changes; patch bumps are strictly additive.
   now offer npm, crates.io and PyPI installs.
 
 - **pond-rs: `filter` and `filter_expr` are faster**, with the same rows in
-  the same order. Each column is copied straight from the mask of kept rows
-  by pond-rs's own loops: numbers, times and decimals eight rows at a time,
-  text and true/false values one stretch of kept rows at a time. The test
-  `column > number` runs on several values at once, and a filter that keeps
-  131,072 rows or more copies the key and each column on a core of its own.
-  On 1M rows of a time key, a number column and a text column (an M1, in a
-  Linux VM), `v > 500` keeping 56% went from 4.3 ms to 2.8 ms on one core
-  and 2.3 ms on four; keeping 1% went from 1.6 ms to 0.5 ms; and `filter`
-  with a closure, which copies its rows the same way, from 5.1 ms to 3.9 ms.
-  The bridges pick it up: Python from 7.0 ms to 3.0 ms, `@pond-ts/wasm` from
-  7.1 ms to 6.0 ms. Two side effects. Any step whose result is a number
-  column with no gaps (`fill`, `cumulative`, `rolling`, …) is about 0.2 ms
-  per 1M rows faster, because the check for gaps that every new number
-  column gets now looks at 64 values at a time. And when a `filter` with a
-  closure keeps no row, a dictionary text column comes back with an empty
-  dictionary, as it already did from `filter_expr`; it used to keep the
-  source's list of strings behind its zero rows.
+  the same order. Times, numbers and dictionary keys are copied straight
+  from the mask of kept rows, word by word: a run of words with every row
+  kept is one copy, a word whose kept rows come in a few long stretches is
+  copied a stretch at a time, and other words go eight rows at a time.
+  Decimals go a stretch or a row at a time, true/false values and gap
+  marks 64 rows at a step, and text is copied from the mask too, a stretch
+  of kept rows at a time. Where the kept rows come in short stretches and
+  enough columns gain by it (for text and true/false values, only where
+  few rows are kept, a row or two at a time), the columns go instead by
+  Arrow's `filter` and one list of the kept rows, made once and shared.
+  The test `column > number` runs on several values at once, and a
+  filter that keeps 131,072 rows or more copies the key and each column on
+  a core of its own. The text it puts together and the dictionary keys it
+  copies are handed to Arrow without Arrow checking them a second time:
+  these are the crate's only two `unsafe` blocks, and debug builds and the
+  tests still check every result in full. On 1M rows
+  of a time key, a number column and a 6-byte text column (an x86 cloud
+  server, `v > 500`, one core unless said, each figure the middle of eleven
+  runs): keeping 56% went from 6.5 ms to 4.2 ms, and to 2.5 ms on four
+  cores; keeping 1% from 2.6 ms to 0.9 ms; keeping half the rows in
+  stretches of 1,000 from 6.0 ms to 1.8 ms; and the same series without
+  its text column from 4.1 ms to 1.9 ms. With 85% of the rows kept at
+  random, four text columns went from 20.4 ms to 9.8 ms and 16 true/false
+  columns from 82.8 ms to 6.7 ms. Wide tables gain little on one core and
+  most of it on four: there 32 number columns with 25% kept went from 28.5
+  ms to 9.6 ms, and 16 decimal columns with 45% kept from 32.3 ms to 12.9
+  ms. Over 1,393 kinds of table timed in one program against the code
+  before, at 1M and at 100,000 rows and by two tests, the middle one takes
+  0.60 to 0.88 of the time on one core. At most 15 are more than 3% slower,
+  nearly all of them short text with from one row in eight to 30% of its
+  rows kept at random (up to 19%) or four to eight dictionary columns with
+  half the rows kept in runs of 3 to 8 (up to 10%, by a test of two parts);
+  on four cores, 400-byte text with 56% kept is 11% slower. Timed apart from
+  those, long text (400 and 1,000 bytes a row) with 13% to half of its rows
+  kept at random is up to 11% slower in some runs and level in others.
+  `filter` with a closure copies its rows the same way, and the Python and
+  WebAssembly bridges run the same code. Two side effects. Any step whose
+  result is a number column with no gaps (`fill`, `cumulative`, `rolling`,
+  …) is about 0.2 ms per 1M rows faster, because the check for gaps that
+  every new number column gets now looks at 64 values at a time. And when
+  a `filter` with a closure keeps no row, a dictionary text column comes
+  back with an empty dictionary, as it already did from `filter_expr`; it
+  used to keep the source's list of strings behind its zero rows.
 
 ## [0.79.0] — 2026-11-23
 

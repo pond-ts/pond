@@ -319,7 +319,7 @@ impl Key {
             Key::Interval(k) => Key::Interval(IntervalKeys {
                 label: match &k.label {
                     Labels::Number(v) => Labels::Number(keep.vec(v)),
-                    Labels::String(s) => Labels::String(s.filter(keep)),
+                    Labels::String(s) => Labels::String(s.filter(keep, false)),
                 },
                 begin: keep.vec(&k.begin),
                 end: keep.vec(&k.end),

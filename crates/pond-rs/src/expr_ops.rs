@@ -240,6 +240,7 @@ mod filter_tests {
     use crate::column::{ArrayColumn, BooleanColumn, DecimalColumn, Scalar, StringColumn};
     use crate::expr::{col, lit};
     use crate::row_filter::RowFilter;
+    use crate::rows::FilterCopy;
     use crate::series::{IntervalKeys, Key, Labels, TimeRangeKeys};
     use arrow_array::DictionaryArray;
     use arrow_array::types::Int32Type;
@@ -331,26 +332,92 @@ mod filter_tests {
                 for m in &masks {
                     let rows: Vec<usize> = (0..n).filter(|&i| m[i]).collect();
                     let keep: RowFilter = m.iter().copied().collect();
-                    let got = s.filter_rows(&keep);
-                    assert_eq!(got, s.take_rows(&rows), "n {n}, {} kept", rows.len());
-                    assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
-                    // A number column's note that it has no gap is what
-                    // later steps go by: it must say what the values say.
-                    for name in ["v", "w"] {
-                        let c = got.column(name).unwrap().numbers().unwrap();
-                        let finite = c.values().iter().all(|x| x.is_finite());
-                        assert_eq!(c.all_finite(), finite, "n {n}, column {name}");
+                    let want = s.take_rows(&rows);
+                    // Each way of going about the copies gives the same
+                    // series, columns in the same order.
+                    for how in [FilterCopy::Direct, FilterCopy::Split, FilterCopy::Listed] {
+                        let got = s.filter_rows_by(&keep, how);
+                        assert_eq!(got, want, "n {n}, {} kept, {how:?}", rows.len());
+                        assert!(got.column("d").unwrap().strings().unwrap().is_dictionary());
+                        // A number column's note that it has no gap is what
+                        // later steps go by: it must say what the values say.
+                        for name in ["v", "w"] {
+                            let c = got.column(name).unwrap().numbers().unwrap();
+                            let finite = c.values().iter().all(|x| x.is_finite());
+                            assert_eq!(c.all_finite(), finite, "n {n}, {name}, {how:?}");
+                        }
                     }
-                    // A long series copies its key and columns on several
-                    // cores: the same series, columns in the same order.
-                    let split = s.filter_rows_split(&keep, true);
-                    assert_eq!(split, got, "n {n}, {} kept, split", rows.len());
-                    // `filter` with a closure goes the same way.
+                    // The way chosen for this series and mask, and `filter`
+                    // with a closure.
+                    assert_eq!(s.filter_rows(&keep), want, "n {n}, {} kept", rows.len());
                     let by_closure = s.filter(|r| Ok(m[r.index()])).unwrap();
-                    assert_eq!(by_closure, got, "n {n}, {} kept, closure", rows.len());
+                    assert_eq!(by_closure, want, "n {n}, {} kept, closure", rows.len());
                 }
             }
         }
+    }
+
+    /// Through the public call, where the library chooses how to copy as it
+    /// does for a caller: a filter that keeps enough rows to be copied on
+    /// several cores (where there are several), one that is copied by the
+    /// list of kept rows, and one that is copied straight from the mask.
+    #[test]
+    fn a_long_filter_and_a_wide_one_match_the_row_by_row_copy() {
+        let n = 400_000;
+        let s = TimeSeries::new("s", (0..n as i64).collect(), columns(n)).unwrap();
+        // Scattered rows, a little under half of them.
+        let test = col("v").gt(4.0);
+        let v = s.column("v").unwrap().numbers().unwrap();
+        let rows: Vec<usize> = (0..n)
+            .filter(|&i| v.get(i).is_some_and(|x| x > 4.0))
+            .collect();
+        let keep = expr::mask(&test, &s);
+        assert_eq!(keep.count(), rows.len());
+        let want = s.take_rows(&rows);
+        // With more than one core this is the split copy. With one, the
+        // two number columns, the dictionary and the decimal column count
+        // enough between them to make the list of kept rows.
+        assert_eq!(s.filter_copy(&keep, 4), FilterCopy::Split);
+        assert_eq!(s.filter_copy(&keep, 1), FilterCopy::Listed);
+        let cores = crate::par::threads();
+        let how = s.filter_copy(&keep, cores);
+        let expected = if cores > 1 {
+            FilterCopy::Split
+        } else {
+            FilterCopy::Listed
+        };
+        assert_eq!(how, expected, "{} rows kept, {cores} cores", rows.len());
+        assert_eq!(s.filter_expr(&test).unwrap(), want);
+        for how in [FilterCopy::Direct, FilterCopy::Split, FilterCopy::Listed] {
+            assert_eq!(s.filter_rows_by(&keep, how), want, "{how:?}");
+        }
+
+        // Fewer rows (too few kept to split) and six more number columns:
+        // by the list, on any number of cores.
+        let n = 200_000;
+        let mut wide = columns(n);
+        wide.extend((0..6).map(|c| {
+            let values = (0..n).map(|i| ((i * 31 + c) % 1000) as f64);
+            Column::required(format!("x{c}"), values.collect::<Vec<f64>>())
+        }));
+        let s = TimeSeries::new("s", (0..n as i64).collect(), wide).unwrap();
+        let v = s.column("v").unwrap().numbers().unwrap();
+        let rows: Vec<usize> = (0..n)
+            .filter(|&i| v.get(i).is_some_and(|x| x > 4.0))
+            .collect();
+        let keep = expr::mask(&test, &s);
+        assert_eq!(keep.count(), rows.len());
+        assert_eq!(s.filter_copy(&keep, cores), FilterCopy::Listed);
+        assert_eq!(s.filter_expr(&test).unwrap(), s.take_rows(&rows));
+
+        // Two number columns alone are too few to make a list for: each is
+        // copied straight from the mask.
+        let narrow = columns(n)[..2].to_vec();
+        let s = TimeSeries::new("s", (0..n as i64).collect(), narrow).unwrap();
+        let keep = expr::mask(&test, &s);
+        assert_eq!(keep.count(), rows.len());
+        assert_eq!(s.filter_copy(&keep, cores), FilterCopy::Direct);
+        assert_eq!(s.filter_expr(&test).unwrap(), s.take_rows(&rows));
     }
 
     /// A filter that keeps nothing, written either way: no rows, a
@@ -418,9 +485,10 @@ mod filter_tests {
                     assert_eq!(bits(&left), want_left, "{k} {op} {name}");
                     assert_eq!(generic(&left), want_left, "{k} {op} {name}, evaluated");
                     assert_eq!(bits(&computed), want, "{at}, after arithmetic");
-                    // And through the public call.
-                    let kept = s.filter_expr(&right).unwrap();
-                    assert_eq!(kept.len(), want.iter().filter(|&&b| b).count(), "{at}");
+                    // And through the public call: those rows of every
+                    // column, as the row-by-row copy gives them.
+                    let rows: Vec<usize> = (0..n).filter(|&i| want[i]).collect();
+                    assert_eq!(s.filter_expr(&right).unwrap(), s.take_rows(&rows), "{at}");
                 }
             }
             // A constant that is not finite cannot be applied through the
