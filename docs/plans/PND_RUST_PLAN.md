@@ -2111,7 +2111,21 @@ rests on the patch's readings (the suite's case at 2.74 ms against 5.62
 before #969 and 3.16 on main, and never slower than "before" on the
 benchmark's 53 lines with text), and where its rules had a bar to set,
 the bar was put where those readings and the x86 server's could both be
-used. Timing this round's code on the M1 is still to do.
+used. This round's code has not been timed on the M1 (next paragraph).
+
+**The bar for text, kept.** On 2026-11-25 the owner chose to keep this
+round's rules as they are. The other two choices put to them were to
+time this round on the M1 first and set the bar from both machines'
+readings, or to send short text and dictionaries back to the fourth
+round's rules to suit the x86 server. What was put to them for keeping
+the rules: the x86 server stays up to 19% slower than "before" on a
+narrow band of short text (from one row in eight to 30% of its rows
+kept), where the M1's readings of the patch favoured this round's copy.
+The long text found slower after the fourth review (above, up to 11%,
+on the same side of the bar) was not part of what was put to them. So
+the bar stays at one row in eight, and timing this round on the M1 is
+no longer needed to set a rule; it would still be the first reading of
+this exact code there.
 
 **Which machine.** The session's container was moved from one server to
 another three times in these two days, and a table is only compared
