@@ -989,6 +989,13 @@ export declare class LiveSeries extends LiveNode<
   pushMany(rows: readonly LiveRow[]): void;
   /** Push rows written as pond-ts JSON (times as ms or UTC text, `null` for a gap). */
   pushJson(rows: readonly JsonRow[], options?: { timeZone?: 'UTC' }): void;
+  /**
+   * Push a batch series as one batch (pond-ts `pushSeries`): the checks,
+   * ordering and listeners of `pushMany` of its rows, all or nothing.
+   * Value columns are matched by name, in any order. The series stays
+   * yours to use and `free()`.
+   */
+  pushSeries(series: TimeSeries): void;
   /** Remove every event. */
   clear(): void;
   /** What the series holds now, as a batch series. */

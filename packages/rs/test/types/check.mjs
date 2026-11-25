@@ -233,7 +233,12 @@ live.cases.forEach((c, k) => {
       );
     else if ('pushMany' in s) b.push(`  root.pushMany(${rows(s.pushMany)});`);
     else if ('pushJson' in s) b.push(`  root.pushJson(${ts(s.pushJson)});`);
-    else if ('clear' in s) b.push('  root.clear();');
+    else if ('pushSeries' in s) {
+      const { name, schema, rows: batch } = s.pushSeries;
+      b.push(
+        `  root.pushSeries(new TimeSeries({ name: ${str(name)}, schema: ${ts(schema)}, rows: ${rows(batch)} }));`,
+      );
+    } else if ('clear' in s) b.push('  root.clear();');
     else if ('dispose' in s) b.push(`  ${v(s.dispose)}.dispose();`);
     else if ('node' in s) {
       const { id, op, from, args: a } = s.node;
@@ -256,7 +261,7 @@ live.cases.forEach((c, k) => {
       }
       // A later node with this id builds on this one.
       if (name !== v(id)) b.push(`  void ${name};`);
-    }
+    } else throw new Error(`${c.name}: unknown live step ${JSON.stringify(s)}`);
     liveCalls++;
   });
   b.push('  root.free();', '}');
