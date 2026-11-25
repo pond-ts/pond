@@ -122,7 +122,7 @@ runs, not when it compiles.
 
 The declarations are checked in CI: every call in the parity fixtures the
 package is tested against (about 4,000 core calls, 8,400 study calls and
-1,300 live steps) has to compile under `tsc --strict`, and every method the
+1,400 live steps) has to compile under `tsc --strict`, and every method the
 package has at runtime has to be declared.
 
 ## Drawing with `@pond-ts/charts`
@@ -180,7 +180,8 @@ The ones you meet first:
   garbage collector cannot see. Call `free()` when done with it. A
   finalizer frees forgotten series eventually, but WebAssembly memory never
   shrinks, so do not rely on it. Freeing a `LiveSeries` frees every view
-  built on it.
+  built on it. A series you hand to `LiveSeries.pushSeries` stays yours
+  to free: the live series keeps its rows, not the series.
 - **Times are milliseconds.** Rows take numbers for times; for times
   written as text, use `Time.parse` or `TimeSeries.fromJSON`.
 - **Prefer expressions to functions.** `s.filter(col('v').gt(0))` runs

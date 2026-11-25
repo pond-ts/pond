@@ -107,7 +107,7 @@ batch.free();
 live.free(); // frees every view built on it too
 ```
 
-In JavaScript (`@pond-ts/wasm`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
+In JavaScript (`@pond-ts/wasm`) the classes and methods are pond-ts's (`push`, `pushMany`, `pushJson`, `pushSeries`, `rolling`, `aggregate`, `on`, …). `free()` the root series when done; listeners run after pond-rs has taken the push.
 
 </TabItem>
 <TabItem value="python" label="Python">
@@ -196,6 +196,11 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+From JavaScript, `@pond-ts/wasm`'s `live.pushSeries(series)` does the same
+with one of that package's own `TimeSeries` (not a pond-ts one). Its rows
+are already in WebAssembly memory, so they go in without a copy through
+JavaScript. The series stays yours to use and `free()`.
 
 ## Late events and how many to keep
 
