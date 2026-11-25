@@ -26,6 +26,10 @@ use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field};
 
 use crate::row_filter::RowFilter;
+use crate::rows::{
+    FILTER_LIST_COLUMNS, LIST_WEIGHT_BITS, LIST_WEIGHT_DECIMAL, LIST_WEIGHT_SCATTERED,
+    LIST_WEIGHT_SINGLE,
+};
 use crate::series::ColumnKind;
 
 /// True when every value is finite. Looks at 64 values at a time, with no
@@ -236,6 +240,30 @@ impl StringColumn {
                     keep.dictionary(a)
                 }),
             },
+        }
+    }
+
+    /// What this column counts toward a list of the kept rows
+    /// ([`ColumnData::list_weight`]).
+    fn list_weight(&self, keep: &RowFilter) -> usize {
+        match &self.repr {
+            // Text in short stretches goes by the kernel and its list
+            // whatever else does: the list is made, so it is there to share.
+            StringRepr::Plain(_) => {
+                if keep.text_by_list() {
+                    FILTER_LIST_COLUMNS
+                } else {
+                    0
+                }
+            }
+            // A dictionary counts its share of a list that so many of them
+            // make between them on this mask: the whole of it where one
+            // does, a half where two do, and nothing where its keys go
+            // from the words. (Its gap marks go the way its keys do, so
+            // they have no count of their own.)
+            StringRepr::Dictionary(_) => keep
+                .dictionaries_for_list()
+                .map_or(0, |columns| FILTER_LIST_COLUMNS / columns),
         }
     }
 }
@@ -1319,11 +1347,14 @@ impl ColumnData {
     /// The rows where `keep` is set, in order: what `filter` keeps. Text
     /// goes by Arrow's kernel or stretch by stretch ([`RowFilter::text`])
     /// and arrays by row number; the other kinds are copied straight from
-    /// the mask. Except that numbers, decimal values and dictionary keys
-    /// go by the kernel's list of kept rows when `listed` says the list is
-    /// there to share and [`RowFilter::list_pays`] that this mask is the
-    /// faster by it for values of that width (see [`RowFilter`] for the
-    /// two ways, and `TimeSeries::filter_rows` for the choice).
+    /// the mask. Except that, when `listed` says the kernel's list of kept
+    /// rows is there to share, each goes by it where this mask is the
+    /// faster that way: numbers, decimal values and dictionary keys by
+    /// [`RowFilter::list_pays`] for values of their width, true/false
+    /// values and the marks for gaps by [`RowFilter::bits_by_list`] (see
+    /// [`RowFilter`] for the two ways, and `TimeSeries::filter_rows` for
+    /// the choice). [`ColumnData::list_weight`] reads the same rules, to
+    /// say what the column counts toward making the list.
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
@@ -1347,12 +1378,9 @@ impl ColumnData {
                 } else {
                     keep.vec(a.values()).into()
                 };
-                // The gap marks come straight from the mask either way.
-                // That is level with the kernel's copy of them or faster
-                // from half the rows kept on. With a quarter kept or
-                // fewer, one row at a time, the kernel's is the faster by
-                // 2 to 18 points (PND_RUST_PLAN.md, "Considered, not done").
-                let kept = Decimal128Array::new(values, keep.nulls(a.nulls()));
+                // The gap marks go by the list too, where bits do
+                // (`RowFilter::nulls`).
+                let kept = Decimal128Array::new(values, keep.nulls(a.nulls(), listed));
                 ColumnData::Decimal(DecimalColumn {
                     values: kept.with_data_type(a.data_type().clone()),
                 })
@@ -1360,16 +1388,43 @@ impl ColumnData {
             ColumnData::String(c) => ColumnData::String(c.filter(keep, listed)),
             ColumnData::Boolean(c) => {
                 let a = &c.values;
-                ColumnData::Boolean(BooleanColumn::from_arrow(BooleanArray::new(
-                    keep.bits(a.values()),
-                    keep.nulls(a.nulls()),
-                )))
+                ColumnData::Boolean(BooleanColumn::from_arrow(
+                    if listed && keep.bits_by_list() {
+                        keep.by_list(a).as_boolean().clone()
+                    } else {
+                        BooleanArray::new(keep.bits(a.values()), keep.nulls(a.nulls(), false))
+                    },
+                ))
             }
             // Array cells are shared, not copied: keep the row-number path.
             ColumnData::Array(c) => {
                 let rows: Vec<Option<usize>> = keep.rows().map(Some).collect();
                 ColumnData::Array(c.take(&rows))
             }
+        }
+    }
+
+    /// What this column counts toward a list of the kept rows, made once
+    /// and shared (`TimeSeries::filter_copy` makes one when the columns'
+    /// counts come to [`FILTER_LIST_COLUMNS`]): one for a number column
+    /// that [`ColumnData::filter`] would copy faster by the list than
+    /// straight from the mask, more for the kinds and the masks that gain
+    /// more by it, nothing for a column the list does not help. So a
+    /// column counts exactly when, with the list there, it would go by it.
+    pub(crate) fn list_weight(&self, keep: &RowFilter) -> usize {
+        let bits = |buffers: usize| LIST_WEIGHT_BITS * buffers * usize::from(keep.bits_by_list());
+        match self {
+            ColumnData::Number(_) if !keep.list_pays(size_of::<f64>()) => 0,
+            ColumnData::Number(_) if keep.mostly_single() => LIST_WEIGHT_SINGLE,
+            ColumnData::Number(_) if keep.scattered() => LIST_WEIGHT_SCATTERED,
+            ColumnData::Number(_) => 1,
+            ColumnData::Decimal(c) => {
+                LIST_WEIGHT_DECIMAL * usize::from(keep.list_pays(size_of::<i128>()))
+                    + bits(usize::from(c.missing_count() > 0))
+            }
+            ColumnData::String(c) => c.list_weight(keep),
+            ColumnData::Boolean(c) => bits(1 + usize::from(c.missing_count() > 0)),
+            ColumnData::Array(_) => 0,
         }
     }
 

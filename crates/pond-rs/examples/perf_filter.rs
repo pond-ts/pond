@@ -21,18 +21,33 @@
 //!   kept. A decimal has no table: its rows go a stretch at a time from
 //!   six rows a stretch, and one at a time otherwise.
 //! - Numbers, decimals and dictionary keys, when the columns are copied
-//!   one after another and eight or more of them are the faster for it (a
-//!   decimal column counting as two): by a list made once. With more than
+//!   one after another: by Arrow's kernel and its list of the kept rows,
+//!   made once, where the columns that are the faster by it gain enough
+//!   between them. Each such column counts toward the list, and it is made
+//!   at a count of eight. A number column counts 1, or 2 when the kept
+//!   rows come under two and a quarter to a stretch on average, or 3 under
+//!   one and three quarters; a decimal's values count 2. With more than
 //!   four rows in five kept that is a list of stretches (a copy per
 //!   stretch), which pays from 8 rows a stretch on average, and always for
 //!   decimals. With fewer kept it is a list of rows (a step per kept row),
 //!   which pays until the stretches reach 32 rows on average (16 for
 //!   decimals).
+//! - A dictionary column: by the kernel sooner than a number column (a
+//!   dictionary put together from copied keys has every key checked by
+//!   Arrow again, and the kernel's has not). With four rows in five kept
+//!   or fewer, one such column makes the list under 12 rows a stretch and
+//!   two make it up to 32. With more kept, one makes it from 16 rows a
+//!   stretch and two from 12.
 //! - Text: stretch by stretch when the kept rows come 32 or more to a
 //!   stretch on average (a step per stretch, plus its bytes); otherwise by
 //!   Arrow's kernel and its list of the kept rows (a step per kept row or
 //!   per stretch, plus the bytes).
-//! - True/false values, and the marks for gaps: one step per stretch.
+//! - True/false values, and the marks for gaps: 64 rows at a time. One
+//!   step per stretch where the 64 hold one stretch or two; otherwise
+//!   eight rows a step, by a table that brings the kept bits together.
+//!   Where under 5 rows in 64 are kept, in stretches of under 4, they go
+//!   by the kernel's list when it is made, and each run of them counts 5
+//!   toward it.
 //! - Arrays: by row number.
 //!
 //! A line that ends in a count of page faults had its output memory handed
@@ -285,6 +300,8 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
     ];
     println!("True/false values and marks for gaps, rows kept one or a few at a time:");
     for (share, k) in [
+        ("1%", 989.5),
+        ("2%", 979.5),
         ("5%", 949.5),
         ("10%", 899.5),
         ("25%", 749.5),
@@ -295,7 +312,16 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
             time(&format!("{what}, {share} kept"), &s, &col("v").gt(k));
         }
     }
-    for (kept, dropped) in [(2.0, 2.0), (3.0, 3.0), (4.0, 12.0), (8.0, 8.0)] {
+    // One row in 20 kept, in stretches of 2 and of 8: either side of the
+    // rows to a stretch under which bits go by the list. Then more kept.
+    for (kept, dropped) in [
+        (2.0, 38.0),
+        (8.0, 152.0),
+        (2.0, 2.0),
+        (3.0, 3.0),
+        (4.0, 12.0),
+        (8.0, 8.0),
+    ] {
         for (what, extra) in &bits {
             let s = table(runs(rows, kept, dropped), extra)?;
             time(
@@ -323,7 +349,7 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
         }
     }
     println!("Dictionary columns:");
-    for count in [2, 8] {
+    for count in [1, 2, 8] {
         let random = as_dictionaries(&table(random_values(rows), &text_columns(rows, count))?)?;
         for (share, k) in [("10%", 899.5), ("50%", 499.5), ("85%", 149.5)] {
             time(
@@ -332,7 +358,20 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
                 &col("v").gt(k),
             );
         }
-        for (kept, dropped) in [(16.0, 16.0), (64.0, 64.0), (64.0, 1.5)] {
+        // Half the rows kept, either side of the 12 rows to a stretch
+        // under which one dictionary column makes the list, and past the
+        // 32 where none does; then most rows kept, either side of the 12
+        // and the 16 from which two and one do.
+        for (kept, dropped) in [
+            (8.0, 8.0),
+            (16.0, 16.0),
+            (24.0, 24.0),
+            (64.0, 64.0),
+            (10.0, 1.2),
+            (14.0, 1.5),
+            (20.0, 2.0),
+            (64.0, 1.5),
+        ] {
             let s = as_dictionaries(&table(
                 runs(rows, kept, dropped),
                 &text_columns(rows, count),

@@ -359,8 +359,8 @@ mod filter_tests {
 
     /// Through the public call, where the library chooses how to copy as it
     /// does for a caller: a filter that keeps enough rows to be copied on
-    /// several cores (where there are several), and one over enough number
-    /// columns to be copied by the list.
+    /// several cores (where there are several), one that is copied by the
+    /// list of kept rows, and one that is copied straight from the mask.
     #[test]
     fn a_long_filter_and_a_wide_one_match_the_row_by_row_copy() {
         let n = 400_000;
@@ -374,13 +374,15 @@ mod filter_tests {
         let keep = expr::mask(&test, &s);
         assert_eq!(keep.count(), rows.len());
         let want = s.take_rows(&rows);
-        // With more than one core this is the split copy.
+        // With more than one core this is the split copy. With one, the
+        // text column's rows come in short stretches, so it goes by the
+        // list of kept rows, and the columns beside it share the list.
         let cores = crate::par::threads();
         let how = s.filter_copy(&keep, cores);
         let expected = if cores > 1 {
             FilterCopy::Split
         } else {
-            FilterCopy::Direct
+            FilterCopy::Listed
         };
         assert_eq!(how, expected, "{} rows kept, {cores} cores", rows.len());
         assert_eq!(s.filter_expr(&test).unwrap(), want);
@@ -389,8 +391,7 @@ mod filter_tests {
         }
 
         // Fewer rows (too few kept to split) and six more number columns:
-        // with `v`, `w` and the dictionary column that is eight to copy by
-        // the list, on any number of cores.
+        // by the list, on any number of cores.
         let n = 200_000;
         let mut wide = columns(n);
         wide.extend((0..6).map(|c| {
@@ -405,6 +406,15 @@ mod filter_tests {
         let keep = expr::mask(&test, &s);
         assert_eq!(keep.count(), rows.len());
         assert_eq!(s.filter_copy(&keep, cores), FilterCopy::Listed);
+        assert_eq!(s.filter_expr(&test).unwrap(), s.take_rows(&rows));
+
+        // Two number columns alone are too few to make a list for: each is
+        // copied straight from the mask.
+        let narrow = columns(n)[..2].to_vec();
+        let s = TimeSeries::new("s", (0..n as i64).collect(), narrow).unwrap();
+        let keep = expr::mask(&test, &s);
+        assert_eq!(keep.count(), rows.len());
+        assert_eq!(s.filter_copy(&keep, cores), FilterCopy::Direct);
         assert_eq!(s.filter_expr(&test).unwrap(), s.take_rows(&rows));
     }
 

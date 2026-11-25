@@ -36,27 +36,79 @@ use crate::series::{Column, TimeSeries};
 /// faster at 148,000.
 const FILTER_SPLIT_ROWS: usize = 1 << 17;
 
-/// A filter that copies its columns one after another makes a list of the
-/// kept rows, once, when this many columns would be copied faster by it
-/// than straight from the mask ([`TimeSeries::filter_copy`]). A decimal
-/// column counts as two: its values are 16 bytes to a number's 8.
+/// A filter that copies its columns one after another makes Arrow's list
+/// of the kept rows, once, when what its columns count toward one comes to
+/// this ([`TimeSeries::filter_copy`]). A column counts only where, with
+/// the list there, it would be copied by it (`ColumnData::list_weight`). A
+/// number column counts one, so on most masks this is how many number
+/// columns it takes; the kinds and the masks that gain more by the list
+/// count more (the constants below, and
+/// `RowFilter::dictionaries_for_list` for a dictionary column).
 ///
 /// Timed on an x86 server at 100,000 and 1,000,000 rows, with rows kept at
 /// random. Number columns, with a quarter to three quarters of the rows
 /// kept: at 8 columns the list was 5 to 17% faster than the copy from the
-/// mask, at 4 the two were level (the list 9% faster to 12% slower), and
-/// at 1 and 2 the copy from the mask was level to 21% faster. Decimal
+/// mask, at 4 the two were level over those shares taken together (the
+/// list 9% faster to 12% slower), and at 1 and 2 the copy from the mask
+/// was level to 21% faster. (Taken share by share, fewer columns gain
+/// where the kept rows come one or two at a time: that is what
+/// [`LIST_WEIGHT_SINGLE`] and [`LIST_WEIGHT_SCATTERED`] are for.) Decimal
 /// columns, the same shares: at 8 the list was level to 13% faster, and at
 /// 4, the fewest that make a list, the two were level (the list 10% faster
 /// to 9% slower over twelve lines). With more than four rows in five kept,
 /// 4 decimal columns were level at 1,000,000 rows, and at 100,000 the list
 /// was the slower by 6% on the middle line of six (from 3% faster to 13%
 /// slower); at 8 and 16 the two were level at 1,000,000 rows and the list
-/// 3 to 13% faster at 100,000 (on eleven lines of twelve). (With a tenth
-/// of the rows kept or fewer the list is already the faster at 4 number
-/// columns, by 14 to 23%, and at 2 and 3 decimal columns; the bar is not
-/// lowered for that, see PND_RUST_PLAN.md, "Considered, not done".)
-const FILTER_LIST_COLUMNS: usize = 8;
+/// 3 to 13% faster at 100,000 (on eleven lines of twelve).
+pub(crate) const FILTER_LIST_COLUMNS: usize = 8;
+
+/// What a decimal column counts toward [`FILTER_LIST_COLUMNS`]: its values
+/// are 16 bytes to a number's 8.
+pub(crate) const LIST_WEIGHT_DECIMAL: usize = 2;
+
+/// What a number column counts on a mask whose kept rows come mostly one
+/// at a time ([`RowFilter::mostly_single`]): three such columns make a
+/// list.
+///
+/// Timed on an x86 server with rows kept at random: the list for every
+/// column against the copy from the words, at 1,000,000 and at 100,000
+/// rows. Three number columns, with a tenth of the rows kept, 0.85 and
+/// 1.00; a quarter, 0.92 and 1.01; a third, 0.93 and 0.91; four in ten,
+/// 0.91 and 0.99. Two number columns, for which the rule makes no list:
+/// a tenth kept, 0.91 and 0.92; a quarter to four in ten, 0.91 to 0.98
+/// and 0.96 to 1.04; a half, 0.99 and 1.06.
+pub(crate) const LIST_WEIGHT_SINGLE: usize = 3;
+
+/// What a number column counts on a mask whose kept rows are scattered
+/// ([`RowFilter::scattered`]) but not mostly single: four such columns
+/// make a list. On any other mask a number column counts one.
+///
+/// Timed as [`LIST_WEIGHT_SINGLE`], with half the rows kept at random (two
+/// rows to a stretch): four number columns, 0.93 and 1.00; five, 0.90 and
+/// 0.94; six, 0.88 and 0.93; seven, 0.87 and 0.96. Three, for which the
+/// rule makes no list: 0.94 and 1.01. With six rows in ten kept (two and a
+/// half to a stretch), where a column counts one and none of these tables
+/// makes a list: four to seven columns by the list, 0.94 to 1.00 and 0.97
+/// to 1.03.
+pub(crate) const LIST_WEIGHT_SCATTERED: usize = 2;
+
+/// What a run of bits counts (a true/false column's values, or the marks
+/// for gaps of a true/false or a decimal column that has gaps), on a mask
+/// whose bits go faster by the list ([`RowFilter::bits_by_list`]): one
+/// run, and one number column whose rows come one at a time, make a list
+/// between them.
+///
+/// Timed on an x86 server with 1, 2 and 5% of the rows kept at random, at
+/// 1,000,000 and at 100,000 rows: this code against itself with bits
+/// never by the list, each line timed twice. One true/false column beside
+/// one number column took 0.86 to 0.96 of the time (the middle of the
+/// readings 0.93) and 0.75 to 0.95 (0.91); two true/false columns, or one
+/// with gaps, 0.82 to 0.90 (0.86) and 0.83 to 1.09 (0.93); four, or two
+/// with gaps, 0.73 to 0.87 (0.79) and 0.69 to 0.87 (0.83). With 10% kept,
+/// where bits go from the words in both, the same tables read 0.87 to
+/// 1.05 and 0.88 to 1.10: that is what two builds of one copy differ by.
+/// (Sixteen columns are with `BITS_LIST_ROWS` in `row_filter.rs`.)
+pub(crate) const LIST_WEIGHT_BITS: usize = 5;
 
 /// How [`TimeSeries::filter_rows`] copies the kept rows. The series that
 /// comes out is the same each way.
@@ -66,9 +118,9 @@ pub(crate) enum FilterCopy {
     Direct,
     /// The same copies, the key and each column on a core of its own.
     Split,
-    /// One after another, with a list of the kept rows made once: number,
-    /// decimal and dictionary columns go by it when that is the faster
-    /// for this mask ([`RowFilter::list_pays`]).
+    /// One after another, with a list of the kept rows made once: each
+    /// column goes by it where that is the faster for this mask
+    /// (`ColumnData::filter`).
     Listed,
 }
 
@@ -479,23 +531,18 @@ impl TimeSeries {
     /// made first would be a step every core waits for. (Text in short
     /// stretches still goes by Arrow's kernel and its list; the first text
     /// column's core makes it.) Otherwise the copies run one after
-    /// another, and a list of the kept rows pays once enough columns share
-    /// it: [`FILTER_LIST_COLUMNS`] of the number, decimal and dictionary
-    /// columns that this mask copies faster by the list than straight
-    /// from its words ([`RowFilter::list_pays`]), a decimal column
-    /// counting as two.
+    /// another, and a list of the kept rows pays once the columns that
+    /// would be copied faster by it gain enough between them: each counts
+    /// toward it by its kind and by the mask (`ColumnData::list_weight`),
+    /// and the list is made when the counts come to
+    /// [`FILTER_LIST_COLUMNS`]. Text in short stretches goes by the
+    /// kernel's list whatever else there is, so it counts the whole of
+    /// that: the list it makes is there for the columns beside it.
     pub(crate) fn filter_copy(&self, keep: &RowFilter, threads: usize) -> FilterCopy {
         if keep.count() >= FILTER_SPLIT_ROWS && threads > 1 {
             return FilterCopy::Split;
         }
-        let sharing = self.columns().iter().map(|c| match c.data() {
-            ColumnData::Number(_) => usize::from(keep.list_pays(size_of::<f64>())),
-            ColumnData::Decimal(_) => 2 * usize::from(keep.list_pays(size_of::<i128>())),
-            ColumnData::String(s) if s.is_dictionary() => {
-                usize::from(keep.list_pays(size_of::<i32>()))
-            }
-            _ => 0,
-        });
+        let sharing = self.columns().iter().map(|c| c.data().list_weight(keep));
         if sharing.sum::<usize>() >= FILTER_LIST_COLUMNS {
             FilterCopy::Listed
         } else {
@@ -633,85 +680,207 @@ mod tests {
         assert_eq!(all, s);
     }
 
+    /// One column of each kind over `rows` rows, with a gap in every fifth
+    /// row or with none: `w` a number, `m` a decimal, `d` a dictionary of
+    /// strings, `b` true/false, `t` plain text.
+    fn column_of(kind: char, name: &str, rows: usize, gaps: bool) -> Column {
+        let there = |i: usize| !gaps || !i.is_multiple_of(5);
+        match kind {
+            'w' => Column::required(name, vec![1.0; rows]),
+            'm' => {
+                let cents = (0..rows).map(|i| there(i).then_some(i as i128));
+                let cents = crate::column::DecimalColumn::from_options(cents, 2);
+                Column::optional(name, cents.unwrap())
+            }
+            'd' => {
+                let words: arrow_array::DictionaryArray<arrow_array::types::Int32Type> = (0..rows)
+                    .map(|i| there(i).then_some(["a", "b"][i % 2]))
+                    .collect();
+                let words = StringColumn::dictionary(words).unwrap();
+                Column::from_data(name.into(), words, false)
+            }
+            'b' => {
+                let flags = (0..rows).map(|i| there(i).then_some(i.is_multiple_of(3)));
+                Column::optional(name, flags.collect::<Vec<_>>())
+            }
+            't' => Column::required(name, vec!["a"; rows]),
+            _ => unreachable!("no such kind"),
+        }
+    }
+
+    /// A series of the kinds in `kinds` (see [`column_of`]): a letter for
+    /// a column without gaps, the same letter in capitals for one with.
+    fn series_of(kinds: &str, rows: usize) -> TimeSeries {
+        let columns = kinds.chars().enumerate().map(|(c, kind)| {
+            let gaps = kind.is_ascii_uppercase();
+            column_of(kind.to_ascii_lowercase(), &format!("c{c}"), rows, gaps)
+        });
+        TimeSeries::new("s", (0..rows as i64).collect(), columns.collect()).unwrap()
+    }
+
     #[test]
     fn filter_copy_goes_by_rows_kept_cores_and_columns() {
-        let series = |rows: usize, numbers: usize, text: bool| {
-            let mut columns: Vec<Column> = (0..numbers)
-                .map(|c| Column::required(format!("w{c}"), vec![1.0; rows]))
-                .collect();
-            if text {
-                columns.push(Column::required("t", vec!["a"; rows]));
-            }
-            TimeSeries::new("s", (0..rows as i64).collect(), columns).unwrap()
-        };
-        let cents = |name: &str, rows: usize| {
-            let cents = crate::column::DecimalColumn::from_options((0..rows as i128).map(Some), 2);
-            Column::optional(name, cents.unwrap())
-        };
-        let with_cents = |rows: usize, numbers: usize, decimals: usize| {
-            (0..decimals).fold(series(rows, numbers, false), |s, d| {
-                s.with_column(cents(&format!("m{d}"), rows)).unwrap()
-            })
-        };
-        let every_other = |rows: usize| -> RowFilter { (0..rows).map(|i| i % 2 == 0).collect() };
-        // Every other row: a mask every column is the faster by the list
-        // for. By the list from eight number columns on, whatever else the
-        // series holds.
-        let scattered = every_other(640);
-        assert!(scattered.list_pays(8) && scattered.list_pays(16));
-        for cores in [1, 8] {
-            let how = |numbers, text| series(640, numbers, text).filter_copy(&scattered, cores);
-            assert_eq!(how(0, true), FilterCopy::Direct);
-            assert_eq!(how(7, false), FilterCopy::Direct);
-            assert_eq!(how(7, true), FilterCopy::Direct);
-            assert_eq!(how(8, false), FilterCopy::Listed);
-            assert_eq!(how(8, true), FilterCopy::Listed);
+        use FilterCopy::{Direct, Listed, Split};
+        let rows = 640;
+        let mask = |f: &dyn Fn(usize) -> bool| -> RowFilter { (0..rows).map(f).collect() };
+        // On one core: the way for a series of these kinds and this mask.
+        let how = |kinds: &str, keep: &RowFilter| series_of(kinds, rows).filter_copy(keep, 1);
+
+        // Every other row. Values of every width are the faster by the
+        // list: a number counts 3 toward it (the rows come one at a time),
+        // a decimal's values 2, and a dictionary or plain text makes the
+        // list whatever else there is. Bits count nothing: half the rows
+        // are kept, and they go faster from the words.
+        let every_other = mask(&|i| i % 2 == 0);
+        assert!(every_other.mostly_single() && !every_other.bits_by_list());
+        assert!(every_other.list_pays(8) && every_other.list_pays(16));
+        for (kinds, way) in [
+            ("ww", Direct),
+            ("www", Listed),
+            ("wm", Direct),
+            ("wwm", Listed),
+            ("mmm", Direct),
+            ("mmmm", Listed),
+            ("M", Direct),
+            ("wM", Direct),
+            ("wwb", Direct),
+            ("wwB", Direct),
+            ("bbbb", Direct),
+            ("d", Listed),
+            ("t", Listed),
+            ("wt", Listed),
+        ] {
+            assert_eq!(how(kinds, &every_other), way, "every other row, {kinds}");
         }
-        // A dictionary column's keys go by the list as numbers do.
-        let words: arrow_array::DictionaryArray<arrow_array::types::Int32Type> =
-            (0..640).map(|i| Some(["a", "b"][i % 2])).collect();
-        let words = Column::from_data("d".into(), StringColumn::dictionary(words).unwrap(), false);
-        let with_words = series(640, 7, true).with_column(words).unwrap();
-        let d = with_words.column("d").unwrap();
-        assert!(d.strings().unwrap().is_dictionary());
-        assert_eq!(with_words.filter_copy(&scattered, 1), FilterCopy::Listed);
-        // A decimal column counts as two.
-        let how = |numbers, decimals| with_cents(640, numbers, decimals).filter_copy(&scattered, 1);
-        assert_eq!(how(6, 1), FilterCopy::Listed);
-        assert_eq!(how(5, 1), FilterCopy::Direct);
-        assert_eq!(how(0, 4), FilterCopy::Listed);
-        assert_eq!(how(1, 3), FilterCopy::Direct);
+        // One row in 16: so few that bits go by the list too, and each run
+        // of them counts 5 (a true/false column's values, and the gap
+        // marks of a true/false or a decimal column that has gaps).
+        let one_in_16 = mask(&|i| i % 16 == 0);
+        assert!(one_in_16.mostly_single() && one_in_16.bits_by_list());
+        for (kinds, way) in [
+            ("b", Direct),
+            ("mb", Direct),
+            ("wb", Listed),
+            ("bb", Listed),
+            ("B", Listed),
+            ("M", Direct),
+            ("wM", Listed),
+            ("mM", Listed),
+        ] {
+            assert_eq!(how(kinds, &one_in_16), way, "one row in 16, {kinds}");
+        }
+        // Two rows kept, two dropped: scattered, but no longer one at a
+        // time, so a number counts 2; and bits no longer go by the list,
+        // so they count nothing.
+        let pairs = mask(&|i| i % 4 < 2);
+        assert!(pairs.scattered() && !pairs.mostly_single() && !pairs.bits_by_list());
+        for (kinds, way) in [
+            ("www", Direct),
+            ("wwww", Listed),
+            ("wwwBB", Direct),
+            ("wwM", Direct),
+            ("wwMM", Listed),
+            ("d", Listed),
+        ] {
+            assert_eq!(how(kinds, &pairs), way, "pairs, {kinds}");
+        }
+        // Eight kept, eight dropped: not scattered, so a number counts 1.
+        let eights = mask(&|i| i % 16 < 8);
+        assert!(!eights.scattered() && eights.list_pays(8) && eights.list_pays(16));
+        for (kinds, way) in [
+            ("wwwwwww", Direct),
+            ("wwwwwwww", Listed),
+            ("wwwwwm", Direct),
+            ("wwwwwwm", Listed),
+            ("wmmm", Direct),
+            ("mmmm", Listed),
+            ("d", Listed),
+            ("wwwwwwwB", Direct),
+            ("wwwwwM", Direct),
+            ("wwwwwwM", Listed),
+            ("t", Listed),
+        ] {
+            assert_eq!(how(kinds, &eights), way, "eights, {kinds}");
+        }
+        // Half the rows in stretches of 16: a dictionary no longer makes
+        // the list by itself (that is under 12 rows a stretch). Two of
+        // them make it, so each counts 4.
+        let sixteens = mask(&|i| i % 32 < 16);
+        assert_eq!(sixteens.dictionaries_for_list(), Some(2));
+        assert_eq!(how("d", &sixteens), Direct);
+        assert_eq!(how("wwwd", &sixteens), Direct);
+        assert_eq!(how("wwwwd", &sixteens), Listed);
+        assert_eq!(how("dd", &sixteens), Listed);
         // Only the columns this mask copies faster by the list count. Half
-        // the rows in one long stretch: none does.
-        let first_half: RowFilter = (0..640).map(|i| i < 320).collect();
-        assert!(!first_half.list_pays(8) && !first_half.list_pays(16));
-        assert_eq!(
-            with_cents(640, 8, 4).filter_copy(&first_half, 1),
-            FilterCopy::Direct
-        );
-        // Half the rows in stretches of 20: numbers do, decimals do not.
-        let twenties: RowFilter = (0..640).map(|i| i % 40 < 20).collect();
+        // the rows in stretches of 20: values of up to eight bytes do (a
+        // number's 8, a dictionary key's 4), a decimal's 16 do not.
+        let twenties = mask(&|i| i % 40 < 20);
         assert!(twenties.list_pays(8) && !twenties.list_pays(16));
-        let how = |numbers, decimals| with_cents(640, numbers, decimals).filter_copy(&twenties, 1);
-        assert_eq!(how(8, 0), FilterCopy::Listed);
-        assert_eq!(how(7, 4), FilterCopy::Direct);
-        // Six rows in seven, a stretch of six at a time: decimals do,
-        // numbers do not.
-        let sixes: RowFilter = (0..644).map(|i| i % 7 != 6).collect();
+        assert_eq!(twenties.dictionaries_for_list(), Some(2));
+        assert_eq!(how("wwwwwwww", &twenties), Listed);
+        assert_eq!(how("wwwwwwwmmmm", &twenties), Direct);
+        assert_eq!(how("d", &twenties), Direct);
+        assert_eq!(how("dd", &twenties), Listed);
+        assert_eq!(how("wwwd", &twenties), Direct);
+        assert_eq!(how("wwwwd", &twenties), Listed);
+        // Six rows in seven, six at a time: the other way round.
+        let sixes = mask(&|i| i % 7 != 6);
         assert!(!sixes.list_pays(8) && sixes.list_pays(16));
-        let how = |numbers, decimals| with_cents(644, numbers, decimals).filter_copy(&sixes, 1);
-        assert_eq!(how(16, 0), FilterCopy::Direct);
-        assert_eq!(how(16, 3), FilterCopy::Direct);
-        assert_eq!(how(0, 4), FilterCopy::Listed);
+        assert_eq!(how("wwwwwwwwwwwwwwww", &sixes), Direct);
+        assert_eq!(how("wwwwwwwwwwwwwwwwmmm", &sixes), Direct);
+        assert_eq!(how("mmmm", &sixes), Listed);
+        assert_eq!(how("dddddddd", &sixes), Direct);
+        // Text counts when it goes by the list, which is by how long the
+        // stretches are and not by how many rows are kept: three rows in
+        // four, 48 at a time, is stretch by stretch.
+        assert_eq!(how("t", &sixes), Listed);
+        assert_eq!(how("t", &mask(&|i| i % 64 < 48)), Direct);
+        // More than four rows in five, the other way round: 32 at a time,
+        // a dictionary column makes the list by itself. At 12 at a time
+        // two make it, and each counts 4. At 11 it counts 1, as a number
+        // does. At three rows in four, 48 at a time, nothing (its keys go
+        // straight from the mask, as numbers do).
+        let most = mask(&|i| i % 33 != 32);
+        assert_eq!(most.dictionaries_for_list(), Some(1));
+        assert_eq!(how("d", &most), Listed);
+        assert_eq!(how("wd", &most), Listed);
+        assert_eq!(how("wwwwwww", &most), Direct);
+        let twelves = mask(&|i| i % 13 != 12);
+        assert_eq!(twelves.dictionaries_for_list(), Some(2));
+        assert_eq!(how("d", &twelves), Direct);
+        assert_eq!(how("wwwd", &twelves), Direct);
+        assert_eq!(how("wwwwd", &twelves), Listed);
+        assert_eq!(how("dd", &twelves), Listed);
+        let elevens = mask(&|i| i % 12 != 11);
+        assert_eq!(elevens.dictionaries_for_list(), Some(FILTER_LIST_COLUMNS));
+        assert_eq!(how("dd", &elevens), Direct);
+        assert_eq!(how("ddddddd", &elevens), Direct);
+        assert_eq!(how("dddddddd", &elevens), Listed);
+        assert_eq!(how("wwwwwwd", &elevens), Direct);
+        assert_eq!(how("wwwwwwwd", &elevens), Listed);
+        assert_eq!(how("d", &mask(&|i| i % 64 < 48)), Direct);
+        // Half the rows in one long stretch: nothing counts.
+        let first_half = mask(&|i| i < 320);
+        assert!(!first_half.list_pays(8) && !first_half.list_pays(16));
+        assert_eq!(how("wwwwwwwwMMMMDDBBtt", &first_half), Direct);
+
         // Many rows kept: a core each, when there is more than one.
         let rows = 2 * FILTER_SPLIT_ROWS;
-        let (wide, many) = (series(rows, 8, false), every_other(rows));
+        let wide = series_of("wwwwwwww", rows);
+        let many: RowFilter = (0..rows).map(|i| i % 2 == 0).collect();
         assert_eq!(many.count(), FILTER_SPLIT_ROWS);
-        assert_eq!(wide.filter_copy(&many, 2), FilterCopy::Split);
-        assert_eq!(wide.filter_copy(&many, 1), FilterCopy::Listed);
+        assert_eq!(wide.filter_copy(&many, 2), Split);
+        assert_eq!(wide.filter_copy(&many, 1), Listed);
         let one_fewer: RowFilter = (0..rows).map(|i| i % 2 == 0 && i > 0).collect();
         assert_eq!(one_fewer.count(), FILTER_SPLIT_ROWS - 1);
-        assert_eq!(wide.filter_copy(&one_fewer, 2), FilterCopy::Listed);
+        assert_eq!(wide.filter_copy(&one_fewer, 2), Listed);
+        // On one core nothing is split, however many rows are kept: five
+        // times the rows it takes on two.
+        let rows = 5 * FILTER_SPLIT_ROWS;
+        let all: RowFilter = (0..rows).map(|_| true).collect();
+        let long = series_of("w", rows);
+        assert_eq!(long.filter_copy(&all, 1), Direct);
+        assert_eq!(long.filter_copy(&all, 2), Split);
     }
 
     /// Which way a column was copied shows in whether the mask's list of
@@ -720,17 +889,10 @@ mod tests {
     #[test]
     fn filter_takes_the_list_only_where_the_rules_say() {
         let rows = 640;
-        let number = Column::required("w", vec![1.0; rows]);
-        let cents = crate::column::DecimalColumn::from_options((0..rows as i128).map(Some), 2);
-        let cents = Column::optional("m", cents.unwrap());
-        let words: arrow_array::DictionaryArray<arrow_array::types::Int32Type> =
-            (0..rows).map(|i| Some(["a", "b"][i % 2])).collect();
-        let words = Column::from_data("d".into(), StringColumn::dictionary(words).unwrap(), false);
-        let text = Column::required("t", vec!["a"; rows]);
-        let flags = Column::optional("b", (0..rows).map(|i| Some(i % 3 == 0)).collect::<Vec<_>>());
+        let column = |kind: char, gaps: bool| column_of(kind, "c", rows, gaps);
         // A mask made afresh for each copy: its list is made at most once.
         let by_list = |c: &Column, mask: &dyn Fn(usize) -> bool, listed: bool| {
-            let keep: RowFilter = (0..rows).map(mask).collect();
+            let keep: RowFilter = (0..c.data().len()).map(mask).collect();
             let kept = c.data().filter(&keep, listed);
             assert_eq!(kept.len(), keep.count());
             keep.has_list()
@@ -738,6 +900,10 @@ mod tests {
         // Every other row: the list pays for every width, and the text is
         // in short stretches.
         let every_other = |i: usize| i.is_multiple_of(2);
+        // One row in 16: as every other row, and bits go by the list too.
+        let one_in_16 = |i: usize| i.is_multiple_of(16);
+        // Two kept, two dropped: as every other row.
+        let pairs = |i: usize| i % 4 < 2;
         // One long stretch: nothing goes by the list.
         let first_half = |i: usize| i < 320;
         // Half the rows in stretches of 20: the list pays for values of up
@@ -745,9 +911,24 @@ mod tests {
         let twenties = |i: usize| i % 40 < 20;
         // Six rows in seven, six at a time: the other way round.
         let sixes = |i: usize| i % 7 != 6;
+        // Three rows in four, 48 at a time: long stretches.
+        let long = |i: usize| i % 64 < 48;
+        // All but one row in 33: most rows, in long stretches.
+        let most = |i: usize| i % 33 != 32;
+        let masks: [(&str, &dyn Fn(usize) -> bool); 8] = [
+            ("every other", &every_other),
+            ("one in 16", &one_in_16),
+            ("pairs", &pairs),
+            ("first half", &first_half),
+            ("twenties", &twenties),
+            ("sixes", &sixes),
+            ("long", &long),
+            ("most", &most),
+        ];
 
         // Numbers, decimal values and dictionary keys: only with the list
         // there to share, and only where it pays for their width.
+        let (number, cents, words) = (column('w', false), column('m', false), column('d', false));
         for c in [&number, &cents, &words] {
             assert!(by_list(c, &every_other, true), "{}", c.name());
             assert!(!by_list(c, &every_other, false), "{}", c.name());
@@ -759,33 +940,126 @@ mod tests {
         assert!(!by_list(&number, &sixes, true));
         assert!(!by_list(&words, &sixes, true));
         assert!(by_list(&cents, &sixes, true));
+        // True/false values, and the gap marks of a decimal or a
+        // dictionary column: only with the list there to share, and only
+        // on a mask whose bits go by it. (On `sixes` a number's
+        // values and a dictionary's keys do not go by the list, so a list
+        // made there would be made for the marks.)
+        let (flags, gappy) = (column('b', false), column('b', true));
+        for c in [&flags, &gappy] {
+            assert!(by_list(c, &one_in_16, true), "{}", c.name());
+            assert!(!by_list(c, &one_in_16, false), "{}", c.name());
+            assert!(!by_list(c, &every_other, true), "{}", c.name());
+            assert!(!by_list(c, &pairs, true), "{}", c.name());
+            assert!(!by_list(c, &sixes, true), "{}", c.name());
+        }
+        let gappy_words = column('d', true);
+        assert!(!by_list(&gappy_words, &every_other, false));
+        assert!(!by_list(&gappy_words, &sixes, true));
+        assert!(by_list(&gappy_words, &most, true));
+        assert!(!by_list(&gappy_words, &most, false));
+        assert!(!by_list(&column('m', true), &every_other, false));
+        // A decimal column's gap marks go by the list only on a mask whose
+        // bits do. Its values make the list on such a mask anyway, so what
+        // shows the way the marks went is whether any word of bits was
+        // copied from the mask.
+        let gappy_cents = column('m', true);
+        let marks_from_the_mask = |mask: &dyn Fn(usize) -> bool, listed: bool| {
+            crate::row_filter::take_bit_words();
+            assert_eq!(by_list(&gappy_cents, mask, listed), listed);
+            crate::row_filter::take_bit_words() > 0
+        };
+        assert!(!marks_from_the_mask(&one_in_16, true));
+        assert!(marks_from_the_mask(&one_in_16, false));
+        assert!(marks_from_the_mask(&every_other, true));
+        assert!(marks_from_the_mask(&pairs, true));
         // Text: by the list whenever its rows come in short stretches,
-        // shared or not, and never when they come in long ones.
+        // shared or not, and never when they come in long ones, however
+        // many rows that keeps.
+        let text = column('t', false);
         for listed in [true, false] {
             assert!(by_list(&text, &every_other, listed));
             assert!(by_list(&text, &twenties, listed));
             assert!(by_list(&text, &sixes, listed));
             assert!(!by_list(&text, &first_half, listed));
-            // From 32 rows a stretch, stretch by stretch.
-            assert!(by_list(&text, &|i| i % 64 < 31, listed));
-            assert!(!by_list(&text, &|i| i % 64 < 32, listed));
+            assert!(!by_list(&text, &long, listed));
+            // From 32 rows a stretch, stretch by stretch (on a series
+            // long enough for one stretch more or less not to matter).
+            let longer = column_of('t', "c", 10 * rows, false);
+            assert!(by_list(&longer, &|i| i % 64 < 31, listed));
+            assert!(!by_list(&longer, &|i| i % 64 < 32, listed));
         }
-        // True/false values: never.
-        assert!(!by_list(&flags, &every_other, true));
 
-        // A whole series of numbers: only the listed way makes the list.
-        let columns: Vec<Column> = (0..8)
-            .map(|c| Column::required(format!("w{c}"), vec![1.0; rows]))
-            .collect();
-        let s = TimeSeries::new("s", (0..rows as i64).collect(), columns).unwrap();
-        for (how, made) in [
-            (FilterCopy::Direct, false),
-            (FilterCopy::Split, false),
-            (FilterCopy::Listed, true),
+        // What a column counts toward the list and how it is copied are
+        // two readings of the same rules: a column counts exactly when,
+        // with the list there to share, it would go by it.
+        for (kind, gaps) in [
+            ('w', false),
+            ('m', false),
+            ('m', true),
+            ('d', false),
+            ('d', true),
+            ('b', false),
+            ('b', true),
+            ('t', false),
         ] {
-            let keep: RowFilter = (0..rows).map(every_other).collect();
-            assert_eq!(s.filter_rows_by(&keep, how).len(), 320);
-            assert_eq!(keep.has_list(), made, "{how:?}");
+            let c = column(kind, gaps);
+            for (name, mask) in masks {
+                let keep: RowFilter = (0..rows).map(mask).collect();
+                let counts = c.data().list_weight(&keep) > 0;
+                assert_eq!(
+                    by_list(&c, mask, true),
+                    counts,
+                    "{kind}, gaps {gaps}, {name}"
+                );
+            }
+        }
+
+        // A whole series, of every kind but plain text: only the listed
+        // way makes the list.
+        let s = series_of("wwwwMMDDBB", rows);
+        for (name, mask) in masks {
+            let kept = (0..rows).filter(|&i| mask(i)).count();
+            for (how, may) in [
+                (FilterCopy::Direct, false),
+                (FilterCopy::Split, false),
+                (FilterCopy::Listed, true),
+            ] {
+                let keep: RowFilter = (0..rows).map(mask).collect();
+                assert_eq!(s.filter_rows_by(&keep, how).len(), kept);
+                assert!(may || !keep.has_list(), "{name}, {how:?}");
+            }
+        }
+        let keep: RowFilter = (0..rows).map(every_other).collect();
+        s.filter_rows_by(&keep, FilterCopy::Listed);
+        assert!(keep.has_list());
+        // And the way chosen for a series never leaves a list unmade that
+        // a column then makes for itself: where the choice is a copy
+        // straight from the mask, no column makes one.
+        for kinds in [
+            "ww",
+            "www",
+            "wb",
+            "wd",
+            "d",
+            "M",
+            "wwwBB",
+            "t",
+            "wt",
+            "wwwwwwwBM",
+        ] {
+            let s = series_of(kinds, rows);
+            for (name, mask) in masks {
+                let keep: RowFilter = (0..rows).map(mask).collect();
+                let how = s.filter_copy(&keep, 1);
+                s.filter_rows_by(&keep, how);
+                assert_eq!(
+                    keep.has_list(),
+                    how == FilterCopy::Listed
+                        && s.columns().iter().any(|c| c.data().list_weight(&keep) > 0),
+                    "{kinds}, {name}"
+                );
+            }
         }
     }
 
