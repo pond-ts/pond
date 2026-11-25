@@ -749,6 +749,58 @@ step(
   },
 );
 
+step('pushSeries from a listener, the batch freed at once', () => {
+  const seriesBefore = rs.alive();
+  const live = new LiveSeries({ name: 'q', schema: SCHEMA });
+  const order = [];
+  let made;
+  live.on('event', (e) => {
+    order.push(e.begin());
+    if (e.begin() !== 0) return;
+    const batch = new rs.TimeSeries({
+      name: 'b',
+      schema: SCHEMA,
+      rows: [
+        [5000, 5, 50],
+        [6000, 6, 60],
+      ],
+    });
+    live.pushSeries(batch);
+    batch.free();
+    // Likely takes the freed slot before the queued push runs.
+    made = new rs.TimeSeries({
+      name: 'other',
+      schema: SCHEMA,
+      rows: [[0, -1, -1]],
+    });
+  });
+  live.push([0, 1, 1], [1000, 2, 2]);
+  check('queued rows arrive', same(order, [0, 1000, 5000, 6000]));
+  check(
+    'the batch’s rows, not the other series’',
+    same(live.at(-1).toJsonRow(live.schema), [6000, 6, 60]),
+  );
+  made.free();
+  // A queued batch the series refuses: the error reaches the caller and
+  // the queue's handle is freed all the same.
+  live.on('event', (e) => {
+    if (e.begin() !== 7000) return;
+    const late = new rs.TimeSeries({
+      name: 'late',
+      schema: SCHEMA,
+      rows: [[100, 1, 1]],
+    });
+    live.pushSeries(late);
+    late.free();
+  });
+  check(
+    'a refused queued batch throws',
+    throws(() => live.push([7000, 7, 7])) && live.length === 5,
+  );
+  live.free();
+  check('no series left behind', rs.alive() === seriesBefore);
+});
+
 step('a subclass of LiveSeries works', () => {
   class Mine extends LiveSeries {}
   const live = new Mine({ name: 'm', schema: SCHEMA });

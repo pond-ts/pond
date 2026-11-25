@@ -1584,9 +1584,17 @@ export class LiveSeries extends LiveNode {
       return;
     }
     if (o.depth > 0) {
-      // From a listener: after the current push, as pond-ts. The series'
-      // id is read when it runs, never kept (a freed slot is reused).
-      o.pending.push(() => this.pushSeries(series));
+      // From a listener: after the current push, as pond-ts. The caller may
+      // free its series before then, so the queue holds its own handle (a
+      // clone sharing the buffers), freed once the push has run or thrown.
+      const copy = new TimeSeries(TOKEN, wasm.series_clone(series.id));
+      o.pending.push(() => {
+        try {
+          this.pushSeries(copy);
+        } finally {
+          copy.free();
+        }
+      });
       return;
     }
     o.settle(wasm.live_push_series(o.liveId, series.id));

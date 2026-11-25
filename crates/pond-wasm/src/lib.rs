@@ -71,6 +71,15 @@ pub fn series_free(id: u32) {
     });
 }
 
+/// A second handle on series `id` in a new slot, sharing its buffers (no
+/// row is copied): freeing either leaves the other usable.
+#[wasm_bindgen]
+pub fn series_clone(id: u32) -> Result<u32, JsValue> {
+    // Cloned out before `store` takes the table.
+    let s = with(id, |s| Ok(s.clone())).map_err(err)?;
+    Ok(store(s))
+}
+
 /// How many series are alive (for leak checks).
 #[wasm_bindgen]
 pub fn series_alive() -> u32 {
