@@ -42,8 +42,10 @@ const FILTER_SPLIT_ROWS: usize = 1 << 17;
 /// the list there, it would be copied by it (`ColumnData::list_weight`). A
 /// number column counts one, so on most masks this is how many number
 /// columns it takes; the kinds and the masks that gain more by the list
-/// count more (the constants below, and
-/// `RowFilter::dictionaries_for_list` for a dictionary column).
+/// count more (the constants below). A dictionary column counts as a
+/// number column does. Plain text counts this whole number where it goes
+/// by the list (few rows kept, a row or two at a time:
+/// `RowFilter::text_by_list`), and nothing on any other mask.
 ///
 /// Timed on an x86 server at 100,000 and 1,000,000 rows, with rows kept at
 /// random. Number columns, with a quarter to three quarters of the rows
@@ -528,16 +530,16 @@ impl TimeSeries {
     ///
     /// When many rows are kept and there is more than one core, the key
     /// and each column get a core of their own: a list of the kept rows
-    /// made first would be a step every core waits for. (Text in short
-    /// stretches still goes by Arrow's kernel and its list; the first text
-    /// column's core makes it.) Otherwise the copies run one after
-    /// another, and a list of the kept rows pays once the columns that
-    /// would be copied faster by it gain enough between them: each counts
-    /// toward it by its kind and by the mask (`ColumnData::list_weight`),
-    /// and the list is made when the counts come to
-    /// [`FILTER_LIST_COLUMNS`]. Text in short stretches goes by the
-    /// kernel's list whatever else there is, so it counts the whole of
-    /// that: the list it makes is there for the columns beside it.
+    /// made first would be a step every core waits for, so no column is
+    /// handed one. (Plain text that goes by the list asks for it itself,
+    /// whichever way this is, and the first such column to ask makes it:
+    /// `RowFilter::text_by_list`. With a core each that takes a series of
+    /// over a million rows, under one in eight of them kept.) Otherwise
+    /// the copies run one after another, and a list of the kept rows pays
+    /// once the columns that would be copied faster by it gain enough
+    /// between them: each counts toward it by its kind and by the mask
+    /// (`ColumnData::list_weight`), and the list is made when the counts
+    /// come to [`FILTER_LIST_COLUMNS`].
     pub(crate) fn filter_copy(&self, keep: &RowFilter, threads: usize) -> FilterCopy {
         if keep.count() >= FILTER_SPLIT_ROWS && threads > 1 {
             return FilterCopy::Split;
@@ -703,6 +705,10 @@ mod tests {
                 let flags = (0..rows).map(|i| there(i).then_some(i.is_multiple_of(3)));
                 Column::optional(name, flags.collect::<Vec<_>>())
             }
+            't' if gaps => {
+                let text = (0..rows).map(|i| there(i).then_some("a"));
+                Column::optional(name, text.collect::<Vec<_>>())
+            }
             't' => Column::required(name, vec!["a"; rows]),
             _ => unreachable!("no such kind"),
         }
@@ -728,9 +734,10 @@ mod tests {
 
         // Every other row. Values of every width are the faster by the
         // list: a number counts 3 toward it (the rows come one at a time),
-        // a decimal's values 2, and a dictionary or plain text makes the
-        // list whatever else there is. Bits count nothing: half the rows
-        // are kept, and they go faster from the words.
+        // and so does a dictionary, for its keys; a decimal's values count
+        // 2. Plain text counts nothing here: it goes by the list only where
+        // few rows are kept (below). Nor do bits: half the rows are kept,
+        // and they go faster from the words.
         let every_other = mask(&|i| i % 2 == 0);
         assert!(every_other.mostly_single() && !every_other.bits_by_list());
         assert!(every_other.list_pays(8) && every_other.list_pays(16));
@@ -746,18 +753,27 @@ mod tests {
             ("wwb", Direct),
             ("wwB", Direct),
             ("bbbb", Direct),
-            ("d", Listed),
-            ("t", Listed),
-            ("wt", Listed),
+            ("dd", Direct),
+            ("ddd", Listed),
+            ("wwd", Listed),
+            ("wd", Direct),
+            ("tttttttt", Direct),
+            ("wwt", Direct),
+            ("wwwt", Listed),
         ] {
             assert_eq!(how(kinds, &every_other), way, "every other row, {kinds}");
         }
         // One row in 16: so few that bits go by the list too, and each run
         // of them counts 5 (a true/false column's values, and the gap
-        // marks of a true/false or a decimal column that has gaps).
+        // marks of a true/false or a decimal column that has gaps). Plain
+        // text goes by the list as well, and one such column makes it.
         let one_in_16 = mask(&|i| i % 16 == 0);
         assert!(one_in_16.mostly_single() && one_in_16.bits_by_list());
+        assert!(one_in_16.text_by_list());
         for (kinds, way) in [
+            ("t", Listed),
+            ("T", Listed),
+            ("wt", Listed),
             ("b", Direct),
             ("mb", Direct),
             ("wb", Listed),
@@ -780,7 +796,9 @@ mod tests {
             ("wwwBB", Direct),
             ("wwM", Direct),
             ("wwMM", Listed),
-            ("d", Listed),
+            ("ddd", Direct),
+            ("dddd", Listed),
+            ("wwwt", Direct),
         ] {
             assert_eq!(how(kinds, &pairs), way, "pairs, {kinds}");
         }
@@ -794,35 +812,27 @@ mod tests {
             ("wwwwwwm", Listed),
             ("wmmm", Direct),
             ("mmmm", Listed),
-            ("d", Listed),
+            ("ddddddd", Direct),
+            ("dddddddd", Listed),
+            ("wwwwwwd", Direct),
+            ("wwwwwwwd", Listed),
             ("wwwwwwwB", Direct),
             ("wwwwwM", Direct),
             ("wwwwwwM", Listed),
-            ("t", Listed),
+            ("wwwwwwwt", Direct),
         ] {
             assert_eq!(how(kinds, &eights), way, "eights, {kinds}");
         }
-        // Half the rows in stretches of 16: a dictionary no longer makes
-        // the list by itself (that is under 12 rows a stretch). Two of
-        // them make it, so each counts 4.
-        let sixteens = mask(&|i| i % 32 < 16);
-        assert_eq!(sixteens.dictionaries_for_list(), Some(2));
-        assert_eq!(how("d", &sixteens), Direct);
-        assert_eq!(how("wwwd", &sixteens), Direct);
-        assert_eq!(how("wwwwd", &sixteens), Listed);
-        assert_eq!(how("dd", &sixteens), Listed);
         // Only the columns this mask copies faster by the list count. Half
         // the rows in stretches of 20: values of up to eight bytes do (a
         // number's 8, a dictionary key's 4), a decimal's 16 do not.
         let twenties = mask(&|i| i % 40 < 20);
         assert!(twenties.list_pays(8) && !twenties.list_pays(16));
-        assert_eq!(twenties.dictionaries_for_list(), Some(2));
         assert_eq!(how("wwwwwwww", &twenties), Listed);
         assert_eq!(how("wwwwwwwmmmm", &twenties), Direct);
-        assert_eq!(how("d", &twenties), Direct);
-        assert_eq!(how("dd", &twenties), Listed);
-        assert_eq!(how("wwwd", &twenties), Direct);
-        assert_eq!(how("wwwwd", &twenties), Listed);
+        assert_eq!(how("ddddddd", &twenties), Direct);
+        assert_eq!(how("dddddddd", &twenties), Listed);
+        assert_eq!(how("wwwwwwwd", &twenties), Listed);
         // Six rows in seven, six at a time: the other way round.
         let sixes = mask(&|i| i % 7 != 6);
         assert!(!sixes.list_pays(8) && sixes.list_pays(16));
@@ -830,35 +840,25 @@ mod tests {
         assert_eq!(how("wwwwwwwwwwwwwwwwmmm", &sixes), Direct);
         assert_eq!(how("mmmm", &sixes), Listed);
         assert_eq!(how("dddddddd", &sixes), Direct);
-        // Text counts when it goes by the list, which is by how long the
-        // stretches are and not by how many rows are kept: three rows in
-        // four, 48 at a time, is stretch by stretch.
-        assert_eq!(how("t", &sixes), Listed);
-        assert_eq!(how("t", &mask(&|i| i % 64 < 48)), Direct);
-        // More than four rows in five, the other way round: 32 at a time,
-        // a dictionary column makes the list by itself. At 12 at a time
-        // two make it, and each counts 4. At 11 it counts 1, as a number
-        // does. At three rows in four, 48 at a time, nothing (its keys go
-        // straight from the mask, as numbers do).
+        // More than four rows in five, 32 at a time: values of up to eight
+        // bytes go by the list (of stretches) again, and count 1.
         let most = mask(&|i| i % 33 != 32);
-        assert_eq!(most.dictionaries_for_list(), Some(1));
-        assert_eq!(how("d", &most), Listed);
-        assert_eq!(how("wd", &most), Listed);
+        assert!(most.list_pays(8) && !most.scattered());
         assert_eq!(how("wwwwwww", &most), Direct);
-        let twelves = mask(&|i| i % 13 != 12);
-        assert_eq!(twelves.dictionaries_for_list(), Some(2));
-        assert_eq!(how("d", &twelves), Direct);
-        assert_eq!(how("wwwd", &twelves), Direct);
-        assert_eq!(how("wwwwd", &twelves), Listed);
-        assert_eq!(how("dd", &twelves), Listed);
-        let elevens = mask(&|i| i % 12 != 11);
-        assert_eq!(elevens.dictionaries_for_list(), Some(FILTER_LIST_COLUMNS));
-        assert_eq!(how("dd", &elevens), Direct);
-        assert_eq!(how("ddddddd", &elevens), Direct);
-        assert_eq!(how("dddddddd", &elevens), Listed);
-        assert_eq!(how("wwwwwwd", &elevens), Direct);
-        assert_eq!(how("wwwwwwwd", &elevens), Listed);
-        assert_eq!(how("d", &mask(&|i| i % 64 < 48)), Direct);
+        assert_eq!(how("wwwwwwww", &most), Listed);
+        assert_eq!(how("ddddddd", &most), Direct);
+        assert_eq!(how("wwwwwwwd", &most), Listed);
+        // Three rows in four, 48 at a time: nothing counts (keys go
+        // straight from the mask, as numbers do).
+        let long = mask(&|i| i % 64 < 48);
+        assert_eq!(how("wwwwwwwwdddddddd", &long), Direct);
+        // Plain text counts nothing on the others, nor where as few rows
+        // are kept three at a time.
+        let few_threes = mask(&|i| i % 48 < 3);
+        assert!(few_threes.bits_by_list() && !few_threes.text_by_list());
+        for keep in [&every_other, &pairs, &eights, &sixes, &most, &few_threes] {
+            assert_eq!(how("tttttttttttt", keep), Direct);
+        }
         // Half the rows in one long stretch: nothing counts.
         let first_half = mask(&|i| i < 320);
         assert!(!first_half.list_pays(8) && !first_half.list_pays(16));
@@ -897,8 +897,7 @@ mod tests {
             assert_eq!(kept.len(), keep.count());
             keep.has_list()
         };
-        // Every other row: the list pays for every width, and the text is
-        // in short stretches.
+        // Every other row: the list pays for every width.
         let every_other = |i: usize| i.is_multiple_of(2);
         // One row in 16: as every other row, and bits go by the list too.
         let one_in_16 = |i: usize| i.is_multiple_of(16);
@@ -915,7 +914,10 @@ mod tests {
         let long = |i: usize| i % 64 < 48;
         // All but one row in 33: most rows, in long stretches.
         let most = |i: usize| i % 33 != 32;
-        let masks: [(&str, &dyn Fn(usize) -> bool); 8] = [
+        // One row in 16 again, three at a time: bits go by the list, plain
+        // text does not.
+        let few_threes = |i: usize| i % 48 < 3;
+        let masks: [(&str, &dyn Fn(usize) -> bool); 9] = [
             ("every other", &every_other),
             ("one in 16", &one_in_16),
             ("pairs", &pairs),
@@ -924,6 +926,7 @@ mod tests {
             ("sixes", &sixes),
             ("long", &long),
             ("most", &most),
+            ("few threes", &few_threes),
         ];
 
         // Numbers, decimal values and dictionary keys: only with the list
@@ -973,21 +976,20 @@ mod tests {
         assert!(marks_from_the_mask(&one_in_16, false));
         assert!(marks_from_the_mask(&every_other, true));
         assert!(marks_from_the_mask(&pairs, true));
-        // Text: by the list whenever its rows come in short stretches,
-        // shared or not, and never when they come in long ones, however
-        // many rows that keeps.
-        let text = column('t', false);
-        for listed in [true, false] {
-            assert!(by_list(&text, &every_other, listed));
-            assert!(by_list(&text, &twenties, listed));
-            assert!(by_list(&text, &sixes, listed));
-            assert!(!by_list(&text, &first_half, listed));
-            assert!(!by_list(&text, &long, listed));
-            // From 32 rows a stretch, stretch by stretch (on a series
-            // long enough for one stretch more or less not to matter).
-            let longer = column_of('t', "c", 10 * rows, false);
-            assert!(by_list(&longer, &|i| i % 64 < 31, listed));
-            assert!(!by_list(&longer, &|i| i % 64 < 32, listed));
+        // Plain text, with gaps or without: by the list where few rows are
+        // kept, one at a time, and nowhere else. It asks for the list
+        // itself, whichever way the series is copied: one text column is
+        // enough to choose the listed way, and where each column has a core
+        // of its own there is no listed way to choose. Copied from the
+        // words, its gap marks go from the words too, even on a mask whose
+        // bits go by the list ("few threes").
+        for text in [column('t', false), column('t', true)] {
+            for (name, mask) in masks {
+                for listed in [true, false] {
+                    let by = by_list(&text, mask, listed);
+                    assert_eq!(by, name == "one in 16", "{name}, {listed}");
+                }
+            }
         }
 
         // What a column counts toward the list and how it is copied are
@@ -1002,6 +1004,7 @@ mod tests {
             ('b', false),
             ('b', true),
             ('t', false),
+            ('t', true),
         ] {
             let c = column(kind, gaps);
             for (name, mask) in masks {
@@ -1015,9 +1018,9 @@ mod tests {
             }
         }
 
-        // A whole series, of every kind but plain text: only the listed
-        // way makes the list.
-        let s = series_of("wwwwMMDDBB", rows);
+        // A whole series, of every kind: only the listed way makes the
+        // list, or text that goes by it.
+        let s = series_of("wwwwMMDDBBtT", rows);
         for (name, mask) in masks {
             let kept = (0..rows).filter(|&i| mask(i)).count();
             for (how, may) in [
@@ -1027,7 +1030,9 @@ mod tests {
             ] {
                 let keep: RowFilter = (0..rows).map(mask).collect();
                 assert_eq!(s.filter_rows_by(&keep, how).len(), kept);
-                assert!(may || !keep.has_list(), "{name}, {how:?}");
+                let text = keep.text_by_list();
+                assert!(may || text || !keep.has_list(), "{name}, {how:?}");
+                assert!(!text || keep.has_list(), "{name}, {how:?}");
             }
         }
         let keep: RowFilter = (0..rows).map(every_other).collect();
@@ -1046,6 +1051,8 @@ mod tests {
             "wwwBB",
             "t",
             "wt",
+            "wwwtT",
+            "dddT",
             "wwwwwwwBM",
         ] {
             let s = series_of(kinds, rows);

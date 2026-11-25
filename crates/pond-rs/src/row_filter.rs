@@ -40,35 +40,46 @@
 //! - **bits** where few rows are kept, a row or two at a time
 //!   ([`RowFilter::bits_by_list`]): from the words a column of bits costs
 //!   by the words it has, by the list by the rows kept;
-//! - **a dictionary column** sooner than a number column, and with no
-//!   other column to share the list with on some masks
-//!   ([`RowFilter::dictionaries_for_list`]): a dictionary put together
-//!   here from its kept keys is checked by Arrow again, key by key (the
-//!   way in that does not check is `unsafe`), and the kernel's is not.
+//! - **text** where few rows are kept, a row or two at a time
+//!   ([`RowFilter::text_by_list`]). One text column is enough to make the
+//!   list.
 //!
-//! **Text** is never put together here from bytes. Arrow would check such
-//! an array again, byte by byte, as text (the unchecked way in is
-//! `unsafe`), and that check costs more than a copy of our own saves for
-//! anything but short plain-ASCII strings. Text goes by the kernel, by
-//! its list, when its kept rows come in short stretches, and stretch by
-//! stretch when they come in long ones (see [`RowFilter::text`]): both
-//! copy from an array known to be valid, so neither needs the check.
+//! On any other mask **text** is copied here, straight from the words
+//! ([`RowFilter::text`]): each stretch of kept rows is one stretch of the
+//! source's bytes, and a run of words with every row kept is one stretch
+//! however long.
 //!
 //! Whichever way, the values are the same; the tests below hold each copy
 //! to a row-by-row reading or to Arrow's kernel.
+//!
+//! # The two unchecked hand-overs
+//!
+//! Twice this file hands Arrow an array it has put together and asks it
+//! not to check it again, which takes `unsafe` (`lib.rs` denies `unsafe`
+//! for the whole library, and these two functions alone allow it):
+//!
+//! - **text copied from the words** ([`RowFilter::text`]). Arrow's safe
+//!   constructor reads every copied byte again as text and looks at every
+//!   row's start: a second pass over what was just written;
+//! - **a dictionary's kept keys** ([`RowFilter::dictionary`]). The safe
+//!   constructor compares every kept key with the number of values again.
+//!
+//! In both, what is handed over is a copy of rows of an array that was
+//! valid to begin with, and the reasons that makes the copy valid are
+//! written beside each block. Arrow's own `filter` kernel skips the same
+//! checks the same way. A debug build, and so every test, has Arrow check
+//! each array handed over in full (`validate_full`); a release build does
+//! not.
 
 use std::sync::OnceLock;
 
-use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::Int32Type;
 use arrow_array::{
     Array, ArrayRef, BooleanArray, DictionaryArray, Int32Array, StringArray, new_empty_array,
 };
-use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer};
+use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer};
 use arrow_select::filter::{FilterBuilder, FilterPredicate};
-
-use crate::rows::FILTER_LIST_COLUMNS;
 
 /// The rows to keep: one bit per row of the source.
 pub(crate) struct RowFilter {
@@ -230,27 +241,6 @@ impl RowFilter {
         }
     }
 
-    /// The stretches of kept rows, as (first row, rows), in order. A
-    /// stretch runs on from one word into the next.
-    fn stretches(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let mut pieces = self
-            .words
-            .iter()
-            .enumerate()
-            .flat_map(|(w, &m)| stretches(m).map(move |(first, rows)| (w * 64 + first, rows)));
-        let mut next = pieces.next();
-        std::iter::from_fn(move || {
-            let (first, mut rows) = next?;
-            loop {
-                next = pieces.next();
-                match next {
-                    Some((at, more)) if at == first + rows => rows += more,
-                    _ => return Some((first, rows)),
-                }
-            }
-        })
-    }
-
     /// How many stretches of kept rows there are: the kept rows with a
     /// dropped row, or none, before them. Counted once, in a pass over the
     /// words.
@@ -302,41 +292,6 @@ impl RowFilter {
             && !self.stretches_of(BITS_LIST_STRETCH_ROWS)
     }
 
-    /// How many dictionary columns it takes before Arrow's kernel, its
-    /// list of the kept rows made for them alone, copies them faster than
-    /// they go straight from the words. `None` where a dictionary's keys go
-    /// from the words even with the list there to share
-    /// ([`RowFilter::list_pays`] says which, as for any value of four
-    /// bytes).
-    ///
-    /// With four rows in five kept or fewer the kernel lists the rows: one
-    /// column is enough while the kept rows come under
-    /// [`DICTIONARY_LIST_UNDER`] to a stretch, on average, and two from
-    /// there on. With more kept the kernel lists the stretches, and it is
-    /// the longer ones that gain: one column from [`DICTIONARY_LIST_FROM`]
-    /// rows to a stretch, two from [`DICTIONARY_PAIR_FROM`], and under
-    /// that as many as it takes of number columns (`FILTER_LIST_COLUMNS`
-    /// in `rows.rs`).
-    pub(crate) fn dictionaries_for_list(&self) -> Option<usize> {
-        if !self.list_pays(size_of::<i32>()) {
-            return None;
-        }
-        let columns = if self.keeps_most() {
-            if self.stretches_of(DICTIONARY_LIST_FROM) {
-                1
-            } else if self.stretches_of(DICTIONARY_PAIR_FROM) {
-                2
-            } else {
-                FILTER_LIST_COLUMNS
-            }
-        } else if !self.stretches_of(DICTIONARY_LIST_UNDER) {
-            1
-        } else {
-            2
-        };
-        Some(columns)
-    }
-
     /// True when the kept rows come mostly one at a time: under
     /// [`SINGLE_STRETCH`] rows to a stretch, on average. A number column
     /// then counts for the most toward a shared list of the kept rows
@@ -353,11 +308,13 @@ impl RowFilter {
         !self.stretches_of_ratio(SCATTERED_STRETCH.0, SCATTERED_STRETCH.1)
     }
 
-    /// True when text goes by Arrow's kernel and its list of the kept rows
-    /// ([`RowFilter::text`]): when the kept rows come under
-    /// [`TEXT_STRETCH_ROWS`] to a stretch, on average.
+    /// True when plain text goes by Arrow's kernel and its list of the kept
+    /// rows, not by this file's own copy ([`RowFilter::text`]): when few
+    /// rows are kept (under one in [`TEXT_LIST_ROWS`]) and they are
+    /// scattered ([`RowFilter::scattered`]: a row or two at a time).
     pub(crate) fn text_by_list(&self) -> bool {
-        !self.stretches_of(TEXT_STRETCH_ROWS)
+        // In 64 bits, as in `stretches_of_ratio`.
+        (self.count as u64) * (TEXT_LIST_ROWS as u64) < self.len as u64 && self.scattered()
     }
 
     /// The rows kept, as row numbers, in order.
@@ -596,35 +553,202 @@ impl RowFilter {
     /// The kept rows of a `Utf8` array, in order. A gap's bytes (there are
     /// usually none) are copied like any row's.
     ///
-    /// Long stretches ([`TEXT_STRETCH_ROWS`] rows or more, on average) go a
-    /// stretch at a time: its offsets moved in one loop, its bytes in one
-    /// copy. Shorter ones go by Arrow's kernel, by its list of the kept
-    /// rows, which every text column of a series then shares.
+    /// A few rows kept a row or two at a time go by Arrow's kernel and its
+    /// list of the kept rows ([`RowFilter::text_by_list`]), which every
+    /// text column of a series then shares. On every other mask the text is copied
+    /// here, from the words of the mask ([`RowFilter::text_from_words`]).
     pub(crate) fn text(&self, a: &StringArray) -> StringArray {
         assert_eq!(a.len(), self.len, "one value per row");
         if self.text_by_list() {
-            return self.by_list(a).as_string::<i32>().clone();
+            self.by_list(a).as_string::<i32>().clone()
+        } else {
+            self.text_from_words(a)
         }
-        let offsets = a.value_offsets();
-        let bytes = self
-            .stretches()
-            .map(|(first, rows)| (offsets[first + rows] - offsets[first]) as usize);
-        let mut out = StringBuilder::with_capacity(self.count, bytes.sum());
-        for (first, rows) in self.stretches() {
-            out.append_array(&a.slice(first, rows))
-                .expect("no more bytes than the source holds");
+    }
+
+    /// [`RowFilter::text`] straight from the words of the mask: each
+    /// stretch of kept rows is one stretch of the source's bytes, copied
+    /// as it is, with its offsets moved down by the bytes dropped before
+    /// it. A stretch is taken a word of the mask at a time, but for a run
+    /// of words with every row kept, which is one stretch however long.
+    /// The offsets, bytes and gap marks then go to Arrow unchecked: the
+    /// first of this file's two `unsafe` blocks.
+    #[allow(unsafe_code)]
+    fn text_from_words(&self, a: &StringArray) -> StringArray {
+        // The source's offsets are positions in `values` (and need not
+        // start at 0: a sliced array).
+        let (offsets, values) = (a.value_offsets(), a.value_data());
+        let total = self.kept_bytes(offsets);
+        // A short stretch is appended as a fixed eight offsets and 64
+        // bytes, whatever its length, and the length then cut back to what
+        // it holds: no branch depends on the length, nothing is zeroed
+        // first, and the spare room below means nothing ever grows.
+        let mut out_offsets: Vec<i32> = Vec::with_capacity(self.count + 1 + 8);
+        let mut bytes: Vec<u8> = Vec::with_capacity(total + 64);
+        let mut whole = 0usize; // words of a run of whole words still to skip
+        for (w, &m) in self.words.iter().enumerate() {
+            if whole > 0 {
+                whole -= 1;
+                continue;
+            }
+            if m == u64::MAX {
+                // A run of words with every row kept: one stretch.
+                whole = self.words[w..]
+                    .iter()
+                    .take_while(|&&m| m == u64::MAX)
+                    .count();
+                #[cfg(test)]
+                count_text_step(0);
+                let (i, rows) = (w * 64, whole * 64);
+                let (start, end) = (offsets[i] as usize, offsets[i + rows] as usize);
+                let ahead = (start - bytes.len()) as i32;
+                out_offsets.extend(offsets[i..i + rows].iter().map(|&x| x - ahead));
+                bytes.extend_from_slice(&values[start..end]);
+                whole -= 1;
+                continue;
+            }
+            for (first, len) in stretches(m) {
+                let i = w * 64 + first;
+                let (start, end) = (offsets[i] as usize, offsets[i + len] as usize);
+                // What the source's offsets are ahead of the output's by,
+                // across this stretch: the bytes dropped before it.
+                let (k, at) = (out_offsets.len(), bytes.len());
+                let ahead = (start - at) as i32;
+                if len <= 8 && i + 8 <= offsets.len() {
+                    #[cfg(test)]
+                    count_text_step(1);
+                    let from: &[i32; 8] = offsets[i..i + 8].try_into().expect("8 offsets");
+                    out_offsets.extend_from_slice(&from.map(|x| x - ahead));
+                    out_offsets.truncate(k + len);
+                } else {
+                    #[cfg(test)]
+                    count_text_step(2);
+                    out_offsets.extend(offsets[i..i + len].iter().map(|&x| x - ahead));
+                }
+                if end - start <= 64 && start + 64 <= values.len() {
+                    #[cfg(test)]
+                    count_text_step(3);
+                    let from: &[u8; 64] = values[start..start + 64].try_into().expect("64 bytes");
+                    bytes.extend_from_slice(from);
+                    bytes.truncate(at + (end - start));
+                } else {
+                    #[cfg(test)]
+                    count_text_step(4);
+                    bytes.extend_from_slice(&values[start..end]);
+                }
+            }
         }
-        out.finish()
+        // Checked in every build, like the gap marks just below: the
+        // block that follows leans on all three counts.
+        assert_eq!(
+            (out_offsets.len(), bytes.len()),
+            (self.count, total),
+            "every kept row, once"
+        );
+        out_offsets.push(total as i32);
+        let nulls = self.nulls(a.nulls(), false);
+        assert!(
+            nulls.as_ref().is_none_or(|n| n.len() == self.count),
+            "a gap mark per kept row"
+        );
+        // SAFETY: `new_unchecked` asks for what `StringArray::try_new`
+        // would check, and `OffsetBuffer::new_unchecked` for offsets that
+        // are not empty, start at 0 or above and never fall. Each holds by
+        // how the loop above writes, given that `a` is a valid
+        // `StringArray` (its bytes UTF-8, its offsets never falling and
+        // each at the start of a character).
+        // - The offsets start at 0, never fall, and end at the length of
+        //   `bytes`. A kept row's offset is the count of bytes appended
+        //   for the kept rows before it: within a stretch the offsets are
+        //   the source's less one number, and the source's never fall; a
+        //   new stretch starts where the last one ended, which is the
+        //   length of `bytes` at that moment. The last offset is `total`,
+        //   which the assert above shows is the length of `bytes`.
+        // - The bytes are UTF-8 and every offset is at the start of a
+        //   character. `bytes` is whole strings of the source, one after
+        //   another, each of them UTF-8 on its own (it lies between two
+        //   character starts of UTF-8), and every offset is where one of
+        //   those strings starts or ends. (What a short stretch appends
+        //   past its own rows and bytes is cut off again before anything
+        //   else is appended.)
+        // - `nulls`, when there are any, holds one bit per kept row: the
+        //   second assert above.
+        // Nothing above reads or writes outside a buffer: the loop uses
+        // ordinary checked slices and `Vec` calls.
+        let out = unsafe {
+            StringArray::new_unchecked(
+                OffsetBuffer::new_unchecked(out_offsets.into()),
+                Buffer::from_vec(bytes),
+                nulls,
+            )
+        };
+        // In a debug build (and so in every test) Arrow checks it in full.
+        debug_assert!(out.to_data().validate_full().is_ok());
+        out
+    }
+
+    /// True when the kept rows come in few stretches: one to [`FEW`] rows
+    /// of the series, or fewer. That is few rows kept, and it is also many
+    /// rows kept in long stretches.
+    fn few_stretches(&self) -> bool {
+        self.stretch_count() <= self.len / FEW
+    }
+
+    /// The bytes of the kept rows of a text column with these offsets:
+    /// what the copy must make room for. Added up stretch by stretch where
+    /// the stretches are few ([`RowFilter::few_stretches`]), which reads
+    /// two offsets a stretch and so passes over most of them; otherwise
+    /// eight rows at a time, reading them all.
+    fn kept_bytes(&self, offsets: &[i32]) -> usize {
+        if self.few_stretches() {
+            let mut total = 0usize;
+            for (w, &m) in self.words.iter().enumerate() {
+                for (first, len) in stretches(m) {
+                    let i = w * 64 + first;
+                    total += (offsets[i + len] - offsets[i]) as usize;
+                }
+            }
+            return total;
+        }
+        // Eight rows at a time: each row's length, kept or not, and-ed
+        // with all ones or all zeros from a table and added into eight
+        // sums, so that no branch depends on the mask. A sum wraps at 4
+        // GB, and the total is right all the same, because a column holds
+        // under 2 GB of text.
+        let (from, from_rest) = offsets[..self.len].as_chunks::<64>();
+        let (to, to_rest) = offsets[1..].as_chunks::<64>();
+        let (words, last) = self.words.split_at(from.len());
+        let mut sum = [0u32; 8];
+        for ((from, to), &m) in from.iter().zip(to).zip(words) {
+            let (from, to) = (from.as_chunks::<8>().0, to.as_chunks::<8>().0);
+            for ((from, to), byte) in from.iter().zip(to).zip(m.to_le_bytes()) {
+                let lanes = &LANES.0[usize::from(byte)];
+                for j in 0..8 {
+                    sum[j] = sum[j].wrapping_add((to[j].wrapping_sub(from[j]) as u32) & lanes[j]);
+                }
+            }
+        }
+        let mut total = sum.iter().fold(0u32, |a, &b| a.wrapping_add(b));
+        if let Some(&m) = last.first() {
+            for (j, (&from, &to)) in from_rest.iter().zip(to_rest).enumerate() {
+                if (m >> j) & 1 == 1 {
+                    total = total.wrapping_add(to.wrapping_sub(from) as u32);
+                }
+            }
+        }
+        total as usize
     }
 
     /// The kept rows of a dictionary array, in order: its keys at the kept
     /// rows, over the same values. When no row is kept the values go too,
     /// as Arrow's `filter` gives. The keys and their gap marks come
-    /// straight from the words. (A dictionary whose keys go faster by the
-    /// list is not copied here: `StringColumn::filter` hands it whole to
-    /// [`RowFilter::by_list`]. That covers every mask whose bits go by
-    /// the list, so the marks never do here; a test holds the two bars to
-    /// that.)
+    /// straight from the words, and go to Arrow unchecked: the second of
+    /// this file's two `unsafe` blocks. (A dictionary whose keys go faster
+    /// by the list is not copied here: `StringColumn::filter` hands it
+    /// whole to [`RowFilter::by_list`]. That covers every mask whose bits
+    /// go by the list, so the marks never do here; a test holds the two
+    /// bars to that.)
+    #[allow(unsafe_code)]
     pub(crate) fn dictionary(&self, a: &DictionaryArray<Int32Type>) -> DictionaryArray<Int32Type> {
         assert_eq!(a.len(), self.len, "one key per row");
         if self.count == 0 {
@@ -633,11 +757,24 @@ impl RowFilter {
                 .clone();
         }
         let keys = a.keys();
+        // `Int32Array::new` checks that there is a gap mark per key.
         let kept = Int32Array::new(
             self.vec(keys.values()).into(),
             self.nulls(keys.nulls(), false),
         );
-        DictionaryArray::new(kept, a.values().clone())
+        // SAFETY: `new_unchecked` asks for what `DictionaryArray::try_new`
+        // would check: that every key that is not a gap is 0 or more and
+        // under the number of values. `a` is a valid dictionary, so that
+        // holds for each of its rows. `kept` holds, for each kept row and
+        // in order, that row's key ([`RowFilter::vec`]) and that row's gap
+        // mark ([`RowFilter::nulls`], or no marks when no kept row is a
+        // gap): the two are copied by the same mask, so a key and its mark
+        // stay together, and each pair is a pair `a` held. The values are
+        // `a`'s own, unchanged, so their number is the same.
+        let out = unsafe { DictionaryArray::new_unchecked(kept, a.values().clone()) };
+        // In a debug build (and so in every test) Arrow checks it in full.
+        debug_assert!(out.to_data().validate_full().is_ok());
+        out
     }
 }
 
@@ -660,25 +797,49 @@ impl FromIterator<bool> for RowFilter {
     }
 }
 
-/// Where the bars below were set: on an x86 server (Intel Xeon, 2.1 GHz),
-/// on tables of 100,000 and of 1,000,000 rows, each time against the same
-/// table copied the other way. Unless a bar says otherwise, the masks kept
-/// rows at random (each row by a pseudo-random number) or in stretches of
-/// random length. A mask with a repeating pattern (every third row, 12 kept
-/// and 1 dropped) is a poor guide: the processor learns a pattern that
-/// repeats, so a bar set on one favours whichever copy branches on the
-/// mask. One line of such a timing moves by 5 to 10% from run to run; the
-/// bars rest on what several lines agree on.
+/// Where the bars below were set: on an x86 cloud server, on tables of
+/// 100,000 and of 1,000,000 rows, each time against the same table copied
+/// the other way. (An Intel Xeon at 2.1 GHz; this first bar, the last to
+/// be set, on another at 2.3 GHz, with every version held to one core.)
+/// Unless a bar says otherwise, the masks kept rows at random (each row by
+/// a pseudo-random number) or in stretches of random length. A mask with a
+/// repeating pattern (every third row, 12 kept and 1 dropped) is a poor
+/// guide: work that goes a stretch at a time took up to 2.8 times as long
+/// on stretches of random length as on a repeating mask with the same rows
+/// and the same number of stretches, so a bar set on one favours whichever
+/// copy branches on the mask. One line of such a timing moves by 5 to 10%
+/// from run to run; the bars rest on what several lines agree on.
 ///
-/// Text is copied stretch by stretch when a stretch of kept rows is this
-/// many rows or more, on average (see [`RowFilter::text`]). First set on
-/// stretches of one length, of 6-byte strings: stretch by stretch was the
-/// faster from about 16 rows a stretch when half the rows were kept, and
-/// from 32 to 64 when nearly all were (Arrow's kernel then copies by
-/// stretches of its own). Then checked on stretches of random length: 16
-/// or 64 in place of 32 moved nothing by more than two runs differ by;
-/// 128 took 25 to 100% longer on stretches of 64 rows.
-const TEXT_STRETCH_ROWS: usize = 32;
+/// Plain text goes by Arrow's kernel and its list of the kept rows only
+/// where fewer than one row in this many is kept, and those scattered
+/// ([`RowFilter::text_by_list`]).
+///
+/// Timed against the same code with one line of the rule changed, on text
+/// of 6, 24 and 120 bytes, in 1 to 8 columns, with gaps and without; each
+/// pair of numbers is the list's time over the copy's from the words at
+/// 1,000,000 rows, then at 100,000. With 5 or 10% of the rows kept, one
+/// at a time: 0.69 to 1.01 (the middle of 31 lines 0.84) and 0.75 to 0.99
+/// (0.88); with 1%, 0.79 and 0.88. With more rows kept the two ways cross,
+/// and where turns on the text. Of 6 bytes: 15% kept, 0.83 to 0.93 and
+/// 0.78 to 0.86; 20%, 0.73 to 0.82 and 0.81 to 0.88; 25%, 0.80 to 0.86 and
+/// 0.87 to 0.91; 30%, 0.88 to 0.93 and 0.95 to 1.01. Of 24 bytes: 15%,
+/// 0.94 to 0.95 and 0.86 to 0.98; 20%, 1.03 to 1.07 and 0.98 to 1.00; 25%,
+/// 1.07 to 1.14 and 1.03 to 1.04. Of 120 bytes: 15 and 20%, 0.89 to 0.90
+/// and 0.88 to 0.92; 25%, 0.97 and 0.93. So on that server a bar of one
+/// row in four or five would be the faster for short text. It is one in
+/// eight because an M1 reads the other way: there, with a quarter of the
+/// rows kept, the copy from the words took 0.78 of the list's time (one
+/// text column, and four), and with 5% kept the list took 0.98 and 0.85
+/// of the copy's.
+///
+/// How the few kept rows lie, timed the same way with 5 and 10% kept in
+/// stretches of random length: 2 rows to a stretch on average, the list
+/// 0.92 to 1.03 (the middle of 8 lines 0.97) and 0.91 to 0.98 (0.96); 3
+/// rows, 0.98 to 1.09 (1.02) and 0.97 to 1.07 (1.03); 4 rows, 1.00 to 1.12
+/// and 1.01 to 1.12; 8 rows, 1.06 to 1.24 and 1.05 to 1.26. The two cross
+/// between 2 and 3 rows to a stretch, which is where
+/// [`RowFilter::scattered`] already draws its line for number columns.
+const TEXT_LIST_ROWS: usize = 8;
 
 /// A column of values of up to eight bytes is copied by the loop that asks
 /// each word about its stretches when the mask's kept rows come this many
@@ -826,70 +987,6 @@ const SINGLE_STRETCH: (usize, usize) = (7, 4);
 /// which is what turns on it.
 const SCATTERED_STRETCH: (usize, usize) = (9, 4);
 
-/// With four rows in five kept or fewer, a dictionary column goes by
-/// Arrow's kernel, whatever else the series holds, while the kept rows
-/// come under this many to a stretch, on average; from there on it takes
-/// two of them ([`RowFilter::dictionaries_for_list`]).
-///
-/// Timed on an x86 server at 1,000,000 and at 100,000 rows, in stretches
-/// of random length with half the rows kept (three quarters where a pair
-/// is in brackets): Arrow's kernel for every column, against the copy
-/// from the words with its keys checked (round three of this work, which
-/// makes no list for tables this narrow). One dictionary column beside
-/// the number column the test reads: stretches of 3 rows, 0.97 and 1.02;
-/// of 4, 0.92 and 0.94; of 8, 0.99 and 1.05; of 12, 0.96 and 0.95 (1.02
-/// and 1.03); of 16, 0.99 and 0.96; of 24, 1.04 and 1.12 (1.03 and 1.11).
-/// So on that machine one such column is level either way up to 16 rows a
-/// stretch, and from 24 the kernel is the slower at 100,000 rows. On an M1
-/// the kernel was the faster where the stretches are short: 0.85 on the
-/// benchmark suite's table (56% kept, about 3 rows to a stretch) with its
-/// text held as a dictionary.
-///
-/// Two dictionary columns: stretches of 4 rows, 0.84 and 0.86; of 12, 0.88
-/// and 0.86 (0.85 and 0.95); of 16, 0.86 and 0.89; of 24, 0.97 and 0.99
-/// (0.93 and 0.99). Three: 0.80 to 0.88 and 0.80 to 0.89 at each of those.
-/// Four: 0.73 and 0.68 at 3 rows, 0.78 and 0.76 at 8, 0.86 and 0.87 at 32.
-///
-/// The list once made, the number columns beside a dictionary go by it
-/// too. This code, which makes the list, against round three, which did
-/// not, on one dictionary beside four number columns (the fewest that
-/// make it): stretches of 16 rows, 0.91 and 0.95; of 24, 1.05 and 1.03
-/// (1.03 and 1.09). Beside five, at 24: 1.04 and 1.06 (1.01 and 1.07).
-const DICTIONARY_LIST_UNDER: usize = 12;
-
-/// With more than four rows in five kept, a dictionary column goes by
-/// Arrow's kernel, whatever else the series holds, when the kept rows come
-/// this many to a stretch or more ([`RowFilter::dictionaries_for_list`]).
-///
-/// Timed as for [`DICTIONARY_LIST_UNDER`], on one dictionary column beside
-/// the number column the test reads; the kernel's time over the copy from
-/// the words, at 1,000,000 and at 100,000 rows. Rows kept at random: 82%
-/// kept (5.6 rows to a stretch), 1.29 and 1.66; 90% (10 rows), 1.13 and
-/// 1.30; 93% (14), 0.96 and 1.11; 95% (20), 0.86 and 0.94; 99%, 0.81 and
-/// 0.82. Stretches of random length: of 8 rows, 1.13 and 1.40; of 12, 0.99
-/// and 1.16; of 14, 0.97 and 1.06; of 16, 0.90 to 0.94 and 0.93 to 0.96;
-/// of 20, 0.88 and 0.95; of 24, 0.85 and 0.89; of 32 to 400, 0.78 to 0.84
-/// and 0.86 to 0.91.
-const DICTIONARY_LIST_FROM: usize = 16;
-
-/// With more than four rows in five kept, two dictionary columns make the
-/// kernel's list between them when the kept rows come this many to a
-/// stretch or more ([`RowFilter::dictionaries_for_list`]).
-///
-/// Timed as for [`DICTIONARY_LIST_FROM`], on two dictionary columns, in
-/// stretches of random length: of 8 rows, 0.94 and 1.24; of 10, 0.95 and
-/// 1.07; of 12, 0.83 and 1.03; of 14, 0.85 and 0.94; of 16, 0.82 and 0.89;
-/// of 20, 0.76 and 0.81. Three: of 8 rows, 0.93 and 1.18; of 10, 0.84 and
-/// 1.10; of 12, 0.77 and 0.96; of 14, 0.76 and 0.88; of 20, 0.76 and 0.79.
-/// So under 12 rows a stretch the kernel is the faster at 1,000,000 rows
-/// and the slower at 100,000, and a dictionary column counts there as a
-/// number column does.
-///
-/// This code against round three on one dictionary beside four number
-/// columns (the fewest that make the list with it): stretches of 12 rows,
-/// 0.89 and 1.08; of 14, 0.84 and 0.98.
-const DICTIONARY_PAIR_FROM: usize = 12;
-
 /// A word with this many kept rows or fewer is walked bit by bit. Timed
 /// from 0 to 64 on wide tables, at mixes from 1% to 93% of rows kept. On
 /// an M1, 0 (never) and 64 (always) are up to two times slower, where few
@@ -905,6 +1002,29 @@ const DICTIONARY_PAIR_FROM: usize = 12;
 /// 56% of the rows kept, the table was 11 to 26% slower than the walk
 /// (x86 server).
 const SPARSE: u32 = 24;
+
+/// With one stretch of kept rows to this many rows, or fewer, the bytes of
+/// a text column's kept rows are added up stretch by stretch
+/// ([`RowFilter::few_stretches`], [`RowFilter::kept_bytes`]).
+const FEW: usize = 16;
+
+/// For each byte of a mask, eight values: all ones where the bit is set,
+/// zero where it is not.
+static LANES: Aligned<[[u32; 8]; 256]> = Aligned({
+    let mut table = [[0u32; 8]; 256];
+    let mut byte = 0;
+    while byte < 256 {
+        let mut j = 0;
+        while j < 8 {
+            if (byte >> j) & 1 == 1 {
+                table[byte][j] = u32::MAX;
+            }
+            j += 1;
+        }
+        byte += 1;
+    }
+    table
+});
 
 #[cfg(test)]
 thread_local! {
@@ -953,6 +1073,25 @@ fn count_bit_word(way: usize) {
 #[cfg(test)]
 pub(crate) fn take_bit_words() -> usize {
     BIT_WORDS_BY_WAY.replace([0; 2]).iter().sum()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The steps [`RowFilter::text_from_words`] has taken on this thread:
+    /// runs of whole words, each copied as one stretch; then the stretches
+    /// whose offsets went as a fixed eight, and by their length; then the
+    /// stretches whose bytes went as a fixed 64, and by their length. The
+    /// text that comes out is the same each way, so this is how a test
+    /// sees which was taken.
+    static TEXT_STEPS: std::cell::Cell<[usize; 5]> = const { std::cell::Cell::new([0; 5]) };
+}
+
+/// One more step of the copy of text taken this way (see [`TEXT_STEPS`]).
+#[cfg(test)]
+fn count_text_step(way: usize) {
+    let mut steps = TEXT_STEPS.get();
+    steps[way] += 1;
+    TEXT_STEPS.set(steps);
 }
 
 /// True for a word of the mask that is copied a stretch at a time: for
@@ -1494,13 +1633,13 @@ mod tests {
     #[test]
     fn text_keeps_the_rows_of_the_mask() {
         let mut rng = Rng(0xdead_beef_cafe_f00d);
-        let (mut by_stretch, mut by_list) = (0, 0);
+        let (mut by_list, mut from_words) = (0, 0);
         each_mask(|n, m, keep| {
             let mask = BooleanArray::from(m.to_vec());
             if keep.text_by_list() {
                 by_list += 1;
             } else {
-                by_stretch += 1;
+                from_words += 1;
             }
             // With gaps and without: a source with none marks none.
             for gaps in [true, false] {
@@ -1515,6 +1654,10 @@ mod tests {
                 for skip in [0, 5] {
                     let a = whole.slice(skip, n);
                     let got = keep.text(&a);
+                    // A sound array by Arrow's own full check (offsets,
+                    // UTF-8, character starts, gap marks): the copy from
+                    // the words is handed over unchecked.
+                    got.to_data().validate_full().unwrap();
                     let read: Vec<Option<String>> =
                         got.iter().map(|v| v.map(str::to_string)).collect();
                     assert_eq!(read, kept(&values[skip..skip + n], m), "n {n}, skip {skip}");
@@ -1528,13 +1671,189 @@ mod tests {
                     }
                 }
             }
+            // By the kernel's list where the rule says, and only there.
+            assert_eq!(keep.has_list(), keep.text_by_list(), "n {n}");
         });
         // Each way of copying was taken.
-        assert!(by_stretch > 50 && by_list > 50, "{by_stretch} {by_list}");
+        assert!(by_list > 20 && from_words > 50, "{by_list} {from_words}");
+    }
+
+    /// A short stretch is appended as a fixed eight offsets and 64 bytes,
+    /// and cut back, only where the source holds that many from its
+    /// start on. Here the last kept stretch starts every small number of
+    /// rows and of bytes from the end of the column, which is where it
+    /// must be copied by its own length instead.
+    #[test]
+    fn a_short_stretch_at_the_end_of_the_text() {
+        let (mut fixed, mut by_length) = (0, 0);
+        for width in [0usize, 1, 5, 7, 8, 9, 13, 21, 32, 33, 64, 65] {
+            for rows in 1..=10usize {
+                for after in 0..=9usize {
+                    // 70 rows of two bytes, every third kept (the last
+                    // of them row 67); then a stretch of `rows` rows of
+                    // `width` bytes, from row 70 and byte 140; then
+                    // `after` dropped rows of one byte.
+                    let wide = "w".repeat(width);
+                    let values: Vec<&str> = (0..70)
+                        .map(|_| "ab")
+                        .chain((0..rows).map(|_| wide.as_str()))
+                        .chain((0..after).map(|_| "z"))
+                        .collect();
+                    let n = values.len();
+                    let m: Vec<bool> = (0..n)
+                        .map(|i| if i < 70 { i % 3 == 1 } else { i < 70 + rows })
+                        .collect();
+                    let keep: RowFilter = m.iter().copied().collect();
+                    let a = StringArray::from(values.clone());
+                    // The rule under test, read off the same way the copy
+                    // reads it.
+                    let (i, start) = (70, 140);
+                    let by_eight = rows <= 8 && i + 8 <= n + 1;
+                    let by_64 = rows * width <= 64 && start + 64 <= a.value_data().len();
+                    fixed += usize::from(by_eight) + usize::from(by_64);
+                    by_length += usize::from(!by_eight) + usize::from(!by_64);
+                    let got = keep.text(&a);
+                    assert!(!keep.has_list(), "from the words");
+                    got.to_data().validate_full().unwrap();
+                    let read: Vec<&str> = got.iter().flatten().collect();
+                    assert_eq!(read, kept(&values, &m), "{width} {rows} {after}");
+                }
+            }
+        }
+        // Both ways were taken, for offsets and for bytes.
+        assert!(fixed > 500 && by_length > 500, "{fixed} {by_length}");
+    }
+
+    /// The steps [`RowFilter::text_from_words`] takes to copy `a` by the
+    /// mask `f` ([`TEXT_STEPS`]): runs of whole words; then stretches
+    /// whose offsets went as a fixed eight, and by their length; then
+    /// stretches whose bytes went as a fixed 64, and by their length.
+    fn text_steps(a: &StringArray, f: &dyn Fn(usize) -> bool) -> [usize; 5] {
+        let m: Vec<bool> = (0..a.len()).map(f).collect();
+        let keep: RowFilter = m.iter().copied().collect();
+        TEXT_STEPS.set([0; 5]);
+        let got = keep.text_from_words(a);
+        let steps = TEXT_STEPS.get();
+        let arrow = filter(a, &BooleanArray::from(m)).unwrap();
+        assert_eq!(&got, arrow.as_string::<i32>());
+        steps
+    }
+
+    /// Which step the copy of text takes for each stretch. The text that
+    /// comes out is the same whichever it takes, so the steps are counted.
+    #[test]
+    fn text_takes_the_step_that_fits_each_stretch() {
+        // 256 rows of two bytes: 257 offsets and 512 bytes.
+        let a = StringArray::from_iter_values((0..256).map(|i| format!("{:02}", i % 100)));
+        let steps = |f: &dyn Fn(usize) -> bool| text_steps(&a, f);
+        // Sixteen stretches of two rows: each a fixed eight offsets and a
+        // fixed 64 bytes.
+        assert_eq!(steps(&|i| i < 64 && i % 4 < 2), [0, 16, 0, 16, 0]);
+        // Eight rows are the most that go as a fixed eight offsets.
+        assert_eq!(steps(&|i| (8..16).contains(&i)), [0, 1, 0, 1, 0]);
+        assert_eq!(steps(&|i| (8..17).contains(&i)), [0, 0, 1, 1, 0]);
+        // 64 bytes (32 rows here) are the most that go as a fixed 64.
+        assert_eq!(steps(&|i| (8..40).contains(&i)), [0, 0, 1, 1, 0]);
+        assert_eq!(steps(&|i| (8..41).contains(&i)), [0, 0, 1, 0, 1]);
+        // Row 224 (byte 448) is the last with 64 bytes from it on, and row
+        // 249 the last with eight offsets.
+        assert_eq!(steps(&|i| (224..227).contains(&i)), [0, 1, 0, 1, 0]);
+        assert_eq!(steps(&|i| (225..228).contains(&i)), [0, 1, 0, 0, 1]);
+        assert_eq!(steps(&|i| (249..252).contains(&i)), [0, 1, 0, 0, 1]);
+        assert_eq!(steps(&|i| (250..253).contains(&i)), [0, 0, 1, 0, 1]);
+        // A run of words with every row kept is one stretch, however long,
+        // and takes neither step of a stretch within a word.
+        assert_eq!(steps(&|i| (64..192).contains(&i)), [1, 0, 0, 0, 0]);
+        assert_eq!(steps(&|_| true), [1, 0, 0, 0, 0]);
+        // One dropped row (row 100) cuts its word into stretches of 36
+        // rows and 27, and leaves a run of whole words on either side.
+        assert_eq!(steps(&|i| i != 100), [2, 0, 2, 1, 1]);
     }
 
     #[test]
-    fn stretches_run_on_across_words() {
+    fn kept_bytes_adds_up_the_kept_rows_either_way() {
+        let mut rng = Rng(0x0bad_cafe_dead_beef);
+        let (mut by_stretch, mut by_eights) = (0, 0);
+        each_mask(|n, m, keep| {
+            if keep.few_stretches() {
+                by_stretch += 1;
+            } else {
+                by_eights += 1;
+            }
+            let values = texts(n + 5, &mut rng);
+            let whole: StringArray = values.iter().map(|v| v.as_deref()).collect();
+            for skip in [0, 5] {
+                let a = whole.slice(skip, n);
+                let rows = (0..n).filter(|&i| m[i]);
+                let want: usize = rows.map(|i| a.value(i).len()).sum();
+                assert_eq!(
+                    keep.kept_bytes(a.value_offsets()),
+                    want,
+                    "n {n}, skip {skip}"
+                );
+            }
+        });
+        assert!(
+            by_stretch > 20 && by_eights > 50,
+            "{by_stretch} {by_eights}"
+        );
+    }
+
+    /// The bytes of the kept rows are added up by stretches where there is
+    /// one stretch to 16 rows or fewer: 400 stretches in 6,400 rows is on
+    /// the bar, and 401 is over it.
+    #[test]
+    fn text_is_added_up_by_stretches_where_they_are_few() {
+        let of = |f: &dyn Fn(usize) -> bool| -> RowFilter { (0..6400).map(f).collect() };
+        assert!(of(&|i| i % 16 == 0).few_stretches());
+        assert!(!of(&|i| i % 16 == 0 || i == 5).few_stretches());
+        // Many rows kept in long stretches are few stretches too.
+        assert!(of(&|i| i % 64 < 48).few_stretches());
+        assert!(!of(&|i| i % 2 == 0).few_stretches());
+        assert!(of(&|_| true).few_stretches() && of(&|_| false).few_stretches());
+    }
+
+    /// Text goes by the kernel's list only where under one row in eight is
+    /// kept and the kept rows are scattered (under two and a quarter to a
+    /// stretch); otherwise from the words, however long the stretches.
+    #[test]
+    fn text_goes_by_the_list_only_for_a_few_scattered_rows() {
+        let a: StringArray = (0..6400).map(|i| Some(format!("r{i}"))).collect();
+        // True when the text went by the list.
+        let listed = |f: &dyn Fn(usize) -> bool| {
+            let keep: RowFilter = (0..6400).map(f).collect();
+            let got = keep.text(&a);
+            let want: Vec<String> = (0..6400)
+                .filter(|&i| f(i))
+                .map(|i| format!("r{i}"))
+                .collect();
+            assert_eq!(got.iter().flatten().collect::<Vec<_>>(), want);
+            assert_eq!(keep.has_list(), keep.text_by_list());
+            keep.has_list()
+        };
+        assert!(listed(&|i| i % 9 == 0), "one row in 9");
+        assert!(listed(&|i| i % 100 == 0), "one row in 100");
+        assert!(!listed(&|i| i % 8 == 0), "one row in 8");
+        assert!(!listed(&|i| i % 2 == 0), "every other row");
+        // Few rows, two at a time, go by the list; three at a time do not.
+        assert!(listed(&|i| i % 32 < 2), "2 kept, 30 dropped");
+        assert!(!listed(&|i| i % 48 < 3), "3 kept, 45 dropped");
+        // Twos and a three: 11 rows in 5 stretches (2.2 to a stretch) go by
+        // the list, 9 rows in 4 stretches (2.25) do not.
+        let twos_and_a_three = |twos: usize, i: usize| {
+            let (run, at) = (i / 32, i % 32);
+            at < 2 || (run % (twos + 1) == twos && at == 2)
+        };
+        assert!(listed(&|i| twos_and_a_three(4, i)), "2, 2, 2, 2 and 3");
+        assert!(!listed(&|i| twos_and_a_three(3, i)), "2, 2, 2 and 3");
+        assert!(!listed(&|i| i % 64 < 31), "31 kept, 33 dropped");
+        assert!(!listed(&|i| (10..150).contains(&i)), "one stretch");
+        assert!(!listed(&|_| false), "no row");
+        assert!(!listed(&|_| true), "every row");
+    }
+
+    #[test]
+    fn stretches_are_counted_across_words() {
         each_mask(|n, m, keep| {
             // A stretch starts at a kept row with a dropped row, or none,
             // before it, and runs to the next dropped row.
@@ -1545,7 +1864,6 @@ mod tests {
                     _ => want.push((i, 1)),
                 }
             }
-            assert_eq!(keep.stretches().collect::<Vec<_>>(), want, "n {n}");
             assert_eq!(keep.stretch_count(), want.len(), "n {n}");
             for rows in [1, 2, 8, 16, 32, 100] {
                 // `rows` to a stretch with one stretch let off: more than
@@ -1560,9 +1878,9 @@ mod tests {
             }
         });
         // One stretch over three words. It is the one stretch let off, so
-        // it is long enough for any bar: one copy is the whole of it.
+        // it is long enough for any bar.
         let keep: RowFilter = (0..200).map(|i| (10..150).contains(&i)).collect();
-        assert_eq!(keep.stretches().collect::<Vec<_>>(), [(10, 140)]);
+        assert_eq!(keep.stretch_count(), 1);
         assert!(keep.stretches_of(140) && keep.stretches_of(1000));
         let every_other: RowFilter = (0..200).map(|i| i % 2 == 0).collect();
         assert_eq!(every_other.stretch_count(), 100);
@@ -1585,13 +1903,16 @@ mod tests {
             let sixteens = of(&|i| i % 32 < 16);
             assert!(sixteens.stretches_of(16), "n {n}");
             assert!(!sixteens.stretches_of(17), "n {n}");
-            // 32 kept, 32 dropped: text goes stretch by stretch, numbers
-            // straight from the words.
+            // 32 kept, 32 dropped: numbers go straight from the words.
             let long = of(&|i| i % 64 < 32);
-            assert!(!long.text_by_list() && !long.list_pays(8), "n {n}");
-            // 31 kept, 33 dropped: under both bars.
+            assert!(!long.list_pays(8), "n {n}");
+            // 31 kept, 33 dropped: under the bar, by the list.
             let shorter = of(&|i| i % 64 < 31);
-            assert!(shorter.text_by_list() && shorter.list_pays(8), "n {n}");
+            assert!(shorter.list_pays(8), "n {n}");
+            // Few rows, two at a time: text goes by the list. Three at a
+            // time: it does not.
+            assert!(of(&|i| i % 32 < 2).text_by_list(), "n {n}");
+            assert!(!of(&|i| i % 48 < 3).text_by_list(), "n {n}");
             // Runs of 3 rows: over the bars for bits and for scattered
             // rows, however the last run is cut.
             let threes = of(&|i| i % 6 < 3);
@@ -1656,50 +1977,27 @@ mod tests {
         assert!(!of(0, &|_| true), "no rows");
     }
 
+    /// Wherever bits go by the list, so do a dictionary's keys (values of
+    /// four bytes): `StringColumn::filter` then hands the whole dictionary
+    /// to the kernel, so the gap marks [`RowFilter::dictionary`] copies
+    /// never go by the list, and need no rule of their own.
     #[test]
-    fn dictionaries_make_the_list_by_how_many_rows_come_to_a_stretch() {
-        // How many dictionary columns make the kernel's list between them.
-        let of = |n: usize, f: &dyn Fn(usize) -> bool| -> Option<usize> {
-            let keep: RowFilter = (0..n).map(f).collect();
-            let columns = keep.dictionaries_for_list();
-            // Some number of them do wherever their keys go by the list,
-            // and nowhere else.
-            assert_eq!(columns.is_some(), keep.list_pays(4));
-            // Wherever bits go by the list, so do a dictionary's keys: its
-            // gap marks go with them, and need no rule of their own.
-            assert!(!keep.bits_by_list() || columns.is_some());
-            columns
+    fn where_bits_go_by_the_list_so_do_a_dictionarys_keys() {
+        let mut bits_by_list = 0;
+        let mut holds = |keep: &RowFilter| {
+            if keep.bits_by_list() {
+                bits_by_list += 1;
+                assert!(keep.list_pays(4));
+            }
         };
-        let as_numbers = Some(FILTER_LIST_COLUMNS);
-        // More than four rows in five: one from 16 rows a stretch, two
-        // from 12, as many as of number columns from 8, and under 8 the
-        // keys go from the words.
-        assert_eq!(of(6400, &|i| i % 64 != 63), Some(1), "63 kept, 1 dropped");
-        assert_eq!(of(6800, &|i| i % 17 != 16), Some(1), "16 kept, 1 dropped");
-        assert_eq!(of(6400, &|i| i % 16 != 15), Some(2), "15 kept, 1 dropped");
-        assert_eq!(of(6500, &|i| i % 13 != 12), Some(2), "12 kept, 1 dropped");
-        assert_eq!(
-            of(6000, &|i| i % 12 != 11),
-            as_numbers,
-            "11 kept, 1 dropped"
-        );
-        assert_eq!(of(6300, &|i| i % 9 != 8), as_numbers, "8 kept, 1 dropped");
-        assert_eq!(of(6400, &|i| i % 8 != 7), None, "7 kept, 1 dropped");
-        assert_eq!(of(640, &|_| true), Some(1), "every row");
-        assert_eq!(of(6400, &|i| i < 6000), Some(1), "most rows in one stretch");
-        // Four in five or fewer: one under 12 rows a stretch, two under
-        // 32, and from 32 the keys go from the words.
-        assert_eq!(of(640, &|i| i % 2 == 0), Some(1), "every other row");
-        assert_eq!(of(6000, &|i| i % 20 < 11), Some(1), "11 kept, 9 dropped");
-        assert_eq!(of(6000, &|i| i % 20 < 12), Some(2), "12 kept, 8 dropped");
-        assert_eq!(of(6000, &|i| i % 20 < 16), Some(2), "16 kept, 4 dropped");
-        assert_eq!(of(6000, &|i| i % 40 < 20), Some(2), "20 kept, 20 dropped");
-        assert_eq!(of(6400, &|i| i % 64 < 31), Some(2), "31 kept, 33 dropped");
-        assert_eq!(of(6400, &|i| i % 64 < 32), None, "32 kept, 32 dropped");
-        assert_eq!(of(6400, &|i| i % 64 < 48), None, "48 kept, 16 dropped");
-        assert_eq!(of(640, &|i| i < 320), None, "the first half");
-        assert_eq!(of(640, &|_| false), None, "no row");
-        assert_eq!(of(0, &|_| true), None, "no rows");
+        each_mask(|_, _, keep| holds(keep));
+        for rows in [1usize, 2, 3, 4, 5, 31, 32, 33] {
+            for gap in [15usize, 16, 100, 1000] {
+                let keep: RowFilter = (0..64_000).map(|i| i % (rows + gap) < rows).collect();
+                holds(&keep);
+            }
+        }
+        assert!(bits_by_list > 20, "{bits_by_list}");
     }
 
     /// The kernel's list is made once, the first time a column goes by it,
@@ -1831,7 +2129,19 @@ mod tests {
                 let arrow = filter(&a, &mask).unwrap();
                 let arrow = arrow.as_dictionary::<Int32Type>();
                 let got = keep.dictionary(&a);
+                // A sound array by Arrow's own full check (every key that
+                // is not a gap within the values): the kept keys are
+                // handed over unchecked.
+                got.to_data().validate_full().unwrap();
                 assert_eq!(got.keys(), arrow.keys(), "n {n}, skip {skip}");
+                // Row by row, the text each kept key stands for.
+                let text = got.values().as_string::<i32>();
+                let read: Vec<Option<String>> = got
+                    .keys()
+                    .iter()
+                    .map(|k| k.map(|k| text.value(k as usize).to_string()))
+                    .collect();
+                assert_eq!(read, kept(&values[skip..skip + n], m), "n {n}, skip {skip}");
                 // The same values behind the keys: all of the source's,
                 // or none when no row is kept.
                 assert_eq!(
@@ -1842,6 +2152,51 @@ mod tests {
                 );
             }
         });
+    }
+
+    /// Under a gap mark a key may be any number: Arrow asks nothing of
+    /// it. The copy keeps each key with its own mark, so such a key is
+    /// still under one where it lands, and the dictionary handed over
+    /// unchecked is one the checked way in would take.
+    #[test]
+    fn a_gaps_key_may_be_any_number() {
+        let n = 1000;
+        let values: ArrayRef = std::sync::Arc::new(StringArray::from(vec!["a", "b", "c"]));
+        let gap = |i: usize| i % 7 == 3 || i.is_multiple_of(64);
+        let keys: Vec<i32> = (0..n)
+            .map(|i| match (gap(i), i % 3) {
+                (false, k) => k as i32,
+                (true, 0) => -1,
+                (true, 1) => i32::MAX,
+                (true, _) => 3,
+            })
+            .collect();
+        let marks: NullBuffer = (0..n).map(|i| !gap(i)).collect::<Vec<bool>>().into();
+        let a = DictionaryArray::new(Int32Array::new(keys.into(), Some(marks)), values);
+        let masks: [&dyn Fn(usize) -> bool; 6] = [
+            &|i| i % 2 == 0,
+            &|i| i % 7 == 3,
+            &|i| i % 7 != 3,
+            &|i| i % 64 < 40,
+            &|i| i % 16 == 0,
+            &|_| true,
+        ];
+        for (at, f) in masks.into_iter().enumerate() {
+            let keep: RowFilter = (0..n).map(f).collect();
+            let got = keep.dictionary(&a);
+            got.to_data().validate_full().unwrap();
+            // What the checked way in makes of the same keys and marks.
+            let (keys, values) = got.clone().into_parts();
+            let checked = DictionaryArray::try_new(keys, values).expect("valid keys");
+            assert_eq!(got.keys(), checked.keys(), "mask {at}");
+            let mask = BooleanArray::from((0..n).map(f).collect::<Vec<_>>());
+            let arrow = filter(&a, &mask).unwrap();
+            assert_eq!(
+                got.keys(),
+                arrow.as_dictionary::<Int32Type>().keys(),
+                "mask {at}"
+            );
+        }
     }
 
     #[test]

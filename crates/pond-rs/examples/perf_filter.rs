@@ -26,22 +26,23 @@
 //!   between them. Each such column counts toward the list, and it is made
 //!   at a count of eight. A number column counts 1, or 2 when the kept
 //!   rows come under two and a quarter to a stretch on average, or 3 under
-//!   one and three quarters; a decimal's values count 2. With more than
+//!   one and three quarters; a decimal's values count 2; a dictionary
+//!   column counts as a number column does. With more than
 //!   four rows in five kept that is a list of stretches (a copy per
 //!   stretch), which pays from 8 rows a stretch on average, and always for
 //!   decimals. With fewer kept it is a list of rows (a step per kept row),
 //!   which pays until the stretches reach 32 rows on average (16 for
 //!   decimals).
-//! - A dictionary column: by the kernel sooner than a number column (a
-//!   dictionary put together from copied keys has every key checked by
-//!   Arrow again, and the kernel's has not). With four rows in five kept
-//!   or fewer, one such column makes the list under 12 rows a stretch and
-//!   two make it up to 32. With more kept, one makes it from 16 rows a
-//!   stretch and two from 12.
-//! - Text: stretch by stretch when the kept rows come 32 or more to a
-//!   stretch on average (a step per stretch, plus its bytes); otherwise by
-//!   Arrow's kernel and its list of the kept rows (a step per kept row or
-//!   per stretch, plus the bytes).
+//! - A dictionary column: its kept keys are copied as a column of
+//!   four-byte numbers is, and handed to Arrow without being checked a
+//!   second time.
+//! - Text: copied from the mask a stretch of kept rows at a time (a step
+//!   per stretch, plus its bytes; a stretch of up to eight rows and 64
+//!   bytes goes as a fixed eight and 64), and handed to Arrow without
+//!   being checked a second time. Where under one row in eight is kept,
+//!   a row or two at a time, it goes by Arrow's kernel and its list of
+//!   the kept rows (a step per kept row), which such text makes whatever
+//!   else uses it.
 //! - True/false values, and the marks for gaps: 64 rows at a time. One
 //!   step per stretch where the 64 hold one stretch or two; otherwise
 //!   eight rows a step, by a table that brings the kept bits together.
@@ -335,11 +336,32 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
         ("1 text", text_columns(rows, 1)),
         ("4 texts", text_columns(rows, 4)),
     ];
-    println!("Text, by the rows to a stretch:");
-    for (share, k) in [("25%", 749.5), ("50%", 499.5)] {
+    println!("Text, by the share kept and by the rows to a stretch:");
+    // Either side of the one row in eight under which text goes by the
+    // list (rows kept at random come a row or two at a time).
+    for (share, k) in [
+        ("5%", 949.5),
+        ("10%", 899.5),
+        ("15%", 849.5),
+        ("20%", 799.5),
+        ("25%", 749.5),
+        ("50%", 499.5),
+    ] {
         for (what, extra) in &text {
             let s = table(random_values(rows), extra)?;
             time(&format!("{what}, {share} kept"), &s, &col("v").gt(k));
+        }
+    }
+    // One row in 20 kept, in stretches of 2, 3 and 4: either side of the
+    // rows to a stretch under which it does. Then half the rows kept.
+    for (kept, dropped) in [(2.0, 38.0), (3.0, 57.0), (4.0, 76.0)] {
+        for (what, extra) in &text {
+            let s = table(runs(rows, kept, dropped), extra)?;
+            time(
+                &format!("{what}, {kept} kept, {dropped} dropped"),
+                &s,
+                &test,
+            );
         }
     }
     for kept in [2.0, 4.0, 8.0, 16.0, 24.0, 32.0, 48.0, 64.0] {
@@ -358,10 +380,11 @@ fn bars(rows: usize) -> pond_rs::Result<()> {
                 &col("v").gt(k),
             );
         }
-        // Half the rows kept, either side of the 12 rows to a stretch
-        // under which one dictionary column makes the list, and past the
-        // 32 where none does; then most rows kept, either side of the 12
-        // and the 16 from which two and one do.
+        // Half the rows kept, and then most of them, by the rows to a
+        // stretch. A dictionary column counts toward the list as a number
+        // column does, so only the eight make one here, and only where
+        // the list pays for values of four bytes: under 32 rows to a
+        // stretch with half kept, and from 8 with most.
         for (kept, dropped) in [
             (8.0, 8.0),
             (16.0, 16.0),

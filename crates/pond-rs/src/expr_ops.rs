@@ -375,8 +375,10 @@ mod filter_tests {
         assert_eq!(keep.count(), rows.len());
         let want = s.take_rows(&rows);
         // With more than one core this is the split copy. With one, the
-        // text column's rows come in short stretches, so it goes by the
-        // list of kept rows, and the columns beside it share the list.
+        // two number columns, the dictionary and the decimal column count
+        // enough between them to make the list of kept rows.
+        assert_eq!(s.filter_copy(&keep, 4), FilterCopy::Split);
+        assert_eq!(s.filter_copy(&keep, 1), FilterCopy::Listed);
         let cores = crate::par::threads();
         let how = s.filter_copy(&keep, cores);
         let expected = if cores > 1 {

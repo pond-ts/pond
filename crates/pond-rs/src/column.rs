@@ -225,11 +225,12 @@ impl StringColumn {
 
 impl StringColumn {
     /// The rows where `keep` is set, in order. Plain text goes as
-    /// [`RowFilter::text`] has it. A dictionary column filters its keys and
-    /// keeps its values, as [`StringColumn::take_indices`]: straight from
-    /// the mask, or by the list of kept rows ([`RowFilter::by_list`]) when
-    /// `listed` says the list is there to share and the keys are the
-    /// faster by it ([`RowFilter::list_pays`]).
+    /// [`RowFilter::text`] has it, whatever `listed` says. A dictionary
+    /// column filters its keys and keeps its values, as
+    /// [`StringColumn::take_indices`]: straight from the mask
+    /// ([`RowFilter::dictionary`]), or by the list of kept rows
+    /// ([`RowFilter::by_list`]) when `listed` says the list is there to
+    /// share and the keys are the faster by it ([`RowFilter::list_pays`]).
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> Self {
         match &self.repr {
             StringRepr::Plain(a) => Self::plain(keep.text(a)),
@@ -240,30 +241,6 @@ impl StringColumn {
                     keep.dictionary(a)
                 }),
             },
-        }
-    }
-
-    /// What this column counts toward a list of the kept rows
-    /// ([`ColumnData::list_weight`]).
-    fn list_weight(&self, keep: &RowFilter) -> usize {
-        match &self.repr {
-            // Text in short stretches goes by the kernel and its list
-            // whatever else does: the list is made, so it is there to share.
-            StringRepr::Plain(_) => {
-                if keep.text_by_list() {
-                    FILTER_LIST_COLUMNS
-                } else {
-                    0
-                }
-            }
-            // A dictionary counts its share of a list that so many of them
-            // make between them on this mask: the whole of it where one
-            // does, a half where two do, and nothing where its keys go
-            // from the words. (Its gap marks go the way its keys do, so
-            // they have no count of their own.)
-            StringRepr::Dictionary(_) => keep
-                .dictionaries_for_list()
-                .map_or(0, |columns| FILTER_LIST_COLUMNS / columns),
         }
     }
 }
@@ -1344,17 +1321,18 @@ impl ColumnData {
         }
     }
 
-    /// The rows where `keep` is set, in order: what `filter` keeps. Text
-    /// goes by Arrow's kernel or stretch by stretch ([`RowFilter::text`])
-    /// and arrays by row number; the other kinds are copied straight from
-    /// the mask. Except that, when `listed` says the kernel's list of kept
-    /// rows is there to share, each goes by it where this mask is the
-    /// faster that way: numbers, decimal values and dictionary keys by
-    /// [`RowFilter::list_pays`] for values of their width, true/false
-    /// values and the marks for gaps by [`RowFilter::bits_by_list`] (see
-    /// [`RowFilter`] for the two ways, and `TimeSeries::filter_rows` for
-    /// the choice). [`ColumnData::list_weight`] reads the same rules, to
-    /// say what the column counts toward making the list.
+    /// The rows where `keep` is set, in order: what `filter` keeps. Arrays
+    /// go by row number; the other kinds are copied straight from the
+    /// mask. Except that, when `listed` says the kernel's list of kept
+    /// rows is there to share, each kind but plain text goes by it where
+    /// this mask is the faster that way: numbers, decimal values and
+    /// dictionary keys by [`RowFilter::list_pays`] for values of their
+    /// width, true/false values and the marks for gaps by
+    /// [`RowFilter::bits_by_list`] (see [`RowFilter`] for the two ways,
+    /// and `TimeSeries::filter_rows` for the choice). Plain text takes the
+    /// list or not by the mask alone ([`RowFilter::text`]).
+    /// [`ColumnData::list_weight`] reads the same rules, to say what the
+    /// column counts toward making the list.
     pub(crate) fn filter(&self, keep: &RowFilter, listed: bool) -> ColumnData {
         match self {
             ColumnData::Number(c) => {
@@ -1406,23 +1384,41 @@ impl ColumnData {
 
     /// What this column counts toward a list of the kept rows, made once
     /// and shared (`TimeSeries::filter_copy` makes one when the columns'
-    /// counts come to [`FILTER_LIST_COLUMNS`]): one for a number column
-    /// that [`ColumnData::filter`] would copy faster by the list than
-    /// straight from the mask, more for the kinds and the masks that gain
-    /// more by it, nothing for a column the list does not help. So a
-    /// column counts exactly when, with the list there, it would go by it.
+    /// counts come to `FILTER_LIST_COLUMNS` in `rows.rs`): one for a
+    /// number column that [`ColumnData::filter`] would copy faster by the
+    /// list than straight from the mask, more for the kinds and the masks
+    /// that gain more by it, nothing for a column the list does not help.
+    /// So a column counts exactly when, with the list there, it would go
+    /// by it.
     pub(crate) fn list_weight(&self, keep: &RowFilter) -> usize {
         let bits = |buffers: usize| LIST_WEIGHT_BITS * buffers * usize::from(keep.bits_by_list());
+        // A column of values of up to eight bytes: more the shorter the
+        // stretches its kept rows come in.
+        let narrow = |width: usize| {
+            if !keep.list_pays(width) {
+                0
+            } else if keep.mostly_single() {
+                LIST_WEIGHT_SINGLE
+            } else if keep.scattered() {
+                LIST_WEIGHT_SCATTERED
+            } else {
+                1
+            }
+        };
         match self {
-            ColumnData::Number(_) if !keep.list_pays(size_of::<f64>()) => 0,
-            ColumnData::Number(_) if keep.mostly_single() => LIST_WEIGHT_SINGLE,
-            ColumnData::Number(_) if keep.scattered() => LIST_WEIGHT_SCATTERED,
-            ColumnData::Number(_) => 1,
+            ColumnData::Number(_) => narrow(size_of::<f64>()),
             ColumnData::Decimal(c) => {
                 LIST_WEIGHT_DECIMAL * usize::from(keep.list_pays(size_of::<i128>()))
                     + bits(usize::from(c.missing_count() > 0))
             }
-            ColumnData::String(c) => c.list_weight(keep),
+            // A dictionary's keys are values of four bytes, and count as a
+            // number column does. (Its gap marks go the way its keys do,
+            // so they have no count of their own.)
+            ColumnData::String(c) if c.is_dictionary() => narrow(size_of::<i32>()),
+            // Plain text goes by the kernel and its list on some masks
+            // whatever else does: the list is made, so it is there to
+            // share. On any other mask it counts nothing.
+            ColumnData::String(_) => FILTER_LIST_COLUMNS * usize::from(keep.text_by_list()),
             ColumnData::Boolean(c) => bits(1 + usize::from(c.missing_count() > 0)),
             ColumnData::Array(_) => 0,
         }

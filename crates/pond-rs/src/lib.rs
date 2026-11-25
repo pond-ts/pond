@@ -171,6 +171,11 @@
 //! ```
 
 #![warn(missing_docs)]
+// Two functions in `row_filter.rs` hand Arrow an array it is asked not to
+// check again. Each carries its own `#[allow(unsafe_code)]`, with the
+// reasons it is sound beside the block. Nothing else in the library may
+// use `unsafe`.
+#![deny(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod aggregate;
