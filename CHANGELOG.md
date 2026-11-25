@@ -101,6 +101,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   windowing, triggers, partitioning, late data, the value axis) now has a
   Rust and a Python tab beside TypeScript, each checked by the docs'
   snippet scripts, and the prose no longer assumes TypeScript.
+- **`@pond-ts/wasm`: `LiveSeries.pushSeries(series)`** ([PND-RSPUSHSERIES]).
+  Pushes every row of a batch `TimeSeries` into a live series as one batch,
+  as pond-ts's `pushSeries` and pond-rs's `push_series` do: the same checks,
+  ordering and listeners as `pushMany` of those rows, all or nothing. It
+  takes only a `@pond-ts/wasm` `TimeSeries`, as pond-ts takes only its own.
+  The rows are already in WebAssembly memory, so they go straight in with no
+  copy through JavaScript. The series stays yours to use and `free()`.
+  Called from a listener, the push waits until the current push is done,
+  and the package keeps its own handle on the series meanwhile, so you may
+  free yours at once. pond-ts's live parity fixture now has `pushSeries`
+  steps, replayed by pond-rs, `@pond-ts/wasm` and the Python package.
 
 ### Changed
 

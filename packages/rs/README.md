@@ -204,19 +204,30 @@ live.free();
 - **Fast path.** `push([t, n, …])` and `pushMany` with only numbers (and
   `undefined` for a gap) skip JSON; other rows go as JSON, which refuses
   `null` and `NaN` cells as pond-ts does. Both give the same result.
+- **Pushing a batch series.** `pushSeries(series)` pushes every row of a
+  `TimeSeries` as one batch, as pond-ts's `pushSeries` (pond-rs's
+  `push_series`): the same checks, ordering and listeners as `pushMany`
+  of those rows, all or nothing. Value columns are matched by name, in
+  any order. It takes only this package's `TimeSeries`, as pond-ts takes
+  only its own; anything else is a `TypeError`. The rows are already in
+  WebAssembly memory, so they go straight in, with no copy through
+  JavaScript. The series stays yours: keep using it, and `free()` it when
+  done. Called from a listener, the push waits until the current push is
+  done, like any other (an empty batch is only checked for shape, at
+  once, as in pond-ts); the package keeps its own handle on the series
+  until then, so you may free yours straight away.
 - **Differences:** a disposed node cannot be read (pond-ts leaves it
   readable); `pushJson` takes no `timeZone`; only the root series takes
-  `push` / `pushMany` / `pushJson` / `clear` (pond-ts lets you push into
-  or clear one partition's series); a node function cannot read its own
-  series during a push; reducers are names only (pond-ts also takes a
-  function as `using`); keys must be whole ms (pond-ts takes `0.5`);
-  `apply(factory)` runs the factory once and repeats its chain for every
-  partition, so it cannot branch on the partition; `cumulative` takes one
-  function column; `toTimeSeries` takes no name; partitioned fused
-  rolling `stats()` has no `windowsCount`; a `map` result cell of the
-  wrong type is a gap; a `cumulative` result that is not a number is
-  `NaN`; there is no `pushSeries` yet (pond-rs has `push_series`; this
-  package doesn't expose it).
+  `push` / `pushMany` / `pushJson` / `pushSeries` / `clear` (pond-ts lets
+  you push into or clear one partition's series); a node function cannot
+  read its own series during a push; reducers are names only (pond-ts
+  also takes a function as `using`); keys must be whole ms (pond-ts takes
+  `0.5`); `apply(factory)` runs the factory once and repeats its chain for
+  every partition, so it cannot branch on the partition; `cumulative`
+  takes one function column; `toTimeSeries` takes no name; partitioned
+  fused rolling `stats()` has no `windowsCount`; a `map` result cell of
+  the wrong type is a gap; a `cumulative` result that is not a number is
+  `NaN`.
 - **Speed** (`scripts/perf-live.mjs`, 1M events): `push` about 6x faster
   than pond-ts, `pushMany` about 3x, a rolling average plus 1-minute
   buckets 2-5x, and about 1.4-2x with a listener on every rolling update

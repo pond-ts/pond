@@ -10,6 +10,13 @@
  *   { push: rows }        live.push(...rows)
  *   { pushMany: rows }    live.pushMany(rows)
  *   { pushJson: rows }    live.pushJson(rows)
+ *   { pushSeries: { name, schema, rows } }
+ *                         live.pushSeries(new TimeSeries({ name, schema,
+ *                         rows })): a batch in `toJSON()` form (cells
+ *                         tagged as below), freed after the push when it
+ *                         has a `free()` (@pond-ts/wasm's does). Batches
+ *                         are valid and sorted, so a step's error is
+ *                         always pushSeries's own
  *   { clear: true }       live.clear()
  *   { node: { id, op, from, args, watch? } }
  *                         nodes[id] = nodes[from][op](...args); `from`
@@ -149,6 +156,14 @@ const TAG_ROWS = [
   [16000, true, ['c']],
 ];
 
+// A required number column and an optional text one, for pushSeries'
+// shape checks.
+const SHAPE_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number' },
+  { name: 'tag', kind: 'string', required: false },
+];
+
 const RANGE_SCHEMA = [
   { name: 'timeRange', kind: 'timeRange' },
   { name: 'v', kind: 'number', required: false },
@@ -190,6 +205,9 @@ const filterGt = (column, gt) => ({ fn: { column, gt } });
 const filterEq = (column, eq) => ({ fn: { column, eq } });
 const quiet = (id, op, from, ...args) => ({
   node: { id, op, from, args, watch: false },
+});
+const batch = (rows, schema = SCHEMA, name = 'batch') => ({
+  pushSeries: { name, schema, rows },
 });
 
 // A late row (2.6s) once the stream has reached 5.001s, then a row 0.5s
@@ -578,6 +596,225 @@ const CASES = [
     schema: RANGE_SCHEMA,
     options: { retention: { maxEvents: 3 } },
     steps: each(RANGE_ROWS),
+  },
+
+  // ── pushSeries ──
+  {
+    // Strict, with retention: an empty batch, a batch refused whole (its
+    // first row is older than the newest held), a row pushed between.
+    name: 'push-series',
+    schema: SCHEMA,
+    options: { retention: { maxEvents: 10 } },
+    steps: [
+      batch(ROWS.slice(0, 4)),
+      batch([]),
+      batch(ROWS.slice(4, 12)),
+      batch([
+        [2000, 'a', 1, 1],
+        [13000, 'b', 2, 2],
+      ]),
+      { push: [ROWS[12]] },
+      batch(ROWS.slice(13)),
+    ],
+  },
+  {
+    // 2.6s and 4.6s are late once the stream is at 5.001s (dropped), 5.001s
+    // and 7.5s are not; then a batch with every row late.
+    name: 'push-series-drop',
+    schema: SCHEMA,
+    options: { ordering: 'drop' },
+    steps: [
+      batch(ROWS.slice(0, 10)),
+      batch([
+        [2600, 'a', 99, 1],
+        [4600, 'b', 98, 2],
+        [5001, 'c', 97, 3],
+        ROWS[10],
+      ]),
+      batch([
+        [100, 'a', 1, 1],
+        [200, 'b', 2, 2],
+      ]),
+      batch(ROWS.slice(11, 16)),
+    ],
+  },
+  {
+    name: 'push-series-reorder',
+    schema: SCHEMA,
+    options: { ordering: 'reorder' },
+    steps: [
+      batch(ROWS.slice(0, 10)),
+      batch([[2600, 'a', 99, 1], [4600, 'b', 98, 2], ROWS[10]]),
+      batch([[100, 'a', 1, 1]]),
+      batch(ROWS.slice(11, 16)),
+    ],
+  },
+  {
+    // A 1s grace: a batch with a row past it is refused whole, one within
+    // it goes in.
+    name: 'push-series-reorder-grace',
+    schema: SCHEMA,
+    options: { ordering: 'reorder', graceWindow: '1s' },
+    steps: [
+      batch(ROWS.slice(0, 10)),
+      batch([
+        [2600, 'a', 99, 1],
+        [6000, 'b', 98, 2],
+      ]),
+      batch([[4600, 'b', 98, 2], ROWS[10]]),
+      batch(ROWS.slice(11, 14)),
+    ],
+  },
+  {
+    // Nothing listens to the root (pond-rs stores the batch's columns
+    // without building events).
+    name: 'push-series-unwatched',
+    schema: SCHEMA,
+    watch: false,
+    options: { retention: { maxEvents: 5 } },
+    steps: [
+      batch(ROWS.slice(0, 4)),
+      batch([]),
+      batch(ROWS.slice(4, 12)),
+      batch([[2000, 'a', 1, 1]]),
+      { clear: true },
+      batch(ROWS.slice(12)),
+    ],
+  },
+  {
+    name: 'push-series-unwatched-drop',
+    schema: SCHEMA,
+    watch: false,
+    options: { ordering: 'drop', retention: { maxEvents: 6 } },
+    steps: [
+      batch(ROWS.slice(0, 10)),
+      batch([[2600, 'a', 99, 1], ROWS[10], ROWS[11]]),
+      batch([[100, 'a', 1, 1]]),
+    ],
+  },
+  {
+    name: 'push-series-columns-only',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: { retention: { maxEvents: 5 } },
+    steps: [
+      batch(ROWS.slice(0, 4)),
+      batch([]),
+      batch(ROWS.slice(4, 12)),
+      batch([[2000, 'a', 1, 1]]),
+      { clear: true },
+      batch(ROWS.slice(12)),
+    ],
+  },
+  {
+    name: 'push-series-columns-only-reorder',
+    schema: SCHEMA,
+    watch: ['columns'],
+    options: {
+      ordering: 'reorder',
+      graceWindow: '3s',
+      retention: { maxEvents: 6 },
+    },
+    steps: [
+      batch(ROWS.slice(0, 10)),
+      batch([[2600, 'a', 99, 1], [4600, 'b', 98, 2], ROWS[10]]),
+      batch(ROWS.slice(11, 14)),
+    ],
+  },
+  {
+    name: 'push-series-nodes',
+    schema: SCHEMA,
+    steps: [
+      node('f', 'filter', 'root', filterGt('cpu', 1)),
+      node('r', 'rolling', 'root', '5s', {
+        cpu: 'avg',
+        n: { from: 'mem', using: 'count' },
+      }),
+      node('a', 'aggregate', 'root', every('5s'), { cpu: 'sum', mem: 'max' }),
+      node('red', 'reduce', 'root', { cpu: 'sum', mem: 'avg' }),
+      batch(ROWS.slice(0, 7)),
+      { push: [ROWS[7]] },
+      batch(ROWS.slice(8, 16)),
+      batch([[3000, 'a', 1, 1]]),
+      batch(ROWS.slice(16)),
+    ],
+  },
+  {
+    name: 'push-series-partition',
+    schema: SCHEMA,
+    steps: [
+      node('p', 'partitionBy', 'root', 'host', {
+        retention: { maxEvents: 3 },
+      }),
+      node('all', 'collect', 'p'),
+      node('d', 'diff', 'p', 'cpu'),
+      node('dall', 'collect', 'd'),
+      batch(ROWS.slice(0, 6)),
+      node('pa', 'partition', 'p', 'a'),
+      batch(ROWS.slice(6, 16)),
+      batch(ROWS.slice(16)),
+    ],
+  },
+  {
+    // Value columns are matched by name, in any order; the key column's
+    // name may differ.
+    name: 'push-series-swapped-columns',
+    schema: SCHEMA,
+    steps: [
+      batch(
+        ROWS.slice(0, 6).map(([t, h, c, m]) => [t, m, c, h]),
+        [SCHEMA[0], SCHEMA[3], SCHEMA[2], SCHEMA[1]],
+      ),
+      batch(
+        ROWS.slice(6, 12).map(([t, h, c, m]) => [t, c, h, m]),
+        [{ name: 'at', kind: 'time' }, SCHEMA[2], SCHEMA[1], SCHEMA[3]],
+      ),
+    ],
+  },
+  {
+    name: 'push-series-interval-keys',
+    schema: INTERVAL_SCHEMA,
+    steps: [
+      batch(INTERVAL_ROWS.slice(0, 3), INTERVAL_SCHEMA),
+      node('f', 'filter', 'root', filterGt('v', 0)),
+      batch(INTERVAL_ROWS.slice(3), INTERVAL_SCHEMA),
+    ],
+  },
+  {
+    // Batches of the wrong shape: key kind, a missing, an extra and a
+    // wrong-kind column, a gap in a column the live series requires (the
+    // batch marks it optional), and an empty batch (checked all the same).
+    name: 'push-series-shape',
+    schema: SHAPE_SCHEMA,
+    steps: [
+      batch([[0, 1, 'a']], SHAPE_SCHEMA),
+      batch(
+        [[[1000, 2000], 2, 'b']],
+        [{ name: 'timeRange', kind: 'timeRange' }, ...SHAPE_SCHEMA.slice(1)],
+      ),
+      batch([[1000, 2]], SHAPE_SCHEMA.slice(0, 2)),
+      batch(
+        [[1000, 2, 'b', 3]],
+        [...SHAPE_SCHEMA, { name: 'w', kind: 'number', required: false }],
+      ),
+      batch(
+        [[1000, 'x', 'b']],
+        [SHAPE_SCHEMA[0], { name: 'v', kind: 'string' }, SHAPE_SCHEMA[2]],
+      ),
+      batch(
+        [
+          [1000, 2, 'b'],
+          [2000, null, 'c'],
+        ],
+        [
+          SHAPE_SCHEMA[0],
+          { name: 'v', kind: 'number', required: false },
+          SHAPE_SCHEMA[2],
+        ],
+      ),
+      batch([], SHAPE_SCHEMA.slice(0, 2)),
+      batch([[1000, 2, null]], SHAPE_SCHEMA),
+    ],
   },
 
   // ── Views ──
@@ -1756,7 +1993,19 @@ async function runCase(pond, spec) {
       if ('push' in step) root.push(...decodeRows(step.push));
       else if ('pushMany' in step) root.pushMany(decodeRows(step.pushMany));
       else if ('pushJson' in step) root.pushJson(step.pushJson);
-      else if ('clear' in step) root.clear();
+      else if ('pushSeries' in step) {
+        const { name, schema, rows } = step.pushSeries;
+        const series = new pond.TimeSeries({
+          name,
+          schema,
+          rows: decodeRows(rows),
+        });
+        try {
+          root.pushSeries(series);
+        } finally {
+          series.free?.();
+        }
+      } else if ('clear' in step) root.clear();
       else if ('dispose' in step) {
         nodes.get(step.dispose).dispose();
         disposed.add(step.dispose);

@@ -729,6 +729,9 @@ saving a raw-columns method could add over
 ~2 µs per call (`fromColumns` alone at one row per push in
 `perf-live-push-series.mjs`). The batch's buffers are shared with the
 live series, not copied (see `docs/plans/PND_LIVE_PLAN.md`).
+`@pond-ts/wasm` follows the same rule (2026-11-25, [PND-RSPUSHSERIES]):
+its `pushSeries` takes only its own `TimeSeries`, not JSON rows, so rows
+already in WebAssembly memory go in without a copy through JavaScript.
 
 ### Patterns we deliberately don't generalize
 
